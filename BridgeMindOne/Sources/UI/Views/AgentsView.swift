@@ -57,12 +57,12 @@ private extension AgentsView {
  case .claude: return "brain.head.profile"
  case .codex: return "chevron.left.forwardslash.chevron.right"
  case .cursor: return "cursor.rays"
- case .copilot: return "octagon"
  case .aider: return "hammer"
  case .deepseek: return "dot.radiowaves.left.and.right"
  case .gemini: return "sparkles"
  case .grok: return "bolt"
  case .opencode: return "terminal"
+ default: return "cpu"
  }
  }
 }
@@ -133,6 +133,7 @@ private extension AgentDetailView {
  statusBadge
  }
  }
+ }
 
  var statusBadge: some View {
  HStack(spacing: 4) {
@@ -182,12 +183,12 @@ private extension AgentDetailView {
  case .claude: return "brain.head.profile"
  case .codex: return "chevron.left.forwardslash.chevron.right"
  case .cursor: return "cursor.rays"
- case .copilot: return "octagon"
  case .aider: return "hammer"
  case .deepseek: return "dot.radiowaves.left.and.right"
  case .gemini: return "sparkles"
  case .grok: return "bolt"
  case .opencode: return "terminal"
+ default: return "cpu"
  }
  }
 }
@@ -243,6 +244,21 @@ private extension AgentDetailView {
  }
 }
 
+// MARK: - Helpers
+
+private func engineDescription(for engine: EngineType) -> String {
+ switch engine {
+ case .claude: return "Anthropic's Claude via Claude Code CLI"
+ case .codex: return "OpenAI's Codex CLI"
+ case .cursor: return "Cursor IDE integration"
+ case .aider: return "Aider coding assistant"
+ case .deepseek: return "DeepSeek AI models"
+ case .gemini: return "Google Gemini CLI"
+ case .grok: return "xAI's Grok"
+ case .opencode: return "OpenCode terminal agent"
+ }
+}
+
 // MARK: - Section Card
 
 private struct SectionCard: View {
@@ -262,18 +278,6 @@ private struct SectionCard: View {
  RoundedRectangle(cornerRadius: 8)
  .fill(Color(nsColor: .controlBackgroundColor))
  )
- }
- }
- private func engineDescription(for engine: EngineType) -> String {
- switch engine {
- case .claude: return "Anthropic's Claude via Claude Code CLI"
- case .codex: return "OpenAI's Codex CLI"
- case .cursor: return "Cursor IDE integration"
- case .aider: return "Aider coding assistant"
- case .deepseek: return "DeepSeek AI models"
- case .gemini: return "Google Gemini CLI"
- case .grok: return "xAI's Grok"
- case .opencode: return "OpenCode terminal agent"
  }
  }
 }
