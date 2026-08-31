@@ -1,60 +1,53 @@
 //
 // SettingsView.swift
-// Application settings
+// Application settings with tabbed interface
 //
 
 import SwiftUI
 
 public struct SettingsView: View {
  @EnvironmentObject private var appState: AppState
- @EnvironmentObject private var analytics: AnalyticsEngine
- @State private var selectedTab: SettingsTab = .general
+ @State private var selectedTab = 0
+
+ public init() {}
 
  public var body: some View {
  TabView(selection: $selectedTab) {
- GeneralSettingsView()
+ GeneralSettings()
  .tabItem { Label("General", systemImage: "gear") }
- .tag(SettingsTab.general)
+ .tag(0)
 
- EnginesSettingsView()
+ EnginesSettings()
  .tabItem { Label("Engines", systemImage: "cpu") }
- .tag(SettingsTab.engines)
+ .tag(1)
 
- PrivacySettingsView()
+ PrivacySettings()
  .tabItem { Label("Privacy", systemImage: "lock.shield") }
- .tag(SettingsTab.privacy)
+ .tag(2)
 
- AppearanceSettingsView()
+ AppearanceSettings()
  .tabItem { Label("Appearance", systemImage: "paintbrush") }
- .tag(SettingsTab.appearance)
+ .tag(3)
  }
- .padding(20)
  .frame(width: 500, height: 400)
- }
-
- private enum SettingsTab: String, CaseIterable {
- case general
- case engines
- case privacy
- case appearance
  }
 }
 
-// MARK: - General Settings
+// MARK: - General
 
-private struct GeneralSettingsView: View {
+private struct GeneralSettings: View {
  @EnvironmentObject private var appState: AppState
 
  public var body: some View {
  Form {
- Section("General") {
+ Section("Behavior") {
  Toggle("Auto-save chats", isOn: $appState.settings.autoSaveEnabled)
- Toggle("Enable notifications", isOn: $appState.settings.notificationsEnabled)
+ Toggle("Notifications", isOn: $appState.settings.notificationsEnabled)
  Toggle("Voice dictation (fn key)", isOn: $appState.settings.voiceDictationEnabled)
  }
 
- Section("Behavior") {
- Picker("Startup", selection: $appState.settings.startupBehavior) {
+ Section("Startup") {
+ Picker("On launch:", selection: $appState.settings.startupBehavior) {
  ForEach(StartupBehavior.allCases, id: \.self) { behavior in
  Text(behavior.displayName).tag(behavior)
  }
@@ -63,31 +56,26 @@ private struct GeneralSettingsView: View {
 
  Section("Font Size") {
  Slider(value: $appState.settings.fontSize, in: 11...20, step: 1)
+ HStack {
+ Text("Small")
+ Spacer()
  Text("\(Int(appState.settings.fontSize))pt")
- .foregroundStyle(.secondary)
+ Spacer()
+ Text("Large")
  }
  }
- }
-}
-
-private extension StartupBehavior {
- var displayName: String {
- switch self {
- case .restoreLastSession: return "Restore last session"
- case .showWelcome: return "Show welcome screen"
- case .createNewChat: return "Create new chat"
  }
  }
 }
 
-// MARK: - Engines Settings
+// MARK: - Engines
 
-private struct EnginesSettingsView: View {
+private struct EnginesSettings: View {
  @EnvironmentObject private var appState: AppState
 
  public var body: some View {
  Form {
- Section("Agent Engine Paths") {
+ Section("Engine Paths") {
  HStack {
  Text("Claude Code")
  TextField("Path", text: $appState.settings.claudeCodePath)
@@ -107,36 +95,28 @@ private struct EnginesSettingsView: View {
  Text("Anthropic").tag("anthropic")
  Text("OpenAI").tag("openai")
  Text("Google").tag("google")
- Text("Custom").tag("custom")
  }
  }
  }
  }
 }
 
-// MARK: - Privacy Settings
+// MARK: - Privacy
 
-private struct PrivacySettingsView: View {
+private struct PrivacySettings: View {
  @EnvironmentObject private var appState: AppState
- @EnvironmentObject private var analytics: AnalyticsEngine
 
  public var body: some View {
  Form {
  Section("Analytics") {
- Toggle("Usage analytics", isOn: Binding(
- get: { appState.settings.telemetryEnabled },
- set: { enabled in
- appState.settings.telemetryEnabled = enabled
- if !enabled { analytics.reset() }
- }
- ))
+ Toggle("Usage analytics", isOn: $appState.settings.telemetryEnabled)
  Text("Anonymous usage data helps improve BridgeMind One. No prompts or messages are sent.")
  .font(.caption)
  .foregroundStyle(.secondary)
  }
 
  Section("Security") {
- Text("Credentials are stored securely in the macOS Keychain using CryptoKit encryption.")
+ Text("Credentials stored in macOS Keychain with CryptoKit encryption.")
  .font(.caption)
  .foregroundStyle(.secondary)
  }
@@ -152,9 +132,9 @@ private struct PrivacySettingsView: View {
  }
 }
 
-// MARK: - Appearance Settings
+// MARK: - Appearance
 
-private struct AppearanceSettingsView: View {
+private struct AppearanceSettings: View {
  @EnvironmentObject private var appState: AppState
 
  public var body: some View {
@@ -166,6 +146,16 @@ private struct AppearanceSettingsView: View {
  }
  }
  }
+ }
+ }
+}
+
+private extension StartupBehavior {
+ var displayName: String {
+ switch self {
+ case .restoreLastSession: return "Restore last session"
+ case .showWelcome: return "Show welcome screen"
+ case .createNewChat: return "Create new chat"
  }
  }
 }
