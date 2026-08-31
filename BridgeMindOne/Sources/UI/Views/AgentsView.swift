@@ -264,6 +264,18 @@ private struct SectionCard: View {
  )
  }
  }
+ private func engineDescription(for engine: EngineType) -> String {
+ switch engine {
+ case .claude: return "Anthropic's Claude via Claude Code CLI"
+ case .codex: return "OpenAI's Codex CLI"
+ case .cursor: return "Cursor IDE integration"
+ case .aider: return "Aider coding assistant"
+ case .deepseek: return "DeepSeek AI models"
+ case .gemini: return "Google Gemini CLI"
+ case .grok: return "xAI's Grok"
+ case .opencode: return "OpenCode terminal agent"
+ }
+ }
 }
 
 // MARK: - Preview
