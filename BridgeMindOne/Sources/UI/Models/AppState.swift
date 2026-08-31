@@ -2,8 +2,8 @@
 // AppState.swift
 // BridgeMind One — UI-layer global state
 //
-// Bridges Core.AppState for UI consumption. Uses @Observable for modern
-// SwiftUI observation. All state mutations flow through Core.AppState.
+// Wraps Core.AppState for SwiftUI @Environment usage.
+// Provides UI-specific state alongside the core model state.
 //
 
 import SwiftUI
@@ -12,11 +12,37 @@ import Core
 @Observable
 public final class AppState {
 
- // MARK: - Core bridge
+ // MARK: - Core state (mirrors Core.AppState for @Environment use)
 
- public let core: Core.AppState
+ public var databaseManager: DatabaseManager?
+ public var currentSessionId: String?
+ public var sessions: [ChatSessionRecord] = []
+ public var currentMessages: [ChatMessageRecord] = []
+ public var isStreaming: Bool = false
+ public var activeAgent: String = "claude"
+ public var statusMessage: String = "Ready"
+ public var sidebarSelection: SidebarItem = .chat
 
- // MARK: - UI state
+ public enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
+ case chat = "Chat"
+ case autoPilot = "Auto-Pilot"
+ case plugins = "Plugins"
+ case skills = "Skills"
+ case settings = "Settings"
+
+ public var id: String { rawValue }
+ public var iconName: String {
+ switch self {
+ case .chat: return "bubble.left.and.bubble.right.fill"
+ case .autoPilot: return "bolt.shield.fill"
+ case .plugins: return "puzzlepiece.extension.fill"
+ case .skills: return "brain.head.profile"
+ case .settings: return "gearshape.fill"
+ }
+ }
+ }
+
+ // MARK: - UI-specific state
 
  public var isAboutSheetPresented: Bool = false
  public var isPluginsPanelPresented: Bool = false
@@ -29,17 +55,17 @@ public final class AppState {
  public var sidebarWidth: CGFloat = 240
  public var isDictating: Bool = false
 
- // MARK: - Agent cache
+ // MARK: - Agent info cache
 
  public var availableAgents: [PluginDescriptor] = []
  public var engineStatuses: [String: EngineHealth] = [:]
 
- // MARK: - Streaming
+ // MARK: - Streaming state
 
  public var streamingContent: String = ""
  public var isThinking: Bool = false
 
- // MARK: - Toast
+ // MARK: - Toast / notifications
 
  public var toastMessage: String?
  public var toastType: ToastType = .info
@@ -50,40 +76,109 @@ public final class AppState {
 
  // MARK: - Init
 
- public init(core: Core.AppState = .shared) {
- self.core = core
- self.availableAgents = PluginCollection.agents.map { $0.descriptor }
-
+ public init() {
+ self.availableAgents = PluginCollection.all
  Task { @MainActor in
- for await _ in core.$sessions {
- break
+ await initializeDatabase()
  }
+ }
+
+ // MARK: - Database
+
+ public func initializeDatabase() async {
+ do {
+ let config = DatabaseConfiguration(path: AppConfig.databaseURL())
+ let manager = try DatabaseManager(configuration: config)
+ self.databaseManager = manager
+ await loadSessions()
+ } catch {
+ self.statusMessage = "Database error: \(error.localizedDescription)"
+ }
+ }
+
+ public func loadSessions() async {
+ guard let db = databaseManager else { return }
+ do {
+ let records = try db.getAllSessions()
+ self.sessions = records
+ if currentSessionId == nil, let first = records.first {
+ await selectSession(id: first.id)
+ }
+ } catch {
+ print("Failed to load sessions: \(error)")
+ }
+ }
+
+ public func createNewSession(title: String = "New Session", agentId: String = "claude") async {
+ guard let db = databaseManager else { return }
+ let newSession = ChatSessionRecord(
+ id: UUID().uuidString,
+ title: title,
+ agentId: agentId,
+ createdAt: ISO8601DateFormatter().string(from: Date()),
+ updatedAt: ISO8601DateFormatter().string(from: Date())
+ )
+ do {
+ try db.saveSession(newSession)
+ await loadSessions()
+ await selectSession(id: newSession.id)
+ } catch {
+ print("Failed to create session: \(error)")
+ }
+ }
+
+ public func selectSession(id: String) async {
+ self.currentSessionId = id
+ guard let db = databaseManager else { return }
+ do {
+ self.currentMessages = try db.getMessages(forSession: id)
+ } catch {
+ print("Failed to load messages: \(error)")
+ }
+ }
+
+ public func appendMessage(role: String, content: String) async {
+ guard let sessionId = currentSessionId, let db = databaseManager else { return }
+ let msg = ChatMessageRecord(
+ id: UUID().uuidString,
+ sessionId: sessionId,
+ role: role,
+ content: content,
+ createdAt: ISO8601DateFormatter().string(from: Date())
+ )
+ do {
+ try db.saveMessage(msg)
+ self.currentMessages.append(msg)
+ } catch {
+ print("Failed to save message: \(error)")
+ }
+ }
+
+ public func deleteSession(_ session: ChatSessionRecord) {
+ guard let db = databaseManager else { return }
+ do {
+ try db.deleteSession(id: session.id)
+ if currentSessionId == session.id {
+ currentSessionId = nil
+ currentMessages = []
+ }
+ loadSessions()
+ } catch {
+ print("Failed to delete session: \(error)")
  }
  }
 
  // MARK: - Computed
 
  public var currentSession: ChatSessionRecord? {
- core.sessions.first { $0.id == core.currentSessionId }
- }
-
- public var isStreaming: Bool {
- core.isStreaming
- }
-
- public var sessions: [ChatSessionRecord] {
- core.sessions
- }
-
- public var currentMessages: [ChatMessageRecord] {
- core.currentMessages
+ sessions.first { $0.id == currentSessionId }
  }
 
  // MARK: - Actions
 
  public func createNewChat() {
  Task {
- await core.createNewSession(agentId: selectedAgentId)
+ await createNewSession(agentId: selectedAgentId)
  }
  }
 
@@ -100,7 +195,7 @@ public final class AppState {
 
  public func switchAgent(to agentId: String) {
  selectedAgentId = agentId
- core.activeAgent = agentId
+ activeAgent = agentId
  isAgentSwitcherPresented = false
  toastMessage = "Switched to \(agentId)"
  toastType = .success
