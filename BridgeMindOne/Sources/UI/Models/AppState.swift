@@ -2,17 +2,17 @@
 // AppState.swift
 // BridgeMind One — UI-layer global state
 //
-// Wraps and extends the Core AppState for UI consumption.
-// Uses @Observable (iOS 17+/macOS 14+ macro) for modern SwiftUI observation.
+// Bridges Core.AppState for UI consumption. Uses @Observable for modern
+// SwiftUI observation. All state mutations flow through Core.AppState.
 //
 
 import SwiftUI
 import Core
-import Combine
 
 @Observable
 public final class AppState {
- // MARK: - Core state (bridged from Core.AppState)
+
+ // MARK: - Core bridge
 
  public let core: Core.AppState
 
@@ -27,19 +27,19 @@ public final class AppState {
  public var selectedAgentId: String = "claude"
  public var searchText: String = ""
  public var sidebarWidth: CGFloat = 240
+ public var isDictating: Bool = false
 
- // MARK: - Agent info cache
+ // MARK: - Agent cache
 
  public var availableAgents: [PluginDescriptor] = []
- public var engineStatuses: [String: Bool] = [:]
+ public var engineStatuses: [String: EngineHealth] = [:]
 
- // MARK: - Streaming state
+ // MARK: - Streaming
 
  public var streamingContent: String = ""
- public var streamingToolCall: ToolCall?
  public var isThinking: Bool = false
 
- // MARK: - Toast / notifications
+ // MARK: - Toast
 
  public var toastMessage: String?
  public var toastType: ToastType = .info
@@ -52,10 +52,10 @@ public final class AppState {
 
  public init(core: Core.AppState = .shared) {
  self.core = core
- self.availableAgents = PluginCollection.agents
+ self.availableAgents = PluginCollection.agents.map { $0.descriptor }
 
  Task { @MainActor in
- for await _ in core.$currentMessages {
+ for await _ in core.$sessions {
  break
  }
  }
@@ -83,12 +83,11 @@ public final class AppState {
 
  public func createNewChat() {
  Task {
- await core.createNewSession()
+ await core.createNewSession(agentId: selectedAgentId)
  }
  }
 
  public func saveCurrentChat() {
- // Persist current chat context — handled by DatabaseManager on every append
  toastMessage = "Chat saved"
  toastType = .success
  }
@@ -108,13 +107,13 @@ public final class AppState {
  }
 
  public func openDocumentation() {
- if let url = URL(string: "https://docs.bridgemind.ai") {
+ if let url = URL(string: AppConfig.docsURL.absoluteString) {
  NSWorkspace.shared.open(url)
  }
  }
 
  public func openIssueReporter() {
- if let url = URL(string: "https://github.com/bridgemind/bridgemind-one/issues") {
+ if let url = URL(string: "\(AppConfig.websiteURL)/issues") {
  NSWorkspace.shared.open(url)
  }
  }
