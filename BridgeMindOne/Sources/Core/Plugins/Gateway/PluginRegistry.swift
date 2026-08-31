@@ -27,8 +27,8 @@ public enum PluginError: Error, Equatable {
 
 public struct PluginState: Codable, Equatable, Sendable {
  public let pluginId: PluginIdentity
- public public var enabled: Bool
- public public var connected: Bool
+ public var enabled: Bool
+ public var connected: Bool
  public var lastError: String?
  public var lastConnectedAt: Date?
  public var toolCount: Int = 0
