@@ -292,18 +292,13 @@ private struct OAuthButton: View {
  }
 
  private func authenticate(plugin: PluginDescriptor) async {
- // In production, this triggers the OAuth flow via OAuthFlows
- // For now, simulate the flow
- do {
- let flow = OAuthFlowFactory.flow(for: plugin.authType)
- let _ = try? await flow.authenticate(
- for: plugin.id,
- scopes: plugin.scopes ?? [],
- redirectURI: "bridgemind://oauth/callback"
- )
- } catch {
- print("OAuth error: \(error)")
+ // Trigger OAuth flow via the system browser
+ let redirectURI = "bridgemind://oauth/callback"
+ guard let authURL = URL(string: "https://auth.bridgemind.ai/authorize?client_id=\(plugin.id)&redirect_uri=\(redirectURI)&response_type=code&scope=\(plugin.scopes?.joined(separator: " ") ?? "")") else {
+ return
  }
+
+ NSWorkspace.shared.open(authURL)
  }
 }
 

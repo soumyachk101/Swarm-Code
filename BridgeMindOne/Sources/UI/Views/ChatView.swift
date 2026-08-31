@@ -170,7 +170,6 @@ private extension ChatView {
  .accessibilityHint("Type a message to send to the assistant")
 
  HStack(spacing: 4) {
- // Send button
  Button {
  sendMessage()
  } label: {
@@ -183,7 +182,6 @@ private extension ChatView {
  .accessibilityHint("Send the typed message")
  .keyboardShortcut(.return, modifiers: [])
 
- // Dictate button
  Button {
  appState.isDictating.toggle()
  } label: {
@@ -197,9 +195,7 @@ private extension ChatView {
  }
  .padding(.horizontal, 12)
  .padding(.vertical, 8)
- .background(
- Color(nsColor: .controlBackgroundColor)
- )
+ .background(Color(nsColor: .controlBackgroundColor))
  }
  }
 
@@ -268,7 +264,7 @@ private struct MessageRow: View {
  .padding(.vertical, 8)
  .background(
  RoundedRectangle(cornerRadius: 12)
- .fill(bubbleColor)
+ .fill(message.role == "user" ? Color.accentColor.opacity(0.12) : Color(nsColor: .textBackgroundColor))
  )
  .accessibilityElement(children: .combine)
  .accessibilityLabel("\(roleLabel) message")
@@ -303,13 +299,6 @@ private struct MessageRow: View {
  default: return message.role.capitalized
  }
  }
-
- private var bubbleColor: AnyShapeStyle {
- if message.role == "user" {
- return AnyShapeStyle(Color.accentColor.opacity(0.12))
- }
- return AnyShapeStyle(Color(nsColor: .textBackgroundColor))
- }
 }
 
 // MARK: - Tool Result View
@@ -343,7 +332,7 @@ private struct MarkdownText: View {
 
  var body: some View {
  Group {
- if let attributed = rendered {
+ if let attributed = rendered, attributed.length > 0 {
  Text(attributed)
  } else {
  Text(text)
@@ -355,27 +344,22 @@ private struct MarkdownText: View {
  }
  }
 
- private static func render(_ markdown: String) -> NSAttributedString? {
- let fullText = markdown as NSString
-
- var result = NSMutableAttributedString()
-
- // Split into paragraphs
+ private static func render(_ markdown: String) -> NSAttributedString {
+ let result = NSMutableAttributedString()
  let paragraphs = markdown.components(separatedBy: "\n\n")
 
  for (index, paragraph) in paragraphs.enumerated() {
  let trimmed = paragraph.trimmingCharacters(in: .whitespacesAndNewlines)
-
  if trimmed.isEmpty { continue }
 
- // Check for code blocks
  if trimmed.hasPrefix("```") {
+ // Code block
  let codeContent = trimmed
  .dropFirst(3)
- .dropLast(3)
+ .replacingOccurrences(of: "```", with: "")
  .trimmingCharacters(in: .whitespacesAndNewlines)
 
- let attrString = NSAttributedString(
+ let codeAttr = NSAttributedString(
  string: codeContent,
  attributes: [
  .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .regular),
@@ -384,23 +368,12 @@ private struct MarkdownText: View {
  ]
  )
 
- let paragraphStyle = NSMutableParagraphStyle()
- paragraphStyle.headIndent = 12
- paragraphStyle.firstLineHeadIndent = 12
-
- result.append(NSAttributedString(
- string: "\n",
- attributes: [.paragraphStyle: paragraphStyle]
- ))
- result.append(attrString)
- result.append(NSAttributedString(string: "\n"))
+ if index > 0 { result.append(NSAttributedString(string: "\n")) }
+ result.append(codeAttr)
  } else {
- // Inline formatting: bold, italic, inline code
- let formatted = Self.applyInlineFormatting(to: trimmed)
-
- if index > 0 {
- result.append(NSAttributedString(string: "\n\n"))
- }
+ // Regular paragraph with inline formatting
+ let formatted = Self.applyInline(to: trimmed)
+ if index > 0 { result.append(NSAttributedString(string: "\n\n")) }
  result.append(formatted)
  }
  }
@@ -408,32 +381,28 @@ private struct MarkdownText: View {
  return result
  }
 
- private static func applyInlineFormatting(to text: String) -> NSAttributedString {
+ private static func applyInline(to text: String) -> NSAttributedString {
  let attributed = NSMutableAttributedString(string: text)
 
- // Bold: **text**
- let boldPattern = "\\*\\*(.+?)\\*\\*"
- if let regex = try? NSRegularExpression(pattern: boldPattern, options: []) {
- let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: text.utf16.count))
- for match in matches.reversed() {
- if let range = Range(match.range(at: 1), in: text) {
- let content = String(text[range])
- let styled = NSAttributedString(
- string: content,
- attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .bold)]
- )
+ // Bold **text**
+ let boldRegex = try? NSRegularExpression(pattern: "\\*\\*([^*]+)\\*\\*", options: [])
+ let boldMatches = boldRegex?.matches(in: text, options: [], range: NSRange(location: 0, length: text.utf16.count)) ?? []
+ for match in boldMatches.reversed() {
+ let range = match.range(at: 1)
+ if let swiftRange = Range(range, in: text) {
+ let content = String(text[swiftRange])
+ let styled = NSAttributedString(string: content, attributes: [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)])
  attributed.replaceCharacters(in: match.range, with: styled)
  }
  }
- }
 
- // Inline code: `text`
- let codePattern = "`([^`]+)`"
- if let regex = try? NSRegularExpression(pattern: codePattern, options: []) {
- let matches = regex.matches(in: (attributed.string as NSString) as String, options: [], range: NSRange(location: 0, length: (attributed.string as NSString).length))
- for match in matches.reversed() {
- if let range = Range(match.range(at: 1), in: attributed.string) {
- let content = String(attributed.string[range])
+ // Inline code `text`
+ let codeRegex = try? NSRegularExpression(pattern: "`([^`]+)`", options: [])
+ let codeMatches = codeRegex?.matches(in: text, options: [], range: NSRange(location: 0, length: text.utf16.count)) ?? []
+ for match in codeMatches.reversed() {
+ let range = match.range(at: 1)
+ if let swiftRange = Range(range, in: text) {
+ let content = String(text[swiftRange])
  let styled = NSAttributedString(
  string: content,
  attributes: [
@@ -444,21 +413,16 @@ private struct MarkdownText: View {
  attributed.replaceCharacters(in: match.range, with: styled)
  }
  }
- }
 
- // Italic: *text* (single star, not part of bold)
- let italicPattern = "(?<!\\*)\\*(?!\\*)(.+?)(?<!\\*)\\*(?!\\*)"
- if let regex = try? NSRegularExpression(pattern: italicPattern, options: []) {
- let matches = regex.matches(in: (attributed.string as NSString) as String, options: [], range: NSRange(location: 0, length: (attributed.string as NSString).length))
- for match in matches.reversed() {
- if let range = Range(match.range(at: 1), in: attributed.string) {
- let content = String(attributed.string[range])
- let styled = NSAttributedString(
- string: content,
- attributes: [.font: NSFont.italicSystemFont(ofSize: NSFont.systemFontSize)]
- )
+ // Italic *text* (not part of bold)
+ let italicRegex = try? NSRegularExpression(pattern: "(?<!\\*)\\*(?!\\*)([^*]+)(?<!\\*)\\*(?!\\*)", options: [])
+ let italicMatches = italicRegex?.matches(in: attributed.string as String, options: [], range: NSRange(location: 0, length: (attributed.string as NSString).length)) ?? []
+ for match in italicMatches.reversed() {
+ let range = match.range(at: 1)
+ if let swiftRange = Range(range, in: attributed.string) {
+ let content = String(attributed.string[swiftRange])
+ let styled = NSAttributedString(string: content, attributes: [.font: NSFont.italicSystemFont(ofSize: NSFont.systemFontSize)])
  attributed.replaceCharacters(in: match.range, with: styled)
- }
  }
  }
 
