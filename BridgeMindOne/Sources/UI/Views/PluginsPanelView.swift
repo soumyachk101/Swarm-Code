@@ -27,7 +27,7 @@ public struct PluginsPanelView: View {
 
  // MARK: - Computed
 
- private var filteredPlugins: [PluginIdentity] {
+ private var displayedPlugins: [PluginIdentity] {
  if searchText.isEmpty { return PluginRegistry.builtinPlugins }
  return PluginRegistry.builtinPlugins.filter {
  $0.displayName.localizedCaseInsensitiveContains(searchText) ||
@@ -42,7 +42,10 @@ public struct PluginsPanelView: View {
  pluginList
  } detail: {
  if let plugin = selectedPlugin {
- PluginDetailView(plugin: plugin, state: state(for: plugin))
+ PluginDetailView(
+ plugin: plugin,
+ state: pluginStates[plugin] ?? PluginState(pluginId: plugin)
+ )
  } else {
  placeholderDetail
  }
@@ -59,10 +62,10 @@ private extension PluginsPanelView {
  header
  searchField
  List(selection: $selectedPlugin) {
- ForEach(filteredPlugins) { plugin in
+ ForEach(displayedPlugins) { plugin in
  PluginListRow(
  plugin: plugin,
- state: state(for: plugin)
+ state: pluginStates[plugin] ?? PluginState(pluginId: plugin)
  )
  .tag(plugin)
  }
@@ -77,7 +80,7 @@ private extension PluginsPanelView {
  Text("Plugins")
  .font(.headline)
  Spacer()
- Text("\(filteredPlugins.count) available")
+ Text("\(displayedPlugins.count) available")
  .font(.caption)
  .foregroundStyle(.secondary)
  }
@@ -90,13 +93,6 @@ private extension PluginsPanelView {
  .textFieldStyle(.roundedBorder)
  .padding(.horizontal, 12)
  .padding(.bottom, 8)
- }
-
- func state(for plugin: PluginIdentity) -> PluginState {
- if let existing = pluginStates[plugin] { return existing }
- let state = PluginState(pluginId: plugin, enabled: true, connected: false)
- pluginStates[plugin] = state
- return state
  }
 
  var placeholderDetail: some View {
@@ -194,6 +190,7 @@ private struct PluginDetailView: View {
  Circle()
  .fill(OrbView.stateColor(.idle))
  .frame(width: 44, height: 44)
+
  Image(systemName: pluginIcon)
  .font(.title3)
  .foregroundStyle(.white)
@@ -202,6 +199,7 @@ private struct PluginDetailView: View {
  VStack(alignment: .leading, spacing: 2) {
  Text(plugin.displayName)
  .font(.title2.bold())
+
  Text(plugin.id)
  .font(.caption)
  .foregroundStyle(.secondary)
@@ -263,7 +261,7 @@ private struct PluginDetailView: View {
  Text("Required scopes:")
  .font(.caption.bold())
  ForEach(scopes, id: \.self) { scope in
- Text("• \(scope)")
+ Text("\u{2022} \(scope)")
  .font(.caption2)
  .foregroundStyle(.secondary)
  }
@@ -275,7 +273,7 @@ private struct PluginDetailView: View {
  // Transport
  SectionCard(title: "Transport") {
  VStack(alignment: .leading, spacing: 6) {
- Text("Type: \(plugin.authType.rawValue.capitalized)")
+ Text("Type: \(plugin.type.rawValue.capitalized)")
  .font(.caption)
 
  if let mcpURL = plugin.mcpURL {
