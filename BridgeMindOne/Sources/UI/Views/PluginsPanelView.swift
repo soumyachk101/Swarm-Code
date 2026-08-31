@@ -249,7 +249,7 @@ private struct PluginRow: View {
  Text(plugin.authType.displayName)
  .font(.caption2)
  .padding(.horizontal, 6)
- .padding(.vertical: 2)
+ .padding(.vertical, 2)
  .background(
  RoundedRectangle(cornerRadius: 4)
  .fill(Color.gray.opacity(0.1))
