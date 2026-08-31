@@ -1,0 +1,83 @@
+bridgemind-one
+bridgemind-one-dev
+bridgemind-one-performance
+bridgemind-one-swift/bridgemind-one-swift/.build/arm64-apple-macosx/release/bridgemind-one-swift_BridgeMindOne.bundle
+bridgemind-one-swift/bridgemind-one-swift/.build/x86_64-apple-macosx/release/bridgemind-one-swift_BridgeMindOne.bundle
+bridgemind-one-swift_BridgeMindOne.bundle
+bridgemind-usage-
+bridgemind.ai
+bridgemind.one
+bridgemind.one.agent-run
+bridgemind.one.chat-sqlite
+bridgemind.one.loopback
+bridgemind.one.metric-reports
+bridgemind.one.perf.sampler
+bridgemind.one.perf.sink
+bridgemind.one.perf.watchdog
+bridgemind.one.plugin-gateway
+bridgemind.one.plugin-oauth
+bridgemind.one.presence.ipc
+bridgemind.one.session-persistence
+bridgemind.one.supervised-child
+bridgemindOne
+bridgemind_agent
+bridgemind_agent={enabled=true,url=
+bridgemind_agent__*
+bridgemind_one: bundled
+bridgemind_plugins
+bridgemind_plugins={enabled=true,url=
+bridgemind_plugins__
+bridgemind_plugins__*
+bridgemind_plugins__apollo
+bridgemind_plugins__apollo__
+bridgemind_plugins__apollo__*`. Search before enriching,
+bridgemind_plugins__blender__
+bridgemind_plugins__blender__*`. It talks to the official Blender Lab MCP add-on on this Mac (127.0.0.1:9876). The running .blend is the scene; start the add-on in Blender before you call tools.
+bridgemind_plugins__cloudflare__
+bridgemind_plugins__cloudflare__*`. Deploys, DNS, R2, D1, and Worker edits go to the builder's Cloudflare account, not a BridgeMind-hosted one.
+bridgemind_plugins__fal__
+bridgemind_plugins__fal__*`. It spends the builder's fal.ai balance, not BridgeMind credits.
+bridgemind_plugins__github__
+bridgemind_plugins__github__*`. It acts as the connected GitHub account. Read files, search code, list commits, and open issues or pull requests first; only write after the builder has confirmed the repo and the change.
+bridgemind_plugins__gmail__
+bridgemind_plugins__gmail__*`. Read the connected inbox with `get_profile`, `search_messages`, `get_message`, and `list_threads`. Drafts and sends need the builder's approval 
+bridgemind_plugins__googleads__
+bridgemind_plugins__googleads__*`. It uses the builder's Google Ads accounts through BridgeMind's own REST adapter (googleads.googleapis.com). Credentials and the developer token never enter this briefing.
+bridgemind_plugins__higgsfield
+bridgemind_plugins__higgsfield__*`. It spends the builder's Higgsfield plan credits. Browse history, list models, and poll job status first; only generate after the builder has confirmed the brief (subject, model if they named one, aspect, duration).
+bridgemind_plugins__linear
+bridgemind_plugins__linear__
+bridgemind_plugins__linear__*`. List teams, cycles, and projects, then read or search issues before writing. Create or update issues and post comments only after the builder has confirmed the title, team, and identifier.
+bridgemind_plugins__metaads__
+bridgemind_plugins__metaads__*`. It uses the builder's Meta ad accounts against Meta's official MCP at mcp.facebook.com/ads. Credentials never enter this briefing.
+bridgemind_plugins__notion
+bridgemind_plugins__notion-
+bridgemind_plugins__notion__
+bridgemind_plugins__notion__*`. Search, fetch a page or database, and list workspace users first. Create or update pages, append blocks, and add database rows only after the builder has confirmed the destination.
+bridgemind_plugins__quickbooks__
+bridgemind_plugins__quickbooks__*`. It reads the connected QuickBooks Online company through Intuit's API, not the official local MCP server and not a community wrapper.
+bridgemind_plugins__resend
+bridgemind_plugins__resend__
+bridgemind_plugins__resend__*`. It uses the builder's API key against the official hosted MCP at mcp.resend.com. Prefer a Sending-access key on one verified domain.
+bridgemind_plugins__revenuecat__
+bridgemind_plugins__revenuecat__*`. It uses the builder's v2 secret key against the official hosted MCP at mcp.revenuecat.ai. Sandbox vs production is on the customer record, not the key prefix.
+bridgemind_plugins__sentry
+bridgemind_plugins__sentry__
+bridgemind_plugins__sentry__*`. It uses the builder's connected Sentry organization against the official hosted MCP at mcp.sentry.dev. Find organizations and projects, then search issues and events before changing anything.
+bridgemind_plugins__shopify__
+bridgemind_plugins__shopify__*`. It acts on the connected store through Shopify's Admin API, not the shopper Storefront MCP and not a community server.
+bridgemind_plugins__slack__
+bridgemind_plugins__slack__*`. This is one workspace, connected with a bot token. Channel content is private even when a read is allowed 
+bridgemind_plugins__stripe__
+bridgemind_plugins__stripe__*`. It uses the builder's restricted Stripe key against the official hosted MCP at mcp.stripe.com. Test-mode keys (`rk_test_
+bridgemind_plugins__supabase
+bridgemind_plugins__supabase__
+bridgemind_plugins__supabase__*`. This is the builder's projects. Do not dump service_role keys into memory. Do not run DELETE or DROP. Prefer typed tools (`list_projects`, `list_tables`, `generate_typescript_types`, `query_logs`) over raw SQL.
+bridgemind_plugins__unity__
+bridgemind_plugins__unity__*`. It talks to Unity's official MCP relay on this Mac. The Unity Editor must be open with the MCP bridge running, and the first connection needs Accept in Project Settings 
+bridgemind_plugins__unreal__
+bridgemind_plugins__unreal__*`. It talks to the official Unreal MCP server inside the running editor at 127.0.0.1:8000. Enable Unreal MCP and All Toolsets first.
+bridgemind_plugins__vercel__
+bridgemind_plugins__vercel__*`. List teams, projects, deployments, domains, and logs first. Creating a deployment, promoting one, assigning a domain, or creating or updating environment variables pauses for builder approval 
+bridgemind_plugins__vidiq
+bridgemind_plugins__vidiq__*`. Check the channel and credit balance before spending. Keyword, search, and trend tools may use credits; BridgeMind's gateway will pause those calls and ask the builder for approval.

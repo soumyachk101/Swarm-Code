@@ -1,0 +1,17 @@
+model_reasoning_summary="detailed"
+mcp_servers.apollo={enabled=false,url="https://mcp.apollo.io/mcp"}
+model_reasoning_effort="
+mcp_servers.bridgemind_agent={enabled=true,url="
+",bearer_token_env_var="BRIDGEMIND_MCP_SESSION_TOKEN"}
+shell_environment_policy.ignore_default_excludes=false
+mcp_servers.bridgemind_plugins={enabled=true,url="
+--include-partial-messages
+--
+model_reasoning_summary="detailed"
+mcp_servers.apollo={enabled=false,url="https://mcp.apollo.io/mcp"}
+model_reasoning_effort="
+mcp_servers.bridgemind_agent={enabled=true,url="
+",bearer_token_env_var="BRIDGEMIND_MCP_SESSION_TOKEN"}
+shell_environment_policy.ignore_default_excludes=false
+mcp_servers.bridgemind_plugins={enabled=true,url="
+--include-partial-messages
