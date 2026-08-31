@@ -10,8 +10,8 @@
 // • Listener – Network.framework `NWListener` (preferred) with a BSD-socket
 // fallback so the transport still functions on older macOS.
 // • Concurrency – Each inbound connection is handled on its own Task; shared
-// mutable state is guarded by an `@MainActor` coordinator so the
-// class itself stays `Sendable`-compatible.
+// mutable state is guarded by a serial `DispatchQueue` acting as a barrier
+// so the class stays `Sendable`-compatible.
 // • Routing – Plugins identify themselves via the `X-MCP-Plugin-ID` request
 // header (or the first URL path segment). A plug-in must call
 // `registerHandler` before the server will dispatch to it.
