@@ -7,6 +7,7 @@ import SwiftUI
 
 public struct MessageRowView: View {
  let message: ChatMessage
+ @EnvironmentObject private var appState: AppState
 
  public var body: some View {
  HStack(alignment: .top, spacing: 8) {
