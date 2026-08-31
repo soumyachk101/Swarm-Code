@@ -1,86 +1,110 @@
 //
 // AppState.swift
-// Global application state management
+// BridgeMind One — UI-layer global state
+//
+// Wraps and extends the Core AppState for UI consumption.
+// Uses @Observable (iOS 17+/macOS 14+ macro) for modern SwiftUI observation.
 //
 
-import Foundation
 import SwiftUI
 import Core
+import Combine
 
-@MainActor
 @Observable
 public final class AppState {
- public static let shared = AppState()
+ // MARK: - Core state (bridged from Core.AppState)
 
- // Current session
- public var currentSession: ChatSession?
- public var sessions: [ChatSession] = []
+ public let core: Core.AppState
 
- // Agents
- public var activeAgent: AgentIdentity?
- public var availableEngines: [AgentEngine] = []
- public var isAutoPilotEnabled = false
+ // MARK: - UI state
 
- // Plugins
- public var plugins: [PluginIdentity: PluginState] = [:]
- public var showPlugins = false
- public var activePlugins: [PluginIdentity] { plugins.filter { $0.value.enabled }.map { $0.key } }
+ public var isAboutSheetPresented: Bool = false
+ public var isPluginsPanelPresented: Bool = false
+ public var isAgentSwitcherPresented: Bool = false
+ public var isSettingsPresented: Bool = false
+ public var isAutoPilotEnabled: Bool = false
+ public var selectedPluginId: String?
+ public var selectedAgentId: String = "claude"
+ public var searchText: String = ""
+ public var sidebarWidth: CGFloat = 240
 
- // UI State
- public var showAboutSheet = false
- public var showAgentSwitcher = false
- public var showSettings = false
- public var selectedThreadId: String?
+ // MARK: - Agent info cache
 
- // Status
- public var isProcessing = false
- public var statusMessage: String?
- public var orbState: OrbState = .idle
+ public var availableAgents: [PluginDescriptor] = []
+ public var engineStatuses: [String: Bool] = [:]
 
- // Settings
- public var settings = AppSettings()
- public var workingDirectory: URL?
- public var apiKeys: [String: String] = [:]
+ // MARK: - Streaming state
 
- // Presence
- public var isPresent: Bool = true
- public var connectedAgents: [AgentIdentity] = []
+ public var streamingContent: String = ""
+ public var streamingToolCall: ToolCall?
+ public var isThinking: Bool = false
 
- private init() {
- loadState()
+ // MARK: - Toast / notifications
+
+ public var toastMessage: String?
+ public var toastType: ToastType = .info
+
+ public enum ToastType {
+ case info, success, warning, error
  }
+
+ // MARK: - Init
+
+ public init(core: Core.AppState = .shared) {
+ self.core = core
+ self.availableAgents = PluginCollection.agents
+
+ Task { @MainActor in
+ for await _ in core.$currentMessages {
+ break
+ }
+ }
+ }
+
+ // MARK: - Computed
+
+ public var currentSession: ChatSessionRecord? {
+ core.sessions.first { $0.id == core.currentSessionId }
+ }
+
+ public var isStreaming: Bool {
+ core.isStreaming
+ }
+
+ public var sessions: [ChatSessionRecord] {
+ core.sessions
+ }
+
+ public var currentMessages: [ChatMessageRecord] {
+ core.currentMessages
+ }
+
+ // MARK: - Actions
 
  public func createNewChat() {
- let session = ChatSession(
- title: "New Chat",
- agentId: activeAgent?.id
- )
- currentSession = session
- sessions.append(session)
- saveState()
- }
-
- public func deleteSession(_ session: ChatSession) {
- sessions.removeAll { $0.id == session.id }
- if currentSession?.id == session.id {
- currentSession = sessions.first
- }
- saveState()
- }
-
- public func toggleAutoPilot() {
- isAutoPilotEnabled.toggle()
- if isAutoPilotEnabled {
- statusMessage = "Auto-Pilot active"
- orbState = .listening
+ Task {
+ await core.createNewSession()
  }
  }
 
  public func saveCurrentChat() {
- // Trigger save to SQLite
- Task {
- try? await DatabaseManager.shared.saveSession(currentSession)
+ // Persist current chat context — handled by DatabaseManager on every append
+ toastMessage = "Chat saved"
+ toastType = .success
  }
+
+ public func toggleAutoPilot() {
+ isAutoPilotEnabled.toggle()
+ toastMessage = isAutoPilotEnabled ? "Auto-Pilot enabled" : "Auto-Pilot disabled"
+ toastType = isAutoPilotEnabled ? .success : .info
+ }
+
+ public func switchAgent(to agentId: String) {
+ selectedAgentId = agentId
+ core.activeAgent = agentId
+ isAgentSwitcherPresented = false
+ toastMessage = "Switched to \(agentId)"
+ toastType = .success
  }
 
  public func openDocumentation() {
@@ -93,101 +117,14 @@ public final class AppState {
  if let url = URL(string: "https://github.com/bridgemind/bridgemind-one/issues") {
  NSWorkspace.shared.open(url)
  }
-
- public func switchAgent(to agent: AgentIdentity) {
- activeAgent = agent
- showAgentSwitcher = false
  }
 
- // MARK: - Private
-
- private func loadState() {
- // Load from UserDefaults + SQLite
- settings = AppSettings.load()
+ public func openSettings() {
+ isSettingsPresented = true
  }
 
- private func saveState() {
- settings.save()
+ public func showToast(_ message: String, type: ToastType = .info) {
+ toastMessage = message
+ toastType = type
  }
-}
-
-// MARK: - Models
-
-public struct AppSettings: Codable, Equatable {
- public var llmProvider: String = "anthropic"
- public var claudeCodePath: String = "claude"
- public var codexPath: String = "codex"
- public var cursorPath: String = "cursor"
- public var autoSaveEnabled: Bool = true
- public var telemetryEnabled: Bool = true
- public var notificationsEnabled: Bool = true
- public var voiceDictationEnabled: Bool = true
- public var fnKeyTriggersDictation: Bool = true
- public var fontSize: Double = 14
- public var theme: AppTheme = .system
- public var startupBehavior: StartupBehavior = .restoreLastSession
-
- public static func load() -> AppSettings {
- let defaults = UserDefaults.standard
- guard let data = defaults.data(forKey: "AppSettings"),
- let settings = try? JSONDecoder().decode(AppSettings.self, from: data) else {
- return AppSettings()
- }
- return settings
- }
-
- public mutating func save() {
- let data = try? JSONEncoder().encode(self)
- UserDefaults.standard.set(data, forKey: "AppSettings")
- }
-}
-
-public enum AppTheme: String, Codable, CaseIterable {
- case system
- case light
- case dark
-}
-
-public enum StartupBehavior: String, Codable, CaseIterable {
- case restoreLastSession
- case showWelcome
- case createNewChat
-}
-
-public struct AgentIdentity: Codable, Equatable, Identifiable {
- public let id: String
- public var name: String
- public var engine: AgentEngineType
- public var workingDirectory: URL?
- public var capabilities: [String] = []
-
- public init(id: String, name: String, engine: AgentEngineType, workingDirectory: URL? = nil) {
- self.id = id
- self.name = name
- self.engine = engine
- self.workingDirectory = workingDirectory
- }
-}
-
-public enum AgentEngineType: String, Codable, CaseIterable {
- case claude = "claude"
- case codex = "codex"
- case copilot = "copilot"
- case cursor = "cursor"
- case aider = "aider"
- case deepseek = "deepseek"
- case gemini = "gemini"
- case grok = "grok"
- case opencode = "opencode"
- case antigravity = "antigravity"
- case droid = "droid"
-}
-
-public enum OrbState: String, CaseIterable {
- case idle
- case listening
- case thinking
- case speaking
- case error
- case disconnected
 }
