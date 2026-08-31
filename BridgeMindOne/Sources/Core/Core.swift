@@ -3,5 +3,6 @@
 // Core module public exports
 //
 
-@_exported import Foundation
-@_exported import Core
+import Foundation
+
+// Core module — no self-referencing imports needed.
