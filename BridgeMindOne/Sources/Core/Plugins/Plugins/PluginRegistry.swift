@@ -5,7 +5,7 @@
 // The PluginRegistry is the central orchestrator for all 24 MCP plugins.
 // It is responsible for:
 // - Selecting the correct transport per plugin type (HTTP, stdio, OAuth, builtin)
-// - Managing plugin lifecycle (connect, disconnect, reconnect)
+// - Managing plugin lifecycle (connect, disconnect, reconnect, enable, disable)
 // - Initiating OAuth flows with PKCE
 // - Tracking plugin state in the SQLite database via DatabaseManager
 // - Validating tool catalogs returned by remote MCP servers
@@ -16,8 +16,8 @@
 // Keychain via CredentialStore. See CredentialStore.swift and OAuthFlows.swift.
 //
 // Thread safety: PluginRegistry is an actor, serializing all mutations.
-// Transport instances are wrapped in a type-erased AnyTransport to allow
-// heterogeneous storage (MCPHTTPTransport + MCPStdioTransport share one dict).
+// Transport instances are wrapped in a type-erased wrapper to allow
+// heterogeneous storage (MCPHTTPTransport and MCPStdioTransport share one dict).
 // The type erasure uses closure boxing — no subclassing, no reference cycles.
 //
 
@@ -49,23 +49,59 @@ public enum PluginRegistryError: Error, Equatable, LocalizedError {
  }
 }
 
+// MARK: - Plugin Runtime State
+
+/// Tracks the runtime state of a single plugin instance (mirrors DB for fast access).
+public struct PluginRuntimeState: Sendable, Equatable, Codable {
+ public var pluginId: String
+ public var enabled: Bool
+ public var connected: Bool
+ public var lastError: String?
+ public var updatedAt: String
+
+ public init(
+ pluginId: String,
+ enabled: Bool = true,
+ connected: Bool = false,
+ lastError: String? = nil,
+ updatedAt: String = ISO8601DateFormatter().string(from: Date())
+ ) {
+ self.pluginId = pluginId
+ self.enabled = enabled
+ self.connected = connected
+ self.lastError = lastError
+ self.updatedAt = updatedAt
+ }
+}
+
+// MARK: - Plugin Validation Result
+
+public struct PluginValidationResult: Sendable, Equatable {
+ public var valid: Bool
+ public var toolsCount: Int
+ public var error: String?
+
+ public init(valid: Bool = true, toolsCount: Int = 0, error: String? = nil) {
+ self.valid = valid
+ self.toolsCount = toolsCount
+ self.error = error
+ }
+}
+
 // MARK: - Type-Erased Transport Wrapper
 
 /// Wraps any concrete MCP transport (HTTP or stdio) behind a unified interface.
 ///
-/// Why: Both `MCPHTTPTransport` and `MCPStdioTransport` conform to `MCPTransport`,
-/// but that protocol has an `associatedtype Message`, preventing it from being
+/// Why: `MCPTransport` has an `associatedtype Message`, preventing it from being
 /// used as an existential (`any MCPTransport` is ill-formed in Swift).
 ///
-/// `AnyTransport` boxes each concrete transport and exposes a common set of
-/// operations needed by the registry. This is a closure-based type erasure —
-/// no inheritance, no reference cycles, fully Sendable.
+/// `AnyTransport` boxes each concrete transport and exposes the common operations
+/// needed by the registry. Closure-based type erasure — no inheritance needed.
 public struct AnyTransport: Sendable, Equatable {
 
  private let _connect: @Sendable () async throws -> Void
  private let _disconnect: @Sendable () async -> Void
  private let _sendRequest: @Sendable (JSONRPCRequest) async throws -> JSONRPCResponse
- private let _isConnected: @Sendable () async -> Bool
  private let _id: String
 
  public init<T: MCPHTTPTransport>(_ transport: T) {
@@ -73,41 +109,31 @@ public struct AnyTransport: Sendable, Equatable {
  self._connect = { try await transport.connect() }
  self._disconnect = { await transport.disconnect() }
  self._sendRequest = { request in
- // HTTP transport uses JSONValue — wrap request into JSONValue object
- let params: JSONValue? = request.params.map { params in
- .object(["id": .string(request.id), "method": .string(request.method), "params": params])
- } ?? .object(["id": .string(request.id), "method": .string(request.method)])
-
- let jsonValue = JSONValue.object([
+ // HTTP transport uses JSONValue for messages.
+ // Convert JSONRPCRequest → JSONValue, send, convert JSONValue response → JSONRPCResponse.
+ let payload = JSONValue.object([
  "jsonrpc": .string("2.0"),
  "id": .string(request.id),
  "method": .string(request.method),
- "params": params ?? .object([:])
+ "params": request.params.map { JSONValue.object($0) } ?? JSONValue.object([:])
  ])
-
- let response = try await transport.send(jsonValue)
-
- // Convert JSONValue response to JSONRPCResponse
+ let response = try await transport.send(payload)
  switch response {
  case .object(let dict):
  let respId = dict["id"]?.stringValue ?? request.id
  let result = dict["result"]
- let errorDict = dict["error"]?.dictionaryValue
- let error: JSONRPCError?
- if let e = errorDict {
- let code = Int(e["code"]?.numberValue ?? 0)
- let message = e["message"]?.stringValue ?? "Unknown error"
- let data = e["data"]
- error = JSONRPCError(code: code, message: message, data: data)
- } else {
- error = nil
+ if let errorDict = dict["error"]?.dictionaryValue {
+ let code = Int(errorDict["code"]?.numberValue ?? 0)
+ let message = errorDict["message"]?.stringValue ?? "Unknown error"
+ let data = errorDict["data"]
+ return JSONRPCResponse(id: respId, result: result,
+ error: JSONRPCError(code: code, message: message, data: data))
  }
- return JSONRPCResponse(id: respId, result: result, error: error)
+ return JSONRPCResponse(id: respId, result: result, error: nil)
  default:
  return JSONRPCResponse(id: request.id, result: response, error: nil)
  }
  }
- self._isConnected = { await transport.isConnected }
  }
 
  public init<T: MCPStdioTransport>(_ transport: T) {
@@ -115,11 +141,6 @@ public struct AnyTransport: Sendable, Equatable {
  self._connect = { try await transport.connect() }
  self._disconnect = { await transport.disconnect() }
  self._sendRequest = { request in try await transport.sendRequest(request) }
- self._isConnected = { [sessionId = transport.sessionId] in
- // MCPStdioTransport doesn't expose isConnected directly in a synchronous way.
- // We approximate: if sessionId is set and transport exists, it's likely connected.
- sessionId != nil
- }
  }
 
  public var id: String { _id }
@@ -135,122 +156,85 @@ public struct AnyTransport: Sendable, Equatable {
  public func sendRequest(_ request: JSONRPCRequest) async throws -> JSONRPCResponse {
  try await _sendRequest(request)
  }
-
- public var isConnected: Bool {
- get async {
- await _isConnected()
- }
- }
 }
 
 // MARK: - Plugin Transport Factory
 
-/// Creates the appropriate MCP transport instance for a given plugin descriptor.
+/// Creates the appropriate MCP transport instance for a given plugin identity.
 ///
 /// SECURITY: For API-key plugins, the environment variable is injected into
-/// the child process environment (stdio) or the transport reads it at
-/// request time. The raw key is never logged or exposed to the app layer.
+/// the child process environment (stdio) or passed to the upstream MCP server.
+/// The raw key is never logged or exposed to the app layer.
 public enum PluginTransportFactory: Sendable {
 
  /// Build and return a type-erased transport ready for connection.
- @discardableResult
  public static func create(
- for descriptor: PluginDescriptor,
+ for identity: PluginIdentity,
  credentialStore: CredentialStore? = nil
  ) async throws -> AnyTransport {
- switch descriptor.transport {
+ switch identity.type {
 
- // ── HTTP transport (remote MCP server) ──────────────────────────
- case .http:
- let httpTransport = try await createHTTPTransport(descriptor: descriptor, credentialStore: credentialStore)
- return AnyTransport(httpTransport)
-
- // ── Stdio transport (local MCP server process) ──────────────────
- case .stdio(let command, let arguments):
- let stdioTransport = try createStdioTransport(command: command, arguments: arguments, descriptor: descriptor)
- return AnyTransport(stdioTransport)
-
- // ── OAuth transport ─────────────────────────────────────────────
- case .oauth:
+ // ── Remote plugins: HTTP MCP server ──────────────────────────
+ case .remote:
+ guard let url = identity.mcpURL else {
  throw PluginRegistryError.transportCreationFailed(
- "OAuth transport must be created after completing the authorization code flow. "
- + "Call initiateOAuthFlow(_:) first."
- )
-
- // ── Built-in transport ──────────────────────────────────────────
- case .builtin:
- throw PluginRegistryError.transportCreationFailed(
- "Built-in plugins do not require a transport. They handle requests internally."
- )
- }
- }
-
- // MARK: HTTP Transport
-
- private static func createHTTPTransport(
- descriptor: PluginDescriptor,
- credentialStore: CredentialStore?
- ) async throws -> MCPHTTPTransport {
- guard let url = descriptor.transport.httpURL else {
- throw PluginRegistryError.transportCreationFailed(
- "Plugin '\(descriptor.id)' has no valid HTTP URL."
+ "Plugin '\(identity.id)' is remote but has no mcpURL."
  )
  }
 
- // Resolve bearer token: for OAuth plugins, read from Keychain.
- // For API-key plugins, the upstream MCP server handles auth — we just connect.
+ // For OAuth remote plugins, resolve the bearer token from Keychain.
  var bearerToken: String? = nil
-
- if descriptor.authType == .oauth, let store = credentialStore {
- let identity = PluginIdentity(
- id: descriptor.id,
- displayName: descriptor.displayName,
- type: .remote,
- authType: .oauth
- )
+ if identity.authType == .oauth, let store = credentialStore {
  let token = try await store.retrieveToken(for: identity)
  bearerToken = token?.accessToken
-
  if bearerToken == nil {
  throw PluginRegistryError.transportCreationFailed(
- "No OAuth token found for '\(descriptor.id)'. Run the OAuth flow first."
+ "No OAuth token found for '\(identity.id)'. Run the OAuth flow first."
  )
  }
  }
 
- // Resolve session ID from environment if set
- let sessionID = ProcessInfo.processInfo.environment["BRIDGEMIND_MCP_SESSION_ID_\(descriptor.id.uppercased())"]
+ // Check for session token in environment as fallback.
+ if bearerToken == nil,
+ let envToken = ProcessInfo.processInfo.environment[AppConfig.sessionTokenEnvVar],
+ !envToken.isEmpty {
+ bearerToken = envToken
+ }
 
  let config = MCPHTTPTransport.Configuration(
- sessionID: sessionID,
+ sessionID: ProcessInfo.processInfo.environment["BRIDGEMIND_MCP_SESSION_ID_\(identity.id)"],
  bearerToken: bearerToken,
  timeout: 30,
  maximumRetryCount: 3,
  additionalHeaders: [:]
  )
 
- return try await MCPHTTPTransport(
- baseURL: url,
- configuration: config
- )
- }
+ let transport = try await MCPHTTPTransport(baseURL: url, configuration: config)
+ return AnyTransport(transport)
 
- // MARK: Stdio Transport
-
- private static func createStdioTransport(
- command: String,
- arguments: [String],
- descriptor: PluginDescriptor
- ) throws -> MCPStdioTransport {
- // Build environment: inherit current env and inject the plugin's API key
- // if one is configured.
+ // ── Local plugins: stdio MCP server ───────────────────────────
+ case .local:
+ // For stdio plugins, inject the API key env var into the child process.
  var env = ProcessInfo.processInfo.environment
 
- if let apiKeyEnv = descriptor.apiKeyEnv,
+ if let apiKeyEnv = identity.apiKeyEnv,
  let keyValue = ProcessInfo.processInfo.environment[apiKeyEnv] {
- // Pass the key through so the child MCP server process can read it.
- // The key itself is never logged or exposed to BridgeMind One's logic.
  env[apiKeyEnv] = keyValue
+ }
+
+ // Determine the command: use mcpURL host as local endpoint hint,
+ // or default to a reasonable command name derived from the display name.
+ let command: String
+ let arguments: [String]
+
+ if let url = identity.mcpURL, url.host == "127.0.0.1" || url.host == "localhost" {
+ // Use the port from mcpURL as a hint; default command is the display name lowercase.
+ let port = url.port.map { ":\($0)" } ?? ""
+ command = identity.displayName.lowercased()
+ arguments = ["--mcp", port]
+ } else {
+ command = identity.displayName.lowercased()
+ arguments = ["--mcp"]
  }
 
  let config = MCPStdioTransport.Configuration(
@@ -259,12 +243,29 @@ public enum PluginTransportFactory: Sendable {
  workingDirectory: nil,
  environment: env,
  requestTimeout: .seconds(30),
- stderrLogHandler: { [logger = Logger(subsystem: "com.bridgemind.mcp.plugin.\(descriptor.id)", category: "stderr")] line in
- logger.debug("\(line, privacy: .public)")
+ stderrLogHandler: { line in
+ Logger(subsystem: "com.bridgemind.mcp.plugin.\(identity.id)", category: "stderr")
+ .debug("\(line, privacy: .public)")
  }
  )
 
- return MCPStdioTransport(configuration: config)
+ let transport = MCPStdioTransport(configuration: config)
+ return AnyTransport(transport)
+
+ // ── OAuth plugins: must complete flow first ───────────────────
+ case .oauth:
+ throw PluginRegistryError.transportCreationFailed(
+ "Plugin '\(identity.id)' requires OAuth authentication. "
+ + "Run the OAuth authorization flow before connecting."
+ )
+
+ // ── Built-in plugins: no external transport needed ─────────────
+ case .builtin:
+ throw PluginRegistryError.transportCreationFailed(
+ "Built-in plugin '\(identity.id)' handles requests internally. "
+ + "No transport is required."
+ )
+ }
  }
 }
 
@@ -295,16 +296,15 @@ public actor PluginRegistry {
  // MARK: Runtime State
 
  /// Active transports keyed by plugin id.
- /// An entry exists only while the plugin is connected.
  private var transports: [String: AnyTransport] = [:]
 
  /// Runtime state cached in memory (mirrors the DB for fast access).
  private var states: [String: PluginRuntimeState] = [:]
 
- /// PKCE verifiers keyed by plugin id (held for the duration of an OAuth flow).
+ /// Pending PKCE verifiers held for the duration of an OAuth flow.
  private var pendingPKCE: [String: String] = [:]
 
- /// OAuth state values keyed by plugin id (for CSRF validation).
+ /// Pending OAuth state values for CSRF validation.
  private var pendingOAuthState: [String: String] = [:]
 
  // MARK: Logging
@@ -320,8 +320,7 @@ public actor PluginRegistry {
  self.database = database
  self.credentialStore = credentialStore
 
- // Load persisted states from DB on startup.
- // This is a fire-and-forget task — failure is non-fatal.
+ // Load persisted states from DB on startup (non-fatal).
  Task {
  await loadStatesFromDatabase()
  }
@@ -332,21 +331,22 @@ public actor PluginRegistry {
  /// Connect a plugin by its stable identifier.
  ///
  /// Steps:
- /// 1. Resolve the plugin descriptor from the collection.
+ /// 1. Resolve the plugin identity from the collection.
  /// 2. Verify the plugin is enabled.
- /// 3. Create the appropriate transport (HTTP, stdio).
- /// 4. Connect the transport.
- /// 5. Validate the tool catalog.
- /// 6. Persist connected state to DB.
+ /// 3. Check not already connected.
+ /// 4. Create the appropriate transport.
+ /// 5. Connect the transport.
+ /// 6. Validate the tool catalog.
+ /// 7. Persist connected state to DB.
  ///
- /// - Parameter pluginId: The stable plugin identifier (e.g. `"github"`).
- /// - Returns: The connected plugin descriptor.
+ /// - Parameter pluginId: Stable identifier (e.g. `"bridgemind_plugins__github"`).
+ /// - Returns: The connected PluginIdentity.
  @discardableResult
- public func connect(pluginId: String) async throws -> PluginDescriptor {
+ public func connect(pluginId: String) async throws -> PluginIdentity {
  logger.info("Connecting plugin: \(pluginId, privacy: .public)")
 
- // ── 1. Resolve descriptor ──────────────────────────────────────
- guard let descriptor = PluginCollection.byId(pluginId) else {
+ // ── 1. Resolve identity ──────────────────────────────────────
+ guard let identity = AllPlugins.byId(pluginId) else {
  logger.error("Plugin not found: \(pluginId, privacy: .public)")
  throw PluginRegistryError.pluginNotFound(pluginId)
  }
@@ -364,42 +364,26 @@ public actor PluginRegistry {
  throw PluginRegistryError.pluginAlreadyConnected(pluginId)
  }
 
- // ── 4. Create and connect transport ────────────────────────────
- // For OAuth plugins, verify a token exists before attempting connection.
- if descriptor.authType == .oauth {
- let identity = PluginIdentity(
- id: descriptor.id,
- displayName: descriptor.displayName,
- type: .remote,
- authType: .oauth
- )
- let existingToken = try await credentialStore.retrieveToken(for: identity)
- guard existingToken != nil, existingToken?.isExpired == false else {
- logger.error("OAuth token missing or expired for: \(pluginId, privacy: .public)")
- throw PluginRegistryError.transportCreationFailed(
- "OAuth token is missing or expired for '\(pluginId)'. Run the OAuth flow first."
- )
- }
- }
-
+ // ── 4. Create transport ────────────────────────────────────────
  let transport = try await PluginTransportFactory.create(
- for: descriptor,
+ for: identity,
  credentialStore: credentialStore
  )
 
+ // ── 5. Connect transport ───────────────────────────────────────
  logger.info("Connecting transport for \(pluginId, privacy: .public)…")
  try await transport.connect()
  logger.info("Transport connected for \(pluginId, privacy: .public)")
 
- // ── 5. Validate tool catalog ───────────────────────────────────
- let validation = try await validateToolCatalog(for: descriptor, transport: transport)
+ // ── 6. Validate tool catalog ───────────────────────────────────
+ let validation = try await validateToolCatalog(for: identity, transport: transport)
  guard validation.valid else {
  await transport.disconnect()
  logger.error("Tool validation failed for \(pluginId): \(validation.error ?? "unknown", privacy: .public)")
  throw PluginRegistryError.toolValidationFailed(validation.error ?? "Unknown validation error")
  }
 
- // ── 6. Store transport and update state ─────────────────────────
+ // ── 7. Store transport and update state ─────────────────────────
  transports[pluginId] = transport
  states[pluginId] = PluginRuntimeState(
  pluginId: pluginId,
@@ -408,15 +392,15 @@ public actor PluginRegistry {
  lastError: nil
  )
 
- // ── 7. Persist to DB ───────────────────────────────────────────
+ // ── 8. Persist to DB ───────────────────────────────────────────
  do {
  try database.savePluginState(pluginId: pluginId, enabled: true, connected: true)
  } catch {
  logger.warning("Failed to persist plugin state: \(error.localizedDescription, privacy: .public)")
  }
 
- logger.info("Plugin connected successfully: \(pluginId, privacy: .public) [\(validation.toolsCount) tools]")
- return descriptor
+ logger.info("Plugin connected: \(pluginId, privacy: .public) [\(validation.toolsCount) tools]")
+ return identity
  }
 
  /// Disconnect a plugin and release its transport.
@@ -424,7 +408,7 @@ public actor PluginRegistry {
  logger.info("Disconnecting plugin: \(pluginId, privacy: .public)")
 
  guard let transport = transports[pluginId] else {
- logger.warning("Plugin not connected, skipping disconnect: \(pluginId, privacy: .public)")
+ logger.warning("Plugin not connected, skipping: \(pluginId, privacy: .public)")
  return
  }
 
@@ -453,18 +437,15 @@ public actor PluginRegistry {
  public func disconnectAll() async {
  let connectedIds = Array(transports.keys)
  logger.info("Disconnecting all \(connectedIds.count) active plugins…")
-
- // Serialize disconnects to avoid overwhelming the process manager.
  for id in connectedIds {
  await disconnect(pluginId: id)
  }
-
  logger.info("All plugins disconnected")
  }
 
  /// Enable a plugin so it can be connected.
  public func enable(pluginId: String) async throws {
- guard PluginCollection.byId(pluginId) != nil else {
+ guard AllPlugins.byId(pluginId) != nil else {
  throw PluginRegistryError.pluginNotFound(pluginId)
  }
 
@@ -479,7 +460,7 @@ public actor PluginRegistry {
 
  /// Disable a plugin. If currently connected, disconnect first.
  public func disable(pluginId: String) async throws {
- guard PluginCollection.byId(pluginId) != nil else {
+ guard AllPlugins.byId(pluginId) != nil else {
  throw PluginRegistryError.pluginNotFound(pluginId)
  }
 
@@ -496,7 +477,7 @@ public actor PluginRegistry {
  }
 
  /// Reconnect a plugin — disconnects then re-connects, refreshing the transport.
- public func reconnect(pluginId: String) async throws -> PluginDescriptor {
+ public func reconnect(pluginId: String) async throws -> PluginIdentity {
  logger.info("Reconnecting plugin: \(pluginId, privacy: .public)")
  await disconnect(pluginId: pluginId)
  return try await connect(pluginId: pluginId)
@@ -509,7 +490,7 @@ public actor PluginRegistry {
  transports[pluginId]
  }
 
- /// Return true if the plugin is currently connected and has an active transport.
+ /// Return true if the plugin has an active transport.
  public func isConnected(_ pluginId: String) -> Bool {
  transports[pluginId] != nil
  }
@@ -519,14 +500,14 @@ public actor PluginRegistry {
  /// Initiate the OAuth 2.0 authorization code + PKCE flow for a plugin.
  ///
  /// Flow:
- /// 1. Generate PKCE challenge (code_verifier + code_challenge per RFC 7636).
+ /// 1. Generate PKCE challenge (RFC 7636).
  /// 2. Discover the provider's OAuth metadata endpoints.
  /// 3. Build the authorization URL and present it via the delegate.
- /// 4. The delegate handles the user authorization (external browser).
- /// 5. Exchange the returned authorization code + PKCE verifier for tokens.
- /// 6. Persist the access/refresh tokens in Keychain via CredentialStore.
+ /// 4. The delegate handles user authorization (external browser).
+ /// 5. Exchange the authorization code + PKCE verifier for tokens.
+ /// 6. Persist tokens in Keychain via CredentialStore.
  ///
- /// - Parameter pluginId: The plugin identifier.
+ /// - Parameter pluginId: The stable plugin identifier.
  /// - Parameter delegate: Handles presenting the authorization URL to the user.
  /// - Returns: The obtained OAuthToken (also stored in Keychain).
  public func initiateOAuthFlow(
@@ -535,40 +516,37 @@ public actor PluginRegistry {
  ) async throws -> OAuthToken {
  logger.info("Initiating OAuth flow for: \(pluginId, privacy: .public)")
 
- guard let descriptor = PluginCollection.byId(pluginId) else {
+ guard let identity = AllPlugins.byId(pluginId) else {
  throw PluginRegistryError.pluginNotFound(pluginId)
  }
 
- guard descriptor.authType == .oauth else {
+ guard identity.authType == .oauth else {
  throw PluginRegistryError.invalidConfiguration(
- "Plugin '\(pluginId)' does not use OAuth (authType: \(descriptor.authType.rawValue))"
+ "Plugin '\(pluginId)' does not use OAuth (authType: \(identity.authType.rawValue))"
  )
  }
 
- guard let scopes = descriptor.scopes, !scopes.isEmpty else {
+ guard let scopes = identity.scopes, !scopes.isEmpty else {
  throw PluginRegistryError.invalidConfiguration(
  "Plugin '\(pluginId)' has no OAuth scopes configured."
  )
  }
 
  // ── 1. Generate PKCE challenge ─────────────────────────────────
- // RFC 7636: code_verifier is 43-128 chars from the unreserved set.
- // The verifier is stored for the duration of the flow.
  let pkce = PKCEChallenge()
  pendingPKCE[pluginId] = pkce.codeVerifier
 
  // ── 2. Discover OAuth metadata ─────────────────────────────────
  let discovery: OAuthDiscovery
 
- if let httpURL = descriptor.transport.httpURL {
- let discoveryURL = httpURL.appendingPathComponent(".well-known/oauth-authorization-server")
+ if let url = identity.mcpURL {
+ let discoveryURL = url.appendingPathComponent(".well-known/oauth-authorization-server")
  discovery = try await fetchDiscoveryDocument(from: discoveryURL) ?? fallbackDiscovery(for: pluginId)
  } else {
  discovery = fallbackDiscovery(for: pluginId)
  }
 
  // ── 3. Build authorization URL ─────────────────────────────────
- // State parameter prevents CSRF — stored for validation on callback.
  let stateValue = UUID().uuidString
  pendingOAuthState[pluginId] = stateValue
 
@@ -577,40 +555,29 @@ public actor PluginRegistry {
  scopes: scopes,
  codeChallenge: pkce.codeChallenge,
  codeChallengeMethod: pkce.method,
- state: stateValue,
- pluginId: descriptor.id
+ state: stateValue
  )
 
- // ── 4-6. Delegate presents URL, obtains code, we exchange ───────
+ // ── 4-6. Present URL, obtain code, exchange for token ──────────
  let authorizationCode = try await delegate.handleAuthorizationURL(authURL)
 
  let token = try await exchangeCodeForToken(
  code: authorizationCode,
  verifier: pkce.codeVerifier,
- discovery: discovery,
- pluginId: descriptor.id
+ discovery: discovery
  )
 
- // Store token in Keychain via CredentialStore (never in source or logs).
- let identity = PluginIdentity(
- id: descriptor.id,
- displayName: descriptor.displayName,
- type: .remote,
- authType: .oauth
- )
-
+ // Store token in Keychain — never in source or logs.
  try await credentialStore.storeToken(token, for: identity)
 
- // Clean up pending flow state.
  pendingPKCE.removeValue(forKey: pluginId)
  pendingOAuthState.removeValue(forKey: pluginId)
 
- logger.info("OAuth flow complete, token stored for: \(pluginId, privacy: .public)")
+ logger.info("OAuth flow complete for: \(pluginId, privacy: .public)")
  return token
  }
 
  /// Retrieve the PKCE verifier for a pending OAuth flow.
- /// Called by the OAuth callback handler to complete the code exchange.
  public func popPKCEVerifier(for pluginId: String) throws -> String {
  guard let verifier = pendingPKCE.removeValue(forKey: pluginId) else {
  throw PluginRegistryError.oauthFlowFailed(
@@ -632,21 +599,15 @@ public actor PluginRegistry {
 
  // MARK: - Tool Catalog Validation
 
- /// Validate the tool catalog for a connected plugin by sending tools/list.
- ///
- /// The validation checks:
- /// - The response is a valid JSON-RPC 2.0 response.
- /// - The `tools` array is present.
- /// - Each tool entry has a required `name` field.
+ /// Validate the tool catalog for a plugin by sending tools/list via its transport.
  public func validateToolCatalog(
- for descriptor: PluginDescriptor,
+ for identity: PluginIdentity,
  transport: AnyTransport
  ) async throws -> PluginValidationResult {
- logger.debug("Validating tool catalog for \(descriptor.id, privacy: .public)…")
+ logger.debug("Validating tool catalog for \(identity.id, privacy: .public)…")
 
- let requestId = UUID().uuidString
  let request = JSONRPCRequest(
- id: requestId,
+ id: UUID().uuidString,
  method: MCPMethod.toolsList.rawValue,
  params: JSONValue.object([:])
  )
@@ -658,7 +619,7 @@ public actor PluginRegistry {
  return PluginValidationResult(
  valid: false,
  toolsCount: 0,
- error: "Invalid tools/list response format — expected JSON object."
+ error: "Invalid tools/list response format."
  )
  }
 
@@ -666,111 +627,95 @@ public actor PluginRegistry {
  return PluginValidationResult(
  valid: false,
  toolsCount: 0,
- error: "Response missing required 'tools' array."
+ error: "Response missing 'tools' array."
  )
  }
 
  let count = toolsArray.count
 
- // Validate each tool entry has required fields.
  for toolValue in toolsArray {
  guard case .object(let toolDict) = toolValue else {
- return PluginValidationResult(
- valid: false,
- toolsCount: count,
- error: "Tool entry is not a JSON object."
- )
+ return PluginValidationResult(valid: false, toolsCount: count,
+ error: "Tool entry is not a JSON object.")
  }
-
  if toolDict["name"]?.stringValue == nil {
- return PluginValidationResult(
- valid: false,
- toolsCount: count,
- error: "Tool missing required 'name' field."
- )
+ return PluginValidationResult(valid: false, toolsCount: count,
+ error: "Tool missing required 'name' field.")
  }
  }
 
- logger.info("Tool catalog validated for \(descriptor.id): \(count) tools available")
+ logger.info("Tool catalog validated for \(identity.id): \(count) tools")
  return PluginValidationResult(valid: true, toolsCount: count)
 
  } catch {
- logger.error("Tool catalog validation error for \(descriptor.id): \(error.localizedDescription, privacy: .public)")
+ logger.error("Tool validation error for \(identity.id): \(error.localizedDescription, privacy: .public)")
  return PluginValidationResult(valid: false, toolsCount: 0, error: error.localizedDescription)
  }
  }
 
  /// Validate the tool catalog for a connected plugin by id.
  public func validateToolCatalog(pluginId: String) async throws -> PluginValidationResult {
- guard let descriptor = PluginCollection.byId(pluginId) else {
+ guard let identity = AllPlugins.byId(pluginId) else {
  throw PluginRegistryError.pluginNotFound(pluginId)
  }
-
  guard let transport = transports[pluginId] else {
  throw PluginRegistryError.pluginNotEnabled(pluginId)
  }
-
- return try await validateToolCatalog(for: descriptor, transport: transport)
+ return try await validateToolCatalog(for: identity, transport: transport)
  }
 
  // MARK: - Safety Rule Enforcement
 
  /// Check whether a pending tool call would violate any safety rule.
- ///
- /// Call this before executing any tool call through the tool router.
- /// Returns nil if the call is safe, or a descriptive violation string.
- ///
- /// Safety rules are pattern-matched against the tool name. If a rule
- /// matches, the call is blocked and the violation message is returned.
+ /// Returns nil if safe, or a descriptive violation string.
  public func checkSafetyViolation(
  pluginId: String,
  toolName: String,
  arguments: [String: JSONValue]
  ) -> String? {
- guard let descriptor = PluginCollection.byId(pluginId) else {
+ guard let identity = AllPlugins.byId(pluginId) else {
  return "Unknown plugin: \(pluginId)"
  }
 
- let lowered = toolName.lowercased()
+ // We match against known safety rule patterns from PluginDefinitions.
+ // Each pattern checks tool name + safety rules to decide if the call is blocked.
 
- // Pattern 1: Never auto-send emails
- if descriptor.safetyRules.contains(where: { $0.contains("Never auto-send") }),
- lowered.contains("send") && lowered.contains("email") {
- return descriptor.safetyRules.first { $0.contains("Never auto-send") }
+ // Pattern: Never auto-send emails
+ if identity.safetyRules?.contains(where: { $0.contains("Never auto-send") }) == true,
+ toolName.lowercased().contains("send") && toolName.lowercased().contains("email") {
+ return identity.safetyRules?.first { $0.contains("Never auto-send") }
  }
 
- // Pattern 2: Never bypass billing / payments
- if descriptor.safetyRules.contains(where: { $0.contains("bypass billing") || $0.contains("bypass payment") }),
- lowered.contains("bill") || lowered.contains("payment") || lowered.contains("charge") {
- return descriptor.safetyRules.first { $0.contains("bypass") }
+ // Pattern: Never bypass billing/payments
+ if identity.safetyRules?.contains(where: { $0.contains("bypass billing") || $0.contains("bypass payment") }) == true,
+ toolName.lowercased().contains("bill") || toolName.lowercased().contains("payment") || toolName.lowercased().contains("charge") {
+ return identity.safetyRules?.first { $0.contains("bypass") }
  }
 
- // Pattern 3: Never merge/force-push without approval
- if descriptor.safetyRules.contains(where: { $0.contains("without user approval") }),
- lowered.contains("merge") || lowered.contains("push") {
- return descriptor.safetyRules.first { $0.contains("without user approval") }
+ // Pattern: Never merge/force-push without approval
+ if identity.safetyRules?.contains(where: { $0.contains("without user approval") }) == true,
+ toolName.lowercased().contains("merge") || toolName.lowercased().contains("push") {
+ return identity.safetyRules?.first { $0.contains("without user approval") }
  }
 
- // Pattern 4: Never delete without confirmation
- if descriptor.safetyRules.contains(where: { $0.contains("without user confirmation") || $0.contains("without explicit confirmation") }),
- lowered.contains("delete") || lowered.contains("remove") || lowered.contains("destroy") || lowered.contains("drop") {
- return descriptor.safetyRules.first {
+ // Pattern: Never delete/remove without confirmation
+ if identity.safetyRules?.contains(where: { $0.contains("without user confirmation") || $0.contains("without explicit confirmation") }) == true,
+ toolName.lowercased().contains("delete") || toolName.lowercased().contains("remove") || toolName.lowercased().contains("destroy") {
+ return identity.safetyRules?.first {
  $0.contains("without user confirmation") || $0.contains("without explicit confirmation") || $0.contains("without approval")
  }
  }
 
- // Pattern 5: Never access private data without authorization
- if descriptor.safetyRules.contains(where: { $0.contains("without user authorization") || $0.contains("without authorization") }),
- lowered.contains("read") && (lowered.contains("private") || lowered.contains("personal")) {
- return descriptor.safetyRules.first {
- $0.contains("without user authorization") || $0.contains("without authorization")
- }
+ // Pattern: Never deploy without approval
+ if identity.safetyRules?.contains(where: { $0.contains("without explicit user approval") }) == true,
+ toolName.lowercased().contains("deploy") || toolName.lowercased().contains("publish") {
+ return identity.safetyRules?.first { $0.contains("without explicit user approval") }
  }
 
- // Pattern 6: Never deploy without approval
- if descriptor.safetyRules.contains(where: { $0.contains("without explicit user approval") }),
- lowered.contains("deploy") || lowered.contains("publish") {
- return descriptor.safetyRules.first { $0.contains("without explicit user approval") }
+ // Pattern: Never read private data without authorization
+ if identity.safetyRules?.contains(where: { $0.contains("without user authorization") }) == true,
+ toolName.lowercased().contains("read") {
+ return identity.safetyRules?.first { $0.contains("without user authorization") }
  }
 
  return nil
@@ -788,20 +733,10 @@ public actor PluginRegistry {
  states.values.sorted { $0.pluginId < $1.pluginId }
  }
 
- /// Return true if the plugin is enabled and currently connected.
+ /// Return true if the plugin is enabled and connected.
  public func isAvailable(_ pluginId: String) -> Bool {
  guard let state = states[pluginId] else { return false }
  return state.enabled && state.connected
- }
-
- /// Return descriptors for all plugins matching a given state filter.
- public func plugins(matching filter: (PluginRuntimeState) -> Bool) -> [PluginDescriptor] {
- PluginCollection.allCases
- .map(\.descriptor)
- .filter { descriptor in
- guard let state = states[descriptor.id] else { return false }
- return filter(state)
- }
  }
 
  // MARK: - Private Helpers
@@ -839,18 +774,18 @@ public actor PluginRegistry {
  }
 
  private func fallbackDiscovery(for pluginId: String) -> OAuthDiscovery {
- // Known provider OAuth endpoints keyed by plugin identifier.
- // SECURITY: These are public well-known URLs, not secrets.
+ // Known provider OAuth endpoints — these are public URLs, not secrets.
  let wellKnownURLs: [String: URL] = [
- "google": URL(string: "https://accounts.google.com")!,
- "github": URL(string: "https://github.com")!,
- "slack": URL(string: "https://slack.com")!,
- "notion": URL(string: "https://api.notion.com")!,
- "linear": URL(string: "https://linear.app")!,
- "stripe": URL(string: "https://connect.stripe.com")!,
- "metaads": URL(string: "https://facebook.com")!,
- "shopify": URL(string: "https://shopify.com")!,
- "supabase": URL(string: "https://supabase.com")!
+ "bridgemind_plugins__google": URL(string: "https://accounts.google.com")!,
+ "bridgemind_plugins__github": URL(string: "https://github.com")!,
+ "bridgemind_plugins__slack": URL(string: "https://slack.com")!,
+ "bridgemind_plugins__notion": URL(string: "https://api.notion.com")!,
+ "bridgemind_plugins__linear": URL(string: "https://linear.app")!,
+ "bridgemind_plugins__stripe": URL(string: "https://connect.stripe.com")!,
+ "bridgemind_plugins__metaads": URL(string: "https://facebook.com")!,
+ "bridgemind_plugins__shopify": URL(string: "https://shopify.com")!,
+ "bridgemind_plugins__supabase": URL(string: "https://supabase.com")!,
+ "bridgemind_plugins__youtube": URL(string: "https://accounts.google.com")!
  ]
 
  let issuerURL = wellKnownURLs[pluginId] ?? URL(string: "https://\(pluginId).com")!
@@ -869,8 +804,7 @@ public actor PluginRegistry {
  scopes: [String],
  codeChallenge: String,
  codeChallengeMethod: String,
- state: String,
- pluginId: String
+ state: String
  ) -> URL {
  var components = URLComponents(url: discovery.authorizationEndpoint, resolvingAgainstBaseURL: false)!
 
@@ -890,10 +824,8 @@ public actor PluginRegistry {
  private func exchangeCodeForToken(
  code: String,
  verifier: String,
- discovery: OAuthDiscovery,
- pluginId: String
+ discovery: OAuthDiscovery
  ) async throws -> OAuthToken {
- // Build the token exchange request body (x-www-form-urlencoded).
  let bodyString = [
  "grant_type=authorization_code",
  "code=\(code)",
@@ -911,9 +843,8 @@ public actor PluginRegistry {
  guard let httpResponse = response as? HTTPURLResponse,
  (200...299).contains(httpResponse.statusCode) else {
  let status = (response as? HTTPURLResponse)?.statusCode ?? -1
- logger.error("Token exchange failed for \(pluginId, privacy: .public): HTTP \(status)")
  throw PluginRegistryError.oauthFlowFailed(
- "Token endpoint returned HTTP \(status) for plugin '\(pluginId)'."
+ "Token endpoint returned HTTP \(status)."
  )
  }
 
@@ -927,28 +858,12 @@ public actor PluginRegistry {
 
  let tokenResponse = try JSONDecoder().decode(TokenResponse.self, from: data)
 
- let token = OAuthToken(
+ return OAuthToken(
  accessToken: tokenResponse.access_token,
  refreshToken: tokenResponse.refresh_token,
  tokenType: tokenResponse.token_type,
  expiresIn: tokenResponse.expires_in,
  scope: tokenResponse.scope
  )
-
- logger.info("Token exchange successful for \(pluginId, privacy: .public)")
- return token
- }
-}
-
-// MARK: - PluginTransport Convenience Extension
-
-extension PluginTransport {
-
- /// Returns the HTTP URL for this transport, or nil if not an HTTP transport.
- var httpURL: URL? {
- switch self {
- case .http(let url): return url
- default: return nil
- }
  }
 }
