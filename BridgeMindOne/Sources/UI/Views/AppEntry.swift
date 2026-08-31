@@ -2,11 +2,8 @@
 // AppEntry.swift
 // BridgeMind One — Application Scene definition
 //
-// Defines the primary window structure, scene phases, commands,
-// and multi-window support. The actual @main entry point lives
-// in the App target (BridgeMindOneApp.swift).
-//
-// Uses NavigationSplitView via MainSplitView for the primary layout.
+// Defines the primary window structure using MainSplitView.
+// The actual @main entry point lives in the App target (BridgeMindOneApp.swift).
 //
 
 import SwiftUI
@@ -26,8 +23,8 @@ public struct BridgeMindOneAppEntry: App {
  // MARK: - Init
 
  public init() {
- let coreState = Core.AppState.shared
- _appState = State(initialValue: AppState(core: coreState))
+ let _ = Core.AppState.shared
+ _appState = State(initialValue: AppState())
  }
 
  // MARK: - Body

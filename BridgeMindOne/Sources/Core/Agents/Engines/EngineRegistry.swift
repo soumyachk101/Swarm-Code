@@ -2,27 +2,161 @@
 // EngineRegistry.swift
 // Registry of all available AI coding agent engines
 //
-// Auto-detects installed agent binaries, manages engine instances,
-// tracks capabilities, and provides per-engine configuration.
-// Bridges the bridgemind.one.agent-run service discovery pattern.
-//
 
 import Foundation
 import Combine
 
-// MARK: - EngineRegistry
+// MARK: - Agent Engine Protocol
+
+public protocol AgentEngine: Sendable {
+ associatedtype StreamChunk
+ var type: EngineType { get }
+ var displayName: String { get }
+ var iconName: String { get }
+ var supportsStreaming: Bool { get }
+ var supportsToolUse: Bool { get }
+ var supportsMultiTurn: Bool { get }
+ var configuration: EngineConfiguration { get }
+
+ func connect() async throws
+ func disconnect() async throws
+ func sendMessage(_ message: AgentMessage, session: AgentSession) async throws -> AsyncThrowingStream<StreamChunk, any Error>
+ func cancelGeneration() async throws
+ func healthCheck() async -> EngineHealth
+}
+
+// MARK: - Engine Types
+
+public struct EngineConfiguration: Codable, Equatable, Sendable {
+ public let engineType: EngineType
+ public let binaryPath: String?
+ public let model: String
+ public let supportsStreaming: Bool
+ public let supportsToolUse: Bool
+ public let supportsMultiTurn: Bool
+ public let autoRestart: Bool
+ public let maxRestartAttempts: Int
+ public let restartDelay: Duration
+
+ public init(
+ engineType: EngineType,
+ binaryPath: String? = nil,
+ model: String = "default",
+ supportsStreaming: Bool = true,
+ supportsToolUse: Bool = true,
+ supportsMultiTurn: Bool = true,
+ autoRestart: Bool = true,
+ maxRestartAttempts: Int = 3,
+ restartDelay: Duration = .seconds(2)
+ ) {
+ self.engineType = engineType
+ self.binaryPath = binaryPath
+ self.model = model
+ self.supportsStreaming = supportsStreaming
+ self.supportsToolUse = supportsToolUse
+ self.supportsMultiTurn = supportsMultiTurn
+ self.autoRestart = autoRestart
+ self.maxRestartAttempts = maxRestartAttempts
+ self.restartDelay = restartDelay
+ }
+}
+
+public struct AgentMessage: Codable, Equatable, Sendable {
+ public let content: String
+ public let sessionId: String?
+ public let metadata: [String: String]?
+
+ public init(content: String, sessionId: String? = nil, metadata: [String: String]? = nil) {
+ self.content = content
+ self.sessionId = sessionId
+ self.metadata = metadata
+ }
+}
+
+public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
+ public let id: String
+ public var messages: [AgentMessage]
+ public public let createdAt: Date
+ public public let updatedAt: Date
+
+ public init(id: String = UUID().uuidString, messages: [AgentMessage] = [], createdAt: Date = Date(), updatedAt: Date = Date()) {
+ self.id = id
+ self.messages = messages
+ self.createdAt = createdAt
+ self.updatedAt = updatedAt
+ }
+}
+
+public struct AgentStreamChunk: Equatable, Sendable {
+ public let content: String
+ public let isFinal: Bool
+ public let usage: TokenUsage?
+
+ public init(content: String = "", isFinal: Bool = false, usage: TokenUsage? = nil) {
+ self.content = content
+ self.isFinal = isFinal
+ self.usage = usage
+ }
+}
+
+public struct TokenUsage: Equatable, Sendable {
+ public let promptTokens: Int
+ public let completionTokens: Int
+ public let totalTokens: Int
+
+ public init(promptTokens: Int = 0, completionTokens: Int = 0, totalTokens: Int = 0) {
+ self.promptTokens = promptTokens
+ self.completionTokens = completionTokens
+ self.totalTokens = totalTokens
+ }
+}
+
+public struct EngineHealth: Equatable, Sendable {
+ public let status: EngineStatus
+ public let message: String?
+
+ public init(status: EngineStatus = .unknown, message: String? = nil) {
+ self.status = status
+ self.message = message
+ }
+}
+
+public enum EngineStatus: String, Codable, Equatable {
+ case healthy
+ case degraded
+ case unhealthy
+ case unknown
+}
+
+public enum AgentEngineError: Error, Equatable {
+ case notFound
+ case binaryNotFound(String)
+ case configurationError(String)
+ case communicationError(String)
+ case processFailed(Int32)
+
+ public var localizedDescription: String {
+ switch self {
+ case .notFound: return "Engine not found"
+ case .binaryNotFound(let b): return "Binary not found: \(b)"
+ case .configurationError(let msg): return "Configuration error: \(msg)"
+ case .communicationError(let msg): return "Communication error: \(msg)"
+ case .processFailed(let code): return "Process failed with code \(code)"
+ }
+ }
+}
+
+// MARK: - Engine Registry
 
 public actor EngineRegistry: Sendable {
  public static let shared = EngineRegistry()
 
- // MARK: Published State
-
+ // Published state
  @Published public private(set) var availableEngines: [EngineType: Bool] = [:]
  @Published public private(set) var engineCapabilities: [EngineType: EngineCapabilities] = [:]
  @Published public private(set) var engineConfigurations: [EngineType: EngineConfiguration] = [:]
 
- // MARK: Detection Results
-
+ // Detection results
  public struct DetectionResult: Sendable, Equatable {
  public let engineType: EngineType
  public let isAvailable: Bool
@@ -54,8 +188,6 @@ public actor EngineRegistry: Sendable {
  }
  }
 
- // MARK: Engine Capabilities
-
  public struct EngineCapabilities: Sendable, Codable, Equatable {
  public let supportsStreaming: Bool
  public let supportsToolUse: Bool
@@ -78,22 +210,17 @@ public actor EngineRegistry: Sendable {
  }
  }
 
- // MARK: Private
-
+ // Storage
  private var engines: [EngineType: any AgentEngine] = [:]
  private var discoveryTask: Task<Void, Error>?
- private let discoveryQueue = DispatchQueue(label: "ai.bridgemind.one.engine-registry", attributes: .concurrent)
 
- // MARK: Init
-
+ // Init
  private init() {
- // Register default configurations for all known engine types
  registerDefaultConfigurations()
  }
 
  // MARK: Public API
 
- /// Auto-detect all available engines on the system
  public func detectAllEngines() async -> [DetectionResult] {
  return await withTaskGroup(of: DetectionResult.self) { group in
  for type in EngineType.allCases {
@@ -110,14 +237,13 @@ public actor EngineRegistry: Sendable {
  }
  }
 
- /// Detect a specific engine
  public func detectEngine(_ type: EngineType) async -> DetectionResult {
- let binaryName = Self.defaultBinaryName(for: type)
+ let binaryName = defaultBinaryName(for: type)
  let binaryPath = await AgentProcess.findBinary(binaryName)
 
  if let path = binaryPath {
- let version = await Self.probeVersion(for: type, at: path)
- let capabilities = Self.capabilities(for: type)
+ let version = await probeVersion(for: type, at: path)
+ let capabilities = capabilities(for: type)
  return DetectionResult(
  engineType: type,
  isAvailable: true,
@@ -134,17 +260,14 @@ public actor EngineRegistry: Sendable {
  }
  }
 
- /// Check if a specific engine is available
  public func isAvailable(_ type: EngineType) -> Bool {
- return availableEngines[type] ?? false
+ availableEngines[type] ?? false
  }
 
- /// Get the default configuration for an engine type
  public func configuration(for type: EngineType) -> EngineConfiguration {
- return engineConfigurations[type] ?? Self.defaultConfiguration(for: type)
+ engineConfigurations[type] ?? defaultConfiguration(for: type)
  }
 
- /// Create an engine instance
  public func createEngine(for type: EngineType) throws -> any AgentEngine {
  guard isAvailable(type) else {
  throw AgentEngineError.notFound
@@ -172,7 +295,6 @@ public actor EngineRegistry: Sendable {
  }
  }
 
- /// Get or create an engine instance for a type
  public func engine(for type: EngineType) async throws -> any AgentEngine {
  if let existing = engines[type] {
  return existing
@@ -183,13 +305,11 @@ public actor EngineRegistry: Sendable {
  return engine
  }
 
- /// Get capabilities for an engine type
  public func capabilities(for type: EngineType) -> EngineCapabilities {
  if let caps = engineCapabilities[type] { return caps }
- return Self.capabilities(for: type)
+ return capabilities(for: type)
  }
 
- /// Run a one-time discovery of all engines and update state
  public func refreshAvailability() async {
  discoveryTask?.cancel()
  discoveryTask = Task {
@@ -210,18 +330,17 @@ public actor EngineRegistry: Sendable {
  }
  }
  }
- }
 
- // MARK: Private
+ // MARK: Private Helpers
 
  private func registerDefaultConfigurations() {
  for type in EngineType.allCases {
- engineConfigurations[type] = Self.defaultConfiguration(for: type)
- engineCapabilities[type] = Self.capabilities(for: type)
+ engineConfigurations[type] = defaultConfiguration(for: type)
+ engineCapabilities[type] = capabilities(for: type)
  }
  }
 
- private static func defaultBinaryName(for type: EngineType) -> String {
+ private func defaultBinaryName(for type: EngineType) -> String {
  switch type {
  case .claude: return "claude"
  case .codex: return "codex"
@@ -234,7 +353,7 @@ public actor EngineRegistry: Sendable {
  }
  }
 
- private static func defaultConfiguration(for type: EngineType) -> EngineConfiguration {
+ private func defaultConfiguration(for type: EngineType) -> EngineConfiguration {
  let models: [EngineType: String] = [
  .claude: "claude-sonnet-4-20250514",
  .codex: "gpt-4",
@@ -261,9 +380,9 @@ public actor EngineRegistry: Sendable {
  )
  }
 
- private static func capabilities(for type: EngineType) -> EngineCapabilities {
+ private func capabilities(for type: EngineType) -> EngineCapabilities {
  switch type {
- case .claude:
+ case .claude, .codex, .cursor, .aider, .deepseek, .opencode:
  return EngineCapabilities(
  supportsStreaming: true,
  supportsToolUse: true,
@@ -271,66 +390,18 @@ public actor EngineRegistry: Sendable {
  supportsFileEditing: true,
  supportsWorkspaceAccess: true
  )
- case .codex:
- return EngineCapabilities(
- supportsStreaming: true,
- supportsToolUse: true,
- supportsMultiTurn: true,
- supportsFileEditing: true,
- supportsWorkspaceAccess: true
- )
- case .cursor:
- return EngineCapabilities(
- supportsStreaming: true,
- supportsToolUse: true,
- supportsMultiTurn: true,
- supportsFileEditing: true,
- supportsWorkspaceAccess: true
- )
- case .aider:
- return EngineCapabilities(
- supportsStreaming: true,
- supportsToolUse: true,
- supportsMultiTurn: true,
- supportsFileEditing: true,
- supportsWorkspaceAccess: true
- )
- case .deepseek:
- return EngineCapabilities(
- supportsStreaming: true,
- supportsToolUse: true,
- supportsMultiTurn: true,
- supportsFileEditing: true,
- supportsWorkspaceAccess: true
- )
- case .grok:
+ case .grok, .gemini:
  return EngineCapabilities(
  supportsStreaming: true,
  supportsToolUse: true,
  supportsMultiTurn: true,
  supportsFileEditing: false,
  supportsWorkspaceAccess: false
- )
- case .gemini:
- return EngineCapabilities(
- supportsStreaming: true,
- supportsToolUse: true,
- supportsMultiTurn: true,
- supportsFileEditing: false,
- supportsWorkspaceAccess: false
- )
- case .opencode:
- return EngineCapabilities(
- supportsStreaming: true,
- supportsToolUse: true,
- supportsMultiTurn: true,
- supportsFileEditing: true,
- supportsWorkspaceAccess: true
  )
  }
  }
 
- private static func probeVersion(for type: EngineType, at path: String) async -> String? {
+ private func probeVersion(for type: EngineType, at path: String) async -> String? {
  let task = Process()
  task.executableURL = URL(fileURLWithPath: path)
  task.arguments = ["--version"]
@@ -353,10 +424,6 @@ public actor EngineRegistry: Sendable {
 }
 
 // MARK: - Placeholder Engines
-
-// Lightweight stubs for engines not yet implemented as full adapters.
-// They conform to AgentEngine for registry compatibility but defer full
-// implementation to their respective Engine adapters.
 
 public struct AiderEngine: AgentEngine {
  public typealias StreamChunk = AgentStreamChunk
