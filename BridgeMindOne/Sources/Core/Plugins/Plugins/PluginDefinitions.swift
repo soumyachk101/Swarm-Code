@@ -8,11 +8,12 @@
 // Each identity carries:
 // - Stable machine-readable id (e.g. "bridgemind_plugins__github")
 // - Human-readable displayName
-// - PluginType (.builtin, .remote, .local)
-// - PluginAuthType (.none, .apiKey, .oauth)
+// - PluginType (.builtin, .remote, .local) — matches OAuthFlows.swift
+// - PluginAuthType (.none, .apiKey, .oauth) — matches OAuthFlows.swift
 // - mcpURL: endpoint for remote MCP servers
 // - apiKeyEnv: environment variable for API-key plugins
 // - scopes: OAuth scopes for OAuth plugins
+// - safetyRules: runtime safety rules (stored separately from PluginIdentity)
 //
 // SECURITY NOTE: API keys and OAuth tokens are NEVER stored in source code.
 // They are resolved at runtime from environment variables (apiKeyEnv) or from
@@ -20,49 +21,195 @@
 
 import Foundation
 
-// MARK: - PluginType
+// MARK: - PluginCategory
 
-/// Classification of plugin categories.
-public enum PluginType: String, Codable, Equatable, CaseIterable, Sendable {
- case builtin // Built into BridgeMind One, no external server
- case remote // Remote MCP server reachable over HTTP/HTTPS
- case local // Local stdio MCP server (child process)
+/// High-level grouping used for UI tabs and filtering.
+/// Distinct from PluginType which describes the transport mechanism.
+public enum PluginCategory: String, Codable, Equatable, CaseIterable, Sendable {
+ case agent // LLM agent engine (Claude, Codex, Gemini, …)
+ case saas // Business / SaaS integration (GitHub, Slack, Stripe, …)
 
  public var displayName: String {
  switch self {
- case .builtin: return "Built-in"
- case .remote: return "Remote"
- case .local: return "Local"
+ case .agent: return "Agent Engine"
+ case .saas: return "Business Tool"
  }
  }
 }
 
-// MARK: - PluginAuthType
+// MARK: - Safety Rule Profiles
 
-/// Authentication mechanism required by a plugin.
-public enum PluginAuthType: String, Codable, Equatable, CaseIterable, Sendable {
- case none // No authentication required
- case apiKey // Simple API key from environment variable
- case oauth // Full OAuth 2.0 authorization code + PKCE
+/// Safety rules per plugin. Stored separately from PluginIdentity because
+/// PluginIdentity is a Codable value type shared with OAuthFlows.swift.
+/// Rules are matched against tool call names at execution time.
+public let pluginSafetyRules: [String: [String]] = [
+ "bridgemind_plugins__claude": [
+ "All responses subject to Anthropic usage policies.",
+ "Never bypass billing approvals.",
+ "Honor prompt caching cost transparency.",
+ "Do not send prompts containing other users' PII without redaction."
+ ],
+ "bridgemind_plugins__codex": [
+ "Output must be reviewed before execution.",
+ "Never execute generated code without sandboxing."
+ ],
+ "bridgemind_plugins__copilot": [
+ "Never auto-apply code suggestions without user review.",
+ "Generated code is subject to GitHub Copilot license terms."
+ ],
+ "bridgemind_plugins__cursor": [
+ "Never apply edits without explicit user confirmation.",
+ "Sandbox all file-system modifications."
+ ],
+ "bridgemind_plugins__aider": [
+ "Never commit generated code without review.",
+ "Sandbox all git operations."
+ ],
+ "bridgemind_plugins__deepseek": [
+ "All output subject to DeepSeek usage policies.",
+ "Never bypass content filters."
+ ],
+ "bridgemind_plugins__gemini": [
+ "Never send prompts containing PII without redaction.",
+ "Honor Google's AI Principles and usage policies."
+ ],
+ "bridgemind_plugins__grok": [
+ "All output subject to xAI usage policies.",
+ "Never bypass content filters."
+ ],
+ "bridgemind_plugins__opencode": [
+ "Never auto-apply code changes without review.",
+ "Sandbox all file operations."
+ ],
+ "bridgemind_plugins__antigravity": [
+ "No external data sent to third-party services.",
+ "All computation runs locally within the sandbox."
+ ],
+ "bridgemind_plugins__droid": [
+ "Never execute code without explicit user approval.",
+ "Never push changes without review."
+ ],
+ "bridgemind_plugins__apollo": [
+ "Never auto-send emails or outreach sequences.",
+ "Respect rate limits — do not bulk-enrich without user approval."
+ ],
+ "bridgemind_plugins__blender": [
+ "Never run destructive operations without user confirmation.",
+ "Validate all file paths before writing."
+ ],
+ "bridgemind_plugins__cloudflare": [
+ "Never modify production DNS records without user approval.",
+ "Do not delete zones or purge cache without confirmation."
+ ],
+ "bridgemind_plugins__fal": [
+ "Never generate harmful, NSFW, or deceptive content.",
+ "Log all generation requests for audit."
+ ],
+ "bridgemind_plugins__github": [
+ "Never force-push to protected branches.",
+ "Never merge pull requests without user approval.",
+ "Never delete repositories or releases without explicit confirmation."
+ ],
+ "bridgemind_plugins__gmail": [
+ "Never auto-send emails without explicit user confirmation.",
+ "Never read or archive emails without user authorization.",
+ "Never modify labels or apply filters without approval."
+ ],
+ "bridgemind_plugins__googleads": [
+ "Never modify campaign budgets without user approval.",
+ "Never pause or resume campaigns without confirmation.",
+ "Log all mutations for billing audit."
+ ],
+ "bridgemind_plugins__higgsfield": [
+ "Never generate content that violates intellectual property rights.",
+ "Never auto-publish generated designs without review."
+ ],
+ "bridgemind_plugins__linear": [
+ "Never close or resolve issues without user approval.",
+ "Never delete projects, cycles, or roadmaps without confirmation."
+ ],
+ "bridgemind_plugins__metaads": [
+ "Never create or modify ad campaigns without explicit approval.",
+ "Never spend budget without user-defined caps.",
+ "Never access ad accounts not owned by the authenticated user."
+ ],
+ "bridgemind_plugins__notion": [
+ "Never delete pages, databases, or blocks without user confirmation.",
+ "Never share pages or databases with unauthorized users."
+ ],
+ "bridgemind_plugins__quickbooks": [
+ "Never create or modify financial transactions without approval.",
+ "Never delete invoices or payments without explicit confirmation.",
+ "All financial mutations must be logged for audit compliance."
+ ],
+ "bridgemind_plugins__resend": [
+ "Never auto-send emails without explicit user confirmation.",
+ "Never send to unverified recipient domains in production.",
+ "Log all outbound email metadata for audit."
+ ],
+ "bridgemind_plugins__revenuecat": [
+ "Never grant or revoke entitlements without business approval.",
+ "Never issue refunds or cancellations without user authorization."
+ ],
+ "bridgemind_plugins__sentry": [
+ "Never modify project settings or DSN without approval.",
+ "Never delete error events or performance data without confirmation."
+ ],
+ "bridgemind_plugins__shopify": [
+ "Never process refunds or void transactions without approval.",
+ "Never modify store settings or pricing without user confirmation.",
+ "Never access orders outside the authenticated store's scope."
+ ],
+ "bridgemind_plugins__slack": [
+ "Never send messages to channels or users without explicit confirmation.",
+ "Never read private channel history without user authorization.",
+ "Never modify workspace settings or integrations without approval."
+ ],
+ "bridgemind_plugins__stripe": [
+ "Never create or modify charges without explicit user approval.",
+ "Never issue refunds without confirmation.",
+ "Never access or modify customer data without authorization.",
+ "All payment operations must be logged for compliance."
+ ],
+ "bridgemind_plugins__supabase": [
+ "Never bypass Row Level Security (RLS) policies.",
+ "Never delete production database tables or data without confirmation."
+ ],
+ "bridgemind_plugins__unity": [
+ "Never build or deploy without user confirmation.",
+ "Never delete project assets without backup confirmation."
+ ],
+ "bridgemind_plugins__unreal": [
+ "Never build or cook without user confirmation.",
+ "Never delete project assets without backup confirmation."
+ ],
+ "bridgemind_plugins__vercel": [
+ "Never deploy to production without explicit user approval.",
+ "Never delete deployments or projects without confirmation."
+ ],
+ "bridgemind_plugins__vidiq": [
+ "Never modify video metadata without user approval.",
+ "Never analyze competitor data for deceptive purposes."
+ ],
+ "bridgemind_plugins__youtube": [
+ "Never upload, edit, or delete videos without explicit user approval.",
+ "Never modify channel settings without confirmation.",
+ "Never access private video data without authorization."
+ ]
+]
 
- public var displayName: String {
- switch self {
- case .none: return "None"
- case .apiKey: return "API Key"
- case .oauth: return "OAuth 2.0"
- }
- }
+/// Convenience accessor for a plugin's safety rules.
+public func safetyRules(for pluginId: String) -> [String] {
+ pluginSafetyRules[pluginId] ?? []
 }
 
 // MARK: - All 24 Plugin Identities
 
 public extension PluginIdentity {
 
- // ─── Agent Engine Plugins ────────────────────────────────────
+ // ─── Agent Engine Plugins (11) ───────────────────────────────
 
  /// Anthropic Claude — primary reasoning engine
- /// Safety: All responses subject to Anthropic usage policies.
- /// Never bypass billing approvals. Honor prompt caching cost transparency.
  static let claude = PluginIdentity(
  id: "bridgemind_plugins__claude",
  displayName: "Claude",
@@ -73,8 +220,6 @@ public extension PluginIdentity {
  )
 
  /// OpenAI Codex — code-specialized reasoning
- /// Safety: Output must be reviewed before execution.
- /// Never execute generated code without sandboxing.
  static let codex = PluginIdentity(
  id: "bridgemind_plugins__codex",
  displayName: "Codex",
@@ -85,8 +230,6 @@ public extension PluginIdentity {
  )
 
  /// GitHub Copilot — code completion and generation
- /// Safety: Never auto-apply code suggestions without user review.
- /// Generated code subject to GitHub Copilot license terms.
  static let copilot = PluginIdentity(
  id: "bridgemind_plugins__copilot",
  displayName: "GitHub Copilot",
@@ -96,8 +239,6 @@ public extension PluginIdentity {
  )
 
  /// Cursor IDE — code agent and editor integration
- /// Safety: Never apply edits without explicit user confirmation.
- /// Sandbox all file-system modifications.
  static let cursor = PluginIdentity(
  id: "bridgemind_plugins__cursor",
  displayName: "Cursor",
@@ -107,8 +248,6 @@ public extension PluginIdentity {
  )
 
  /// Aider — open-source AI pair programming
- /// Safety: Never commit generated code without review.
- /// Sandbox all git operations.
  static let aider = PluginIdentity(
  id: "bridgemind_plugins__aider",
  displayName: "Aider",
@@ -118,8 +257,6 @@ public extension PluginIdentity {
  )
 
  /// DeepSeek — high-performance reasoning
- /// Safety: All output subject to DeepSeek usage policies.
- /// Never bypass content filters.
  static let deepseek = PluginIdentity(
  id: "bridgemind_plugins__deepseek",
  displayName: "DeepSeek",
@@ -130,8 +267,6 @@ public extension PluginIdentity {
  )
 
  /// Google Gemini — multimodal reasoning
- /// Safety: Never send prompts containing PII without redaction.
- /// Honor Google's AI Principles and usage policies.
  static let gemini = PluginIdentity(
  id: "bridgemind_plugins__gemini",
  displayName: "Gemini",
@@ -142,8 +277,6 @@ public extension PluginIdentity {
  )
 
  /// xAI Grok — reasoning with real-time knowledge
- /// Safety: All output subject to xAI usage policies.
- /// Never bypass content filters.
  static let grok = PluginIdentity(
  id: "bridgemind_plugins__grok",
  displayName: "Grok",
@@ -154,8 +287,6 @@ public extension PluginIdentity {
  )
 
  /// OpenCode — open-source AI coding assistant
- /// Safety: Never auto-apply code changes without review.
- /// Sandbox all file operations.
  static let opencode = PluginIdentity(
  id: "bridgemind_plugins__opencode",
  displayName: "OpenCode",
@@ -165,8 +296,6 @@ public extension PluginIdentity {
  )
 
  /// Antigravity — experimental reasoning engine
- /// Safety: No external data sent to third-party services.
- /// All computation runs locally within the sandbox.
  static let antigravity = PluginIdentity(
  id: "bridgemind_plugins__antigravity",
  displayName: "Antigravity",
@@ -176,8 +305,6 @@ public extension PluginIdentity {
  )
 
  /// Factory.ai Droid — autonomous code agent
- /// Safety: Never execute code without explicit user approval.
- /// Never push changes without review.
  static let droid = PluginIdentity(
  id: "bridgemind_plugins__droid",
  displayName: "Droid",
@@ -186,11 +313,9 @@ public extension PluginIdentity {
  mcpURL: URL(string: "https://docs.factory.ai/mcp")!
  )
 
- // ─── SaaS / Business Plugins ─────────────────────────────────
+ // ─── SaaS / Business Plugins (13) ────────────────────────────
 
  /// Apollo.io — sales intelligence and engagement
- /// Safety: Never auto-send emails or outreach sequences.
- /// Respect rate limits — do not bulk-enrich without user approval.
  static let apollo = PluginIdentity(
  id: "bridgemind_plugins__apollo",
  displayName: "Apollo",
@@ -201,8 +326,6 @@ public extension PluginIdentity {
  )
 
  /// Blender — 3D modeling and animation
- /// Safety: Never run destructive operations without user confirmation.
- /// Validate all file paths before writing.
  static let blender = PluginIdentity(
  id: "bridgemind_plugins__blender",
  displayName: "Blender",
@@ -212,8 +335,6 @@ public extension PluginIdentity {
  )
 
  /// Cloudflare — DNS, CDN, and edge computing management
- /// Safety: Never modify production DNS records without user approval.
- /// Do not delete zones or purge cache without confirmation.
  static let cloudflare = PluginIdentity(
  id: "bridgemind_plugins__cloudflare",
  displayName: "Cloudflare",
@@ -223,8 +344,6 @@ public extension PluginIdentity {
  )
 
  /// fal.ai — AI image generation and media processing
- /// Safety: Never generate harmful, NSFW, or deceptive content.
- /// Log all generation requests for audit.
  static let fal = PluginIdentity(
  id: "bridgemind_plugins__fal",
  displayName: "fal.ai",
@@ -235,9 +354,6 @@ public extension PluginIdentity {
  )
 
  /// GitHub — code repository and workflow management
- /// Safety: Never force-push to protected branches.
- /// Never merge pull requests without user approval.
- /// Never delete repositories or releases without explicit confirmation.
  static let github = PluginIdentity(
  id: "bridgemind_plugins__github",
  displayName: "GitHub",
@@ -247,9 +363,6 @@ public extension PluginIdentity {
  )
 
  /// Gmail — email reading, sending, and management
- /// Safety: Never auto-send emails without explicit user confirmation.
- /// Never read or archive emails without user authorization.
- /// Never modify labels or apply filters without approval.
  static let gmail = PluginIdentity(
  id: "bridgemind_plugins__gmail",
  displayName: "Gmail",
@@ -264,9 +377,6 @@ public extension PluginIdentity {
  )
 
  /// Google Ads — advertising campaign management
- /// Safety: Never modify campaign budgets without user approval.
- /// Never pause or resume campaigns without confirmation.
- /// Log all mutations for billing audit.
  static let googleads = PluginIdentity(
  id: "bridgemind_plugins__googleads",
  displayName: "Google Ads",
@@ -277,8 +387,6 @@ public extension PluginIdentity {
  )
 
  /// Higgsfield — AI-powered creative and design tool
- /// Safety: Never generate content that violates intellectual property rights.
- /// Never auto-publish generated designs without review.
  static let higgsfield = PluginIdentity(
  id: "bridgemind_plugins__higgsfield",
  displayName: "Higgsfield",
@@ -289,8 +397,6 @@ public extension PluginIdentity {
  )
 
  /// Linear — issue tracking and project management
- /// Safety: Never close or resolve issues without user approval.
- /// Never delete projects, cycles, or roadmaps without confirmation.
  static let linear = PluginIdentity(
  id: "bridgemind_plugins__linear",
  displayName: "Linear",
@@ -300,9 +406,6 @@ public extension PluginIdentity {
  )
 
  /// Meta Ads — advertising campaign management via Meta Marketing API
- /// Safety: Never create or modify ad campaigns without explicit approval.
- /// Never spend budget without user-defined caps.
- /// Never access ad accounts not owned by the authenticated user.
  static let metaads = PluginIdentity(
  id: "bridgemind_plugins__metaads",
  displayName: "Meta Ads",
@@ -312,8 +415,6 @@ public extension PluginIdentity {
  )
 
  /// Notion — workspace, page, and database management
- /// Safety: Never delete pages, databases, or blocks without user confirmation.
- /// Never share pages or databases with unauthorized users.
  static let notion = PluginIdentity(
  id: "bridgemind_plugins__notion",
  displayName: "Notion",
@@ -323,9 +424,6 @@ public extension PluginIdentity {
  )
 
  /// QuickBooks — accounting and financial data
- /// Safety: Never create or modify financial transactions without approval.
- /// Never delete invoices or payments without explicit confirmation.
- /// All financial mutations must be logged for audit compliance.
  static let quickbooks = PluginIdentity(
  id: "bridgemind_plugins__quickbooks",
  displayName: "QuickBooks",
@@ -336,9 +434,6 @@ public extension PluginIdentity {
  )
 
  /// Resend — transactional email delivery
- /// Safety: Never auto-send emails without explicit user confirmation.
- /// Never send to unverified recipient domains in production.
- /// Log all outbound email metadata for audit.
  static let resend = PluginIdentity(
  id: "bridgemind_plugins__resend",
  displayName: "Resend",
@@ -349,8 +444,6 @@ public extension PluginIdentity {
  )
 
  /// RevenueCat — in-app purchase and subscription management
- /// Safety: Never grant or revoke entitlements without business approval.
- /// Never issue refunds or cancellations without user authorization.
  static let revenuecat = PluginIdentity(
  id: "bridgemind_plugins__revenuecat",
  displayName: "RevenueCat",
@@ -361,8 +454,6 @@ public extension PluginIdentity {
  )
 
  /// Sentry — error tracking and performance monitoring
- /// Safety: Never modify project settings or DSN without approval.
- /// Never delete error events or performance data without confirmation.
  static let sentry = PluginIdentity(
  id: "bridgemind_plugins__sentry",
  displayName: "Sentry",
@@ -372,9 +463,6 @@ public extension PluginIdentity {
  )
 
  /// Shopify — e-commerce store management
- /// Safety: Never process refunds or void transactions without approval.
- /// Never modify store settings or pricing without user confirmation.
- /// Never access orders outside the authenticated store's scope.
  static let shopify = PluginIdentity(
  id: "bridgemind_plugins__shopify",
  displayName: "Shopify",
@@ -384,9 +472,6 @@ public extension PluginIdentity {
  )
 
  /// Slack — messaging and workspace collaboration
- /// Safety: Never send messages to channels or users without explicit confirmation.
- /// Never read private channel history without user authorization.
- /// Never modify workspace settings or integrations without approval.
  static let slack = PluginIdentity(
  id: "bridgemind_plugins__slack",
  displayName: "Slack",
@@ -396,10 +481,6 @@ public extension PluginIdentity {
  )
 
  /// Stripe — payment processing and financial operations
- /// Safety: Never create or modify charges without explicit user approval.
- /// Never issue refunds without confirmation.
- /// Never access or modify customer data without authorization.
- /// All payment operations must be logged for compliance.
  static let stripe = PluginIdentity(
  id: "bridgemind_plugins__stripe",
  displayName: "Stripe",
@@ -410,8 +491,6 @@ public extension PluginIdentity {
  )
 
  /// Supabase — open-source Firebase alternative with Postgres, Auth, Storage
- /// Safety: Never bypass Row Level Security (RLS) policies.
- /// Never delete production database tables or data without confirmation.
  static let supabase = PluginIdentity(
  id: "bridgemind_plugins__supabase",
  displayName: "Supabase",
@@ -422,8 +501,6 @@ public extension PluginIdentity {
  )
 
  /// Unity — game engine and real-time 3D development
- /// Safety: Never build or deploy without user confirmation.
- /// Never delete project assets without backup confirmation.
  static let unity = PluginIdentity(
  id: "bridgemind_plugins__unity",
  displayName: "Unity",
@@ -433,8 +510,6 @@ public extension PluginIdentity {
  )
 
  /// Unreal Engine — high-fidelity game and real-time experience development
- /// Safety: Never build or cook without user confirmation.
- /// Never delete project assets without backup confirmation.
  static let unreal = PluginIdentity(
  id: "bridgemind_plugins__unreal",
  displayName: "Unreal Engine",
@@ -444,8 +519,6 @@ public extension PluginIdentity {
  )
 
  /// Vercel — frontend deployment and edge functions
- /// Safety: Never deploy to production without explicit user approval.
- /// Never delete deployments or projects without confirmation.
  static let vercel = PluginIdentity(
  id: "bridgemind_plugins__vercel",
  displayName: "Vercel",
@@ -455,8 +528,6 @@ public extension PluginIdentity {
  )
 
  /// vidIQ — YouTube analytics and SEO optimization
- /// Safety: Never modify video metadata without user approval.
- /// Never analyze competitor data for deceptive purposes.
  static let vidiq = PluginIdentity(
  id: "bridgemind_plugins__vidiq",
  displayName: "vidIQ",
@@ -467,9 +538,6 @@ public extension PluginIdentity {
  )
 
  /// YouTube — video management and analytics via YouTube Data API v3
- /// Safety: Never upload, edit, or delete videos without explicit user approval.
- /// Never modify channel settings without confirmation.
- /// Never access private video data without authorization.
  static let youtube = PluginIdentity(
  id: "bridgemind_plugins__youtube",
  displayName: "YouTube",
@@ -482,6 +550,26 @@ public extension PluginIdentity {
  "https://www.googleapis.com/auth/youtube.upload"
  ]
  )
+}
+
+// MARK: - PluginCategory Lookup
+
+public extension PluginIdentity {
+
+ /// Returns the category for this plugin identity.
+ var category: PluginCategory {
+ switch id {
+ case "bridgemind_plugins__claude", "bridgemind_plugins__codex",
+ "bridgemind_plugins__copilot", "bridgemind_plugins__cursor",
+ "bridgemind_plugins__aider", "bridgemind_plugins__deepseek",
+ "bridgemind_plugins__gemini", "bridgemind_plugins__grok",
+ "bridgemind_plugins__opencode", "bridgemind_plugins__antigravity",
+ "bridgemind_plugins__droid":
+ return .agent
+ default:
+ return .saas
+ }
+ }
 }
 
 // MARK: - Plugin Collections
