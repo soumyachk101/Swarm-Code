@@ -280,10 +280,10 @@ public actor PluginRegistry {
  // MARK: Runtime State
 
  /// Active transports keyed by plugin id.
- private let transports: [String: AnyTransport] = [:]
+ private var transports: [String: AnyTransport] = [:]
 
  /// Runtime state cached in memory (mirrors the DB for fast access).
- private let states: [String: PluginRuntimeState] = [:]
+ private var states: [String: PluginRuntimeState] = [:]
 
  /// Pending PKCE verifiers held for the duration of an OAuth flow.
  private var pendingPKCE: [String: String] = [:]
