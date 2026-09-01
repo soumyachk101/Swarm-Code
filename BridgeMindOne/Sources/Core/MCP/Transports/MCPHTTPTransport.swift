@@ -317,11 +317,42 @@ public final class MCPHTTPTransport: MCPTransport {
  self.streamState = StreamState()
 
  logger.info("MCPHTTPTransport initialized for \(self.baseURL.absoluteString, privacy: .public) session \(self.sessionID ?? "nil", privacy: .public)")
- }
+    }
 
- // MARK: Send
+    // MARK: - Lifecycle
 
- public func send(_ message: JSONValue) async throws {
+    public func connect() async throws {
+        isClosed = false
+    }
+
+    public func disconnect() async {
+        try? await close()
+    }
+
+    // MARK: - Send
+
+    public func sendRequest(_ message: JSONValue) async throws -> JSONValue {
+        guard !isClosed else {
+            throw MCPTransportError.transportClosed
+        }
+
+        var request = try buildRequest(for: message)
+        try validator.validate(request)
+        try contextProvider.headers(for: &request)
+
+        let (data, response) = try await urlSession.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw MCPTransportError.invalidResponse(status: status)
+        }
+
+        if let json = try? JSONDecoder().decode(JSONValue.self, from: data) {
+            return json
+        }
+        return .object(["result": .string("ok")])
+    }
+
+    public func send(_ message: JSONValue) async throws {
  guard !isClosed else {
  throw MCPTransportError.transportClosed
  }
