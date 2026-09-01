@@ -4,168 +4,164 @@
 //
 
 import SwiftUI
+import Core
 
 public struct SettingsView: View {
- @EnvironmentObject private var appState: AppState
- @State private var selectedTab = 0
+    @Environment(AppState.self) private var appState
+    @State private var selectedTab = 0
 
- public init() {}
+    public init() {}
 
- public var body: some View {
- TabView(selection: $selectedTab) {
- GeneralSettings()
- .tabItem { Label("General", systemImage: "gear") }
- .tag(0)
+    public var body: some View {
+        TabView(selection: $selectedTab) {
+            GeneralSettings()
+                .tabItem { Label("General", systemImage: "gear") }
+                .tag(0)
 
- EnginesSettings()
- .tabItem { Label("Engines", systemImage: "cpu") }
- .tag(1)
+            EnginesSettings()
+                .tabItem { Label("Engines", systemImage: "cpu") }
+                .tag(1)
 
- PrivacySettings()
- .tabItem { Label("Privacy", systemImage: "lock.shield") }
- .tag(2)
+            PrivacySettings()
+                .tabItem { Label("Privacy", systemImage: "lock.shield") }
+                .tag(2)
 
- AppearanceSettings()
- .tabItem { Label("Appearance", systemImage: "paintbrush") }
- .tag(3)
- }
- .frame(width: 500, height: 400)
- }
+            AppearanceSettings()
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
+                .tag(3)
+        }
+        .frame(width: 520, height: 420)
+        .padding()
+    }
 }
 
 // MARK: - General
 
 private struct GeneralSettings: View {
- @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
 
- public var body: some View {
- Form {
- Section("Behavior") {
- Toggle("Auto-save chats", isOn: $appState.settings.autoSaveEnabled)
- Toggle("Notifications", isOn: $appState.settings.notificationsEnabled)
- Toggle("Voice dictation (fn key)", isOn: $appState.settings.voiceDictationEnabled)
- }
+    var body: some View {
+        @Bindable var state = appState
 
- Section("Startup") {
- Picker("On launch:", selection: $appState.settings.startupBehavior) {
- ForEach(StartupBehavior.allCases, id: \.self) { behavior in
- Text(behavior.displayName).tag(behavior)
- }
- }
- }
+        Form {
+            Section("Behavior") {
+                Toggle("Auto-save chats", isOn: $state.settings.autoSaveEnabled)
+                Toggle("Notifications", isOn: $state.settings.notificationsEnabled)
+                Toggle("Voice dictation (fn key)", isOn: $state.settings.voiceDictationEnabled)
+            }
 
- Section("Font Size") {
- Slider(value: $appState.settings.fontSize, in: 11...20, step: 1)
- HStack {
- Text("Small")
- Spacer()
- Text("\(Int(appState.settings.fontSize))pt")
- Spacer()
- Text("Large")
- }
- }
- }
- }
+            Section("Startup") {
+                Picker("On launch:", selection: $state.settings.startupBehavior) {
+                    ForEach(StartupBehavior.allCases) { behavior in
+                        Text(behavior.displayName).tag(behavior)
+                    }
+                }
+            }
+
+            Section("Font Size") {
+                Slider(value: $state.settings.fontSize, in: 11...20, step: 1)
+                HStack {
+                    Text("Small")
+                    Spacer()
+                    Text("\(Int(state.settings.fontSize))pt")
+                    Spacer()
+                    Text("Large")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+    }
 }
 
 // MARK: - Engines
 
 private struct EnginesSettings: View {
- @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
 
- public var body: some View {
- Form {
- Section("Engine Paths") {
- HStack {
- Text("Claude Code")
- TextField("Path", text: $appState.settings.claudeCodePath)
- }
- HStack {
- Text("Codex")
- TextField("Path", text: $appState.settings.codexPath)
- }
- HStack {
- Text("Cursor")
- TextField("Path", text: $appState.settings.cursorPath)
- }
- }
+    var body: some View {
+        @Bindable var state = appState
 
- Section("Default Provider") {
- Picker("LLM Provider", selection: $appState.settings.llmProvider) {
- Text("Anthropic").tag("anthropic")
- Text("OpenAI").tag("openai")
- Text("Google").tag("google")
- }
- }
- }
- }
+        Form {
+            Section("Engine Paths") {
+                HStack {
+                    Text("Claude Code")
+                    TextField("Path", text: $state.settings.claudeCodePath)
+                }
+                HStack {
+                    Text("Codex")
+                    TextField("Path", text: $state.settings.codexPath)
+                }
+                HStack {
+                    Text("Cursor")
+                    TextField("Path", text: $state.settings.cursorPath)
+                }
+            }
+
+            Section("Default Provider") {
+                Picker("LLM Provider", selection: $state.settings.llmProvider) {
+                    Text("Anthropic").tag("anthropic")
+                    Text("OpenAI").tag("openai")
+                    Text("Google").tag("google")
+                }
+            }
+        }
+        .padding()
+    }
 }
 
 // MARK: - Privacy
 
 private struct PrivacySettings: View {
- @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
 
- public var body: some View {
- Form {
- Section("Analytics") {
- Toggle("Usage analytics", isOn: $appState.settings.telemetryEnabled)
- Text("Anonymous usage data helps improve BridgeMind One. No prompts or messages are sent.")
- .font(.caption)
- .foregroundStyle(.secondary)
- }
+    var body: some View {
+        @Bindable var state = appState
 
- Section("Security") {
- Text("Credentials stored in macOS Keychain with CryptoKit encryption.")
- .font(.caption)
- .foregroundStyle(.secondary)
- }
+        Form {
+            Section("Analytics") {
+                Toggle("Usage analytics", isOn: $state.settings.telemetryEnabled)
+                Text("Anonymous usage data helps improve BridgeMind One. No prompts or messages are sent.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
- Section("Data") {
- Button("Clear all chat history") {
- appState.sessions.removeAll()
- appState.currentSession = nil
- }
- .foregroundStyle(.red)
- }
- }
- }
+            Section("Security") {
+                Text("Credentials stored in macOS Keychain with CryptoKit encryption.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Data") {
+                Button("Clear all chat history") {
+                    appState.sessions.removeAll()
+                    appState.currentSessionId = nil
+                }
+                .foregroundStyle(.red)
+            }
+        }
+        .padding()
+    }
 }
 
 // MARK: - Appearance
 
 private struct AppearanceSettings: View {
- @EnvironmentObject private var appState: AppState
+    @Environment(AppState.self) private var appState
 
- public var body: some View {
- Form {
- Section("Theme") {
- Picker("Appearance", selection: $appState.settings.theme) {
- ForEach(AppTheme.allCases, id: \.self) { theme in
- Text(theme.displayName).tag(theme)
- }
- }
- }
- }
- }
-}
+    var body: some View {
+        @Bindable var state = appState
 
-private extension StartupBehavior {
- var displayName: String {
- switch self {
- case .restoreLastSession: return "Restore last session"
- case .showWelcome: return "Show welcome screen"
- case .createNewChat: return "Create new chat"
- }
- }
-}
-
-private extension AppTheme {
- var displayName: String {
- switch self {
- case .system: return "System"
- case .light: return "Light"
- case .dark: return "Dark"
- }
- }
+        Form {
+            Section("Theme") {
+                Picker("Appearance", selection: $state.settings.theme) {
+                    ForEach(AppTheme.allCases) { theme in
+                        Text(theme.displayName).tag(theme)
+                    }
+                }
+            }
+        }
+        .padding()
+    }
 }
