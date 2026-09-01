@@ -3,7 +3,7 @@
 // Real Anthropic Claude Messages API implementation
 //
 // Uses URLSession with streaming SSE response parsing.
-// Supports multi-turn context, tool definitions, and .
+// Supports multi-turn context, tool definitions, and streaming.
 //
 
 import Foundation
@@ -65,46 +65,38 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  }
  }
 
+ return AsyncStream { continuation in
+ Task {
+ do {
  var request = URLRequest(url: url)
  request.httpMethod = "POST"
  request.setValue("application/json", forHTTPHeaderField: "Content-Type")
  request.setValue(resolvedKey, forHTTPHeaderField: "x-api-key")
  request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
- request.setValue("claude-bridge-mind/1.0", forHTTPHeaderField: "anthropic-dangerous-direct-browser-access")
 
- do {
  let bodyData = try JSONEncoder().encode(requestBody)
  request.httpBody = bodyData
 
- let (stream, response) = try URLSession.shared.bytes(for: request)
+ let (byteStream, response) = try await URLSession.shared.bytes(for: request)
 
  guard let httpResponse = response as? HTTPURLResponse else {
- return AsyncStream { continuation in
  continuation.yield(.error("Invalid server response"))
  continuation.finish()
- }
+ return
  }
 
  if httpResponse.statusCode != 200 {
- return AsyncStream { continuation in
- let errorDetail: String
- if let body = try? JSONDecoder().decode([String: String].self, from: Data(stream as! [UInt8])) {
- errorDetail = body["error"] ?? body["message"] ?? String(httpResponse.statusCode)
- } else {
- errorDetail = "HTTP \(httpResponse.statusCode)"
- }
- continuation.yield(.error("API error (\(httpResponse.statusCode)): \(errorDetail)"))
+ let errorBody = String(decoding: Array(byteStream), as: UTF8.self)
+ let truncated = String(errorBody.prefix(500))
+ continuation.yield(.error("API error (\(httpResponse.statusCode)): \(truncated)"))
  continuation.finish()
- }
+ return
  }
 
- return AsyncStream { continuation in
- Task {
- do {
- let buffer = NSMutableData()
- for try await byte in stream {
+ var buffer = [UInt8]()
+ for try await byte in byteStream {
  buffer.append(byte)
- let events = parseSSEBytes(buffer as Data)
+ let events = parseSSEBytes(buffer)
  for event in events {
  continuation.yield(event)
  if case .done = event {
@@ -117,8 +109,8 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  }
  }
  }
- // Flush any remaining data
- let finalEvents = parseSSEBytes(buffer as Data)
+
+ let finalEvents = parseSSEBytes(buffer)
  for event in finalEvents {
  continuation.yield(event)
  if case .done = event {
@@ -130,19 +122,13 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  return
  }
  }
+
  continuation.yield(.done)
  continuation.finish()
  } catch {
- continuation.yield(.error(error.localizedDescription))
- continuation.finish()
- }
- }
- }
-
- } catch {
- return AsyncStream { continuation in
  continuation.yield(.error("Network error: \(error.localizedDescription)"))
  continuation.finish()
+ }
  }
  }
  }
@@ -186,15 +172,9 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  for message in context {
  switch message.role {
  case .system:
- if let text = message.content.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) {
  systemMessages.append(message.content)
- }
  case .user:
  var contentBlocks: [AnthropicContentBlock] = [.text(message.content)]
- // If this message triggered tool results, add them as user content
- if message.content.hasPrefix("[Tool Result]") {
- contentBlocks = [.text(message.content)]
- }
  conversation.append(.user(contentBlocks))
  case .assistant:
  var assistantBlocks: [AnthropicContentBlock] = []
@@ -210,25 +190,29 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  }
  conversation.append(.assistant(assistantBlocks))
  case .tool:
- // Tool results come as user messages in Anthropic's format
  conversation.append(.user([.toolResult(id: message.toolCallId ?? UUID().uuidString, content: message.content)]))
- }
- }
-
- // If last message is from assistant with tool_use, we don't send it yet (the engine handles that)
- if let last = conversation.last, case .assistant = last {
- if conversation.count > 1, case .user = conversation[conversation.count - 2] {
- // keep the conversation as-is for multi-turn tool use
  }
  }
 
  // Convert MCP tools to Anthropic tool format
  let anthropicTools: [AnthropicToolDefinition] = tools.map { tool in
- let schema = tool.inputSchema.dictionaryValue ?? ["type": "object", "properties": [:]]
+ let rawSchema = tool.inputSchema.dictionaryValue ?? ["type": "object", "properties": JSONValue.object([:])]
+ let converted: [String: JSONValue] = rawSchema.mapValues { value in
+ switch value {
+ case .string(let s):
+ if let data = s.data(using: .utf8),
+ let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+ return JSONValue.object(decoded.mapValues { JSONValue($0) })
+ }
+ return .string(s)
+ default:
+ return value
+ }
+ }
  return AnthropicToolDefinition(
  name: tool.name,
  description: tool.description,
- inputSchema: schema
+ inputSchema: JSONValue.object(converted)
  )
  }
 
@@ -244,12 +228,11 @@ public struct AnthropicProvider: LLMProvider, Sendable {
 
  // MARK: - SSE Parser
 
- private func parseSSEBytes(_ buffer: Data) -> [ChatStreamEvent] {
- guard let text = String(data: buffer, encoding: .utf8) else { return [] }
+ private func parseSSEBytes(_ buffer: [UInt8]) -> [ChatStreamEvent] {
+ guard let text = String(bytes: buffer, encoding: .utf8) else { return [] }
 
  let lines = text.components(separatedBy: .newlines)
  var events: [ChatStreamEvent] = []
- var currentEventType = ""
  var currentData = ""
 
  for line in lines {
@@ -261,13 +244,10 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  if let ev = event { events.append(ev) }
  }
  currentData = ""
- currentEventType = ""
  continue
  }
 
- if trimmed.hasPrefix("event:") {
- currentEventType = String(trimmed.dropFirst(7)).trimmingCharacters(in: .whitespaces)
- } else if trimmed.hasPrefix("data:") {
+ if trimmed.hasPrefix("data:") {
  currentData = String(trimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
  }
  }
@@ -278,62 +258,42 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  private func parseAnthropicEvent(data: String) -> ChatStreamEvent? {
  guard let jsonData = data.data(using: .utf8) else { return nil }
 
- // Try to parse as a dictionary first to check event type
- if let dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
- // Check for error
+ // Parse as dictionary to inspect event type
+ guard let dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+ return nil
+ }
+
+ // Error response
  if let error = dict["error"] as? [String: Any] {
  let message = error["message"] as? String ?? "Unknown API error"
  return .error(message)
  }
 
- // Check for content block delta (streaming text)
+ // Content block delta — streaming text chunk
  if let type = dict["type"] as? String, type == "content_block_delta",
  let delta = dict["delta"] as? [String: Any],
  let text = delta["text"] as? String {
  return .chunk(text)
  }
 
- // Check for content block start (tool use)
- if let type = dict["type"] as? String, type == "content_block_start",
- let contentBlock = dict["content_block"] as? [String: Any],
- let blockType = contentBlock["type"] as? String, blockType == "tool_use" {
- // Tool use started — signal via chunk with metadata
- return .chunk("[TOOL_USE_START]")
- }
-
- // Check for message_start
- if let type = dict["type"] as? String, type == "message_start" {
- return nil // ignore, just setup
- }
-
- // Check for message_delta (stop reason)
- if let type = dict["type"] as? String, type == "message_delta" {
- if let stopReason = dict["stop_reason"] as? String, stopReason == "tool_use" {
- return .chunk("[TOOL_USE_REQUEST]")
- }
- return .done
- }
-
- // Check for ping
- if let type = dict["type"] as? String, type == "ping" {
+ // Content block start (tool use beginning)
+ if let type = dict["type"] as? String, type == "content_block_start" {
  return nil
  }
- }
 
- // Try parsing as structured Anthropic response types
- if let event = try? JSONDecoder().decode(AnthropicContentBlockDelta.self, from: jsonData) {
- if let text = event.delta?.text {
- return .chunk(text)
- }
- }
-
- if let event = try? JSONDecoder().decode(AnthropicMessageDelta.self, from: jsonData) {
- if event.stopReason == "end_turn" || event.stopReason == "stop_sequence" {
- return .done
- }
- if event.stopReason == "tool_use" {
+ // Message delta — signals completion or tool use
+ if let type = dict["type"] as? String, type == "message_delta",
+ let deltaDict = dict["delta"] as? [String: Any] {
+ let stopReason = deltaDict["stop_reason"] as? String
+ if stopReason == "tool_use" {
  return .chunk("[TOOL_USE_REQUEST]")
  }
+ return .done
+ }
+
+ // Ping — no-op
+ if let type = dict["type"] as? String, type == "ping" {
+ return nil
  }
 
  return nil
@@ -342,7 +302,7 @@ public struct AnthropicProvider: LLMProvider, Sendable {
 
 // MARK: - Anthropic API Types
 
-private struct AnthropicMessagesRequest: Codable {
+private struct AnthropicMessagesRequest: Codable, Equatable, Sendable {
  let model: String
  let maxTokens: Int
  let system: String?
@@ -452,23 +412,6 @@ private struct AnthropicToolDefinition: Codable, Equatable, Sendable {
  let name: String
  let description: String
  let inputSchema: JSONValue
-}
-
-private struct AnthropicContentBlockDelta: Codable, Equatable, Sendable {
- let type: String?
- let delta: AnthropicDelta?
-}
-
-private struct AnthropicDelta: Codable, Equatable, Sendable {
- let type: String?
- let text: String?
- let partialJson: String?
-}
-
-private struct AnthropicMessageDelta: Codable, Equatable, Sendable {
- let type: String?
- let delta: AnthropicDelta?
- let stopReason: String?
 }
 
 // MARK: - Errors
