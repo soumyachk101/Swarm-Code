@@ -291,7 +291,7 @@ public actor ClaudeEngine: AgentEngine, Sendable {
  switch chunk.type {
  case "content_block_delta":
  if let delta = chunk.delta {
- continuation.yield(.text(delta.text))
+ continuation.yield(.text(delta.text ?? ""))
  }
  case "tool_use_delta":
  if let delta = chunk.delta {
