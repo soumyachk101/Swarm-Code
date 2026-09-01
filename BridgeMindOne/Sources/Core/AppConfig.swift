@@ -8,6 +8,7 @@ import Foundation
 public struct AppConfig {
  // MARK: - App Identity
  public static let bundleIdentifier = "ai.bridgemind.one"
+ public static let appIdentifier = "ai.bridgemind.one"
  public static let appName = "BridgeMind"
  public static let displayName = "BridgeMind One"
 
