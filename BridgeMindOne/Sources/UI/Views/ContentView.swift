@@ -1,6 +1,11 @@
 //
 // ContentView.swift
-// BridgeMind One — Complete 3-Column macOS Window Layout matching Screenshot
+// BridgeMind One — Master 3-Mode Functional Router
+//
+// Routes seamlessly between:
+// 1. Agent Mode: Multi-agent orchestration with MCP tools & subagents
+// 2. Code Mode: Single-agent coding workspace with editor & terminal
+// 3. Chat Mode: Direct conversational AI with multi-model switcher
 //
 
 import SwiftUI
@@ -18,24 +23,34 @@ public struct ContentView: View {
             // Top Navigation Header with [ Agent | Code | Chat ] and Bell
             TopNavHeaderView()
 
-            // 3-Pane Main Body
+            // 3-Pane Body depending on top mode
             HStack(spacing: 0) {
-                // Left Sidebar (Dashboard, Routines, Plugins, Skills, Agents, Notch, Credits, Profile)
+                // Left Sidebar (Always accessible)
                 LeftSidebarView()
 
                 Divider()
                     .background(BMColors.borderSubtle)
 
-                // Middle Pane (Chats list / Plugins / Skills switch)
+                // Main Content Switching
                 if appState.selectedLeftSection == .plugins {
                     PluginsPanelView()
                 } else if appState.selectedLeftSection == .skills {
                     SkillsView()
                 } else {
-                    MiddlePaneView()
+                    switch appState.topMode {
+                    case .agent:
+                        // Multi-Agent Orchestration Mode
+                        MiddlePaneView()
+                        ExactChatView()
 
-                    // Right Main Timeline Pane
-                    ExactChatView()
+                    case .code:
+                        // Single-Agent Code Mode
+                        CodeModeView()
+
+                    case .chat:
+                        // Direct AI Chat Mode
+                        DirectChatModeView()
+                    }
                 }
             }
         }
