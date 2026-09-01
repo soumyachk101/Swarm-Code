@@ -88,7 +88,7 @@ public actor AgentProcess: Sendable {
     public func start() async throws {
         guard !isRunning else { return }
         guard Self.isExecutable(config.binaryPath) else {
-            throw AgentError.binaryNotFound(config.binaryPath)
+            throw AgentEngineError.notFound
         }
 
         let p = Process()
@@ -144,7 +144,7 @@ public actor AgentProcess: Sendable {
 
     public func writeStringToStdin(_ string: String) async throws {
         guard let stdinPipe, isRunning else {
-            throw AgentError.notRunning
+            throw AgentEngineError.notConnected
         }
         let data = Data(string.utf8)
         try stdinPipe.fileHandleForWriting.write(contentsOf: data)
