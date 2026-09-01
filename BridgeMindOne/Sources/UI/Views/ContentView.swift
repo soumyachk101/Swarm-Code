@@ -8,7 +8,6 @@ import Core
 
 public struct ContentView: View {
     @Environment(AppState.self) private var appState
-    @State private var showSidebar: Bool = true
 
     public init() {}
 
@@ -16,9 +15,10 @@ public struct ContentView: View {
         @Bindable var state = appState
 
         NavigationSplitView(columnVisibility: .constant(.all)) {
-            threadSidebar
+            ThreadSidebarView()
+                .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
         } detail: {
-            chatDetail
+            detailPane
         }
         .navigationSplitViewStyle(.balanced)
         .sheet(isPresented: $state.isAboutSheetPresented) {
@@ -54,34 +54,20 @@ public struct ContentView: View {
             }
         }
     }
-}
 
-// MARK: - Thread Sidebar
-
-private extension ContentView {
-    var threadSidebar: some View {
-        ThreadSidebarView()
-    }
-}
-
-// MARK: - Chat Detail
-
-private extension ContentView {
-    var chatDetail: some View {
-        ZStack {
-            switch appState.sidebarSelection {
-            case .chat:
-                ChatView()
-            case .plugins:
-                PluginsPanelView()
-            case .autoPilot:
-                AgentsView()
-            case .settings:
-                SettingsView()
-            case .skills:
-                Text("Skills")
-                    .foregroundStyle(.secondary)
-            }
+    @ViewBuilder
+    private var detailPane: some View {
+        switch appState.sidebarSelection {
+        case .chat:
+            ChatView()
+        case .plugins:
+            PluginsPanelView()
+        case .autoPilot:
+            AgentsView()
+        case .skills:
+            SkillsView()
+        case .settings:
+            SettingsView()
         }
     }
 }
