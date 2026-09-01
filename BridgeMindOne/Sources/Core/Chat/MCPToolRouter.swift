@@ -10,16 +10,16 @@ import Foundation
 public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  private let pluginRegistry: PluginRegistry
  private let credentialStore: CredentialStore
- private let defaultTimeout: Duration
+ private let defaultTimeoutNanoseconds: UInt64
 
  public init(
  pluginRegistry: PluginRegistry,
  credentialStore: CredentialStore,
- defaultTimeout: Duration = .seconds(30)
+ defaultTimeoutSeconds: Int = 30
  ) {
  self.pluginRegistry = pluginRegistry
  self.credentialStore = credentialStore
- self.defaultTimeout = defaultTimeout
+ self.defaultTimeoutNanoseconds = UInt64(defaultTimeoutSeconds) * 1_000_000_000
  }
 
  // MARK: - MCPToolRouter
@@ -27,7 +27,7 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  public func callTool(_ call: ToolCall) async throws -> String {
  let pluginId = extractPluginId(from: call.name)
 
- guard let transport = pluginRegistry.transport(for: pluginId) else {
+ guard let transport = await pluginRegistry.transport(for: pluginId) else {
  throw ToolRouterError.pluginNotConnected(pluginId)
  }
 
@@ -40,33 +40,35 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  ])
  )
 
- do {
  let response = try await withThrowingTaskGroup(of: String.self) { group in
  group.addTask {
  try await self.sendWithTimeout(transport: transport, request: request)
  }
- for try await result in group {
+ group.addTask {
+ try? await Task.sleep(nanoseconds: self.defaultTimeoutNanoseconds)
+ throw ToolRouterError.timeout
+ }
+
+ if let result = try await group.next() {
  return result
  }
- throw NSError(domain: "MCPToolRouter", code: -1, userInfo: [NSLocalizedDescriptionKey: "No result from tool execution"])
- }
- } catch {
- throw ToolRouterError.executionFailed(call.name, error.localizedDescription)
+ throw ToolRouterError.timeout
  }
  }
 
  public func listAvailableTools(pluginIds: [String]?) async throws -> [MCPTool] {
+ let allIds = await pluginRegistry.allPluginIds()
  let targets: [String]
  if let pluginIds = pluginIds, !pluginIds.isEmpty {
  targets = pluginIds
  } else {
- targets = Array(pluginRegistry.allPluginIds())
+ targets = allIds
  }
 
  var allTools: [MCPTool] = []
 
  for pluginId in targets {
- guard let transport = pluginRegistry.transport(for: pluginId) else {
+ guard let transport = await pluginRegistry.transport(for: pluginId) else {
  continue
  }
 
@@ -92,7 +94,6 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  }
  }
  } catch {
- // Skip tools from plugins that fail to respond
  continue
  }
  }
@@ -103,31 +104,26 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  // MARK: - Private
 
  private func extractPluginId(from toolName: String) -> String {
- // Tool names may be prefixed with "pluginId:toolName" or just "toolName"
  if let colonIndex = toolName.firstIndex(of: ":") {
  return String(toolName[..<colonIndex])
  }
- // Fallback: check all connected plugins to find which owns this tool
- return findOwningPlugin(for: toolName) ?? "unknown"
+ return findConnectedPluginId(for: toolName) ?? "unknown"
  }
 
- private func findOwningPlugin(for toolName: String) -> String? {
- let allIds = pluginRegistry.allPluginIds()
+ private func findConnectedPluginId(for toolName: String) -> String? {
+ let allIds = await pluginRegistry.allPluginIds()
  for pluginId in allIds {
- if pluginRegistry.isConnected(pluginId) {
- // Quick heuristic: check if tool name contains plugin identifier
+ let connected = await pluginRegistry.isConnected(pluginId)
+ if connected {
  if toolName.lowercased().contains(pluginId.lowercased()) {
  return pluginId
  }
  }
  }
- // Default: return first connected plugin (should be refined by the caller)
- return allIds.first { pluginRegistry.isConnected($0) }
+ return allIds.first { await pluginRegistry.isConnected($0) }
  }
 
  private func sendWithTimeout(transport: AnyTransport, request: JSONRPCRequest) async throws -> String {
- try await withThrowingTaskGroup(of: String.self) { group in
- group.addTask {
  let response = try await transport.sendRequest(request)
 
  if let error = response.error {
@@ -135,22 +131,10 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  }
 
  if let result = response.result {
- // Extract text content from tool result
  return extractTextContent(from: result)
  }
 
  return "Tool executed successfully (no content)"
- }
-
- // Timeout after defaultTimeout
- group.addTask {
- try? await Task.sleep(nanoseconds: UInt64(self.defaultTimeout.inNanoseconds))
- throw ToolRouterError.timeout
- }
-
- let result = try await group.next()!
- return result
- }
  }
 
  private func extractTextContent(from result: JSONValue) -> String {
@@ -196,17 +180,5 @@ public enum ToolRouterError: Error, Equatable, LocalizedError {
  case .remoteError(let msg):
  return "Remote tool error: \(msg)"
  }
- }
-}
-
-// MARK: - Duration helper
-
-extension Duration {
- static func seconds(_ s: Int) -> Duration {
- .seconds(Double(s))
- }
-
- var inNanoseconds: UInt64 {
- UInt64(self.timeInterval * 1_000_000_000)
  }
 }
