@@ -115,9 +115,7 @@ public struct ThreadSidebarView: View {
             .background(.ultraThinMaterial)
         }
         .onChange(of: appState.selectedThreadId) { _, newId in
-            if let newId {
-                appState.selectSession(id: newId)
-            }
+            appState.selectSession(id: newId)
         }
     }
 

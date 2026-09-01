@@ -8,6 +8,44 @@ import Core
 
 public typealias PluginState = PluginRuntimeState
 
+// MARK: - Startup Behavior & App Theme
+
+public enum StartupBehavior: String, CaseIterable, Identifiable, Codable, Sendable {
+    case lastSession = "Resume Last Session"
+    case newChat = "Open New Chat"
+    case welcome = "Show Welcome Screen"
+
+    public var id: String { rawValue }
+    public var displayName: String { rawValue }
+}
+
+public enum AppTheme: String, CaseIterable, Identifiable, Codable, Sendable {
+    case system = "System"
+    case dark = "Dark"
+    case light = "Light"
+
+    public var id: String { rawValue }
+    public var displayName: String { rawValue }
+}
+
+// MARK: - Settings Data
+
+public struct SettingsData: Codable, Sendable {
+    public var autoSaveEnabled: Bool = true
+    public var notificationsEnabled: Bool = true
+    public var voiceDictationEnabled: Bool = false
+    public var startupBehavior: StartupBehavior = .lastSession
+    public var fontSize: Double = 14.0
+    public var claudeCodePath: String = "claude"
+    public var codexPath: String = "codex"
+    public var cursorPath: String = "cursor"
+    public var llmProvider: String = "anthropic"
+    public var telemetryEnabled: Bool = false
+    public var theme: AppTheme = .dark
+
+    public init() {}
+}
+
 public enum TopNavMode: String, CaseIterable, Identifiable, Sendable {
     case agent = "Agent"
     case code = "Code"
@@ -219,6 +257,10 @@ public final class AppState: ObservableObject, @unchecked Sendable {
     public var username: String = "Bridgemindapps"
     public var isPro: Bool = true
 
+    // MARK: - Processing State
+    public var isProcessing: Bool = false
+    public var statusMessage: String = "Ready"
+
     // MARK: - Legacy Compatibility
     public var activeAgent: EngineType = .claude
     public var orbState: OrbState = .idle
@@ -228,7 +270,7 @@ public final class AppState: ObservableObject, @unchecked Sendable {
     public var showPlugins: Bool = false
     public var isAutoPilotEnabled: Bool = false
     public var sidebarSelection: SidebarItem = .chat
-    public var settings = SettingsData()
+    public var settings: SettingsData = SettingsData()
 
     public enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
         case chat = "Chat"
@@ -256,6 +298,7 @@ public final class AppState: ObservableObject, @unchecked Sendable {
 
     public var plugins: [PluginIdentity: PluginRuntimeState] = [:]
     public var sessions: [ChatSession] = []
+    public var currentSessionId: String? = nil
     public var currentSession: ChatSession? = nil
 
     public init(core: Any? = nil) {
@@ -285,5 +328,5 @@ public final class AppState: ObservableObject, @unchecked Sendable {
     public func openDocumentation() {}
     public func openIssueReporter() {}
     public func deleteSession(_ session: ChatSession) {}
-    public func selectSession(id: String) {}
+    public func selectSession(id: String) { selectedThreadId = id }
 }
