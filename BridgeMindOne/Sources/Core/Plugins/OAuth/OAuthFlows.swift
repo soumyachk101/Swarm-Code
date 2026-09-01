@@ -13,11 +13,7 @@ public protocol MCPOAuthURLValidating: Sendable {
 }
 
 public protocol MCPOAuthScopeSelecting: Sendable {
- func selectScopes(for plugin: PluginIdentity) -> [String]
-}
-
-public protocol MCPHTTPClientAuthorizer {
- func authorize(request: inout URLRequest, session: MCPSession?) async throws
+    func selectScopes(for plugin: PluginIdentity) -> [String]
 }
 
 public protocol MCPOAuthTokenRequesting: Sendable {
