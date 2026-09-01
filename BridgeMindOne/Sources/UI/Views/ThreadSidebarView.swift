@@ -185,9 +185,10 @@ private extension ThreadSidebarView {
     }
 
     func deleteSessions(at offsets: IndexSet) {
+        let current = filteredSessions
         for index in offsets {
-            if let session = filteredSessions[safe: index] {
-                appState.deleteSession(session)
+            if current.indices.contains(index) {
+                appState.deleteSession(current[index])
             }
         }
     }
