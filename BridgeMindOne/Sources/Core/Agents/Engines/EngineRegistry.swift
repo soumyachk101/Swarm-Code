@@ -9,141 +9,23 @@ import Combine
 // MARK: - Agent Engine Protocol
 
 public protocol AgentEngine: Sendable {
- associatedtype StreamChunk
+ associatedtype StreamChunk: Sendable
  var type: EngineType { get }
  var displayName: String { get }
  var iconName: String { get }
+ var configuration: EngineConfiguration { get }
  var supportsStreaming: Bool { get }
  var supportsToolUse: Bool { get }
  var supportsMultiTurn: Bool { get }
- var configuration: EngineConfiguration { get }
 
  func connect() async throws
  func disconnect() async throws
- func sendMessage(_ message: AgentMessage, session: AgentSession) async throws -> AsyncThrowingStream<StreamChunk, any Error>
+ func sendMessage(
+ _ message: AgentMessage,
+ session: AgentSession
+ ) async throws -> AsyncThrowingStream<AgentStreamChunk, any Error>
  func cancelGeneration() async throws
  func healthCheck() async -> EngineHealth
-}
-
-// MARK: - Engine Types
-
-public struct EngineConfiguration: Codable, Equatable, Sendable {
- public let engineType: EngineType
- public let binaryPath: String?
- public let model: String
- public let supportsStreaming: Bool
- public let supportsToolUse: Bool
- public let supportsMultiTurn: Bool
- public let autoRestart: Bool
- public let maxRestartAttempts: Int
- public let restartDelay: Duration
-
- public init(
- engineType: EngineType,
- binaryPath: String? = nil,
- model: String = "default",
- supportsStreaming: Bool = true,
- supportsToolUse: Bool = true,
- supportsMultiTurn: Bool = true,
- autoRestart: Bool = true,
- maxRestartAttempts: Int = 3,
- restartDelay: Duration = .seconds(2)
- ) {
- self.engineType = engineType
- self.binaryPath = binaryPath
- self.model = model
- self.supportsStreaming = supportsStreaming
- self.supportsToolUse = supportsToolUse
- self.supportsMultiTurn = supportsMultiTurn
- self.autoRestart = autoRestart
- self.maxRestartAttempts = maxRestartAttempts
- self.restartDelay = restartDelay
- }
-}
-
-public struct AgentMessage: Codable, Equatable, Sendable {
- public let content: String
- public let sessionId: String?
- public let metadata: [String: String]?
-
- public init(content: String, sessionId: String? = nil, metadata: [String: String]? = nil) {
- self.content = content
- self.sessionId = sessionId
- self.metadata = metadata
- }
-}
-
-public struct AgentSession: Codable, Equatable, Identifiable, Sendable {
- public let id: String
- public var messages: [AgentMessage]
- public public let createdAt: Date
- public public let updatedAt: Date
-
- public init(id: String = UUID().uuidString, messages: [AgentMessage] = [], createdAt: Date = Date(), updatedAt: Date = Date()) {
- self.id = id
- self.messages = messages
- self.createdAt = createdAt
- self.updatedAt = updatedAt
- }
-}
-
-public struct AgentStreamChunk: Equatable, Sendable {
- public let content: String
- public let isFinal: Bool
- public let usage: TokenUsage?
-
- public init(content: String = "", isFinal: Bool = false, usage: TokenUsage? = nil) {
- self.content = content
- self.isFinal = isFinal
- self.usage = usage
- }
-}
-
-public struct TokenUsage: Equatable, Sendable {
- public let promptTokens: Int
- public let completionTokens: Int
- public let totalTokens: Int
-
- public init(promptTokens: Int = 0, completionTokens: Int = 0, totalTokens: Int = 0) {
- self.promptTokens = promptTokens
- self.completionTokens = completionTokens
- self.totalTokens = totalTokens
- }
-}
-
-public struct EngineHealth: Equatable, Sendable {
- public let status: EngineStatus
- public let message: String?
-
- public init(status: EngineStatus = .unknown, message: String? = nil) {
- self.status = status
- self.message = message
- }
-}
-
-public enum EngineStatus: String, Codable, Equatable {
- case healthy
- case degraded
- case unhealthy
- case unknown
-}
-
-public enum AgentEngineError: Error, Equatable {
- case notFound
- case binaryNotFound(String)
- case configurationError(String)
- case communicationError(String)
- case processFailed(Int32)
-
- public var localizedDescription: String {
- switch self {
- case .notFound: return "Engine not found"
- case .binaryNotFound(let b): return "Binary not found: \(b)"
- case .configurationError(let msg): return "Configuration error: \(msg)"
- case .communicationError(let msg): return "Communication error: \(msg)"
- case .processFailed(let code): return "Process failed with code \(code)"
- }
- }
 }
 
 // MARK: - Engine Registry
@@ -235,7 +117,7 @@ public actor EngineRegistry: Sendable {
  }
  return results
  }
- }
+}
 
  public func detectEngine(_ type: EngineType) async -> DetectionResult {
  let binaryName = defaultBinaryName(for: type)
