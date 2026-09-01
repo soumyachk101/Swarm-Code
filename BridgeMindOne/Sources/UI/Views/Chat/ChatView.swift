@@ -55,7 +55,7 @@ public struct ChatView: View {
                 Button(action: sendMessage) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
-                        .foregroundStyle(isProcessing || messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .secondary : .tint)
+                        .foregroundStyle(isProcessing || messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tint))
                 }
                 .keyboardShortcut(.return, modifiers: [])
                 .disabled(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isProcessing)

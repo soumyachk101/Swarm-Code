@@ -114,7 +114,7 @@ private extension AgentDetailView {
  HStack(spacing: 16) {
  ZStack {
  Circle()
- .fill(OrbView.stateColor(statusState))
+ .fill(status?.status == .healthy ? Color.green : Color.orange)
  .frame(width: 48, height: 48)
 
  Image(systemName: engineIcon)
@@ -261,25 +261,25 @@ private func engineDescription(for engine: EngineType) -> String {
 
 // MARK: - Section Card
 
-private struct SectionCard: View {
- let title: String
- let content: some View
+private struct SectionCard<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
 
- var body: some View {
- VStack(alignment: .leading, spacing: 0) {
- Text(title)
- .font(.headline)
- .padding(.bottom, 8)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.headline)
+                .padding(.bottom, 8)
 
- content
- .padding()
- .frame(maxWidth: .infinity, alignment: .leading)
- .background(
- RoundedRectangle(cornerRadius: 8)
- .fill(Color(nsColor: .controlBackgroundColor))
- )
- }
- }
+            content()
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+        }
+    }
 }
 
 // MARK: - Preview
