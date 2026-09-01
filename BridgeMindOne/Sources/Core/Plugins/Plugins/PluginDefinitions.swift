@@ -645,17 +645,17 @@ public enum AllPlugins: Sendable, CaseIterable, Equatable {
  .map(\.identity)
 
  /// Plugins requiring OAuth authentication.
- public static let oauthPlugins: [PluginIdentity] {
+ public static var oauthPlugins: [PluginIdentity] {
  all.filter { $0.authType == .oauth }
  }
 
  /// Plugins using API key authentication.
- public static let apiKeyPlugins: [PluginIdentity] {
+ public static var apiKeyPlugins: [PluginIdentity] {
  all.filter { $0.authType == .apiKey }
  }
 
  /// Plugins with no authentication (built-in / local).
- public static let noAuthPlugins: [PluginIdentity] {
+ public static var noAuthPlugins: [PluginIdentity] {
  all.filter { $0.authType == .none }
  }
 
