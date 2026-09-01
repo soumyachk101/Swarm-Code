@@ -354,7 +354,7 @@ public final class MCPLoopbackTransport: MCPTransport {
 		nwParameters.requiredInterfaceType = .loopback
 		nwParameters.allowLocalEndpointReuse = true
 
-		let listener = try NWListener(using: nwParameters, on: .init(rawValue: Int(port)))
+		let listener = try NWListener(using: nwParameters, on: NWEndpoint.Port(rawValue: port) ?? .any)
 
 		let connectionHandler: (NWConnection) -> Void = { [weak self] nwConnection in
 			guard let self else { return }
@@ -362,11 +362,13 @@ public final class MCPLoopbackTransport: MCPTransport {
 		}
 
 		listener.newConnectionHandler = connectionHandler
-		listener.stateUpdateHandler = { [weak self] state in
+		listener.stateUpdateHandler = { [weak self] (state: NWListener.State) in
 			switch state {
 			case .ready:
 				self?.transportQueue.async(flags: .barrier) {
-					self?.resolvedPort = UInt16(listener.port!.rawValue)
+					if let p = listener.port {
+						self?.resolvedPort = p.rawValue
+					}
 				}
 			case .failed(let error):
 				self?.reportError(error)
@@ -403,14 +405,16 @@ public final class MCPLoopbackTransport: MCPTransport {
 
 		Task { [weak self] in
 			guard let self else { return }
+			var activeConnection: ActiveConnection?
 			do {
-				let stream = try await NWConnectionStream(nwConnection)
+				let stream = NWConnectionStream(nwConnection)
 				let remoteAddress = nwConnection.endpoint.debugDescription
 				let active = ActiveConnection(
 					pluginId: nil,
 					remoteAddress: remoteAddress,
 					stream: stream
 				)
+				activeConnection = active
 
 				transportQueue.async(flags: .barrier) {
 					self.connections[active.id] = active
@@ -421,7 +425,9 @@ public final class MCPLoopbackTransport: MCPTransport {
 				self.reportError(error)
 				transportQueue.async(flags: .barrier) { [weak self] in
 					guard let self else { return }
-					self.connections.removeValue(forKey: active.id)
+					if let activeConnection {
+						self.connections.removeValue(forKey: activeConnection.id)
+					}
 					self.connectionCount = max(0, self.connectionCount - 1)
 				}
 			}
@@ -498,7 +504,8 @@ public final class MCPLoopbackTransport: MCPTransport {
 	private func startBSDListener() throws -> any Listener {
 		let fd = Darwin.socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
 		guard fd >= 0 else {
-			throw MCPTransportError.ioError("socket() failed: \(Darwin.strerror(Darwin.errno) ?? "unknown")")
+			let errStr = String(cString: Darwin.strerror(Darwin.errno))
+			throw MCPTransportError.ioError("socket() failed: \(errStr)")
 		}
 
 		var opt: Int32 = 1
@@ -517,12 +524,14 @@ public final class MCPLoopbackTransport: MCPTransport {
 
 		guard bindResult == 0 else {
 			Darwin.close(fd)
-			throw MCPTransportError.ioError("bind() failed: \(Darwin.strerror(Darwin.errno) ?? "unknown")")
+			let errStr = String(cString: Darwin.strerror(Darwin.errno))
+			throw MCPTransportError.ioError("bind() failed: \(errStr)")
 		}
 
 		guard Darwin.listen(fd, SOMAXCONN) == 0 else {
 			Darwin.close(fd)
-			throw MCPTransportError.ioError("listen() failed: \(Darwin.strerror(Darwin.errno) ?? "unknown")")
+			let errStr = String(cString: Darwin.strerror(Darwin.errno))
+			throw MCPTransportError.ioError("listen() failed: \(errStr)")
 		}
 
 		// Determine the actual bound port via getsockname.
@@ -538,77 +547,43 @@ public final class MCPLoopbackTransport: MCPTransport {
 		resolvedPort = actualPort
 
 		let transport = BSDListenerTransport(socket: fd, port: actualPort) { [weak self] connection in
-			self?.dispatchBSDFallback(connection)
+			self?.dispatchIncoming(connection)
 		}
 		transport.start()
 		return transport
 	}
 
-	private func dispatchBSDFallback(_ connection: any Connection) {
-		Task { [weak self] in
-			guard let self else { return }
-			transportQueue.async(flags: .barrier) {
-				guard self.connectionCount < self.maxConnections else { return }
-				self.connectionCount += 1
-			}
+	// MARK: - Request Processing Loop
 
-			let stream = connection.stream
-			let remoteAddress = connection.remoteAddress
-
-			let active = ActiveConnection(
-				pluginId: nil,
-				remoteAddress: remoteAddress,
-				stream: stream
-			)
-
-			transportQueue.async(flags: .barrier) {
-				self.connections[active.id] = active
-			}
-
-			do {
-				try await readLoop(connection: active, stream: stream)
-			} catch {
-				self.reportError(error)
-			}
-
-			transportQueue.async(flags: .barrier) { [weak self] in
-				guard let self else { return }
-				self.connections.removeValue(forKey: active.id)
-				self.connectionCount = max(0, self.connectionCount - 1)
-			}
-		}
-	}
-
-	// MARK: - Read / Dispatch Loop
-
-	private func readLoop(connection: ActiveConnection, stream: any Stream) async throws {
-		var idleTimer: Task<Void, any Error>?
+	private func readLoop(
+		connection: ActiveConnection,
+		stream: any Stream
+	) async throws {
 		var buffer = Data()
+		var idleTimer: Task<Void, Never>?
 
-		while true {
-			// Reset the idle timer on each read cycle.
+		let resetIdleTimer = { [weak self] in
 			idleTimer?.cancel()
-			idleTimer = Task { [weak self] in
-				try await Task.sleep(nanoseconds: UInt64(self?.connectionIdleTimeout ?? 300) * 1_000_000_000)
-				self?.transportQueue.async(flags: .barrier) {
-					self?.closeConnection(connection)
+			guard let self else { return }
+			idleTimer = Task {
+				try? await Task.sleep(nanoseconds: UInt64(self.connectionIdleTimeout * 1_000_000_000))
+				if !Task.isCancelled {
+					connection.close()
 				}
 			}
+		}
 
+		resetIdleTimer()
+
+		while !Task.isCancelled {
 			let chunk = try await stream.read()
-			if chunk.isEmpty {
-				break // EOF
-			}
+			guard !chunk.isEmpty else { break } // Socket closed by peer.
 
+			resetIdleTimer()
 			buffer.append(chunk)
 
-			// Try to extract complete HTTP requests from the buffer.
 			while let request = extractHTTPRequest(from: &buffer) {
-				idleTimer?.cancel()
-				idleTimer = nil
-
 				let pluginId = request.headers["X-MCP-Plugin-ID"]
-					?? extractPluginId(fromPath: request.path)
 
 				// Update connection metadata with the resolved plugin id.
 				transportQueue.async(flags: .barrier) {
@@ -633,7 +608,7 @@ public final class MCPLoopbackTransport: MCPTransport {
 					response = buildHTTPResponse(statusCode: 500, headers: [:], body: error.localizedDescription)
 				}
 
-				try stream.write(response)
+				try await stream.write(response)
 			}
 		}
 
@@ -641,7 +616,7 @@ public final class MCPLoopbackTransport: MCPTransport {
 	}
 
 	private func dispatchIncoming(_ connection: any Connection) {
-		// Entry point for Network.framework connections.
+		// Entry point for all connections.
 		Task { [weak self] in
 			guard let self else { return }
 			transportQueue.async(flags: .barrier) {
@@ -715,7 +690,7 @@ public final class MCPLoopbackTransport: MCPTransport {
 		let bodyStart = headerEnd.upperBound
 		let contentLength = Int(headers["Content-Length"] ?? "0") ?? 0
 
-		let bodyStartOffset = buffer.startIndex.utf8Offset(in: buffer)
+		let bodyStartOffset = buffer.distance(from: buffer.startIndex, to: bodyStart)
 		guard buffer.count >= bodyStartOffset + contentLength else {
 			return nil // Incomplete body -- wait for more data.
 		}
