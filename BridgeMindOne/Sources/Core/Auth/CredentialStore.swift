@@ -83,13 +83,13 @@ public actor CredentialStore: MCPTokenStorage {
  SecItemDelete(query as CFDictionary)
  }
 
- public func allTokens() async throws -> [PluginIdentity: OAuthToken] {
- let query: [String: Any] = [
- kSecClass as String: kSecClassGenericPassword,
- kSecAttrService as String: service,
- kSecReturnAttributes as String: true,
- kSecMatchLimit as String: kSecMatchLimitAll,
- ]
+    public func allTokens() async throws -> [PluginIdentity: OAuthToken] {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
 
  if let accessGroup {
  query[kSecAttrAccessGroup as String] = accessGroup
