@@ -22,7 +22,6 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  maxTokens: Int = 4096,
  temperature: Double = 1.0
  ) {
- // Priority: explicit key → env var → empty (will fail at call time with a clear error)
  self.apiKey = apiKey ?? ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"] ?? ""
  self.model = model
  self.baseURL = baseURL
@@ -86,7 +85,11 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  }
 
  if httpResponse.statusCode != 200 {
- let errorBody = String(decoding: Array(byteStream), as: UTF8.self)
+ var errorBody = ""
+ for try await byte in byteStream {
+ errorBody.append(Character(UnicodeScalar(byte)!))
+ if errorBody.count > 500 { break }
+ }
  let truncated = String(errorBody.prefix(500))
  continuation.yield(.error("API error (\(httpResponse.statusCode)): \(truncated)"))
  continuation.finish()
@@ -165,7 +168,6 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  // MARK: - Request Body Builder
 
  private func buildRequestBody(context: [ChatMessage], tools: [MCPTool]) -> AnthropicMessagesRequest {
- // Separate system messages from conversation
  var systemMessages: [String] = []
  var conversation: [AnthropicMessage] = []
 
@@ -174,7 +176,7 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  case .system:
  systemMessages.append(message.content)
  case .user:
- var contentBlocks: [AnthropicContentBlock] = [.text(message.content)]
+ let contentBlocks: [AnthropicContentBlock] = [.text(message.content)]
  conversation.append(.user(contentBlocks))
  case .assistant:
  var assistantBlocks: [AnthropicContentBlock] = []
@@ -196,19 +198,41 @@ public struct AnthropicProvider: LLMProvider, Sendable {
 
  // Convert MCP tools to Anthropic tool format
  let anthropicTools: [AnthropicToolDefinition] = tools.map { tool in
- let rawSchema = tool.inputSchema.dictionaryValue ?? ["type": "object", "properties": JSONValue.object([:])]
- let converted: [String: JSONValue] = rawSchema.mapValues { value in
+ // Build a plain dictionary, then convert each value to JSONValue
+ let rawDict: [String: Any] = [
+ "type": "object",
+ "properties": tool.inputSchema.dictionaryValue as Any
+ ]
+ let converted = rawDict.compactMapValues { value -> JSONValue? in
  switch value {
- case .string(let s):
- if let data = s.data(using: .utf8),
- let decoded = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
- return JSONValue.object(decoded.mapValues { JSONValue($0) })
+ case String(let s): return .string(s)
+ case Int(let i): return .number(Double(i))
+ case Double(let d): return .number(d)
+ case Bool(let b): return .bool(b)
+ case [String: Any]: return .object(value.compactMapValues { v in
+ switch v {
+ case String(let s): return .string(s)
+ case Int(let i): return .number(Double(i))
+ case Double(let d): return .number(d)
+ case Bool(let b): return .bool(b)
+ case [String: Any]: return .object(v.compactMapValues { vv in
+ switch vv {
+ case String(let s): return .string(s)
+ case Int(let i): return .number(Double(i))
+ case Double(let d): return .number(d)
+ case Bool(let b): return .bool(b)
+ default: return .null
  }
- return .string(s)
- default:
- return value
+ })
+ default: return .null
+ }
+ })
+ case [Any]: return .null
+ case nil: return .null
+ default: return .null
  }
  }
+
  return AnthropicToolDefinition(
  name: tool.name,
  description: tool.description,
@@ -258,30 +282,21 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  private func parseAnthropicEvent(data: String) -> ChatStreamEvent? {
  guard let jsonData = data.data(using: .utf8) else { return nil }
 
- // Parse as dictionary to inspect event type
  guard let dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
  return nil
  }
 
- // Error response
  if let error = dict["error"] as? [String: Any] {
  let message = error["message"] as? String ?? "Unknown API error"
  return .error(message)
  }
 
- // Content block delta — streaming text chunk
  if let type = dict["type"] as? String, type == "content_block_delta",
  let delta = dict["delta"] as? [String: Any],
  let text = delta["text"] as? String {
  return .chunk(text)
  }
 
- // Content block start (tool use beginning)
- if let type = dict["type"] as? String, type == "content_block_start" {
- return nil
- }
-
- // Message delta — signals completion or tool use
  if let type = dict["type"] as? String, type == "message_delta",
  let deltaDict = dict["delta"] as? [String: Any] {
  let stopReason = deltaDict["stop_reason"] as? String
@@ -291,7 +306,6 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  return .done
  }
 
- // Ping — no-op
  if let type = dict["type"] as? String, type == "ping" {
  return nil
  }
