@@ -16,8 +16,9 @@ import Combine
 // MARK: - CodexEngine
 
 public actor CodexEngine: AgentEngine, Sendable {
- public static let engineType: EngineType = .codex
- public let configuration: EngineConfiguration
+    public typealias StreamChunk = AgentStreamChunk
+    public static let engineType: EngineType = .codex
+    public let configuration: EngineConfiguration
 
  public nonisolated var type: EngineType { Self.engineType }
  public nonisolated var displayName: String { "OpenAI Codex" }

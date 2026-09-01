@@ -20,8 +20,9 @@ import Combine
 // MARK: - CursorEngine
 
 public actor CursorEngine: AgentEngine, Sendable {
- public static let engineType: EngineType = .cursor
- public let configuration: EngineConfiguration
+    public typealias StreamChunk = AgentStreamChunk
+    public static let engineType: EngineType = .cursor
+    public let configuration: EngineConfiguration
 
  public nonisolated var type: EngineType { Self.engineType }
  public nonisolated var displayName: String { "Cursor" }
