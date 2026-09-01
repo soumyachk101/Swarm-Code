@@ -707,6 +707,11 @@ public actor PluginRegistry {
  states[pluginId] ?? PluginRuntimeState(pluginId: pluginId)
  }
 
+ /// Return all known plugin IDs from the registry.
+ public func allPluginIds() -> [String] {
+ AllPlugins.allCases.map { $0.id }
+ }
+
  /// Return runtime states for all known plugins, sorted by id.
  public func allStates() -> [PluginRuntimeState] {
  states.values.sorted { $0.pluginId < $1.pluginId }
