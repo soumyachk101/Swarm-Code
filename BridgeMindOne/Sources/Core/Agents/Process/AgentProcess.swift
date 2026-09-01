@@ -18,6 +18,15 @@ public protocol AgentEngine: Sendable {
  func isAvailable() async -> Bool
 }
 
+// MARK: - Process State
+
+public enum ProcessState: Equatable, Sendable {
+ case idle
+ case running(pid: Int32)
+ case stopped(exitCode: Int32)
+ case error(String)
+}
+
 // MARK: - Process-based Agent
 
 public actor AgentProcess: Sendable {
