@@ -958,7 +958,7 @@ private struct NWConnectionTransport: Connection, Sendable {
 
 // MARK: - BSD Socket Connection Wrapper (fallback)
 
-private struct BSDStream: Stream, Sendable {
+private final class BSDStream: Stream, @unchecked Sendable {
 	private let fd: Int32
 	private let lock = NSLock()
 	private var closed = false
@@ -989,11 +989,7 @@ private struct BSDStream: Stream, Sendable {
 			if readCount < 0 {
 				let err = Darwin.errno
 				if err == EAGAIN || err == EWOULDBLOCK {
-					// No data right now; poll briefly.
-					DispatchQueue.global().asyncAfter(deadline: .now() + 0.01) { [weak self] in
-						guard let self else { continuation.resume(returning: Data()); return }
-						self.readFromFD(buffer: buffer, maxRead: maxRead, continuation: continuation)
-					}
+					self.pollRead(maxRead: maxRead, continuation: continuation)
 					return
 				}
 				continuation.resume(throwing: MCPTransportError.ioError("read() error: \(err)"))
@@ -1005,26 +1001,27 @@ private struct BSDStream: Stream, Sendable {
 		}
 	}
 
-	private func readFromFD(
-		buffer: UnsafeMutablePointer<UInt8>,
+	private func pollRead(
 		maxRead: Int,
 		continuation: CheckedContinuation<Data, any Error>
 	) {
-		let readCount = Darwin.read(fd, buffer, maxRead)
-		if readCount < 0 {
-			let err = Darwin.errno
-			if err == EAGAIN || err == EWOULDBLOCK {
-				DispatchQueue.global().asyncAfter(deadline: .now() + 0.01) { [weak self] in
-					guard let self else { continuation.resume(returning: Data()); return }
-					self.readFromFD(buffer: buffer, maxRead: maxRead, continuation: continuation)
+		DispatchQueue.global().asyncAfter(deadline: .now() + 0.01) { [weak self] in
+			guard let self else { continuation.resume(returning: Data()); return }
+			let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: maxRead)
+			defer { buffer.deallocate() }
+			let readCount = Darwin.read(self.fd, buffer, maxRead)
+			if readCount < 0 {
+				let err = Darwin.errno
+				if err == EAGAIN || err == EWOULDBLOCK {
+					self.pollRead(maxRead: maxRead, continuation: continuation)
+					return
 				}
-				return
+				continuation.resume(throwing: MCPTransportError.ioError("read() error: \(err)"))
+			} else if readCount == 0 {
+				continuation.resume(returning: Data())
+			} else {
+				continuation.resume(returning: Data(bytes: buffer, count: readCount))
 			}
-			continuation.resume(throwing: MCPTransportError.ioError("read() error: \(err)"))
-		} else if readCount == 0 {
-			continuation.resume(returning: Data())
-		} else {
-			continuation.resume(returning: Data(bytes: buffer, count: readCount))
 		}
 	}
 
@@ -1040,8 +1037,6 @@ private struct BSDStream: Stream, Sendable {
 					return
 				}
 				var totalWritten = 0
-				var writeError: Error?
-				let writeQueue = DispatchQueue(label: "BSDStream.write")
 
 				func doWrite() {
 					guard totalWritten < data.count else {
@@ -1049,7 +1044,7 @@ private struct BSDStream: Stream, Sendable {
 						return
 					}
 					let written = Darwin.write(
-						fd,
+						self.fd,
 						base.advanced(by: totalWritten),
 						data.count - totalWritten
 					)
@@ -1061,8 +1056,7 @@ private struct BSDStream: Stream, Sendable {
 							}
 							return
 						}
-						writeError = MCPTransportError.ioError("write() error: \(err)")
-						continuation.resume(throwing: writeError!)
+						continuation.resume(throwing: MCPTransportError.ioError("write() error: \(err)"))
 						return
 					}
 					totalWritten += written

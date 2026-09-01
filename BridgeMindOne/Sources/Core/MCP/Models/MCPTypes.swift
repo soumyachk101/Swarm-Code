@@ -59,7 +59,7 @@ public struct JSONRPCNotification: Codable, Equatable {
 
 // MARK: - JSON Value (untyped)
 
-public enum JSONValue: Codable, Equatable {
+public enum JSONValue: Codable, Sendable, Equatable {
  case string(String)
  case number(Double)
  case bool(Bool)
