@@ -45,7 +45,7 @@ public struct AgentSwitcherView: View {
                 Button("Cancel") {
                     dismiss()
                 }
-                .keyboardShortcut(.cancel)
+                .keyboardShortcut(.cancelAction)
 
                 Spacer()
 
@@ -89,7 +89,7 @@ private struct EngineCard: View {
         VStack(spacing: 8) {
             Image(systemName: engineIcon)
                 .font(.system(size: 36))
-                .foregroundStyle(isSelected ? .tint : .secondary)
+                .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
 
             Text(engine.displayName)
                 .font(.caption.bold())

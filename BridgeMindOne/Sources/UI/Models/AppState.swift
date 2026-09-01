@@ -160,7 +160,7 @@ public final class AppState: ObservableObject, @unchecked Sendable {
 
     // MARK: - Init
 
-    public init(core: Core.AppState? = nil) {
+    public init(core: Any? = nil) {
         // Initialize default sample session
         let initial = ChatSession(
             title: "Welcome to BridgeMind One",
