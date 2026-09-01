@@ -2,223 +2,272 @@
 // AppState.swift
 // BridgeMind One — UI-layer global state
 //
-// Wraps Core.AppState for SwiftUI @Environment usage.
-// Provides UI-specific state alongside the core model state.
+// Wraps Core models and state for SwiftUI Observation and environment usage.
 //
 
 import SwiftUI
 import Core
 
+public typealias PluginState = PluginRuntimeState
+
+// MARK: - Startup Behavior & App Theme
+
+public enum StartupBehavior: String, CaseIterable, Identifiable, Codable, Sendable {
+    case lastSession = "Resume Last Session"
+    case newChat = "Open New Chat"
+    case welcome = "Show Welcome Screen"
+
+    public var id: String { rawValue }
+    public var displayName: String { rawValue }
+}
+
+public enum AppTheme: String, CaseIterable, Identifiable, Codable, Sendable {
+    case system = "System"
+    case dark = "Dark"
+    case light = "Light"
+
+    public var id: String { rawValue }
+    public var displayName: String { rawValue }
+}
+
+// MARK: - Settings Data
+
+public struct SettingsData: Codable, Sendable {
+    public var autoSaveEnabled: Bool = true
+    public var notificationsEnabled: Bool = true
+    public var voiceDictationEnabled: Bool = false
+    public var startupBehavior: StartupBehavior = .lastSession
+    public var fontSize: Double = 14.0
+    public var claudeCodePath: String = "claude"
+    public var codexPath: String = "codex"
+    public var cursorPath: String = "cursor"
+    public var llmProvider: String = "anthropic"
+    public var telemetryEnabled: Bool = false
+    public var theme: AppTheme = .dark
+
+    public init() {}
+}
+
+// MARK: - AppState
+
 @Observable
-public final class AppState {
+public final class AppState: ObservableObject, @unchecked Sendable {
 
- // MARK: - Core state (mirrors Core.AppState for @Environment use)
+    public static let shared = AppState()
 
- public var databaseManager: DatabaseManager?
- public var currentSessionId: String?
- public var sessions: [ChatSessionRecord] = []
- public var currentMessages: [ChatMessageRecord] = []
- public var isStreaming: Bool = false
- public var activeAgent: String = "claude"
- public var statusMessage: String = "Ready"
- public var sidebarSelection: SidebarItem = .chat
+    // MARK: - Navigation
 
- public enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
- case chat = "Chat"
- case autoPilot = "Auto-Pilot"
- case plugins = "Plugins"
- case skills = "Skills"
- case settings = "Settings"
+    public enum SidebarItem: String, Hashable, CaseIterable, Identifiable {
+        case chat = "Chat"
+        case autoPilot = "Auto-Pilot"
+        case plugins = "Plugins"
+        case skills = "Skills"
+        case settings = "Settings"
 
- public var id: String { rawValue }
- public var iconName: String {
- switch self {
- case .chat: return "bubble.left.and.bubble.right.fill"
- case .autoPilot: return "bolt.shield.fill"
- case .plugins: return "puzzlepiece.extension.fill"
- case .skills: return "brain.head.profile"
- case .settings: return "gearshape.fill"
- }
- }
- }
+        public var id: String { rawValue }
+        public var title: String { rawValue }
+        public var iconName: String {
+            switch self {
+            case .chat: return "bubble.left.and.bubble.right.fill"
+            case .autoPilot: return "bolt.shield.fill"
+            case .plugins: return "puzzlepiece.extension.fill"
+            case .skills: return "brain.head.profile"
+            case .settings: return "gearshape.fill"
+            }
+        }
+    }
 
- // MARK: - UI-specific state
+    public var sidebarSelection: SidebarItem = .chat
+    public var selectedThreadId: String?
 
- public var isAboutSheetPresented: Bool = false
- public var isPluginsPanelPresented: Bool = false
- public var isAgentSwitcherPresented: Bool = false
- public var isSettingsPresented: Bool = false
- public var isAutoPilotEnabled: Bool = false
- public var selectedPluginId: String?
- public var selectedAgentId: String = "claude"
- public var searchText: String = ""
- public var sidebarWidth: CGFloat = 240
- public var isDictating: Bool = false
+    // MARK: - Chat & Sessions
 
- // MARK: - Agent info cache
+    public var databaseManager: DatabaseManager?
+    public var currentSessionId: String?
+    public var sessions: [ChatSession] = []
+    public var currentMessages: [ChatMessage] = []
 
- public var availableAgents: [PluginDescriptor] = []
- public var engineStatuses: [String: EngineHealth] = [:]
+    public var currentSession: ChatSession? {
+        get {
+            if let id = currentSessionId {
+                return sessions.first { $0.id == id }
+            }
+            return sessions.first
+        }
+        set {
+            if let newValue {
+                if let idx = sessions.firstIndex(where: { $0.id == newValue.id }) {
+                    sessions[idx] = newValue
+                } else {
+                    sessions.append(newValue)
+                }
+                currentSessionId = newValue.id
+            }
+        }
+    }
 
- // MARK: - Streaming state
+    // MARK: - Agent State
 
- public var streamingContent: String = ""
- public var isThinking: Bool = false
+    public var activeAgent: EngineType = .claude
+    public var selectedAgentId: String = "claude"
+    public var availableEngines: [EngineType] { EngineType.allCases }
+    public var engineStatuses: [EngineType: EngineHealth] = [:]
 
- // MARK: - Toast / notifications
+    // MARK: - Plugins State
 
- public var toastMessage: String?
- public var toastType: ToastType = .info
+    public var plugins: [PluginIdentity: PluginRuntimeState] = [:]
+    public var activePlugins: [PluginIdentity] {
+        allPlugins.filter { plugins[$0]?.connected ?? false }
+    }
+    public var allPlugins: [PluginIdentity] {
+        PluginCollection.allIdentities
+    }
 
- public enum ToastType {
- case info, success, warning, error
- }
+    // MARK: - Processing & Orb
 
- // MARK: - Init
+    public var isStreaming: Bool = false
+    public var isProcessing: Bool = false
+    public var orbState: OrbState = .idle
+    public var statusMessage: String = "Ready"
+    public var streamingContent: String = ""
+    public var isThinking: Bool = false
+    public var isDictating: Bool = false
 
- public init() {
- self.availableAgents = PluginCollection.all
- Task { @MainActor in
- await initializeDatabase()
- }
- }
+    // MARK: - Sheets & Panels
 
- // MARK: - Database
+    public var isAboutSheetPresented: Bool = false
+    public var isPluginsPanelPresented: Bool = false
+    public var showPlugins: Bool {
+        get { isPluginsPanelPresented }
+        set { isPluginsPanelPresented = newValue }
+    }
+    public var isAgentSwitcherPresented: Bool = false
+    public var isSettingsPresented: Bool = false
+    public var isAutoPilotEnabled: Bool = false
+    public var selectedPluginId: String?
 
- public func initializeDatabase() async {
- do {
- let config = DatabaseConfiguration(path: AppConfig.databaseURL())
- let manager = try DatabaseManager(configuration: config)
- self.databaseManager = manager
- await loadSessions()
- } catch {
- self.statusMessage = "Database error: \(error.localizedDescription)"
- }
- }
+    // MARK: - Settings & UI
 
- public func loadSessions() async {
- guard let db = databaseManager else { return }
- do {
- let records = try db.getAllSessions()
- self.sessions = records
- if currentSessionId == nil, let first = records.first {
- await selectSession(id: first.id)
- }
- } catch {
- print("Failed to load sessions: \(error)")
- }
- }
+    public var settings: SettingsData = SettingsData()
+    public var searchText: String = ""
+    public var sidebarWidth: CGFloat = 240
+    public var toastMessage: String?
+    public var toastType: ToastType = .info
 
- public func createNewSession(title: String = "New Session", agentId: String = "claude") async {
- guard let db = databaseManager else { return }
- let newSession = ChatSessionRecord(
- id: UUID().uuidString,
- title: title,
- agentId: agentId,
- createdAt: ISO8601DateFormatter().string(from: Date()),
- updatedAt: ISO8601DateFormatter().string(from: Date())
- )
- do {
- try db.saveSession(newSession)
- await loadSessions()
- await selectSession(id: newSession.id)
- } catch {
- print("Failed to create session: \(error)")
- }
- }
+    public enum ToastType {
+        case info, success, warning, error
+    }
 
- public func selectSession(id: String) async {
- self.currentSessionId = id
- guard let db = databaseManager else { return }
- do {
- self.currentMessages = try db.getMessages(forSession: id)
- } catch {
- print("Failed to load messages: \(error)")
- }
- }
+    // MARK: - Init
 
- public func appendMessage(role: String, content: String) async {
- guard let sessionId = currentSessionId, let db = databaseManager else { return }
- let msg = ChatMessageRecord(
- id: UUID().uuidString,
- sessionId: sessionId,
- role: role,
- content: content,
- createdAt: ISO8601DateFormatter().string(from: Date())
- )
- do {
- try db.saveMessage(msg)
- self.currentMessages.append(msg)
- } catch {
- print("Failed to save message: \(error)")
- }
- }
+    public init(core: Core.AppState? = nil) {
+        // Initialize default sample session
+        let initial = ChatSession(
+            title: "Welcome to BridgeMind One",
+            agentId: "claude",
+            messages: [
+                ChatMessage(
+                    role: .assistant,
+                    content: "Welcome to BridgeMind One! I am your AI-powered multi-agent orchestration workspace. You can switch engines, enable plugins, or connect MCP servers to get started."
+                )
+            ]
+        )
+        self.sessions = [initial]
+        self.currentSessionId = initial.id
+        self.currentMessages = initial.messages
 
- public func deleteSession(_ session: ChatSessionRecord) {
- guard let db = databaseManager else { return }
- do {
- try db.deleteSession(id: session.id)
- if currentSessionId == session.id {
- currentSessionId = nil
- currentMessages = []
- }
- loadSessions()
- } catch {
- print("Failed to delete session: \(error)")
- }
- }
+        // Initialize plugin states
+        for plugin in PluginCollection.allIdentities {
+            self.plugins[plugin] = PluginRuntimeState(
+                pluginId: plugin.id,
+                enabled: true,
+                connected: false
+            )
+        }
+    }
 
- // MARK: - Computed
+    // MARK: - Session Management
 
- public var currentSession: ChatSessionRecord? {
- sessions.first { $0.id == currentSessionId }
- }
+    public func createNewChat() {
+        let newSession = ChatSession(
+            title: "New Chat",
+            agentId: selectedAgentId,
+            messages: []
+        )
+        sessions.insert(newSession, at: 0)
+        currentSessionId = newSession.id
+        selectedThreadId = newSession.id
+        currentMessages = []
+    }
 
- // MARK: - Actions
+    public func createNewSession(agentId: String = "claude") async {
+        createNewChat()
+    }
 
- public func createNewChat() {
- Task {
- await createNewSession(agentId: selectedAgentId)
- }
- }
+    public func selectSession(id: String) {
+        currentSessionId = id
+        selectedThreadId = id
+        if let session = sessions.first(where: { $0.id == id }) {
+            currentMessages = session.messages
+        }
+    }
 
- public func saveCurrentChat() {
- toastMessage = "Chat saved"
- toastType = .success
- }
+    public func deleteSession(_ session: ChatSession) {
+        sessions.removeAll { $0.id == session.id }
+        if currentSessionId == session.id {
+            currentSessionId = sessions.first?.id
+            selectedThreadId = currentSessionId
+            currentMessages = sessions.first?.messages ?? []
+        }
+    }
 
- public func toggleAutoPilot() {
- isAutoPilotEnabled.toggle()
- toastMessage = isAutoPilotEnabled ? "Auto-Pilot enabled" : "Auto-Pilot disabled"
- toastType = isAutoPilotEnabled ? .success : .info
- }
+    public func saveCurrentChat() {
+        showToast("Chat saved", type: .success)
+    }
 
- public func switchAgent(to agentId: String) {
- selectedAgentId = agentId
- activeAgent = agentId
- isAgentSwitcherPresented = false
- toastMessage = "Switched to \(agentId)"
- toastType = .success
- }
+    public func toggleAutoPilot() {
+        isAutoPilotEnabled.toggle()
+        showToast(
+            isAutoPilotEnabled ? "Auto-Pilot: Enabled" : "Auto-Pilot: Disabled",
+            type: isAutoPilotEnabled ? .success : .info
+        )
+    }
 
- public func openDocumentation() {
- if let url = URL(string: AppConfig.docsURL.absoluteString) {
- NSWorkspace.shared.open(url)
- }
- }
+    public func switchAgent(to agent: EngineType) {
+        activeAgent = agent
+        selectedAgentId = agent.rawValue
+        isAgentSwitcherPresented = false
+        showToast("Switched engine to \(agent.displayName)", type: .success)
+    }
 
- public func openIssueReporter() {
- if let url = URL(string: "\(AppConfig.websiteURL)/issues") {
- NSWorkspace.shared.open(url)
- }
- }
+    public func switchAgent(to agentId: String) {
+        if let engine = EngineType(rawValue: agentId) {
+            switchAgent(to: engine)
+        } else {
+            selectedAgentId = agentId
+            isAgentSwitcherPresented = false
+            showToast("Switched agent to \(agentId)", type: .success)
+        }
+    }
 
- public func openSettings() {
- isSettingsPresented = true
- }
+    public func openDocumentation() {
+        if let url = URL(string: "https://docs.bridgemind.ai") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 
- public func showToast(_ message: String, type: ToastType = .info) {
- toastMessage = message
- toastType = type
- }
+    public func openIssueReporter() {
+        if let url = URL(string: "https://github.com/bridgemind/bridgemind/issues") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    public func openSettings() {
+        isSettingsPresented = true
+    }
+
+    public func showToast(_ message: String, type: ToastType = .info) {
+        toastMessage = message
+        toastType = type
+    }
 }
