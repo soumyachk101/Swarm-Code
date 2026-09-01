@@ -65,97 +65,104 @@ public actor ClaudeEngine: AgentEngine, Sendable {
  restartDelay: configuration.restartDelay
  ))
 
- self.jsonDecoder = JSONDecoder()
- self.jsonEncoder = JSONEncoder()
- self.jsonEncoder.outputFormatting = [.sortedKeys]
+        self.jsonDecoder = JSONDecoder()
+        self.jsonEncoder = JSONEncoder()
+        self.jsonEncoder.outputFormatting = [.sortedKeys]
 
- // Monitor process state changes
- self.processMonitor = Task {
- for await event in await process.events {
- switch event.state {
- case .running(let pid):
- self.engineState = .ready
- case .stopped, .crashed:
- self.engineState = .idle
- self.pendingRequests.values.forEach { $0.finish(throwing: AgentEngineError.connectionLost) }
- self.pendingRequests.removeAll()
- case .error(let message):
- self.engineState = .error(message)
- default:
- break
- }
- }
- }
- }
+        // Monitor process state changes
+        let processEvents = self.process.events
+        self.processMonitor = Task { [weak self] in
+            for await event in processEvents {
+                await self?.handleProcessEvent(event.state)
+            }
+        }
+    }
 
- deinit {
- processMonitor?.cancel()
- responseTask?.cancel()
- }
+    private func handleProcessEvent(_ state: AgentProcess.ProcessState) {
+        switch state {
+        case .running:
+            self.engineState = .ready
+        case .stopped, .crashed:
+            self.engineState = .idle
+            self.pendingRequests.values.forEach { $0.finish(throwing: AgentEngineError.connectionLost) }
+            self.pendingRequests.removeAll()
+        case .error(let message):
+            self.engineState = .error(message)
+        default:
+            break
+        }
+    }
 
- // MARK: Public API
+    deinit {
+        processMonitor?.cancel()
+        responseTask?.cancel()
+    }
 
- public func connect() async throws {
- guard !process.isRunning else { return }
- engineState = .initializing
- try await process.start()
- }
+    // MARK: Public API
 
- public func disconnect() async throws {
- processMonitor?.cancel()
- responseTask?.cancel()
- try await process.stop()
- engineState = .idle
- }
+    public func connect() async throws {
+        let isRunning = await process.isRunning
+        guard !isRunning else { return }
+        engineState = .initializing
+        try await process.start()
+    }
 
- public func sendMessage(
- _ message: AgentMessage,
- session: AgentSession
- ) async throws -> AsyncThrowingStream<AgentStreamChunk, Error> {
- guard engineState == .ready else {
- throw AgentEngineError.notConnected
- }
+    public func disconnect() async throws {
+        processMonitor?.cancel()
+        responseTask?.cancel()
+        try await process.stop()
+        engineState = .idle
+    }
 
- let continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
- let stream = AsyncThrowingStream<AgentStreamChunk, Error> { cont in
- continuation = cont
- }
+    public func sendMessage(
+        _ message: AgentMessage,
+        session: AgentSession
+    ) async throws -> AsyncThrowingStream<AgentStreamChunk, Error> {
+        guard engineState == .ready else {
+            throw AgentEngineError.notConnected
+        }
 
- let requestId = UUID().uuidString
- pendingRequests[requestId] = continuation
+        var continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation!
+        let stream = AsyncThrowingStream<AgentStreamChunk, Error> { cont in
+            continuation = cont
+        }
 
- // Build Claude Code prompt message
- let prompt = ClaudePrompt(
- model: Self.mapModel(configuration.model),
- messages: Self.buildMessages(message, session: session),
- system: Self.buildSystemPrompt(message, session: session),
- maxTokens: configuration.maxTokens,
- tools: Self.buildTools(configuration)
- )
+        let requestId = UUID().uuidString
+        pendingRequests[requestId] = continuation
 
- // Send as JSON to stdin
- let requestData = try jsonEncoder.encode(prompt)
- guard let requestLine = (String(data: requestData, encoding: .utf8) ?? "") + "\n" else {
- continuation.finish(throwing: AgentEngineError.invalidMessage)
- return stream
- }
+        // Build Claude Code prompt message
+        let prompt = ClaudePrompt(
+            model: Self.mapModel(configuration.model),
+            messages: Self.buildMessages(message, session: session),
+            system: Self.buildSystemPrompt(message, session: session),
+            maxTokens: configuration.maxTokens,
+            tools: Self.buildTools(configuration)
+        )
 
- do {
- try await process.writeStringToStdin(requestLine)
- } catch {
- continuation.finish(throwing: AgentEngineError.sendFailed(error))
- pendingRequests.removeValue(forKey: requestId)
- return stream
- }
+        // Send as JSON to stdin
+        let requestData = try jsonEncoder.encode(prompt)
+        guard let requestString = String(data: requestData, encoding: .utf8) else {
+            continuation.finish(throwing: AgentEngineError.invalidMessage)
+            return stream
+        }
+        let requestLine = requestString + "\n"
 
- // Begin reading responses
- responseTask?.cancel()
- responseTask = Task {
- await self.readResponses(for: requestId, continuation: continuation)
- }
+        do {
+            try await process.writeStringToStdin(requestLine)
+        } catch {
+            continuation.finish(throwing: AgentEngineError.sendFailed(error))
+            pendingRequests.removeValue(forKey: requestId)
+            return stream
+        }
 
- return stream
- }
+        // Begin reading responses
+        responseTask?.cancel()
+        responseTask = Task {
+            await self.readResponses(for: requestId, continuation: continuation)
+        }
+
+        return stream
+    }
 
  public func cancelGeneration() async throws {
  responseTask?.cancel()
@@ -165,19 +172,20 @@ public actor ClaudeEngine: AgentEngine, Sendable {
  engineState = .ready
  }
 
- public func healthCheck() async -> EngineHealth {
- guard process.isRunning else {
- return EngineHealth(status: .offline, latencyMs: nil, message: "Process not running")
- }
- let start = Date()
- do {
- _ = try await process.readStdout()
- let latency = Date().timeIntervalSince(start) * 1000
- return EngineHealth(status: .healthy, latencyMs: latency, message: nil)
- } catch {
- return EngineHealth(status: .degraded, latencyMs: nil, message: error.localizedDescription)
- }
- }
+    public func healthCheck() async -> EngineHealth {
+        let isRunning = await process.isRunning
+        guard isRunning else {
+            return EngineHealth(status: .offline, latencyMs: nil, message: "Process not running")
+        }
+        let start = Date()
+        do {
+            _ = try await process.readStdout()
+            let latency = Date().timeIntervalSince(start) * 1000
+            return EngineHealth(status: .healthy, latencyMs: latency, message: nil)
+        } catch {
+            return EngineHealth(status: .degraded, latencyMs: nil, message: error.localizedDescription)
+        }
+    }
 
  // MARK: Private
 
