@@ -470,12 +470,12 @@ public actor PluginRegistry {
  // MARK: - Transport Access
 
  /// Return the active transport for a plugin, or nil if not connected.
- public func transport(for pluginId: String) -> AnyTransport? {
+ public nonisolated func transport(for pluginId: String) -> AnyTransport? {
  transports[pluginId]
  }
 
  /// Return true if the plugin has an active transport.
- public func isConnected(_ pluginId: String) -> Bool {
+ public nonisolated func isConnected(_ pluginId: String) -> Bool {
  transports[pluginId] != nil
  }
 
