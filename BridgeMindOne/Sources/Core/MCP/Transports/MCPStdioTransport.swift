@@ -306,7 +306,7 @@ public final class MCPStdioTransport: @unchecked Sendable {
  do {
  data = try self.jsonEncoder.encode(request)
  } catch {
- self.pendingRequestsLock.perform { self.pendingRequests.removeValue(forKey: requestId) }
+ _ = self.pendingRequestsLock.perform { self.pendingRequests.removeValue(forKey: requestId) }
  continuation.resume(throwing: MCPTransportError.ioError(
  "Failed to encode JSON-RPC request: \(error.localizedDescription)"
  ))
@@ -319,15 +319,15 @@ public final class MCPStdioTransport: @unchecked Sendable {
 
  self.stdinWriteLock.perform {
  guard let handle = self.stdinPipe?.fileHandleForWriting else {
- self.pendingRequestsLock.perform { self.pendingRequests.removeValue(forKey: requestId) }
+ _ = self.pendingRequestsLock.perform { self.pendingRequests.removeValue(forKey: requestId) }
  continuation.resume(throwing: MCPTransportError.notConnected)
  return
  }
  do {
  try handle.write(contentsOf: payload)
- try handle.synchronizeFile()
+ handle.synchronizeFile()
  } catch {
- self.pendingRequestsLock.perform { self.pendingRequests.removeValue(forKey: requestId) }
+ _ = self.pendingRequestsLock.perform { self.pendingRequests.removeValue(forKey: requestId) }
  continuation.resume(throwing: MCPTransportError.ioError(
  "Failed to write to server stdin: \(error.localizedDescription)"
  ))
@@ -376,7 +376,7 @@ public final class MCPStdioTransport: @unchecked Sendable {
  throw MCPTransportError.notConnected
  }
  try handle.write(contentsOf: payload)
- try handle.synchronizeFile()
+ handle.synchronizeFile()
  }
  }
 
