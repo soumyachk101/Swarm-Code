@@ -12,32 +12,97 @@ public actor AgentProcess: Sendable {
     public enum ProcessState: Equatable, Sendable {
         case idle
         case running(pid: Int32)
-        case stopped(exitCode: Int32)
+        case stopped
+        case crashed
         case error(String)
     }
 
-    private let engineType: EngineType
-    private var process: Process?
-    private var inputPipe: Pipe?
-    private var outputPipe: Pipe?
-    private var errorPipe: Pipe?
-    private let workingDirectory: URL
-    private var isRunning = false
+    public struct ProcessEvent: Sendable {
+        public let state: ProcessState
 
-    public init(engineType: EngineType, workingDirectory: URL) {
-        self.engineType = engineType
-        self.workingDirectory = workingDirectory
+        public init(state: ProcessState) {
+            self.state = state
+        }
     }
 
-    public func launch() async throws {
-        guard let binaryPath = findBinary() else {
-            throw AgentError.binaryNotFound(engineType.rawValue)
+    // MARK: - Configuration
+
+    public struct Configuration: Sendable {
+        public var binaryPath: String
+        public var arguments: [String]
+        public var workingDirectory: String?
+        public var environment: [String: String]
+        public var envToInject: [String: String]
+        public var inheritedEnvironment: Bool
+        public var restartOnCrash: Bool
+        public var maxRestartAttempts: Int
+        public var restartDelay: Duration
+
+        public init(
+            binaryPath: String,
+            arguments: [String] = [],
+            workingDirectory: String? = nil,
+            environment: [String: String] = [:],
+            envToInject: [String: String] = [:],
+            inheritedEnvironment: Bool = true,
+            restartOnCrash: Bool = false,
+            maxRestartAttempts: Int = 3,
+            restartDelay: Duration = .seconds(2)
+        ) {
+            self.binaryPath = binaryPath
+            self.arguments = arguments
+            self.workingDirectory = workingDirectory
+            self.environment = environment
+            self.envToInject = envToInject
+            self.inheritedEnvironment = inheritedEnvironment
+            self.restartOnCrash = restartOnCrash
+            self.maxRestartAttempts = maxRestartAttempts
+            self.restartDelay = restartDelay
+        }
+    }
+
+    // MARK: - Properties
+
+    private let config: Configuration
+    private var process: Process?
+    private var stdinPipe: Pipe?
+    private var stdoutPipe: Pipe?
+    private var stderrPipe: Pipe?
+    private var eventContinuation: AsyncStream<ProcessEvent>.Continuation?
+    public let events: AsyncStream<ProcessEvent>
+    public private(set) var isRunning: Bool = false
+
+    // MARK: - Init
+
+    public init(configuration: Configuration) {
+        self.config = configuration
+        var continuation: AsyncStream<ProcessEvent>.Continuation?
+        self.events = AsyncStream<ProcessEvent> { cont in
+            continuation = cont
+        }
+        self.eventContinuation = continuation
+    }
+
+    // MARK: - Process Control
+
+    public func start() async throws {
+        guard !isRunning else { return }
+        guard Self.isExecutable(config.binaryPath) else {
+            throw AgentError.binaryNotFound(config.binaryPath)
         }
 
         let p = Process()
-        p.executableURL = binaryPath
-        p.currentDirectoryURL = workingDirectory
-        p.environment = ProcessInfo.processInfo.environment
+        p.executableURL = URL(fileURLWithPath: config.binaryPath)
+        p.arguments = config.arguments
+
+        if let wd = config.workingDirectory {
+            p.currentDirectoryURL = URL(fileURLWithPath: wd)
+        }
+
+        var env = config.inheritedEnvironment ? ProcessInfo.processInfo.environment : [:]
+        for (k, v) in config.environment { env[k] = v }
+        for (k, v) in config.envToInject { env[k] = v }
+        p.environment = env
 
         let inPipe = Pipe()
         let outPipe = Pipe()
@@ -47,16 +112,23 @@ public actor AgentProcess: Sendable {
         p.standardOutput = outPipe
         p.standardError = errPipe
 
-        self.inputPipe = inPipe
-        self.outputPipe = outPipe
-        self.errorPipe = errPipe
+        self.stdinPipe = inPipe
+        self.stdoutPipe = outPipe
+        self.stderrPipe = errPipe
         self.process = p
+
+        p.terminationHandler = { [weak self] proc in
+            Task { [weak self] in
+                await self?.handleTermination(status: proc.terminationStatus)
+            }
+        }
 
         try p.run()
         self.isRunning = true
+        self.eventContinuation?.yield(ProcessEvent(state: .running(pid: p.processIdentifier)))
     }
 
-    public func stop() async {
+    public func stop() async throws {
         guard let p = process else { return }
         if p.isRunning {
             p.terminate()
@@ -64,77 +136,37 @@ public actor AgentProcess: Sendable {
         }
         self.isRunning = false
         self.process = nil
-        self.inputPipe = nil
-        self.outputPipe = nil
-        self.errorPipe = nil
+        self.stdinPipe = nil
+        self.stdoutPipe = nil
+        self.stderrPipe = nil
+        self.eventContinuation?.yield(ProcessEvent(state: .stopped))
     }
 
-    public func send(_ input: String) async throws -> String {
-        guard let inPipe = inputPipe, let outPipe = outputPipe, isRunning else {
+    public func writeStringToStdin(_ string: String) async throws {
+        guard let stdinPipe, isRunning else {
             throw AgentError.notRunning
         }
-
-        let data = Data((input + "\n").utf8)
-        try inPipe.fileHandleForWriting.write(contentsOf: data)
-
-        let outputData = outPipe.fileHandleForReading.availableData
-        return String(data: outputData, encoding: .utf8) ?? ""
+        let data = Data(string.utf8)
+        try stdinPipe.fileHandleForWriting.write(contentsOf: data)
     }
 
-    public func isAvailable() -> Bool {
-        findBinary() != nil
+    public func readStdout() async throws -> Data? {
+        guard let stdoutPipe, isRunning else { return nil }
+        let handle = stdoutPipe.fileHandleForReading
+        let data = handle.availableData
+        return data.isEmpty ? nil : data
     }
 
-    // MARK: - Private
-
-    private func findBinary() -> URL? {
-        var candidatePaths: [String] = []
-
-        switch engineType {
-        case .claude:
-            candidatePaths = ["/usr/local/bin/claude", "/opt/homebrew/bin/claude"]
-        case .codex:
-            candidatePaths = ["/usr/local/bin/codex", "/opt/homebrew/bin/codex"]
-        case .cursor:
-            candidatePaths = ["/usr/local/bin/cursor", "/opt/homebrew/bin/cursor"]
-        case .aider:
-            candidatePaths = ["/usr/local/bin/aider", "/opt/homebrew/bin/aider"]
-        default:
-            candidatePaths = ["/usr/local/bin/\(engineType.rawValue)", "/opt/homebrew/bin/\(engineType.rawValue)"]
+    private func handleTermination(status: Int32) {
+        self.isRunning = false
+        if status == 0 {
+            self.eventContinuation?.yield(ProcessEvent(state: .stopped))
+        } else {
+            self.eventContinuation?.yield(ProcessEvent(state: .crashed))
         }
+    }
 
-        if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
-            let pathEntries = pathEnv.components(separatedBy: ":")
-            for entry in pathEntries {
-                candidatePaths.append("\(entry)/\(engineType.rawValue)")
-            }
-        }
-
-        for path in candidatePaths {
-            if FileManager.default.isExecutableFile(atPath: path) {
-                return URL(fileURLWithPath: path)
-            }
-        }
-
-        return nil
+    public static func isExecutable(_ path: String) -> Bool {
+        FileManager.default.isExecutableFile(atPath: path)
     }
 }
-
-// MARK: - Errors
-
-public enum AgentError: Error, Equatable, Sendable {
-    case binaryNotFound(String)
-    case notRunning
-    case processFailed(Int32)
-    case launchFailed(String)
-
-    public var localizedDescription: String {
-        switch self {
-        case .binaryNotFound(let engine): return "\(engine) binary not found in PATH"
-        case .notRunning: return "Agent is not running"
-        case .processFailed(let code): return "Agent process failed with exit code \(code)"
-        case .launchFailed(let msg): return "Agent launch failed: \(msg)"
-        }
-    }
-}
-
