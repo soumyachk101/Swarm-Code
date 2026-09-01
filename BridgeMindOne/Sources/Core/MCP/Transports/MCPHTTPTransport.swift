@@ -198,10 +198,10 @@ public final class MCPHTTPTransport: @unchecked Sendable {
  private var urlSession: URLSession
  private var activeSSETasks: [UUID] = []
  private let logger = Logger(subsystem: "com.bridgemind.mcp", category: "MCPHTTPTransport")
- private let streamState: StreamState
+ private let streamState = StreamState()
 
- struct StreamState: Sendable {
- var continuation: AsyncThrowingStream<JSONValue, Error>.Continuation?
+ final class StreamState: @unchecked Sendable {
+     var continuation: AsyncThrowingStream<JSONValue, Error>.Continuation?
  }
 
  // MARK: Configuration
@@ -374,71 +374,6 @@ public final class MCPHTTPTransport: @unchecked Sendable {
  }
  }
 
- // MARK: Close
-
- public func close() async throws {
- guard !isClosed else { return }
- isClosed = true
-
- for taskID in activeSSETasks {
- urlSession.getAllTasks { tasks in
- tasks.filter { $0.taskIdentifier == taskID }.forEach { $0.cancel() }
- }
- }
- activeSSETasks.removeAll()
-
- streamState.continuation?.finish()
- streamState.continuation = nil
-
- logger.info("MCPHTTPTransport closed")
- }
-
- // MARK: Private Helpers
-
- private func buildRequest(for message: JSONValue) throws -> URLRequest {
- guard let url = URL(string: baseURL.absoluteString + "/mcp") else {
- throw MCPTransportError.validationFailed("Cannot construct MCP endpoint URL")
- }
-
- var request = URLRequest(url: url)
- request.httpMethod = "POST"
- request.setValue("application/json", forHTTPHeaderField: "Content-Type")
- request.setValue("keep-alive", forHTTPHeaderField: "Connection")
- request.setValue("application/json", forHTTPHeaderField: "Accept")
-
- let bodyData = try JSONEncoder().encode(message)
- request.httpBody = bodyData
-
- return request
- }
-
- private func startSSEListening(continuation: AsyncThrowingStream<JSONValue, Error>.Continuation) async {
- guard let sseURL = URL(string: baseURL.absoluteString + "/mcp/events") else {
- continuation.finish(throwing: MCPTransportError.validationFailed("Invalid SSE endpoint"))
- return
- }
-
- var request = URLRequest(url: sseURL)
- request.httpMethod = "GET"
- request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
- request.setValue("keep-alive", forHTTPHeaderField: "Connection")
- request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
- do {
- try contextProvider.headers(for request: &request)
- try validator.validate(request)
-
- let (bodyStream, response) = try await urlSession.bytes(for: request)
- guard let httpResponse = response as? HTTPURLResponse,
- (200 ... 299).contains(httpResponse.statusCode) else {
- let status = (response as? HTTPURLResponse)?.statusCode ?? -1
- throw MCPTransportError.invalidResponse(status: status)
- }
-
- // Accumulate raw bytes and parse SSE events
- var accumulated = Data()
-
- for try await byte in bodyStream {
  accumulated.append(byte)
 
  // Try parsing SSE from accumulated buffer
