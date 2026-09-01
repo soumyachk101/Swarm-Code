@@ -270,11 +270,11 @@ public final class MCPStdioTransport: @unchecked Sendable {
  guard stateLock.perform({ process != nil && !terminated }) else {
  throw MCPTransportError.notConnected
  }
-
- return try await withThrowingTaskGroup(of: JSONRPCResponse.self) { [requestTimeout] group in
+ let timeout = configuration.requestTimeout
+ return try await withThrowingTaskGroup(of: JSONRPCResponse.self) { group in
  // ── Timeout child ──────────────────────────────────────────
  group.addTask { [requestId = request.id] in
- try await Task.sleep(for: requestTimeout)
+ try await Task.sleep(for: timeout)
 
  // Remove the pending continuation so late responses don't
  // try to resume a continuation that will never be read.
@@ -555,7 +555,7 @@ public final class MCPStdioTransport: @unchecked Sendable {
 
  // Force-kill if the process ignored SIGTERM.
  if proc.isRunning {
- proc.kill()
+ kill(proc.processIdentifier, SIGKILL)
  }
 
  terminated = true
