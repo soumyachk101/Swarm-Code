@@ -134,6 +134,7 @@ public struct ChatMessage: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let role: MessageRole
     public let content: String
+    public let toolCall: ToolCall?
     public let toolCallId: String?
     public let createdAt: Date
 
@@ -141,12 +142,14 @@ public struct ChatMessage: Codable, Equatable, Identifiable, Sendable {
         id: String = UUID().uuidString,
         role: MessageRole,
         content: String,
+        toolCall: ToolCall? = nil,
         toolCallId: String? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
         self.role = role
         self.content = content
+        self.toolCall = toolCall
         self.toolCallId = toolCallId
         self.createdAt = createdAt
     }
