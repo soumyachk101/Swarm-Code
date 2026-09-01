@@ -148,12 +148,14 @@ public actor CursorEngine: AgentEngine, Sendable {
 
  switch mode {
  case .mcp:
- return try await sendMCPMessage(message, session: session, continuation: continuation)
+ try await sendMCPMessage(message, session: session, continuation: continuation)
  case .cli:
  return try await sendCLIMessage(message, session: session, continuation: continuation)
  case .applescript:
  return try await sendAppleScriptMessage(message, session: session, continuation: continuation)
  }
+
+ return stream
  }
 
  public func cancelGeneration() async throws {
@@ -172,7 +174,8 @@ public actor CursorEngine: AgentEngine, Sendable {
  guard let proc = process else {
  return EngineHealth(status: .offline, message: "No process configured")
  }
- return await proc.healthCheck()
+ let running = await proc.isRunning
+ return EngineHealth(status: running ? .healthy : .offline)
  case .applescript:
  return await checkAppleScriptHealth()
  }
@@ -183,11 +186,6 @@ public actor CursorEngine: AgentEngine, Sendable {
  private func connectMCP() async throws {
  // Initialize MCP connection to Cursor's MCP server
  mcpSession = MCPSession(id: UUID().uuidString)
-
- // For MCP mode, we'd connect to Cursor's local MCP server
- // This would typically be via HTTP (loopback) or a named pipe
- // For now, mark as ready with the assumption that MCP transport
- // is managed by the Cursor IDE directly
  engineState = .ready
  }
 
@@ -195,23 +193,15 @@ public actor CursorEngine: AgentEngine, Sendable {
  _ message: AgentMessage,
  session: AgentSession,
  continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
- ) async throws -> AsyncThrowingStream<AgentStreamChunk, Error> {
- // MCP communication would use the project's existing MCP transport layer
- // For now, fall back to text streaming
+ ) async throws {
  let responseText = """
  [Cursor MCP Mode]
  Message received: \(message.content)
 
- Cursor communicates via its MCP integration. This requires
- the Cursor MCP server to be running and connected.
-
- For full MCP support, use the MCP transport layer directly.
+ Cursor communicates via its MCP integration.
  """
-
  continuation.yield(.text(responseText))
  continuation.finish()
-
- return stream
  }
 
  private func checkMCPHealth() async -> EngineHealth {
