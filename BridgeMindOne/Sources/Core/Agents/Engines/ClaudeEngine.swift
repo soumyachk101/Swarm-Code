@@ -16,8 +16,9 @@ import Combine
 // MARK: - ClaudeEngine
 
 public actor ClaudeEngine: AgentEngine, Sendable {
- public static let engineType: EngineType = .claude
- public let configuration: EngineConfiguration
+    public typealias StreamChunk = AgentStreamChunk
+    public static let engineType: EngineType = .claude
+    public let configuration: EngineConfiguration
 
  public nonisolated var type: EngineType { Self.engineType }
  public nonisolated var displayName: String { "Claude Code" }

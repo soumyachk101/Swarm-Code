@@ -904,7 +904,7 @@ private protocol Connection: Sendable {
 
 #if canImport(Network)
 
-private actor NWConnectionStream: Stream {
+private final class NWConnectionStream: Stream, @unchecked Sendable {
 	private let connection: NWConnection
 
 	init(_ connection: NWConnection) {
