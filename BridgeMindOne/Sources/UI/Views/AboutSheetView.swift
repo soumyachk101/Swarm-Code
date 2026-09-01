@@ -58,7 +58,7 @@ public struct AboutSheetView: View {
                 Button("Close") {
                     dismiss()
                 }
-                .keyboardShortcut(.cancel)
+                .keyboardShortcut(.cancelAction)
             }
         }
         .padding(24)

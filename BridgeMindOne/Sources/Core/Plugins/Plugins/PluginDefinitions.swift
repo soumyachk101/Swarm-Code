@@ -667,6 +667,6 @@ public enum AllPlugins: Sendable, CaseIterable, Equatable {
 
 public enum PluginCollection {
     public static var allIdentities: [PluginIdentity] {
-        PluginDefinition.all
+        AllPlugins.all
     }
 }
