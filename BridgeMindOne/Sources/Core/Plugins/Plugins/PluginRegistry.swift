@@ -113,9 +113,9 @@ public struct AnyTransport: Sendable, Equatable {
  "jsonrpc": .string("2.0"),
  "id": .string(request.id),
  "method": .string(request.method),
- "params": request.params.map { .object($0) } ?? .object([:])
+ "params": request.params ?? .object([:])
  ])
- let response = try await transport.send(payload)
+ let response = try await transport.sendRequest(payload)
  switch response {
  case .object(let dict):
  let respId = dict["id"]?.stringValue ?? request.id
@@ -378,7 +378,7 @@ public actor PluginRegistry {
 
  // 8. Persist to DB
  do {
- try database.savePluginState(pluginId: pluginId, enabled: true, connected: true)
+ try await database.savePluginState(pluginId: pluginId, enabled: true, connected: true)
  } catch {
  logger.warning("Failed to persist plugin state: \(error.localizedDescription, privacy: .public)")
  }
@@ -409,7 +409,7 @@ public actor PluginRegistry {
  states[pluginId] = state
 
  do {
- try database.savePluginState(pluginId: pluginId, enabled: state.enabled, connected: false)
+ try await database.savePluginState(pluginId: pluginId, enabled: state.enabled, connected: false)
  } catch {
  logger.warning("Failed to persist disconnect state: \(error.localizedDescription, privacy: .public)")
  }
@@ -438,7 +438,7 @@ public actor PluginRegistry {
  state.lastError = nil
  states[pluginId] = state
 
- try database.savePluginState(pluginId: pluginId, enabled: true, connected: state.connected)
+ try await database.savePluginState(pluginId: pluginId, enabled: true, connected: state.connected)
  logger.info("Plugin enabled: \(pluginId, privacy: .public)")
  }
 
@@ -456,7 +456,7 @@ public actor PluginRegistry {
  state.enabled = false
  states[pluginId] = state
 
- try database.savePluginState(pluginId: pluginId, enabled: false, connected: false)
+ try await database.savePluginState(pluginId: pluginId, enabled: false, connected: false)
  logger.info("Plugin disabled: \(pluginId, privacy: .public)")
  }
 
@@ -722,7 +722,7 @@ public actor PluginRegistry {
 
  private func loadStatesFromDatabase() async {
  do {
- let records = try database.getAllPluginStates()
+ let records = try await database.getAllPluginStates()
  for record in records {
  states[record.pluginId] = PluginRuntimeState(
  pluginId: record.pluginId,
