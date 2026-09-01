@@ -50,13 +50,7 @@ public protocol MCPTransport: AnyObject, Sendable {
 // MARK: - MCP HTTP Client Authorizer
 
 public protocol MCPHTTPClientAuthorizer: Sendable {
- func authorize(request: inout URLRequest, session: MCPSession?) async throws
-}
-
-// MARK: - MCP HTTP Context Provider
-
-public protocol MCPHTTPContextProviding: Sendable {
- func context(for session: MCPSession) async -> [String: String]
+    func authorize(request: inout URLRequest, session: MCPSession?) async throws
 }
 
 // MARK: - MCP Session Management
