@@ -14,54 +14,51 @@ public protocol AnalyticsBackend: Sendable {
  func flush()
 }
 
-public actor AnalyticsEngine: AnalyticsBackend {
- public static let shared = AnalyticsEngine()
- public static let apiKey = "phc_xwHPCc9bhzdrsFSKZRvdZf2estjpbvTTghvDqzKKSPmS"
+public final class AnalyticsEngine: AnalyticsBackend, @unchecked Sendable {
+    public static let shared = AnalyticsEngine()
+    public static let apiKey = "phc_xwHPCc9bhzdrsFSKZRvdZf2estjpbvTTghvDqzKKSPmS"
 
- private var client: Any?
- private var isInitialized = false
- private var isEnabled: Bool {
- UserDefaults.standard.object(forKey: "analytics_enabled") as? Bool ?? true
- }
+    private let lock = NSLock()
+    private var client: Any?
+    private var isInitialized = false
+    private var isEnabled: Bool {
+        UserDefaults.standard.object(forKey: "analytics_enabled") as? Bool ?? true
+    }
 
- public func initialize() {
- guard isEnabled, !isInitialized else { return }
+    public init() {}
 
- // PostHog SDK initialization
- // In production: PostHogSDK.shared.setup(apiKey: Self.apiKey)
- isInitialized = true
- }
+    public func initialize() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isEnabled, !isInitialized else { return }
+        isInitialized = true
+    }
 
- public func track(event: String, properties: [String: Any]? = nil) {
- guard isEnabled else { return }
+    public func track(event: String, properties: [String: Any]? = nil) {
+        guard isEnabled else { return }
+        Task.detached(priority: .background) {
+            // PostHog event logging
+        }
+    }
 
- // Delegate to PostHog SDK
- Task.detached(priority: .background) {
- // PostHogSDK.shared.capture(event, properties: properties)
- }
- }
+    public func identify(userId: String?, properties: [String: Any]? = nil) {
+        guard isEnabled else { return }
+        Task.detached(priority: .background) {
+            // PostHog user identification
+        }
+    }
 
- public func identify(userId: String?, properties: [String: Any]? = nil) {
- guard isEnabled else { return }
+    public func reset() {
+        Task.detached(priority: .background) {
+            // PostHog reset
+        }
+    }
 
- Task.detached(priority: .background) {
- // if let userId {
- // PostHogSDK.shared.identify(userId, userProperties: properties)
- // }
- }
- }
-
- public func reset() {
- Task.detached(priority: .background) {
- // PostHogSDK.shared.reset()
- }
- }
-
- public func flush() {
- Task.detached(priority: .background) {
- // PostHogSDK.shared.flush()
- }
- }
+    public func flush() {
+        Task.detached(priority: .background) {
+            // PostHog flush
+        }
+    }
 
  // MARK: - Convenience Methods
 

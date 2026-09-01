@@ -4,44 +4,45 @@
 //
 
 import Foundation
+import CryptoKit
 
 public struct Skill: Codable, Equatable, Identifiable, Sendable {
- public let id: String
- public let name: String
- public let description: String
- public let version: String
- public let engine: String
- public let content: String
- public let contentHash: String
- public let source: SkillSource
- public let installedAt: Date
+    public let id: String
+    public let name: String
+    public let description: String
+    public let version: String
+    public let engine: String
+    public let content: String
+    public let contentHash: String
+    public let source: SkillSource
+    public let installedAt: Date
 
- public init(
- id: String,
- name: String,
- description: String,
- version: String,
- engine: String,
- content: String,
- source: SkillSource = .builtin,
- installedAt: Date = Date()
- ) {
- self.id = id
- self.name = name
- self.description = description
- self.version = version
- self.engine = engine
- self.content = content
- self.contentHash = SHA256.hash(data: Data(content.utf8)).compactMap { String(format: "%02x", $0) }.joined()
- self.source = source
- self.installedAt = installedAt
- }
+    public init(
+        id: String,
+        name: String,
+        description: String,
+        version: String,
+        engine: String,
+        content: String,
+        source: SkillSource = .builtin,
+        installedAt: Date = Date()
+    ) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.version = version
+        self.engine = engine
+        self.content = content
+        self.contentHash = SHA256.hash(data: Data(content.utf8)).compactMap { String(format: "%02x", $0) }.joined()
+        self.source = source
+        self.installedAt = installedAt
+    }
 }
 
-public enum SkillSource: String, Codable, Equatable {
- case builtin
- case user
- case project
+public enum SkillSource: String, Codable, Equatable, Sendable {
+    case builtin
+    case user
+    case project
 }
 
 // MARK: - Skill Frontmatter
