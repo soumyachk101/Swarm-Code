@@ -142,7 +142,7 @@ public actor CursorEngine: AgentEngine, Sendable {
  throw AgentEngineError.notConnected
  }
 
- let continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
+ var continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation!
  let stream = AsyncThrowingStream<AgentStreamChunk, Error> { cont in
  continuation = cont
  }
@@ -151,9 +151,9 @@ public actor CursorEngine: AgentEngine, Sendable {
  case .mcp:
  try await sendMCPMessage(message, session: session, continuation: continuation)
  case .cli:
- return try await sendCLIMessage(message, session: session, continuation: continuation)
+ try await sendCLIMessage(message, session: session, continuation: continuation)
  case .applescript:
- return try await sendAppleScriptMessage(message, session: session, continuation: continuation)
+ try await sendAppleScriptMessage(message, session: session, continuation: continuation)
  }
 
  return stream

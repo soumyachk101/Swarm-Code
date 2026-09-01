@@ -143,7 +143,12 @@ public actor AgentManager: Sendable {
             throw AgentManagerError.configurationError("Session already has an assigned agent")
         }
 
-        let config = configuration ?? await registry.configuration(for: engineType)
+        let config: EngineConfiguration
+        if let configuration {
+            config = configuration
+        } else {
+            config = await registry.configuration(for: engineType)
+        }
         let record = AgentRecord(
             engineType: engineType,
             configuration: config,
