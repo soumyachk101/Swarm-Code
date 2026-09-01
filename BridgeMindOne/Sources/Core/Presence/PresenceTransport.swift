@@ -82,6 +82,7 @@ public actor XPCServiceManager {
  }
 
  public func disconnect(service: IPCName) async {
+→ await services[service]?.disconnect()
  services[service]?.disconnect()
  services.removeValue(forKey: service)
  }
