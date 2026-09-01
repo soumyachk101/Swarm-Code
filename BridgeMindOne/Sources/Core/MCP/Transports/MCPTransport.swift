@@ -69,12 +69,6 @@ public protocol MCPSessionManaging: Sendable {
  func allSessions() async -> [MCPSession]
 }
 
-// MARK: - MCP Request Validator
-
-public protocol MCPHTTPRequestValidator: Sendable {
- func validate(_ request: URLRequest, for session: MCPSession?) throws
-}
-
 // MARK: - MCP Network Connection Protocol
 
 public protocol MCPNetworkConnectionProtocol: Sendable {
