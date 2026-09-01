@@ -115,7 +115,7 @@ public struct OAuthChallenge: Codable, Equatable {
 
 // MARK: - Plugin Identity
 
-public struct PluginIdentity: Codable, Equatable, Hashable, Sendable {
+public struct PluginIdentity: Codable, Equatable, Hashable, Identifiable, Sendable {
  public let id: String
  public let displayName: String
  public let type: PluginType
