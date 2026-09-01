@@ -6,141 +6,123 @@
 import Foundation
 import Combine
 
-// MARK: - Agent Engine Protocol
-
-public protocol AgentEngine: Sendable {
- associatedtype StreamChunk: Sendable
- var type: EngineType { get }
- var displayName: String { get }
- var iconName: String { get }
- var configuration: EngineConfiguration { get }
- var supportsStreaming: Bool { get }
- var supportsToolUse: Bool { get }
- var supportsMultiTurn: Bool { get }
-
- func connect() async throws
- func disconnect() async throws
- func sendMessage(
- _ message: AgentMessage,
- session: AgentSession
- ) async throws -> AsyncThrowingStream<AgentStreamChunk, any Error>
- func cancelGeneration() async throws
- func healthCheck() async -> EngineHealth
-}
-
-// MARK: - Engine Registry
+//// MARK: - Engine Registry
 
 public actor EngineRegistry: Sendable {
- public static let shared = EngineRegistry()
+    public static let shared = EngineRegistry()
 
- // Published state
- @Published public private(set) var availableEngines: [EngineType: Bool] = [:]
- @Published public private(set) var engineCapabilities: [EngineType: EngineCapabilities] = [:]
- @Published public private(set) var engineConfigurations: [EngineType: EngineConfiguration] = [:]
+    // Published state
+    @Published public private(set) var availableEngines: [EngineType: Bool] = [:]
+    @Published public private(set) var engineCapabilities: [EngineType: EngineCapabilities] = [:]
+    @Published public private(set) var engineConfigurations: [EngineType: EngineConfiguration] = [:]
 
- // Detection results
- public struct DetectionResult: Sendable, Equatable {
- public let engineType: EngineType
- public let isAvailable: Bool
- public let binaryPath: String?
- public let version: String?
- public let capabilities: EngineCapabilities
- public let error: String?
+    // Detection results
+    public struct DetectionResult: Sendable, Equatable {
+        public let engineType: EngineType
+        public let isAvailable: Bool
+        public let binaryPath: String?
+        public let version: String?
+        public let capabilities: EngineCapabilities
+        public let error: String?
 
- public init(
- engineType: EngineType,
- isAvailable: Bool,
- binaryPath: String? = nil,
- version: String? = nil,
- capabilities: EngineCapabilities? = nil,
- error: String? = nil
- ) {
- self.engineType = engineType
- self.isAvailable = isAvailable
- self.binaryPath = binaryPath
- self.version = version
- self.capabilities = capabilities ?? EngineCapabilities(
- supportsStreaming: false,
- supportsToolUse: false,
- supportsMultiTurn: false,
- supportsFileEditing: false,
- supportsWorkspaceAccess: false
- )
- self.error = error
- }
- }
+        public init(
+            engineType: EngineType,
+            isAvailable: Bool,
+            binaryPath: String? = nil,
+            version: String? = nil,
+            capabilities: EngineCapabilities? = nil,
+            error: String? = nil
+        ) {
+            self.engineType = engineType
+            self.isAvailable = isAvailable
+            self.binaryPath = binaryPath
+            self.version = version
+            self.capabilities = capabilities ?? EngineCapabilities(
+                supportsStreaming: false,
+                supportsToolUse: false,
+                supportsMultiTurn: false,
+                supportsFileEditing: false,
+                supportsWorkspaceAccess: false
+            )
+            self.error = error
+        }
+    }
 
- public struct EngineCapabilities: Sendable, Codable, Equatable {
- public let supportsStreaming: Bool
- public let supportsToolUse: Bool
- public let supportsMultiTurn: Bool
- public let supportsFileEditing: Bool
- public let supportsWorkspaceAccess: Bool
+    public struct EngineCapabilities: Sendable, Codable, Equatable {
+        public let supportsStreaming: Bool
+        public let supportsToolUse: Bool
+        public let supportsMultiTurn: Bool
+        public let supportsFileEditing: Bool
+        public let supportsWorkspaceAccess: Bool
 
- public init(
- supportsStreaming: Bool = true,
- supportsToolUse: Bool = true,
- supportsMultiTurn: Bool = true,
- supportsFileEditing: Bool = false,
- supportsWorkspaceAccess: Bool = false
- ) {
- self.supportsStreaming = supportsStreaming
- self.supportsToolUse = supportsToolUse
- self.supportsMultiTurn = supportsMultiTurn
- self.supportsFileEditing = supportsFileEditing
- self.supportsWorkspaceAccess = supportsWorkspaceAccess
- }
- }
+        public init(
+            supportsStreaming: Bool = true,
+            supportsToolUse: Bool = true,
+            supportsMultiTurn: Bool = true,
+            supportsFileEditing: Bool = false,
+            supportsWorkspaceAccess: Bool = false
+        ) {
+            self.supportsStreaming = supportsStreaming
+            self.supportsToolUse = supportsToolUse
+            self.supportsMultiTurn = supportsMultiTurn
+            self.supportsFileEditing = supportsFileEditing
+            self.supportsWorkspaceAccess = supportsWorkspaceAccess
+        }
+    }
 
- // Storage
- private var engines: [EngineType: any AgentEngine] = [:]
- private var discoveryTask: Task<Void, Error>?
+    // Storage
+    private var engines: [EngineType: any AgentEngine] = [:]
+    private var discoveryTask: Task<Void, Error>?
 
- // Init
- private init() {
- registerDefaultConfigurations()
- }
+    // Init
+    public init() {
+        var configs: [EngineType: EngineConfiguration] = [:]
+        var caps: [EngineType: EngineCapabilities] = [:]
+        for type in EngineType.allCases {
+            configs[type] = Self.defaultConfiguration(for: type)
+            caps[type] = Self.defaultCapabilities(for: type)
+        }
+        self.engineConfigurations = configs
+        self.engineCapabilities = caps
+    }
 
- // MARK: Public API
+    // MARK: Public API
 
- public func detectAllEngines() async -> [DetectionResult] {
- return await withTaskGroup(of: DetectionResult.self) { group in
- for type in EngineType.allCases {
- group.addTask {
- await self.detectEngine(type)
- }
- }
+    public func detectAllEngines() async -> [DetectionResult] {
+        return await withTaskGroup(of: DetectionResult.self) { group in
+            for type in EngineType.allCases {
+                group.addTask {
+                    await self.detectEngine(type)
+                }
+            }
+            var results: [DetectionResult] = []
+            for await result in group {
+                results.append(result)
+            }
+            return results
+        }
+    }
 
- var results: [DetectionResult] = []
- for await result in group {
- results.append(result)
- }
- return results
- }
-}
+    public func detectEngine(_ type: EngineType) async -> DetectionResult {
+        let binaryName = defaultBinaryName(for: type)
+        let binaryPath = AgentProcess.findBinary(binaryName)
 
- public func detectEngine(_ type: EngineType) async -> DetectionResult {
- let binaryName = defaultBinaryName(for: type)
- let binaryPath = await AgentProcess.findBinary(binaryName)
-
- if let path = binaryPath {
- let version = await probeVersion(for: type, at: path)
- let capabilities = capabilities(for: type)
- return DetectionResult(
- engineType: type,
- isAvailable: true,
- binaryPath: path,
- version: version,
- capabilities: capabilities
- )
- } else {
- return DetectionResult(
- engineType: type,
- isAvailable: false,
- error: "Binary '\(binaryName)' not found in PATH"
- )
- }
- }
+        if let path = binaryPath {
+            return DetectionResult(
+                engineType: type,
+                isAvailable: true,
+                binaryPath: path,
+                capabilities: capabilities(for: type)
+            )
+        } else {
+            return DetectionResult(
+                engineType: type,
+                isAvailable: false,
+                capabilities: capabilities(for: type),
+                error: "\(type.displayName) binary not found"
+            )
+        }
+    }
 
  public func isAvailable(_ type: EngineType) -> Bool {
  availableEngines[type] ?? false
@@ -181,87 +163,6 @@ public actor EngineRegistry: Sendable {
  if let existing = engines[type] {
  return existing
  }
-
- let engine = try createEngine(for: type)
- engines[type] = engine
- return engine
- }
-
- public func capabilities(for type: EngineType) -> EngineCapabilities {
- if let caps = engineCapabilities[type] { return caps }
- return capabilities(for: type)
- }
-
- public func refreshAvailability() async {
- discoveryTask?.cancel()
- discoveryTask = Task {
- let results = await detectAllEngines()
- let newAvailability: [EngineType: Bool] = [:]
- let newCapabilities: [EngineType: EngineCapabilities] = [:]
-
- for result in results {
- newAvailability[result.engineType] = result.isAvailable
- if result.isAvailable {
- newCapabilities[result.engineType] = result.capabilities
- }
- }
-
- await MainActor.run {
- self.availableEngines = newAvailability
- self.engineCapabilities = newCapabilities
- }
- }
- }
-
- // MARK: Private Helpers
-
- private func registerDefaultConfigurations() {
- for type in EngineType.allCases {
- engineConfigurations[type] = defaultConfiguration(for: type)
- engineCapabilities[type] = capabilities(for: type)
- }
- }
-
- private func defaultBinaryName(for type: EngineType) -> String {
- switch type {
- case .claude: return "claude"
- case .codex: return "codex"
- case .cursor: return "cursor"
- case .aider: return "aider"
- case .deepseek: return "deepseek"
- case .grok: return "grok"
- case .gemini: return "gemini"
- case .opencode: return "opencode"
- }
- }
-
- private func defaultConfiguration(for type: EngineType) -> EngineConfiguration {
- let models: [EngineType: String] = [
- .claude: "claude-sonnet-4-20250514",
- .codex: "gpt-4",
- .cursor: "claude-3.5-sonnet",
- .aider: "claude-3-5-sonnet-20241022",
- .deepseek: "deepseek-chat",
- .grok: "grok-3",
- .gemini: "gemini-2.0-flash",
- .opencode: "claude-3-5-sonnet"
- ]
-
- let caps = capabilities(for: type)
-
- return EngineConfiguration(
- engineType: type,
- binaryPath: nil,
- model: models[type] ?? "default",
- supportsStreaming: caps.supportsStreaming,
- supportsToolUse: caps.supportsToolUse,
- supportsMultiTurn: caps.supportsMultiTurn,
- autoRestart: true,
- maxRestartAttempts: 3,
- restartDelay: .seconds(2)
- )
- }
-
  private func capabilities(for type: EngineType) -> EngineCapabilities {
  switch type {
  case .claude, .codex, .cursor, .aider, .deepseek, .opencode:
