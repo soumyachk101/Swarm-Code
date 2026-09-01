@@ -709,7 +709,7 @@ public actor PluginRegistry {
 
  /// Return all known plugin IDs from the registry.
  public func allPluginIds() -> [String] {
- AllPlugins.allCases.map { $0.id }
+ AllPlugins.allCases.map { $0.identity.id }
  }
 
  /// Return runtime states for all known plugins, sorted by id.
