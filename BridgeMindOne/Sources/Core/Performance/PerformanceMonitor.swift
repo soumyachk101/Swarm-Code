@@ -51,9 +51,11 @@ public actor PerformanceMonitor {
     private var alertThreshold = 80.0
     private var samplingTask: Task<Void, Never>?
 
-    public init() {
-        startSamplingTask()
-    }
+ public init() {
+ Task { [weak self] in
+ await self?.startSamplingTask()
+ }
+ }
 
     private func startSamplingTask() {
         samplingTask = Task { [weak self] in
