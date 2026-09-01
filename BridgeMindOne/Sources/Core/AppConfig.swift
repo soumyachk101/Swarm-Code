@@ -29,6 +29,7 @@ public struct AppConfig {
  public static let mcpProtocolVersion = "2025-03-26"
  public static let mcpLocalPort = 8000
  public static let mcpSessionTokenEnv = "BRIDGEMIND_MCP_SESSION_TOKEN"
+ public static let sessionTokenEnvVar = "BRIDGEMIND_MCP_SESSION_TOKEN"
 
  // MARK: - Sparkle
  public static let sparklePublicKey = "qDys+F+w3LbYwVY20c0PCDFloXwhuuKQmCyZfbtYTKY="
