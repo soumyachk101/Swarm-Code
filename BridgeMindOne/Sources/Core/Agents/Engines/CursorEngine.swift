@@ -243,9 +243,6 @@ public actor CursorEngine: AgentEngine, Sendable {
  // MARK: CLI Mode
 
  private func sendCLIMessage(
- _ message: AgentMessage,
- session: AgentSession,
- continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
      _ message: AgentMessage,
      session: AgentSession,
      continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
