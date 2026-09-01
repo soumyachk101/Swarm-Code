@@ -25,7 +25,7 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  // MARK: - MCPToolRouter
 
  public func callTool(_ call: ToolCall) async throws -> String {
- let pluginId = extractPluginId(from: call.name)
+ let pluginId = await extractPluginId(from: call.name)
 
  guard let transport = await pluginRegistry.transport(for: pluginId) else {
  throw ToolRouterError.pluginNotConnected(pluginId)
@@ -40,10 +40,12 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  ])
  )
 
- let response = try await withThrowingTaskGroup(of: String.self) { group in
+ // Simple timeout pattern: race the request against a sleep
+ try await withThrowingTaskGroup(of: String.self) { group in
  group.addTask {
- try await self.sendWithTimeout(transport: transport, request: request)
+ try await self.sendRequest(transport: transport, request: request)
  }
+
  group.addTask {
  try? await Task.sleep(nanoseconds: self.defaultTimeoutNanoseconds)
  throw ToolRouterError.timeout
@@ -103,12 +105,12 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
 
  // MARK: - Private
 
- private func extractPluginId(from toolName: String) -> String {
+ private func extractPluginId(from toolName: String) async -> String {
  if let colonIndex = toolName.firstIndex(of: ":") {
  return String(toolName[..<colonIndex])
  }
+
  // Fallback: iterate over all plugins to find which owns this tool
- Task {
  let allIds = await pluginRegistry.allPluginIds()
  for pluginId in allIds {
  if await pluginRegistry.isConnected(pluginId) {
@@ -119,10 +121,8 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  }
  return allIds.first { await pluginRegistry.isConnected($0) } ?? "unknown"
  }
- return "unknown"
- }
 
- private func sendWithTimeout(transport: AnyTransport, request: JSONRPCRequest) async throws -> String {
+ private func sendRequest(transport: AnyTransport, request: JSONRPCRequest) async throws -> String {
  let response = try await transport.sendRequest(request)
 
  if let error = response.error {
