@@ -1,18 +1,6 @@
 import Foundation
 import os.log
 
-// MARK: - Transport Protocol
-
-/// Defines the transport interface for MCP message exchange.
-public protocol MCPTransport<Message> {
- associatedtype Message: Codable & Sendable
- var baseURL: URL { get }
- var sessionID: String? { get }
- func send(_ message: Message) async throws
- func listen() -> AsyncThrowingStream<Message, Error>
- func close() async throws
-}
-
 // MARK: - Transport Errors
 
 public enum MCPTransportError: LocalizedError, Sendable {
@@ -231,9 +219,8 @@ public enum MCPTokenRefreshHandler: Sendable {
 
 // MARK: - MCPHTTPTransport
 
-@Observable
-public final class MCPHTTPTransport: MCPTransport {
- public typealias Message = JSONValue
+public final class MCPHTTPTransport: @unchecked Sendable {
+    public typealias Message = JSONValue
 
  // MARK: Properties
  public let baseURL: URL

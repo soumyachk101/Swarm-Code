@@ -139,17 +139,17 @@ public struct PluginIdentity: Codable, Equatable, Hashable, Sendable {
  }
 }
 
-public enum PluginType: String, Codable, Equatable {
- case remote // HTTP MCP server
- case local // stdio MCP server
- case oauth // OAuth-based plugin
- case builtin // Built into BridgeMind
+public enum PluginType: String, Codable, Equatable, Sendable {
+    case remote // HTTP MCP server
+    case local // stdio MCP server
+    case oauth // OAuth-based plugin
+    case builtin // Built into BridgeMind
 }
 
-public enum PluginAuthType: String, Codable, Equatable {
- case none // No auth needed
- case apiKey // Simple API key
- case oauth // Full OAuth 2.0
+public enum PluginAuthType: String, Codable, Equatable, Sendable {
+    case none // No auth needed
+    case apiKey // Simple API key
+    case oauth // Full OAuth 2.0
 }
 
 // MARK: - PKCE Generator
