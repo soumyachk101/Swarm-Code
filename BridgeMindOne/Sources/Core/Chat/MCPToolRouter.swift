@@ -119,7 +119,12 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  }
  }
  }
- return allIds.first { await pluginRegistry.isConnected($0) } ?? "unknown"
+ for pluginId in allIds {
+ if await pluginRegistry.isConnected(pluginId) {
+ return pluginId
+ }
+ }
+ return "unknown"
  }
 
  private func sendRequest(transport: AnyTransport, request: JSONRPCRequest) async throws -> String {
