@@ -1,43 +1,6 @@
 import Foundation
 import os.log
 
-// MARK: - Transport Errors
-
-public enum MCPTransportError: LocalizedError, Sendable {
- case connectionFailed(underlying: Error?)
- case invalidResponse(status: Int)
- case timeoutInterval(TimeInterval)
- case malformedSSE(String)
- case sessionRejected
- case authenticationFailed
- case validationFailed(String)
- case transportClosed
- case networkUnavailable
-
- public var errorDescription: String? {
- switch self {
- case .connectionFailed(let underlying):
- return "Connection failed: \(underlying?.localizedDescription ?? "unknown error")"
- case .invalidResponse(let status):
- return "Server returned invalid status code: \(status)"
- case .timeoutInterval(let interval):
- return "Request timed out after \(interval)s"
- case .malformedSSE(let detail):
- return "Malformed SSE: \(detail)"
- case .sessionRejected:
- return "Session rejected by server"
- case .authenticationFailed:
- return "Authentication failed — check BRIDGEMIND_MCP_SESSION_TOKEN"
- case .validationFailed(let detail):
- return "Request validation failed: \(detail)"
- case .transportClosed:
- return "Transport is closed"
- case .networkUnavailable:
- return "Network unavailable"
- }
- }
-}
-
 // MARK: - Session ID Generator
 
 public protocol MCPSessionIDGenerator: Sendable {
