@@ -154,6 +154,10 @@ public struct AnyTransport: Sendable, Equatable {
  public func sendRequest(_ request: JSONRPCRequest) async throws -> JSONRPCResponse {
  try await _sendRequest(request)
  }
+
+ public static func == (lhs: AnyTransport, rhs: AnyTransport) -> Bool {
+ lhs._id == rhs._id
+ }
 }
 
 // MARK: - Plugin Transport Factory
@@ -812,7 +816,7 @@ public actor PluginRegistry {
  var request = URLRequest(url: discovery.tokenEndpoint)
  request.httpMethod = "POST"
  request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
- request.httpBody = bodyString.data(using: .utf8)
+ request.httpBody = Data(bodyString.utf8)
 
  let (data, response) = try await URLSession.shared.data(for: request)
  guard let httpResponse = response as? HTTPURLResponse,
