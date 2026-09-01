@@ -57,7 +57,7 @@ public actor PerformanceMonitor {
  }
  }
 
-    private func startSamplingTask() {
+ private nonisolated func startSamplingTask() {
         samplingTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
