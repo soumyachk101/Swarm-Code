@@ -73,8 +73,7 @@ public final class MCPLoopbackTransport: MCPTransport {
 		let pluginId: String?
 		let remoteAddress: String
 		let connectedAt: Date
-		private let sendLock = NSLock()
-		private var stream: (any Stream)?
+		let stream: (any Stream)?
 
 		init(
 			pluginId: String?,
@@ -89,16 +88,11 @@ public final class MCPLoopbackTransport: MCPTransport {
 		}
 
 		func close() {
-			sendLock.lock()
-			defer { sendLock.unlock() }
 			stream?.close()
-			stream = nil
 		}
 
-		func send(_ data: Data) throws {
-			sendLock.lock()
-			defer { sendLock.unlock() }
-			try stream?.write(data)
+		func send(_ data: Data) async throws {
+			try await stream?.write(data)
 		}
 	}
 
@@ -140,9 +134,9 @@ public final class MCPLoopbackTransport: MCPTransport {
 	/// Create a new loopback transport.
 	///
 	/// - Parameters:
-	/// - port: TCP port to listen on. Pass `0` for auto-assignment.
-	/// - maxConnections: Upper bound on simultaneous plugin connections.
-	/// - connectionIdleTimeout: Seconds of inactivity before a plugin socket is closed.
+	///   - port: TCP port to listen on. Pass `0` for auto-assignment.
+	///   - maxConnections: Upper bound on simultaneous plugin connections.
+	///   - connectionIdleTimeout: Seconds of inactivity before a plugin socket is closed.
 	public init(
 		port: UInt16 = 8765,
 		maxConnections: Int = 64,
@@ -156,7 +150,7 @@ public final class MCPLoopbackTransport: MCPTransport {
 	// MARK: - MCPTransport
 
 	public func connect() async throws {
-		try await withCheckedThrowingContinuation { continuation in
+		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
 			transportQueue.async(flags: .barrier) { [weak self] in
 				guard let self else {
 					continuation.resume(throwing: MCPTransportError.ioError("Transport deallocated"))
@@ -166,7 +160,7 @@ public final class MCPLoopbackTransport: MCPTransport {
 					try self.startListener()
 					self.isConnected = true
 					self.sessionId = UUID().uuidString
-					continuation.resume()
+					continuation.resume(returning: ())
 				} catch {
 					continuation.resume(throwing: error)
 				}
@@ -175,23 +169,23 @@ public final class MCPLoopbackTransport: MCPTransport {
 	}
 
 	public func disconnect() async {
-		await withCheckedContinuation { continuation in
+		await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
 			transportQueue.async(flags: .barrier) { [weak self] in
-				guard let self else { continuation.resume(); return }
+				guard let self else { continuation.resume(returning: ()); return }
 				self.stopListener()
 				self.isConnected = false
 				self.sessionId = nil
-				continuation.resume()
+				continuation.resume(returning: ())
 			}
 		}
 	}
 
 	public func sendRequest(_ request: JSONRPCRequest) async throws -> JSONRPCResponse {
 		guard let pluginId = extractPluginId(from: request) else {
-			throw MCPTransportError.invalidResponse
+			throw MCPTransportError.invalidResponse()
 		}
 
-		return try await withCheckedThrowingContinuation { continuation in
+		return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<JSONRPCResponse, any Error>) in
 			transportQueue.async(flags: .barrier) { [weak self] in
 				guard let self else {
 					continuation.resume(throwing: MCPTransportError.ioError("Transport deallocated"))
@@ -201,16 +195,18 @@ public final class MCPLoopbackTransport: MCPTransport {
 					continuation.resume(throwing: MCPTransportError.serverNotAvailable)
 					return
 				}
-				do {
-					let payload = try JSONEncoder().encode(request)
-					let httpBody = self.wrapJSONRPCInHTTP(body: payload)
-					try connection.send(httpBody)
-					continuation.resume(returning: JSONRPCResponse(
-						id: request.id,
-						result: .object([:])
-					))
-				} catch {
-					continuation.resume(throwing: error)
+				Task {
+					do {
+						let payload = try JSONEncoder().encode(request)
+						let httpBody = self.wrapJSONRPCInHTTP(body: payload)
+						try await connection.send(httpBody)
+						continuation.resume(returning: JSONRPCResponse(
+							id: request.id,
+							result: .object([:])
+						))
+					} catch {
+						continuation.resume(throwing: error)
+					}
 				}
 			}
 		}
@@ -219,17 +215,20 @@ public final class MCPLoopbackTransport: MCPTransport {
 	public func sendNotification(_ notification: JSONRPCNotification) async throws {
 		let payload = try JSONEncoder().encode(notification)
 
-		try await withCheckedThrowingContinuation { continuation in
+		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
 			transportQueue.async(flags: .barrier) { [weak self] in
 				guard let self else {
 					continuation.resume(throwing: MCPTransportError.ioError("Transport deallocated"))
 					return
 				}
 				let httpBody = self.wrapNotificationInHTTP(body: payload)
-				for connection in self.connections.values {
-					do { try connection.send(httpBody) } catch { /* best-effort */ }
+				let conns = Array(self.connections.values)
+				Task {
+					for connection in conns {
+						do { try await connection.send(httpBody) } catch { /* best-effort */ }
+					}
+					continuation.resume(returning: ())
 				}
-				continuation.resume()
 			}
 		}
 	}
@@ -242,15 +241,14 @@ public final class MCPLoopbackTransport: MCPTransport {
 					continuation.finish()
 					return
 				}
-				self.handlers[token] = { [weak self] _, request in
-					guard let self else { return nil }
+				self.handlers[token] = { _, request in
 					continuation.yield(.object([
-						.string("id"): request.params ?? .null
+						"id": request.params ?? .null
 					]))
 					return JSONRPCResponse(id: request.id, result: .object([:]))
 				}
 			}
-			continuation.onTermination = { @Sendable [weak self] in
+			continuation.onTermination = { @Sendable [weak self] _ in
 				self?.transportQueue.async(flags: .barrier) {
 					self?.handlers.removeValue(forKey: token)
 				}
