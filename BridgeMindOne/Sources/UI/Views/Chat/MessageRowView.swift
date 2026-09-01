@@ -4,85 +4,81 @@
 //
 
 import SwiftUI
+import Core
 
 public struct MessageRowView: View {
- let message: ChatMessage
- @EnvironmentObject private var appState: AppState
+    let message: ChatMessage
+    @Environment(AppState.self) private var appState
 
- public var body: some View {
- HStack(alignment: .top, spacing: 8) {
- // Avatar
- avatarView
- .frame(width: 28, height: 28)
+    public init(message: ChatMessage) {
+        self.message = message
+    }
 
- // Content
- VStack(alignment: .leading, spacing: 4) {
- if message.role != .user {
- Text(roleLabel)
- .font(.caption2)
- .foregroundStyle(.secondary)
- }
+    public var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            // Avatar
+            avatarView
+                .frame(width: 28, height: 28)
 
- Text(displayContent)
- .font(.system(size: 14))
- .textSelection(.enabled)
- .frame(maxWidth: .infinity, alignment: .leading)
- }
- }
- .padding(.horizontal, 12)
- .padding(.vertical, 8)
- .background(messageBackground)
- .clipShape(RoundedRectangle(cornerRadius: 12))
- .padding(.horizontal, 16)
- .padding(.vertical, 2)
- }
+            // Content
+            VStack(alignment: .leading, spacing: 4) {
+                if message.role != .user {
+                    Text(roleLabel)
+                        .font(.caption2.bold())
+                        .foregroundStyle(.secondary)
+                }
 
- private var avatarView: some View {
- Group {
- switch message.role {
- case .user:
- Image(systemName: "person.circle.fill")
- .foregroundStyle(.blue)
- case .assistant:
- Image(systemName: "brain.head.profile")
- .foregroundStyle(.green)
- case .tool:
- Image(systemName: "wrench.and.screwdriver.fill")
- .foregroundStyle(.orange)
- case .system:
- Image(systemName: "gear")
- .foregroundStyle(.gray)
- }
- }
- }
+                Text(message.content)
+                    .font(.system(size: 14))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(messageBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 16)
+    }
 
- private var roleLabel: String {
- switch message.role {
- case .user: return "You"
- case .assistant: return appState?.activeAgent?.name ?? "Assistant"
- case .tool: return "Tool"
- case .system: return "System"
- }
- }
+    private var avatarView: some View {
+        Group {
+            switch message.role {
+            case .user:
+                Image(systemName: "person.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(.blue)
+            case .assistant:
+                Image(systemName: "brain.head.profile")
+                    .font(.title3)
+                    .foregroundStyle(.green)
+            case .tool:
+                Image(systemName: "wrench.and.screwdriver.fill")
+                    .font(.title3)
+                    .foregroundStyle(.orange)
+            case .system:
+                Image(systemName: "gear")
+                    .font(.title3)
+                    .foregroundStyle(.gray)
+            }
+        }
+    }
 
- private var messageBackground: some ShapeStyle {
- switch message.role {
- case .user: return AnyShapeStyle(.blue.opacity(0.1))
- case .assistant: return AnyShapeStyle(.green.opacity(0.1))
- case .tool: return AnyShapeStyle(.orange.opacity(0.1))
- case .system: return AnyShapeStyle(.gray.opacity(0.1))
- }
- }
+    private var roleLabel: String {
+        switch message.role {
+        case .user: return "You"
+        case .assistant: return appState.activeAgent.displayName
+        case .tool: return "Tool"
+        case .system: return "System"
+        }
+    }
 
- private var displayContent: AttributedString {
- // Simple markdown-ish rendering
- var result = message.content
-
- // Replace code blocks with styled text
- if result.contains("```") {
- // In production, use a proper Markdown renderer
- }
-
- return AttributedString(result)
- }
+    private var messageBackground: Color {
+        switch message.role {
+        case .user: return Color.blue.opacity(0.08)
+        case .assistant: return Color.green.opacity(0.08)
+        case .tool: return Color.orange.opacity(0.08)
+        case .system: return Color.gray.opacity(0.08)
+        }
+    }
 }
