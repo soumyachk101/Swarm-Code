@@ -107,7 +107,8 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  if let colonIndex = toolName.firstIndex(of: ":") {
  return String(toolName[..<colonIndex])
  }
- // Fallback: check all connected plugins to find which owns this tool
+ // Fallback: iterate over all plugins to find which owns this tool
+ Task {
  let allIds = await pluginRegistry.allPluginIds()
  for pluginId in allIds {
  if await pluginRegistry.isConnected(pluginId) {
@@ -117,6 +118,8 @@ public actor MCPToolRouterImpl: MCPToolRouter, Sendable {
  }
  }
  return allIds.first { await pluginRegistry.isConnected($0) } ?? "unknown"
+ }
+ return "unknown"
  }
 
  private func sendWithTimeout(transport: AnyTransport, request: JSONRPCRequest) async throws -> String {
