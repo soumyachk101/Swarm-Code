@@ -230,7 +230,7 @@ private extension AgentDetailView {
  .foregroundStyle(.tertiary)
  }
 
- Stepper(value: .constant, in: 1024...128000, step: 1024) {
+ Stepper(value: .constant(4096), in: 1024...128000, step: 1024) {
  Text("Max tokens: 4096")
  }
  .accessibilityLabel("Maximum tokens per request")
@@ -280,12 +280,4 @@ private struct SectionCard<Content: View>: View {
                 )
         }
     }
-}
-
-// MARK: - Preview
-
-#Preview {
- AgentsView()
- .environment(AppState())
- .frame(width: 800, height: 600)
 }

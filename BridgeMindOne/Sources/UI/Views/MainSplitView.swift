@@ -72,11 +72,3 @@ private extension MainSplitView {
  }
  }
 }
-
-// MARK: - Preview
-
-#Preview {
- MainSplitView()
- .environment(AppState())
- .frame(width: 1000, height: 700)
-}
