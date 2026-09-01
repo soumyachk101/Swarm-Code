@@ -664,3 +664,9 @@ public enum AllPlugins: Sendable, CaseIterable, Equatable {
  allCases.first { $0.identity.id == id }?.identity
  }
 }
+
+public enum PluginCollection {
+    public static var allIdentities: [PluginIdentity] {
+        PluginDefinition.all
+    }
+}
