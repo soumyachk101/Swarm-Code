@@ -87,7 +87,8 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  if httpResponse.statusCode != 200 {
  var errorBody = ""
  for try await byte in byteStream {
- errorBody.append(Character(UnicodeScalar(byte)!))
+ let scalar = Unicode.Scalar(byte)
+ errorBody.append(Character(scalar))
  if errorBody.count > 500 { break }
  }
  let truncated = String(errorBody.prefix(500))
@@ -204,33 +205,7 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  "properties": tool.inputSchema.dictionaryValue as Any
  ]
  let converted = rawDict.compactMapValues { value -> JSONValue? in
- switch value {
- case String(let s): return .string(s)
- case Int(let i): return .number(Double(i))
- case Double(let d): return .number(d)
- case Bool(let b): return .bool(b)
- case [String: Any]: return .object(value.compactMapValues { v in
- switch v {
- case String(let s): return .string(s)
- case Int(let i): return .number(Double(i))
- case Double(let d): return .number(d)
- case Bool(let b): return .bool(b)
- case [String: Any]: return .object(v.compactMapValues { vv in
- switch vv {
- case String(let s): return .string(s)
- case Int(let i): return .number(Double(i))
- case Double(let d): return .number(d)
- case Bool(let b): return .bool(b)
- default: return .null
- }
- })
- default: return .null
- }
- })
- case [Any]: return .null
- case nil: return .null
- default: return .null
- }
+ jsonValue(from: value)
  }
 
  return AnthropicToolDefinition(
@@ -251,6 +226,23 @@ public struct AnthropicProvider: LLMProvider, Sendable {
  }
 
  // MARK: - SSE Parser
+
+ private func jsonValue(from value: Any) -> JSONValue {
+ switch value {
+ case let s as String: return .string(s)
+ case let d as Double: return .number(d)
+ case let i as Int: return .number(Double(i))
+ case let i as Int8: return .number(Double(i))
+ case let i as Int16: return .number(Double(i))
+ case let i as Int32: return .number(Double(i))
+ case let i as Int64: return .number(Double(i))
+ case let f as Float: return .number(Double(f))
+ case let b as Bool: return .bool(b)
+ case let dict as [String: Any]: return .object(dict.compactMapValues { jsonValue(from: $0) })
+ case let arr as [Any]: return .array(arr.map { jsonValue(from: $0) })
+ default: return .null
+ }
+ }
 
  private func parseSSEBytes(_ buffer: [UInt8]) -> [ChatStreamEvent] {
  guard let text = String(bytes: buffer, encoding: .utf8) else { return [] }
