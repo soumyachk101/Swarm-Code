@@ -68,9 +68,9 @@ public actor CredentialStore: MCPTokenStorage {
  return try? JSONDecoder().decode(OAuthToken.self, from: data)
  }
 
- public func deleteToken(for plugin: PluginIdentity) async throws {
- let key = tokenKey(for: plugin)
- let query: [String: Any] = [
+    public func deleteToken(for plugin: PluginIdentity) async throws {
+        let key = tokenKey(for: plugin)
+        var query: [String: Any] = [
  kSecClass as String: kSecClassGenericPassword,
  kSecAttrService as String: service,
  kSecAttrAccount as String: key,
