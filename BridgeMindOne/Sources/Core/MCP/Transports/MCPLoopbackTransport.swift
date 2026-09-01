@@ -121,7 +121,7 @@ public final class MCPLoopbackTransport: MCPTransport {
 
 	public private(set) var isConnected: Bool = false
 	public private(set) var sessionId: String?
-	public private(set) var sessionToken: String?
+	public var sessionToken: String?
 
 	private let transportQueue = DispatchQueue(
 		label: "BridgeMindOne.MCPLoopbackTransport",
