@@ -13,9 +13,7 @@ public struct BridgeMindOneApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var appState = AppState.shared
 
-    public init() {
-        NSApp.setActivationPolicy(.regular)
-    }
+    public init() {}
 
     public var body: some Scene {
         WindowGroup {
