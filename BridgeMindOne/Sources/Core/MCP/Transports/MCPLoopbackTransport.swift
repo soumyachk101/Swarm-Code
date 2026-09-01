@@ -928,12 +928,12 @@ private final class NWConnectionStream: Stream, @unchecked Sendable {
 	}
 
 	func write(_ data: Data) async throws {
-		try await withCheckedThrowingContinuation { continuation in
+		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
 			connection.send(content: data, completion: .contentProcessed { error in
 				if let error {
 					continuation.resume(throwing: error)
 				} else {
-					continuation.resume()
+					continuation.resume(returning: ())
 				}
 			})
 		}
