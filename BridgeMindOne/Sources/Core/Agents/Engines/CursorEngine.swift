@@ -245,187 +245,187 @@ public actor CursorEngine: AgentEngine, Sendable {
  _ message: AgentMessage,
  session: AgentSession,
  continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
- ) async throws -> AsyncThrowingStream<AgentStreamChunk, Error> {
- guard let proc = process else {
- throw AgentEngineError.notConnected
- }
+     _ message: AgentMessage,
+     session: AgentSession,
+     continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
+ ) async throws {
+     guard let proc = process else {
+         throw AgentEngineError.notConnected
+     }
 
- let requestId = UUID().uuidString
- pendingRequests[requestId] = continuation
+     let requestId = UUID().uuidString
+     pendingRequests[requestId] = continuation
 
- // Build Cursor CLI prompt
- let prompt = CursorPrompt(
- prompt: Self.buildFullPrompt(message, session: session),
- files: session.workingDirectory.map { [$0] } ?? [],
- maxTokens: configuration.maxTokens
- )
+     // Build Cursor CLI prompt
+     let prompt = CursorPrompt(
+         prompt: Self.buildFullPrompt(message, session: session),
+         files: session.workingDirectory.map { [$0] } ?? [],
+         maxTokens: configuration.maxTokens
+     )
 
- let requestData = try jsonEncoder.encode(prompt)
- guard let requestLine = (String(data: requestData, encoding: .utf8) ?? "") + "\n" else {
- continuation.finish(throwing: AgentEngineError.invalidMessage)
- return stream
- }
+     let requestData = try jsonEncoder.encode(prompt)
+     guard let requestLine = (String(data: requestData, encoding: .utf8) ?? "") + "\n" else {
+         continuation.finish(throwing: AgentEngineError.invalidMessage)
+         return
+     }
 
- do {
- try await proc.writeStringToStdin(requestLine)
- } catch {
- continuation.finish(throwing: AgentEngineError.sendFailed(error))
- pendingRequests.removeValue(forKey: requestId)
- return stream
- }
+     do {
+         try await proc.writeStringToStdin(requestLine)
+     } catch {
+         continuation.finish(throwing: AgentEngineError.sendFailed(error))
+         pendingRequests.removeValue(forKey: requestId)
+         return
+     }
 
- responseTask?.cancel()
- responseTask = Task {
- await self.readCLIResponses(for: requestId, continuation: continuation)
- }
-
- return stream
+     responseTask?.cancel()
+     responseTask = Task {
+         await self.readCLIResponses(for: requestId, continuation: continuation)
+     }
  }
 
  private func readCLIResponses(
- for requestId: String,
- continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
+     for requestId: String,
+     continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
  ) async {
- while !Task.isCancelled {
- do {
- if let data = try await (process?.readStdout()) {
- messageBuffer.append(data)
- processCLIBuffer(for: requestId, continuation: continuation)
- }
- } catch {
- continuation.finish(throwing: AgentEngineError.readFailed(error))
- pendingRequests.removeValue(forKey: requestId)
- return
- }
- try? await Task.sleep(nanoseconds: 10_000_000)
- }
+     while !Task.isCancelled {
+         do {
+             if let data = try await (process?.readStdout()) {
+                 messageBuffer.append(data)
+                 processCLIBuffer(for: requestId, continuation: continuation)
+             }
+         } catch {
+             continuation.finish(throwing: AgentEngineError.readFailed(error))
+             pendingRequests.removeValue(forKey: requestId)
+             return
+         }
+         try? await Task.sleep(nanoseconds: 10_000_000)
+     }
  }
 
  private func processCLIBuffer(
- for requestId: String,
- continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
+     for requestId: String,
+     continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
  ) {
- let separator = UInt8(ascii: "\n")
- var lines = messageBuffer.split(separator: separator, omittingEmptySubsequences: false)
+     let separator = UInt8(ascii: "\n")
+     let lines = messageBuffer.split(separator: separator, omittingEmptySubsequences: false)
 
- for lineData in lines {
- guard let line = String(data: lineData, encoding: .utf8),
- !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+     for lineData in lines {
+         guard let line = String(data: lineData, encoding: .utf8),
+               !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
 
- if let range = messageBuffer.range(of: lineData) {
- messageBuffer.removeSubrange(range.lowerBound..<range.upperBound)
- messageBuffer.append(separator)
- }
+         if let range = messageBuffer.range(of: lineData) {
+             messageBuffer.removeSubrange(range.lowerBound..<range.upperBound)
+             messageBuffer.append(separator)
+         }
 
- parseCursorResponse(line, for: requestId, continuation: continuation)
- }
+         parseCursorResponse(line, for: requestId, continuation: continuation)
+     }
  }
 
  private func parseCursorResponse(
- _ line: String,
- for requestId: String,
- continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
+     _ line: String,
+     for requestId: String,
+     continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
  ) {
- guard let data = line.data(using: .utf8) else { return }
+     guard let data = line.data(using: .utf8) else { return }
 
- if let response = try? jsonDecoder.decode(CursorResponse.self, from: data) {
- if let text = response.text {
- continuation.yield(.text(text))
- }
- if let done = response.done, done {
- continuation.finish()
- pendingRequests.removeValue(forKey: requestId)
- }
- return
- }
+     if let response = try? jsonDecoder.decode(CursorResponse.self, from: data) {
+         if let text = response.text {
+             continuation.yield(.text(text))
+         }
+         if let done = response.done, done {
+             continuation.finish()
+             pendingRequests.removeValue(forKey: requestId)
+         }
+         return
+     }
 
- continuation.yield(.text(line))
+     continuation.yield(.text(line))
  }
 
  // MARK: AppleScript Mode
 
  private func connectAppleScript() async throws {
- // Check if Cursor is installed and accessible
- guard Self.isCursorInstalled() else {
- throw AgentEngineError.notFound
- }
- engineState = .ready
+     // Check if Cursor is installed and accessible
+     guard Self.isCursorInstalled() else {
+         throw AgentEngineError.notFound
+     }
+     engineState = .ready
  }
 
  private func sendAppleScriptMessage(
- _ message: AgentMessage,
- session: AgentSession,
- continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
- ) async throws -> AsyncThrowingStream<AgentStreamChunk, Error> {
- // AppleScript mode sends the prompt to Cursor via URL scheme or AppleScript
- let escapedPrompt = message.content
- .replacingOccurrences(of: "\\", with: "\\\\")
- .replacingOccurrences(of: "\"", with: "\\\"")
- .replacingOccurrences(of: "\n", with: "\\n")
+     _ message: AgentMessage,
+     session: AgentSession,
+     continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
+ ) async throws {
+     // AppleScript mode sends the prompt to Cursor via URL scheme or AppleScript
+     let escapedPrompt = message.content
+         .replacingOccurrences(of: "\\", with: "\\\\")
+         .replacingOccurrences(of: "\"", with: "\\\"")
+         .replacingOccurrences(of: "\n", with: "\\n")
 
- let script = """
- tell application "Cursor"
- activate
- delay 0.5
- tell application "System Events"
- keystroke "n" using command down
- delay 0.3
- keystroke "i" using command down
- delay 0.3
- keystroke "\(escapedPrompt)"
- delay 0.2
- key code 36
- end tell
- end tell
- """
+     let script = """
+     tell application "Cursor"
+         activate
+         delay 0.5
+         tell application "System Events"
+             keystroke "n" using command down
+             delay 0.3
+             keystroke "i" using command down
+             delay 0.3
+             keystroke "\(escapedPrompt)"
+             delay 0.2
+             key code 36
+         end tell
+     end tell
+     """
 
- let task = Process()
- task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
- task.arguments = ["-e", script]
- try task.run()
- task.waitUntilExit()
+     let task = Process()
+     task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+     task.arguments = ["-e", script]
+     try task.run()
+     task.waitUntilExit()
 
- continuation.yield(.text("Prompt sent to Cursor via AppleScript. Check Cursor window for response."))
- continuation.finish()
-
- return stream
+     continuation.yield(.text("Prompt sent to Cursor via AppleScript. Check Cursor window for response."))
+     continuation.finish()
  }
 
  private func checkAppleScriptHealth() async -> EngineHealth {
- if Self.isCursorInstalled() {
- return EngineHealth(status: .healthy, message: "Cursor is installed")
- }
- return EngineHealth(status: .offline, message: "Cursor not installed")
+     if Self.isCursorInstalled() {
+         return EngineHealth(status: .healthy, message: "Cursor is installed")
+     }
+     return EngineHealth(status: .offline, message: "Cursor not installed")
  }
 
  // MARK: Static Helpers
 
  private static func detectMode(_ config: EngineConfiguration) -> CommunicationMode {
- if let mode = config.extraEnvironment["cursor_mode"] as? CommunicationMode {
- return mode
- }
- // Auto-detect
- if Self.isCursorCLIAvailable() {
- return .cli
- } else if Self.isMCPAvailable() {
- return .mcp
- }
- return .applescript
+     if let modeStr = config.extraEnvironment["cursor_mode"],
+        let mode = CommunicationMode(rawValue: modeStr) {
+         return mode
+     }
+     // Auto-detect
+     if Self.isCursorCLIAvailable() {
+         return .cli
+     } else if Self.isMCPAvailable() {
+         return .mcp
+     }
+     return .applescript
  }
 
  private static func resolveBinaryPath(_ config: EngineConfiguration) -> String {
- if let binaryPath = config.binaryPath, !binaryPath.isEmpty {
- return binaryPath
- }
- return "cursor"
+     if let binaryPath = config.binaryPath, !binaryPath.isEmpty {
+         return binaryPath
+     }
+     return "cursor"
  }
 
  private static func buildArguments(_ config: EngineConfiguration) -> [String] {
- var args: [String] = ["--no-ui", "--quiet"]
- if let model = config.model, model != "default" {
- args += ["--model", model]
- }
- return args
+     var args: [String] = ["--no-ui", "--quiet"]
+     if config.model != "default" && !config.model.isEmpty {
+         args += ["--model", config.model]
+     }
+     return args
  }
 
  private static func buildEnvironment(_ config: EngineConfiguration) -> [String: String] {
