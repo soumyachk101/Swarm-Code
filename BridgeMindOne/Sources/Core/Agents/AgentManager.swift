@@ -416,72 +416,64 @@ public actor AgentManager: Sendable {
 
  // MARK: Supervision
 
- private func beginSupervision(for agentId: String) {
- supervisionTasks[agentId]?.cancel()
+    private func beginSupervision(for agentId: String) {
+        supervisionTasks[agentId]?.cancel()
 
- let task = Task { [weak self] in
- while !Task.isCancelled {
- do {
- try await Task.sleep(nanoseconds: 5_000_000_000) // Check every 5s
+        let task = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                if Task.isCancelled { break }
+                await self?.checkSupervision(for: agentId)
+            }
+        }
 
- guard let record = self?.agents[agentId],
- record.isActive,
- let engine = self?.activeEngines[agentId] else {
- continue
- }
+        supervisionTasks[agentId] = task
+    }
 
- let health = await engine.healthCheck()
+    private func checkSupervision(for agentId: String) async {
+        guard let record = agents[agentId],
+              record.isActive,
+              let engine = activeEngines[agentId] else {
+            return
+        }
 
- switch health.status {
- case .offline:
- // Attempt restart
- guard let currentRecord = self?.agents[agentId] else { continue }
- if currentRecord.crashCount < currentRecord.configuration.maxRestartAttempts {
- var updated = currentRecord
- updated.crashCount += 1
- updated.processState = .error("Restarting (attempt \(updated.crashCount))")
- self?.agents[agentId] = updated
+        let health = await engine.healthCheck()
 
- self?.eventSubject.send(AgentEvent(
- agentId: agentId,
- type: .crashed(exitCode: -1)
- ))
+        switch health.status {
+        case .offline:
+            if record.crashCount < record.configuration.maxRestartAttempts {
+                var updated = record
+                updated.crashCount += 1
+                updated.processState = .error("Restarting (attempt \(updated.crashCount))")
+                agents[agentId] = updated
 
- // Disconnect and reconnect
- try? await self?.disconnectAgent(agentId)
- try? await Task.sleep(nanoseconds: 2_000_000_000)
- try? await self?.connectAgent(agentId)
+                eventSubject.send(AgentEvent(
+                    agentId: agentId,
+                    type: .crashed(exitCode: -1)
+                ))
 
- } else {
- // Give up — mark as stopped
- try? await self?.disconnectAgent(agentId)
- self?.eventSubject.send(AgentEvent(
- agentId: agentId,
- type: .error("Max restart attempts exceeded")
- ))
- }
- case .degraded:
- // Log but don't restart
- break
- case .healthy:
- // Reset crash count on healthy
- if let current = self?.agents[agentId], current.crashCount > 0 {
- var updated = current
- updated.crashCount = 0
- self?.agents[agentId] = updated
- }
- default:
- break
- }
-
- } catch {
- // Supervision task error — just keep running
- }
- }
- }
-
- supervisionTasks[agentId] = task
- }
+                try? await disconnectAgent(agentId)
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                try? await connectAgent(agentId)
+            } else {
+                try? await disconnectAgent(agentId)
+                eventSubject.send(AgentEvent(
+                    agentId: agentId,
+                    type: .error("Max restart attempts exceeded")
+                ))
+            }
+        case .degraded:
+            break
+        case .healthy:
+            if record.crashCount > 0 {
+                var updated = record
+                updated.crashCount = 0
+                agents[agentId] = updated
+            }
+        default:
+            break
+        }
+    }
 
  // MARK: Presence IPC
 

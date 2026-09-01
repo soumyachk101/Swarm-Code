@@ -281,7 +281,7 @@ public struct EngineHealth: Sendable, Equatable {
 
 // MARK: - Agent Engine Errors
 
-public enum AgentEngineError: LocalizedError, Equatable, Sendable {
+public enum AgentEngineError: LocalizedError, Sendable {
  case notConnected
  case sendFailed(Error)
  case readFailed(Error)
