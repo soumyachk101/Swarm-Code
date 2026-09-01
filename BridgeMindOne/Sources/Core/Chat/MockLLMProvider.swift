@@ -4,45 +4,56 @@
 //
 
 import Foundation
-import Core
 
 public struct MockLLMProvider: LLMProvider {
- public init() {}
+    public init() {}
 
- public func stream(context: [ChatMessage], tools: [MCPTool]) -> AsyncStream<ChatStreamEvent> {
- AsyncStream { continuation in
- Task {
- let lastMessage = context.last?.content ?? ""
+    public func stream(context: [ChatMessage], tools: [MCPTool]) async throws -> AsyncStream<ChatStreamEvent> {
+        AsyncStream { continuation in
+            Task {
+                let lastMessage = context.last?.content ?? ""
 
- // Simulate thinking delay
- try? await Task.sleep(nanoseconds: 500_000_000)
+                // Simulate thinking delay
+                try? await Task.sleep(nanoseconds: 300_000_000)
 
- // Generate a simple response
- let response: String
- if lastMessage.isEmpty {
- response = "Hello! I'm ready to help. What would you like to work on?"
- } else if lastMessage.count < 50 {
- response = "I understand you said: \"\(lastMessage)\". How can I help with that?"
- } else {
- response = "I've processed your message. Here's what I found:\n\n• Your message is \(lastMessage.count) characters\n• It contains \(lastMessage.components(separatedBy: " ").count) words\n• I'm ready to help you with any coding or development task.\n\nTry using the available plugins to access external services, or ask me to research, debug, or write code."
- }
+                // Generate a response
+                let response: String
+                if lastMessage.isEmpty {
+                    response = "Hello! I'm BridgeMind One, your AI development orchestrator. How can I help you today?"
+                } else if lastMessage.lowercased().contains("hello") || lastMessage.lowercased().contains("hi") {
+                    response = "Hello! I am connected and ready to orchestrate your AI coding agents, execute MCP tools, and manage development workflows."
+                } else {
+                    response = "I have received your instruction: \"\(lastMessage)\".\n\nI can assist you with:\n• Running Claude Code, Codex, Cursor, Copilot, or Aider\n• Utilizing 24 connected MCP plugins\n• Executing specialized skills\n• Persisting your development session"
+                }
 
- continuation.yield(.chunk(response))
- continuation.yield(.done)
- continuation.finish()
- }
- }
- }
+                continuation.yield(.chunk(response))
+                continuation.yield(.done)
+                continuation.finish()
+            }
+        }
+    }
+
+    public func complete(context: [ChatMessage], tools: [MCPTool]) async throws -> ChatMessage {
+        let stream = try await self.stream(context: context, tools: tools)
+        var fullText = ""
+        for await event in stream {
+            if case .chunk(let text) = event {
+                fullText += text
+            }
+        }
+        return ChatMessage(role: .assistant, content: fullText)
+    }
 }
 
 public struct MockToolRouter: MCPToolRouter {
- public init() {}
+    public init() {}
 
- public func callTool(_ call: ToolCall) async throws -> String {
- return "Tool '\(call.name)' executed with arguments: \(call.arguments)"
- }
+    public func callTool(_ call: ToolCall) async throws -> String {
+        return "Tool '\(call.name)' executed successfully."
+    }
 
- public func listAvailableTools(pluginIds: [String]?) async throws -> [MCPTool] {
- return []
- }
+    public func listAvailableTools(pluginIds: [String]?) async throws -> [MCPTool] {
+        return []
+    }
 }
+

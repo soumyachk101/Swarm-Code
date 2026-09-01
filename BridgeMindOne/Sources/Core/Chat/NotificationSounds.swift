@@ -5,85 +5,103 @@
 
 import Foundation
 import AVFoundation
+import UserNotifications
 
-public enum NotificationSound: String, Codable, CaseIterable {
- case notchOpen = "notch-open"
- case notchClose = "notch-close"
- case cueBegin = "notch-cue-begin"
- case cueError = "notch-cue-error"
- case cueSent = "notch-cue-sent"
- case bell = "notification-bell"
+public enum NotificationSound: String, Codable, CaseIterable, Sendable {
+    case notchOpen = "notch-open"
+    case notchClose = "notch-close"
+    case cueBegin = "notch-cue-begin"
+    case cueError = "notch-cue-error"
+    case cueSent = "notch-cue-sent"
+    case bell = "notification-bell"
 
- public var fileName: String { rawValue }
+    public var fileName: String { rawValue }
 }
 
 public actor NotificationSoundPlayer {
- public static let shared = NotificationSoundPlayer()
- private var audioPlayer: AVAudioPlayer?
- private var sounds: [NotificationSound: URL] = [:]
+    public static let shared = NotificationSoundPlayer()
+    private var audioPlayer: AVAudioPlayer?
+    private var sounds: [NotificationSound: URL] = [:]
 
- public init() {
- loadSounds()
- }
+    public init() {
+        self.sounds = Self.discoverSounds()
+    }
 
- public func play(_ sound: NotificationSound) {
- guard let url = sounds[sound] else { return }
+    private static func discoverSounds() -> [NotificationSound: URL] {
+        var found: [NotificationSound: URL] = [:]
+        let searchDirectories = [
+            Bundle.main.resourceURL?.appendingPathComponent("Sounds"),
+            Bundle.main.resourceURL,
+            Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/Sounds"),
+            Bundle.main.bundleURL.appendingPathComponent("Contents/Resources"),
+            URL(fileURLWithPath: "Sources/Resources/Sounds")
+        ].compactMap { $0 }
 
- Task {
- do {
- audioPlayer = try AVAudioPlayer(contentsOf: url)
- audioPlayer?.volume = 0.5
- audioPlayer?.play()
- } catch {
- // Silent fail
- }
- }
- }
+        for sound in NotificationSound.allCases {
+            for dir in searchDirectories {
+                let fileURL = dir.appendingPathComponent("\(sound.fileName).wav")
+                if FileManager.default.fileExists(atPath: fileURL.path) {
+                    found[sound] = fileURL
+                    break
+                }
+            }
+        }
+        return found
+    }
 
- public func playCueBegin() { play(.cueBegin) }
- public func playCueError() { play(.cueError) }
- public func playCueSent() { play(.cueSent) }
- public func playBell() { play(.bell) }
+    public func play(_ sound: NotificationSound) {
+        guard let url = sounds[sound] else { return }
+        do {
+            audioPlayer = try AVAudioPlayer(contentsOf: url)
+            audioPlayer?.volume = 0.5
+            audioPlayer?.play()
+        } catch {
+            // Silent fail
+        }
+    }
 
- public func loadSounds() {
- let soundsURL = Bundle.main.bundleURL
- .appendingPathComponent("Contents/Resources/sounds")
+    public func playCueBegin() { play(.cueBegin) }
+    public func playCueError() { play(.cueError) }
+    public func playCueSent() { play(.cueSent) }
+    public func playBell() { play(.bell) }
 
- for sound in NotificationSound.allCases {
- let fileURL = soundsURL.appendingPathComponent("\(sound.fileName).wav")
- if FileManager.default.fileExists(atPath: fileURL.path) {
- sounds[sound] = fileURL
- }
- }
- }
+    public func reloadSounds() {
+        self.sounds = Self.discoverSounds()
+    }
 }
 
 public actor SystemNotificationDelivering {
- public static let shared = SystemNotificationDelivering()
+    public static let shared = SystemNotificationDelivering()
 
- public func deliver(title: String, body: String) {
- let center = UNUserNotificationCenter.current()
+    public init() {}
 
- let content = UNMutableNotificationContent()
- content.title = title
- content.body = body
- content.sound = .default
+    public func deliver(title: String, body: String) {
+        let center = UNUserNotificationCenter.current()
 
- let request = UNNotificationRequest(
- identifier: UUID().uuidString,
- content: content,
- trigger: nil
- )
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
 
- center.add(request) { error in
- if let error {
- print("Notification error: \(error)")
- }
- }
- }
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
 
- public func requestAuthorization() async -> Bool {
- await UNUserNotificationCenter.current()
- .requestAuthorization(options: [.alert, .sound, .badge])
- }
+        center.add(request) { error in
+            if let error {
+                print("Notification error: \(error)")
+            }
+        }
+    }
+
+    public func requestAuthorization() async -> Bool {
+        do {
+            return try await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound, .badge])
+        } catch {
+            return false
+        }
+    }
 }
