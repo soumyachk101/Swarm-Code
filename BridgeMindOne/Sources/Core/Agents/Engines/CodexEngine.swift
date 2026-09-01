@@ -65,116 +65,124 @@ public actor CodexEngine: AgentEngine, Sendable {
  restartDelay: configuration.restartDelay
  ))
 
- self.jsonDecoder = JSONDecoder()
- self.jsonEncoder = JSONEncoder()
- self.jsonEncoder.outputFormatting = [.sortedKeys]
+        self.jsonDecoder = JSONDecoder()
+        self.jsonEncoder = JSONEncoder()
+        self.jsonEncoder.outputFormatting = [.sortedKeys]
 
- self.processMonitor = Task {
- for await event in await process.events {
- switch event.state {
- case .running(let pid):
- self.engineState = .ready
- case .stopped, .crashed:
- self.engineState = .idle
- self.pendingRequests.values.forEach { $0.finish(throwing: AgentEngineError.connectionLost) }
- self.pendingRequests.removeAll()
- case .error(let message):
- self.engineState = .error(message)
- default:
- break
- }
- }
- }
- }
+        let processEvents = self.process.events
+        self.processMonitor = Task { [weak self] in
+            for await event in processEvents {
+                await self?.handleProcessEvent(event.state)
+            }
+        }
+    }
 
- deinit {
- processMonitor?.cancel()
- responseTask?.cancel()
- }
+    private func handleProcessEvent(_ state: AgentProcess.ProcessState) {
+        switch state {
+        case .running:
+            self.engineState = .ready
+        case .stopped, .crashed:
+            self.engineState = .idle
+            self.pendingRequests.values.forEach { $0.finish(throwing: AgentEngineError.connectionLost) }
+            self.pendingRequests.removeAll()
+        case .error(let message):
+            self.engineState = .error(message)
+        default:
+            break
+        }
+    }
 
- // MARK: Public API
+    deinit {
+        processMonitor?.cancel()
+        responseTask?.cancel()
+    }
 
- public func connect() async throws {
- guard !process.isRunning else { return }
- engineState = .initializing
- try await process.start()
- }
+    // MARK: Public API
 
- public func disconnect() async throws {
- processMonitor?.cancel()
- responseTask?.cancel()
- try await process.stop()
- engineState = .idle
- }
+    public func connect() async throws {
+        let isRunning = await process.isRunning
+        guard !isRunning else { return }
+        engineState = .initializing
+        try await process.start()
+    }
 
- public func sendMessage(
- _ message: AgentMessage,
- session: AgentSession
- ) async throws -> AsyncThrowingStream<AgentStreamChunk, Error> {
- guard engineState == .ready else {
- throw AgentEngineError.notConnected
- }
+    public func disconnect() async throws {
+        processMonitor?.cancel()
+        responseTask?.cancel()
+        try await process.stop()
+        engineState = .idle
+    }
 
- let continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
- let stream = AsyncThrowingStream<AgentStreamChunk, Error> { cont in
- continuation = cont
- }
+    public func sendMessage(
+        _ message: AgentMessage,
+        session: AgentSession
+    ) async throws -> AsyncThrowingStream<AgentStreamChunk, Error> {
+        guard engineState == .ready else {
+            throw AgentEngineError.notConnected
+        }
 
- let requestId = UUID().uuidString
- pendingRequests[requestId] = continuation
+        var continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation!
+        let stream = AsyncThrowingStream<AgentStreamChunk, Error> { cont in
+            continuation = cont
+        }
 
- // Build Codex CLI prompt
- let prompt = CodexPrompt(
- model: Self.mapModel(configuration.model),
- messages: Self.buildMessages(message, session: session),
- systemPrompt: Self.buildSystemPrompt(message, session: session),
- maxTokens: configuration.maxTokens,
- tools: Self.buildTools(configuration)
- )
+        let requestId = UUID().uuidString
+        pendingRequests[requestId] = continuation
 
- let requestData = try jsonEncoder.encode(prompt)
- guard let requestLine = (String(data: requestData, encoding: .utf8) ?? "") + "\n" else {
- continuation.finish(throwing: AgentEngineError.invalidMessage)
- return stream
- }
+        // Build Codex CLI prompt
+        let prompt = CodexPrompt(
+            model: Self.mapModel(configuration.model),
+            messages: Self.buildMessages(message, session: session),
+            systemPrompt: Self.buildSystemPrompt(message, session: session),
+            maxTokens: configuration.maxTokens,
+            tools: Self.buildTools(configuration)
+        )
 
- do {
- try await process.writeStringToStdin(requestLine)
- } catch {
- continuation.finish(throwing: AgentEngineError.sendFailed(error))
- pendingRequests.removeValue(forKey: requestId)
- return stream
- }
+        let requestData = try jsonEncoder.encode(prompt)
+        guard let requestString = String(data: requestData, encoding: .utf8) else {
+            continuation.finish(throwing: AgentEngineError.invalidMessage)
+            return stream
+        }
+        let requestLine = requestString + "\n"
 
- responseTask?.cancel()
- responseTask = Task {
- await self.readResponses(for: requestId, continuation: continuation)
- }
+        do {
+            try await process.writeStringToStdin(requestLine)
+        } catch {
+            continuation.finish(throwing: AgentEngineError.sendFailed(error))
+            pendingRequests.removeValue(forKey: requestId)
+            return stream
+        }
 
- return stream
- }
+        responseTask?.cancel()
+        responseTask = Task {
+            await self.readResponses(for: requestId, continuation: continuation)
+        }
 
- public func cancelGeneration() async throws {
- responseTask?.cancel()
- responseTask = nil
- pendingRequests.values.forEach { $0.finish() }
- pendingRequests.removeAll()
- engineState = .ready
- }
+        return stream
+    }
 
- public func healthCheck() async -> EngineHealth {
- guard process.isRunning else {
- return EngineHealth(status: .offline, latencyMs: nil, message: "Process not running")
- }
- let start = Date()
- do {
- _ = try await process.readStdout()
- let latency = Date().timeIntervalSince(start) * 1000
- return EngineHealth(status: .healthy, latencyMs: latency, message: nil)
- } catch {
- return EngineHealth(status: .degraded, latencyMs: nil, message: error.localizedDescription)
- }
- }
+    public func cancelGeneration() async throws {
+        responseTask?.cancel()
+        responseTask = nil
+        pendingRequests.values.forEach { $0.finish() }
+        pendingRequests.removeAll()
+        engineState = .ready
+    }
+
+    public func healthCheck() async -> EngineHealth {
+        let isRunning = await process.isRunning
+        guard isRunning else {
+            return EngineHealth(status: .offline, latencyMs: nil, message: "Process not running")
+        }
+        let start = Date()
+        do {
+            _ = try await process.readStdout()
+            let latency = Date().timeIntervalSince(start) * 1000
+            return EngineHealth(status: .healthy, latencyMs: latency, message: nil)
+        } catch {
+            return EngineHealth(status: .degraded, latencyMs: nil, message: error.localizedDescription)
+        }
+    }
 
  // MARK: Private
 
@@ -253,52 +261,52 @@ public actor CodexEngine: AgentEngine, Sendable {
  if let content = choice.message?.content {
  continuation.yield(.text(content))
  }
- if let toolCalls = choice.message?.toolCalls {
- for toolCall in toolCalls {
- continuation.yield(.toolCall(.init(
- id: toolCall.id,
- name: toolCall.function.name,
- arguments: toolCall.function.arguments
- )))
- }
- }
- }
- }
+                if let toolCalls = choice.message?.toolCalls {
+                    for toolCall in toolCalls {
+                        continuation.yield(.toolCall(.init(
+                            id: toolCall.id ?? UUID().uuidString,
+                            name: toolCall.function.name ?? "",
+                            arguments: toolCall.function.arguments
+                        )))
+                    }
+                }
+            }
+        }
 
- if let finishReason = response.choices?.first?.finishReason,
- ["stop", "length"].contains(finishReason) {
- continuation.finish()
- pendingRequests.removeValue(forKey: requestId)
- }
- }
+        if let finishReason = response.choices?.first?.finishReason,
+           ["stop", "length"].contains(finishReason) {
+            continuation.finish()
+            pendingRequests.removeValue(forKey: requestId)
+        }
+    }
 
- private func handleCodexChunk(
- _ chunk: CodexStreamChunk,
- for requestId: String,
- continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
- ) {
- if let choices = chunk.choices {
- for choice in choices {
- if let delta = choice.delta {
- if let text = delta.content {
- continuation.yield(.text(text))
- }
- if let toolCall = delta.toolCall {
- continuation.yield(.toolCall(.init(
- id: toolCall.id,
- name: toolCall.function.name,
- arguments: toolCall.function.arguments
- )))
- }
- }
- if let finishReason = choice.finishReason,
- ["stop", "length"].contains(finishReason) {
- continuation.finish()
- pendingRequests.removeValue(forKey: requestId)
- }
- }
- }
- }
+    private func handleCodexChunk(
+        _ chunk: CodexStreamChunk,
+        for requestId: String,
+        continuation: AsyncThrowingStream<AgentStreamChunk, Error>.Continuation
+    ) {
+        if let choices = chunk.choices {
+            for choice in choices {
+                if let delta = choice.delta {
+                    if let text = delta.content {
+                        continuation.yield(.text(text))
+                    }
+                    if let toolCall = delta.toolCall {
+                        continuation.yield(.toolCall(.init(
+                            id: toolCall.id ?? UUID().uuidString,
+                            name: toolCall.function.name ?? "",
+                            arguments: toolCall.function.arguments
+                        )))
+                    }
+                }
+                if let finishReason = choice.finishReason,
+                   ["stop", "length"].contains(finishReason) {
+                    continuation.finish()
+                    pendingRequests.removeValue(forKey: requestId)
+                }
+            }
+        }
+    }
 
  // MARK: Static Builders
 
@@ -312,9 +320,9 @@ public actor CodexEngine: AgentEngine, Sendable {
  private static func buildArguments(_ config: EngineConfiguration) -> [String] {
  var args: [String] = ["--output-format", "stream-json", "--verbose"]
 
- if let model = config.model, model != "default" {
- args += ["--model", model]
- }
+        if config.model != "default" && !config.model.isEmpty {
+            args += ["--model", config.model]
+        }
 
  args += ["--max-turns", "\(config.maxTurns)"]
  args += ["-q"] // Quiet mode for piping

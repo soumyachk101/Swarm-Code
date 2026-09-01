@@ -321,9 +321,9 @@ public actor ClaudeEngine: AgentEngine, Sendable {
  private static func buildArguments(_ config: EngineConfiguration) -> [String] {
  var args: [String] = ["--output-format", "stream-json", "--verbose"]
 
- if let model = config.model {
- args += ["--model", model]
- }
+        if config.model != "default" && !config.model.isEmpty {
+            args += ["--model", config.model]
+        }
 
  if config.supportsToolUse == false {
  args += ["--no-tools"]
