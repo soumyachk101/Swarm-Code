@@ -169,4 +169,26 @@ public actor AgentProcess: Sendable {
     public static func isExecutable(_ path: String) -> Bool {
         FileManager.default.isExecutableFile(atPath: path)
     }
+
+    public static func findBinary(_ binaryName: String) -> String? {
+        let candidatePaths = [
+            "/usr/local/bin/\(binaryName)",
+            "/opt/homebrew/bin/\(binaryName)",
+            "/usr/bin/\(binaryName)"
+        ]
+        for path in candidatePaths {
+            if isExecutable(path) {
+                return path
+            }
+        }
+        if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
+            for entry in pathEnv.components(separatedBy: ":") {
+                let candidate = "\(entry)/\(binaryName)"
+                if isExecutable(candidate) {
+                    return candidate
+                }
+            }
+        }
+        return nil
+    }
 }
