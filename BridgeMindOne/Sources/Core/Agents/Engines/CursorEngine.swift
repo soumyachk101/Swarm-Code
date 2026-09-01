@@ -264,10 +264,11 @@ public actor CursorEngine: AgentEngine, Sendable {
      )
 
      let requestData = try jsonEncoder.encode(prompt)
-     guard let requestLine = (String(data: requestData, encoding: .utf8) ?? "") + "\n" else {
+     guard let requestString = String(data: requestData, encoding: .utf8) else {
          continuation.finish(throwing: AgentEngineError.invalidMessage)
          return
      }
+     let requestLine = requestString + "\n"
 
      do {
          try await proc.writeStringToStdin(requestLine)
