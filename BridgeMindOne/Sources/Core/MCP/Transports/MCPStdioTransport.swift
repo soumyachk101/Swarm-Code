@@ -83,9 +83,9 @@ public final class MCPStdioTransport: @unchecked Sendable {
  }
  }
 
- // MARK: - Private State
+ // MARK: - Configuration & State
 
- private let configuration: Configuration
+ public let configuration: Configuration
 
  // Process lifecycle
  private var process: Process?
