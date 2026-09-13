@@ -13,7 +13,19 @@ struct ComposerArea: View {
                 ForEach(runtime.questions) { request in
                     QuestionCard(request: request, runtime: runtime)
                 }
-                ComposerView(runtime: runtime)
+                VStack(alignment: .leading, spacing: -ThreadChangesTab.overlap) {
+                    if let stats = runtime.changeStats {
+                        ThreadChangesTab(stats: stats) {
+                            runtime.diffSelection = nil
+                            runtime.isDiffVisible = true
+                        }
+                        .padding(.leading, 18)
+                        .transition(.softAppear)
+                    }
+                    ComposerView(runtime: runtime)
+                }
+                .animation(.softAppear, value: runtime.changeStats)
+                .task(id: runtime.diffRevision) { await runtime.refreshChangeStats() }
             }
         }
         .frame(maxWidth: 820)

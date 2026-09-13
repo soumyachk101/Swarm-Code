@@ -113,6 +113,10 @@ struct DiffInspector: View {
     private func load() async {
         guard let thread = model.thread(runtime.threadID), let project = model.project(thread.projectID) else { return }
         let git = Git(thread.worktreePath ?? project.path)
+        let selectedTurns = runtime.diffSelection.map { selection in runtime.turns.filter { $0.id == selection } } ?? runtime.turns
+        let touched = Set(selectedTurns.flatMap { $0.touchedPaths ?? [] })
+        // Turns recorded before edited files were tracked have none, and show everything as before.
+        let filtersToThread = selectedTurns.contains { $0.touchedPaths != nil }
         isLoading = true
         defer { isLoading = false }
         let turns = runtime.turns
@@ -131,12 +135,14 @@ struct DiffInspector: View {
                 patch = turns.compactMap(\.providerDiff).joined(separator: "\n")
             }
         }
-        files = await Self.parse(patch)
+        files = await Self.parse(patch, touched: filtersToThread ? touched : nil)
     }
 
     @concurrent
-    private nonisolated static func parse(_ patch: String) async -> [DiffFile] {
-        DiffParser.parse(patch)
+    private nonisolated static func parse(_ patch: String, touched: Set<String>?) async -> [DiffFile] {
+        let files = DiffParser.parse(patch)
+        guard let touched else { return files }
+        return files.filter { TouchedPaths.matches($0, touched: touched) }
     }
 }
 

@@ -173,6 +173,9 @@ struct TurnRecord: Codable, Identifiable, Hashable, Sendable {
     var providerDiff: String?
     /// The provider's last message id in this turn, used to rewind a conversation.
     var providerAnchor: String?
+    /// Repository-relative paths this turn's agent edited, so changes made elsewhere in the
+    /// repository during the turn are never attributed to the thread. Nil on turns recorded before.
+    var touchedPaths: [String]?
 }
 
 struct ContextUsage: Codable, Hashable, Sendable {

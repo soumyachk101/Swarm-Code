@@ -483,28 +483,13 @@ struct TurnEndRow: View {
     let runtime: ThreadRuntime
 
     var body: some View {
-        if case .turnEnd(let summary) = entry.item.content, summary.filesChanged > 0 || !hasReply(summary) {
+        if case .turnEnd(let summary) = entry.item.content, !hasReply(summary) {
             HStack(spacing: 10) {
                 // A turn that replied shows its duration on the reply's hover line instead.
                 if !hasReply(summary) {
                     Text(Self.label(for: summary))
                         .font(.caption)
                         .foregroundStyle(.tertiary)
-                }
-                if summary.filesChanged > 0 {
-                    Button {
-                        runtime.diffSelection = summary.turnID
-                        runtime.isDiffVisible = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "plusminus")
-                            Text(summary.filesChanged == 1 ? "1 file" : "\(summary.filesChanged) files")
-                            DiffStatLabel(additions: summary.additions, deletions: summary.deletions)
-                        }
-                        .font(.caption)
-                    }
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
