@@ -18,12 +18,11 @@ struct ShortcutsSettingsPage: View {
 private struct ShortcutSectionHeader<Accessory: View>: View {
     let title: String
     let symbol: String
-    let tint: Color
     @ViewBuilder var accessory: Accessory
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
-            SidebarIconBadge(tint: tint) {
+            SidebarIconBadge {
                 SidebarSymbol(symbol)
             }
             Text(verbatim: title)
@@ -43,7 +42,7 @@ private struct ShortcutSectionCard: View {
     var body: some View {
         let store = ShortcutStore.shared
         VStack(alignment: .leading, spacing: Chrome.sectionHeaderSpacing) {
-            ShortcutSectionHeader(title: section.title, symbol: section.symbol, tint: section.tint) {
+            ShortcutSectionHeader(title: section.title, symbol: section.symbol) {
                 if store.hasCustomizations(in: section) {
                     Button("Reset") {
                         withAnimation(Chrome.hover) { store.reset(section) }
@@ -76,7 +75,7 @@ private struct FixedShortcutsCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chrome.sectionHeaderSpacing) {
-            ShortcutSectionHeader(title: "Composer", symbol: "text.cursor", tint: Chrome.gray) {
+            ShortcutSectionHeader(title: "Composer", symbol: "text.cursor") {
                 EmptyView()
             }
             ChromeCard {

@@ -41,7 +41,7 @@ enum Chrome {
     static let rowHorizontalPadding: CGFloat = 8
     static let iconSize: CGFloat = 20
     static let iconCornerRadius: CGFloat = 5
-    static let symbolSize: CGFloat = 11.5
+    static let symbolSize: CGFloat = 14
     static let groupGap: CGFloat = 10
     static let listInset: CGFloat = 10
 
@@ -429,30 +429,14 @@ struct SidebarSymbol: View {
     }
 }
 
-/// The squircle behind a sidebar glyph: a hue gradient for sections, a flat tint otherwise.
+/// A sidebar glyph on its own: a provider logo or an SF Symbol, with nothing drawn behind it.
 struct SidebarIconBadge<Glyph: View>: View {
-    var tint: Color?
     @ViewBuilder var glyph: Glyph
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: Chrome.iconCornerRadius, style: .continuous)
-        ZStack {
-            if let tint {
-                shape
-                    .fill(LinearGradient(colors: [tint.lightened(by: 0.14), tint.darkened(by: 0.12)], startPoint: .top, endPoint: .bottom))
-                    .overlay {
-                        shape
-                            .fill(LinearGradient(colors: [Color.white.opacity(0.22), Color.white.opacity(0)], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.62)))
-                            .blendMode(.softLight)
-                    }
-                    .clipShape(shape)
-            } else {
-                shape.fill(Chrome.overlay(0.12))
-            }
-            glyph
-                .foregroundStyle(tint == nil ? Chrome.primaryText : Color.white)
-        }
-        .frame(width: Chrome.iconSize, height: Chrome.iconSize)
+        glyph
+            .foregroundStyle(Chrome.primaryText.opacity(0.85))
+            .frame(width: Chrome.iconSize, height: Chrome.iconSize)
     }
 }
 
@@ -584,6 +568,50 @@ struct SidebarSearchField: View {
             Capsule(style: .continuous).fill(Chrome.overlay(0.07))
         }
         .contentShape(Capsule(style: .continuous))
+    }
+}
+
+/// A glass capsule showing the current choice; clicking it opens the choices in a native popover.
+struct GlassPickerButton<Value: Hashable>: View {
+    let options: [(value: Value, title: String)]
+    @Binding var selection: Value
+
+    @State private var isPresented = false
+    @State private var isHovering = false
+
+    var body: some View {
+        let title = options.first { $0.value == selection }?.title ?? ""
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                Text(verbatim: title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Chrome.secondaryText)
+            }
+            .foregroundStyle(Chrome.primaryText.opacity(isHovering || isPresented ? 1 : 0.92))
+            .padding(.horizontal, Chrome.capsuleHorizontalPadding)
+            .frame(height: Chrome.capsuleContentHeight)
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .chromeGlassCapsule()
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            PopoverMenu {
+                ForEach(Array(options.enumerated()), id: \.offset) { _, option in
+                    PopoverItem(option.title, isChecked: option.value == selection) {
+                        selection = option.value
+                    }
+                }
+            }
+        }
     }
 }
 

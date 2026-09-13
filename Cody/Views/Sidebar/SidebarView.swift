@@ -46,10 +46,10 @@ struct SidebarView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 SidebarRow(title: "Add project", action: { model.chooseProjectFolder() }) {
-                    SidebarIconBadge(tint: Chrome.blue) { SidebarSymbol("plus") }
+                    SidebarIconBadge { SidebarSymbol("plus") }
                 }
                 SidebarRow(title: "Settings", action: { WindowManager.shared.showSettings() }) {
-                    SidebarIconBadge(tint: Chrome.gray) { SidebarSymbol("gear", scale: 1.15) }
+                    SidebarIconBadge { SidebarSymbol("gear", scale: 1.15) }
                 }
             }
             .padding(.horizontal, Chrome.listInset)
@@ -209,7 +209,7 @@ private struct ProjectRow: View {
                 }
             },
             icon: {
-                SidebarIconBadge(tint: Chrome.tileHue(for: project.id)) { SidebarSymbol("folder.fill") }
+                SidebarIconBadge { SidebarSymbol("folder.fill") }
             },
             accessory: { hovering in
                 if hovering || isMenuPresented {
@@ -311,9 +311,10 @@ private struct ThreadBadge: View {
         let runtime = model.existingRuntime(for: thread.id)
         let needsInput = !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true)
         let isRunning = runtime?.isRunning == true
-        SidebarIconBadge(tint: needsInput ? Chrome.orange : nil) {
+        SidebarIconBadge {
             if needsInput {
                 SidebarSymbol("hand.raised.fill")
+                    .foregroundStyle(Chrome.orange)
             } else if isRunning {
                 ProgressView()
                     .controlSize(.mini)
@@ -321,7 +322,7 @@ private struct ThreadBadge: View {
             } else if thread.isPinned {
                 SidebarSymbol("pin.fill", scale: 0.9)
             } else {
-                ProviderIcon(provider: thread.provider, size: 11)
+                ProviderIcon(provider: thread.provider, size: 14)
             }
         }
         .overlay(alignment: .topTrailing) {

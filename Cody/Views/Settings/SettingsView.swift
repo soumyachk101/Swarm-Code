@@ -104,7 +104,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     ForEach(visiblePages) { item in
                         SidebarRow(title: item.title, isSelected: page == item, action: { page = item }) {
-                            SidebarIconBadge(tint: item.tint) {
+                            SidebarIconBadge {
                                 SidebarSymbol(item.symbol, scale: item == .general ? 1.15 : 1)
                             }
                         }
@@ -203,33 +203,15 @@ private struct GeneralSettingsPage: View {
         ChromeSection(title: "New threads") {
             ChromeCard {
                 ChromeRow(title: "Provider") {
-                    Picker("Provider", selection: $settings.defaultProvider) {
-                        ForEach(ProviderKind.allCases) { provider in
-                            Text(provider.displayName).tag(provider)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                    GlassPickerButton(options: ProviderKind.allCases.map { ($0, $0.displayName) }, selection: $settings.defaultProvider)
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Permissions", detail: settings.defaultRuntimeMode.summary) {
-                    Picker("Permissions", selection: $settings.defaultRuntimeMode) {
-                        ForEach(RuntimeMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                    GlassPickerButton(options: RuntimeMode.allCases.map { ($0, $0.title) }, selection: $settings.defaultRuntimeMode)
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Workspace", detail: "Where a new thread makes its changes") {
-                    Picker("Workspace", selection: $settings.defaultWorkspaceMode) {
-                        ForEach(WorkspaceMode.allCases) { mode in
-                            Text(mode.title).tag(mode)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                    GlassPickerButton(options: WorkspaceMode.allCases.map { ($0, $0.title) }, selection: $settings.defaultWorkspaceMode)
                 }
             }
         }
@@ -251,14 +233,7 @@ private struct GeneralSettingsPage: View {
         ChromeSection(title: "Appearance") {
             ChromeCard {
                 ChromeRow(title: "Theme") {
-                    Picker("Theme", selection: $settings.appearance) {
-                        ForEach(AppearancePreference.allCases) { appearance in
-                            Text(appearance.title).tag(appearance)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize()
+                    GlassPickerButton(options: AppearancePreference.allCases.map { ($0, $0.title) }, selection: $settings.appearance)
                 }
             }
         }
@@ -363,13 +338,7 @@ private struct SourceControlSettingsPage: View {
                     title: "Thread titles and commit messages",
                     detail: "Automatic uses the thread's own provider. Claude uses Haiku, Codex your default model."
                 ) {
-                    Picker("Text generation", selection: $settings.textGeneration) {
-                        ForEach(TextGenerationChoice.allCases) { choice in
-                            Text(choice.title).tag(choice)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
+                    GlassPickerButton(options: TextGenerationChoice.allCases.map { ($0, $0.title) }, selection: $settings.textGeneration)
                 }
             }
         }
