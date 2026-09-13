@@ -702,7 +702,6 @@ struct SoftAppearModifier: ViewModifier {
         content
             .opacity(isVisible ? 1 : 0)
             .blur(radius: isVisible ? 0 : 5)
-            .offset(y: isVisible ? 0 : 4)
     }
 }
 
@@ -710,7 +709,8 @@ extension AnyTransition {
     /// Arrives softly; leaves with a quick fade so removals never drag.
     static var softAppear: AnyTransition {
         .asymmetric(
-            insertion: .modifier(active: SoftAppearModifier(isVisible: false), identity: SoftAppearModifier(isVisible: true)),
+            insertion: .modifier(active: SoftAppearModifier(isVisible: false), identity: SoftAppearModifier(isVisible: true))
+                .animation(.softAppear),
             removal: .opacity.animation(.easeOut(duration: 0.12))
         )
     }

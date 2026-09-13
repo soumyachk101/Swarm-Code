@@ -13,8 +13,6 @@ struct MarkdownView: View {
                     .transition(.softAppear)
             }
         }
-        // Only a new block animates; text growing inside a block is not interpolated.
-        .animation(.softAppear, value: blocks.count)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

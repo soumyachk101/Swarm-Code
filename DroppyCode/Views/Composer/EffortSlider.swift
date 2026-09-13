@@ -535,8 +535,9 @@ enum EffortPalette {
     static let superchargedFill = Color(red: 0.55, green: 0.34, blue: 0.97)
 }
 
-/// The maximum effort's tail: faint dots flowing toward the knob, and now and then a thin bolt
-/// crackling along it. One small Canvas at 30fps, drawn only while the slider sits at the maximum.
+/// The maximum effort's tail: particles drifting through the whole purple fill toward the knob, each
+/// with its own height, size, speed and shimmer, fading in and out at the ends. One small Canvas at
+/// 30fps, drawn only while the slider sits at the maximum.
 private struct SuperchargedTail: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var startedAt = Date.now
@@ -545,41 +546,37 @@ private struct SuperchargedTail: View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
             let time = timeline.date.timeIntervalSince(startedAt)
             Canvas { context, size in
-                let spacing: CGFloat = 8
-                let drift = CGFloat((time * 22).truncatingRemainder(dividingBy: Double(spacing)))
-                for (row, y) in [size.height * 0.34, size.height * 0.66].enumerated() {
-                    var x = -spacing + drift + (row == 1 ? spacing / 2 : 0)
-                    var column = 0
-                    while x < size.width {
-                        let pulse = 0.5 + 0.5 * sin(time * 3 + Double(column) * 0.7 + Double(row))
-                        context.fill(
-                            Path(ellipseIn: CGRect(x: x - 1.1, y: y - 1.1, width: 2.2, height: 2.2)),
-                            with: .color(.white.opacity(0.16 + 0.24 * pulse))
-                        )
-                        x += spacing
-                        column += 1
-                    }
-                }
+                guard size.width > 8 else { return }
+                let span = Double(size.width) + 8
+                let count = max(10, Int(size.width / 5))
+                for index in 0..<count {
+                    let seed = Double(index)
+                    let height = Self.random(seed, 1)
+                    let speed = 12 + 28 * Self.random(seed, 2)
+                    let radius = 0.7 + 1.1 * Self.random(seed, 3)
+                    let start = Self.random(seed, 4) * span
+                    let brightness = 0.22 + 0.5 * Self.random(seed, 5)
 
-                let cycle = 1.7
-                let local = time.truncatingRemainder(dividingBy: cycle)
-                guard local < 0.22, size.width > 48 else { return }
-                let strike = (time / cycle).rounded(.down)
-                let seed = sin(strike * 12.9898) * 43758.5453
-                let startX = size.width * (0.15 + 0.6 * (seed - seed.rounded(.down)))
-                var bolt = Path()
-                bolt.move(to: CGPoint(x: startX, y: size.height * 0.2))
-                bolt.addLine(to: CGPoint(x: startX + 5, y: size.height * 0.48))
-                bolt.addLine(to: CGPoint(x: startX + 1, y: size.height * 0.52))
-                bolt.addLine(to: CGPoint(x: startX + 7, y: size.height * 0.82))
-                context.stroke(
-                    bolt,
-                    with: .color(.white.opacity(0.55 * (1 - local / 0.22))),
-                    style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
-                )
+                    let x = (start + time * speed).truncatingRemainder(dividingBy: span) - 4
+                    let y = Double(size.height) * (0.16 + 0.68 * height)
+                    let shimmer = 0.6 + 0.4 * sin(time * (2 + 3 * Self.random(seed, 6)) + seed)
+                    let edge = min(1, max(0, x / 14), max(0, (Double(size.width) - x) / 14))
+                    let opacity = brightness * shimmer * edge
+                    guard opacity > 0.01 else { continue }
+                    context.fill(
+                        Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)),
+                        with: .color(.white.opacity(opacity))
+                    )
+                }
             }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    /// A stable pseudo-random value in 0..<1 for a particle and one of its traits.
+    private static func random(_ index: Double, _ trait: Double) -> Double {
+        let value = sin(index * 12.9898 + trait * 78.233) * 43758.5453
+        return value - value.rounded(.down)
     }
 }

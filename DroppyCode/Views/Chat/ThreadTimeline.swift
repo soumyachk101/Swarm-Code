@@ -40,8 +40,6 @@ struct ThreadTimeline: View {
                         WorkingIndicatorSlot(runtime: runtime, showsThinking: model.settings.showReasoning)
                     }
                 }
-                .animation(.softAppear, value: groups.count)
-                .animation(.softAppear, value: runtime.isRunning)
                 // The end of the conversation. While it is on screen the reader is at the latest message.
                 Color.clear
                     .frame(height: 1)
@@ -270,18 +268,24 @@ private struct WorkingIndicatorSlot: View {
         let replyTookOver = runtime.entries.last?.kind == .assistant
         ZStack(alignment: .topLeading) {
             if !replyTookOver {
-                WorkingIndicator(
-                    startedAt: runtime.turnStartedAt ?? .now,
-                    seed: WorkingWords.seed(runtime.threadID.uuidString),
-                    thinkingSteps: showsThinking ? thinking : []
-                )
+                VStack(alignment: .leading, spacing: 2) {
+                    WorkingIndicator(
+                        startedAt: runtime.turnStartedAt ?? .now,
+                        seed: WorkingWords.seed(runtime.threadID.uuidString),
+                        thinkingSteps: showsThinking ? thinking : []
+                    )
+                    // The room a reply keeps under its text for the copy line, so the reply's first
+                    // line appears exactly where the indicator's text was.
+                    Color.clear
+                        .frame(height: 22)
+                        .accessibilityHidden(true)
+                }
                 .transition(.asymmetric(
                     insertion: .softAppear,
                     removal: .opacity.animation(.easeOut(duration: 0.1))
                 ))
             }
         }
-        .animation(.softAppear, value: replyTookOver)
     }
 
     /// The running turn's thinking. Kind and turn are fixed at creation, so they are checked before
