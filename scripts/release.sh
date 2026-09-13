@@ -1,0 +1,112 @@
+#!/bin/bash
+# Builds, signs, notarizes and packages T3 Code as a disk image.
+#
+#   scripts/release.sh
+#
+# Needs Xcode, XcodeGen, a Developer ID Application certificate for the team below
+# and a notarytool keychain profile (NOTARY_PROFILE, "Droppy-Notarize" by default).
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+ROOT="$PWD"
+TEAM_ID="NARHG44L48"
+NOTARY_PROFILE="${NOTARY_PROFILE:-Droppy-Notarize}"
+APP_NAME="T3 Code"
+BUILD="$ROOT/build"
+ARCHIVE="$BUILD/T3Code.xcarchive"
+EXPORT="$BUILD/export"
+VERSION=$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -1)
+DMG="$BUILD/T3Code-$VERSION.dmg"
+
+step() { printf '\n==> %s\n' "$1"; }
+
+notarize() {
+  local file="$1" result status id
+  result=$(xcrun notarytool submit "$file" --keychain-profile "$NOTARY_PROFILE" --wait --output-format json)
+  status=$(printf '%s' "$result" | plutil -extract status raw - 2>/dev/null || true)
+  if [ "$status" != "Accepted" ]; then
+    printf '%s\n' "$result"
+    id=$(printf '%s' "$result" | plutil -extract id raw - 2>/dev/null || true)
+    [ -n "$id" ] && xcrun notarytool log "$id" --keychain-profile "$NOTARY_PROFILE"
+    exit 1
+  fi
+  echo "Notarization accepted for $(basename "$file")"
+}
+
+step "Generating the Xcode project"
+xcodegen generate --quiet
+
+step "Archiving $APP_NAME $VERSION"
+rm -rf "$BUILD"
+mkdir -p "$BUILD"
+if ! xcodebuild archive \
+  -project T3Code.xcodeproj \
+  -scheme T3Code \
+  -configuration Release \
+  -destination 'generic/platform=macOS' \
+  -archivePath "$ARCHIVE" \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
+  ONLY_ACTIVE_ARCH=NO > "$BUILD/archive.log" 2>&1; then
+  grep -E "error:" "$BUILD/archive.log" | head -40 || tail -40 "$BUILD/archive.log"
+  exit 1
+fi
+
+step "Exporting with Developer ID"
+cat > "$BUILD/ExportOptions.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key>
+  <string>developer-id</string>
+  <key>teamID</key>
+  <string>$TEAM_ID</string>
+  <key>signingStyle</key>
+  <string>manual</string>
+  <key>signingCertificate</key>
+  <string>Developer ID Application</string>
+</dict>
+</plist>
+PLIST
+if ! xcodebuild -exportArchive \
+  -archivePath "$ARCHIVE" \
+  -exportPath "$EXPORT" \
+  -exportOptionsPlist "$BUILD/ExportOptions.plist" > "$BUILD/export.log" 2>&1; then
+  tail -40 "$BUILD/export.log"
+  exit 1
+fi
+APP="$EXPORT/$APP_NAME.app"
+
+step "Verifying the signature"
+codesign --verify --deep --strict --verbose=2 "$APP"
+details=$(codesign -dv --verbose=4 "$APP" 2>&1)
+grep -q "Authority=Developer ID Application" <<< "$details"
+grep -q "flags=.*runtime" <<< "$details"
+grep -q "Timestamp=" <<< "$details"
+lipo -archs "$APP/Contents/MacOS/$APP_NAME"
+
+step "Notarizing the app"
+ditto -c -k --keepParent "$APP" "$BUILD/T3Code.zip"
+notarize "$BUILD/T3Code.zip"
+xcrun stapler staple "$APP"
+
+step "Building the disk image"
+STAGING="$BUILD/dmg"
+mkdir -p "$STAGING"
+ditto "$APP" "$STAGING/$APP_NAME.app"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING" -ov -format UDZO "$DMG" > /dev/null
+IDENTITY=$(security find-identity -v -p codesigning | sed -nE "s/.*\"(Developer ID Application: .*\($TEAM_ID\))\".*/\1/p" | head -1)
+codesign --sign "$IDENTITY" --timestamp "$DMG"
+
+step "Notarizing the disk image"
+notarize "$DMG"
+xcrun stapler staple "$DMG"
+
+step "Checking Gatekeeper"
+spctl --assess --type execute --ignore-cache --no-cache --verbose "$APP"
+spctl --assess --type open --context context:primary-signature --ignore-cache --no-cache --verbose "$DMG"
+xcrun stapler validate "$DMG"
+
+printf '\nReady: %s\n' "$DMG"

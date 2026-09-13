@@ -1,0 +1,205 @@
+import Foundation
+
+struct TimelineItem: Codable, Identifiable, Hashable, Sendable {
+    var id: String
+    var turnID: UUID?
+    var date: Date
+    var content: Content
+
+    init(id: String = UUID().uuidString, turnID: UUID?, date: Date = .now, content: Content) {
+        self.id = id
+        self.turnID = turnID
+        self.date = date
+        self.content = content
+    }
+
+    enum Content: Codable, Hashable, Sendable {
+        case user(UserMessage)
+        case assistant(AssistantMessage)
+        case reasoning(ReasoningBlock)
+        case tool(ToolCall)
+        case plan(ProposedPlan)
+        case todos([TodoStep])
+        case notice(Notice)
+        case turnEnd(TurnSummary)
+    }
+}
+
+struct UserMessage: Codable, Hashable, Sendable {
+    var text: String
+    var attachments: [Attachment] = []
+}
+
+struct Attachment: Codable, Hashable, Identifiable, Sendable {
+    var id = UUID()
+    var name: String
+    var path: String
+    var mimeType: String
+
+    var url: URL { URL(fileURLWithPath: path) }
+    var isImage: Bool { mimeType.hasPrefix("image/") }
+}
+
+struct AssistantMessage: Codable, Hashable, Sendable {
+    var text: String
+    var isStreaming = false
+}
+
+struct ReasoningBlock: Codable, Hashable, Sendable {
+    var text: String
+    var isStreaming = false
+}
+
+struct ToolCall: Codable, Hashable, Sendable {
+    enum Kind: String, Codable, Sendable {
+        case command
+        case read
+        case edit
+        case search
+        case web
+        case mcp
+        case agent
+        case other
+    }
+
+    enum Status: String, Codable, Sendable {
+        case running
+        case completed
+        case failed
+        case declined
+    }
+
+    static let outputLimit = 60_000
+
+    var kind: Kind
+    var title: String
+    var detail: String?
+    var output = ""
+    var status: Status = .running
+    var exitCode: Int?
+    var edits: [FileEdit] = []
+    var startedAt = Date.now
+    var finishedAt: Date?
+
+    mutating func appendOutput(_ text: String) {
+        output += text
+        trimOutput()
+    }
+
+    mutating func setOutput(_ text: String) {
+        output = text
+        trimOutput()
+    }
+
+    mutating func finish(_ status: Status) {
+        self.status = status
+        if finishedAt == nil { finishedAt = .now }
+    }
+
+    private mutating func trimOutput() {
+        guard output.utf8.count > Self.outputLimit else { return }
+        output = "…" + String(output.suffix(Self.outputLimit / 2))
+    }
+}
+
+struct FileEdit: Codable, Hashable, Sendable {
+    var path: String
+    var diff: String?
+    var additions = 0
+    var deletions = 0
+}
+
+struct ProposedPlan: Codable, Hashable, Sendable {
+    enum State: String, Codable, Sendable {
+        case drafting
+        case proposed
+        case accepted
+        case dismissed
+    }
+
+    var markdown: String
+    var state: State
+}
+
+struct TodoStep: Codable, Hashable, Sendable {
+    enum Status: String, Codable, Sendable {
+        case pending
+        case active
+        case done
+    }
+
+    var text: String
+    var status: Status
+}
+
+struct Notice: Codable, Hashable, Sendable {
+    enum Level: String, Codable, Sendable {
+        case info
+        case warning
+        case error
+    }
+
+    var level: Level
+    var message: String
+}
+
+enum TurnStatus: String, Codable, Sendable {
+    case running
+    case completed
+    case interrupted
+    case failed
+}
+
+struct TurnSummary: Codable, Hashable, Sendable {
+    var turnID: UUID
+    var status: TurnStatus
+    var duration: TimeInterval
+    var filesChanged: Int
+    var additions: Int
+    var deletions: Int
+}
+
+struct TurnRecord: Codable, Identifiable, Hashable, Sendable {
+    var id = UUID()
+    var index: Int
+    var providerTurnID: String?
+    var startedAt = Date.now
+    var completedAt: Date?
+    var status: TurnStatus = .running
+    var baseCheckpoint: String?
+    var endCheckpoint: String?
+    var userItemID: String?
+    /// The provider's own diff, used when the workspace is not a git repository.
+    var providerDiff: String?
+    /// The provider's last message id in this turn, used to rewind a conversation.
+    var providerAnchor: String?
+}
+
+struct ContextUsage: Codable, Hashable, Sendable {
+    var usedTokens: Int
+    var windowTokens: Int?
+
+    var fraction: Double? {
+        guard let windowTokens, windowTokens > 0 else { return nil }
+        return min(1, Double(usedTokens) / Double(windowTokens))
+    }
+}
+
+struct ThreadDocument: Codable, Sendable {
+    var threadID: UUID
+    var items: [TimelineItem] = []
+    var turns: [TurnRecord] = []
+    var usage: ContextUsage?
+
+    init(threadID: UUID) {
+        self.threadID = threadID
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        threadID = try container.decode(UUID.self, forKey: .threadID)
+        items = container.value(.items, default: [Lenient<TimelineItem>]()).compactMap(\.value)
+        turns = container.value(.turns, default: [Lenient<TurnRecord>]()).compactMap(\.value)
+        usage = container.value(.usage, default: nil)
+    }
+}

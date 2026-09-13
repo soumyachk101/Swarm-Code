@@ -1,0 +1,133 @@
+import Foundation
+
+/// What a thread asks a provider to do for one turn.
+struct TurnInput: Sendable {
+    var text: String
+    var images: [Attachment]
+    var model: String?
+    var effort: String?
+    var runtimeMode: RuntimeMode
+    var interactionMode: InteractionMode
+}
+
+/// Everything a provider session needs to launch.
+struct SessionConfiguration: Sendable {
+    var provider: ProviderKind
+    var executable: URL
+    var workingDirectory: URL
+    var environment: [String: String]
+    var resumeID: String?
+    var resumeAt: String?
+    var model: String?
+    var effort: String?
+    var runtimeMode: RuntimeMode
+    var interactionMode: InteractionMode
+}
+
+enum ApprovalDecision: Sendable {
+    case option(String)
+}
+
+/// Normalized events every provider adapter emits into a thread.
+enum ProviderEvent: Sendable {
+    case sessionReady(sessionID: String)
+    case turnStarted(providerTurnID: String?)
+    case messageDelta(id: String, text: String)
+    case messageCompleted(id: String, text: String)
+    case reasoningDelta(id: String, text: String)
+    case reasoningCompleted(id: String, text: String)
+    case toolStarted(id: String, call: ToolCall)
+    case toolOutput(id: String, text: String)
+    case toolUpdated(id: String, update: ToolUpdate)
+    case planDelta(id: String, text: String)
+    case planCompleted(id: String, markdown: String)
+    case todos([TodoStep])
+    case approval(ApprovalRequest)
+    case question(QuestionRequest)
+    case requestResolved(id: String)
+    case usage(ContextUsage)
+    case diff(String)
+    case notice(Notice)
+    case modeChanged(InteractionMode)
+    case models([ModelOption], current: String?)
+    case commands([SlashCommand])
+    case title(String)
+    case assistantMessageID(String)
+    case turnCompleted(status: TurnStatus, error: String?)
+    case exited(error: String?)
+}
+
+struct ToolUpdate: Sendable {
+    var title: String?
+    var detail: String?
+    var output: String?
+    var status: ToolCall.Status?
+    var exitCode: Int?
+    var edits: [FileEdit]?
+    var kind: ToolCall.Kind?
+}
+
+@MainActor
+protocol ProviderSession: AnyObject {
+    var onEvent: ((ProviderEvent) -> Void)? { get set }
+    var isRunning: Bool { get }
+
+    /// Launches the provider and returns its session id.
+    func start() async throws -> String
+    func send(_ input: TurnInput) async throws
+    func interrupt() async
+    func resolveApproval(_ requestID: String, optionID: String)
+    func answerQuestion(_ requestID: String, answers: [String: [String]])
+    func compact() async throws
+    func stop()
+}
+
+enum ProviderError: LocalizedError {
+    case notInstalled(ProviderKind)
+    case notRunning
+    case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .notInstalled(let provider):
+            "\(provider.displayName) is not installed. Install it and sign in with `\(provider.loginCommand)`."
+        case .notRunning:
+            "The agent session is not running."
+        case .failed(let message):
+            message
+        }
+    }
+}
+
+enum ToolTitles {
+    /// Removes the `/bin/zsh -lc '…'` wrapper providers put around shell commands.
+    static func unwrapShell(_ command: String) -> String {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        for prefix in ["/bin/zsh -lc ", "/bin/bash -lc ", "bash -lc ", "zsh -lc ", "/bin/sh -c ", "sh -c "] {
+            guard trimmed.hasPrefix(prefix) else { continue }
+            var rest = String(trimmed.dropFirst(prefix.count))
+            if rest.count >= 2, let first = rest.first, first == "'" || first == "\"", rest.last == first {
+                rest = String(rest.dropFirst().dropLast())
+                if first == "'" { rest = rest.replacingOccurrences(of: "'\\''", with: "'") }
+            }
+            return rest
+        }
+        return trimmed
+    }
+
+    static func relativePath(_ path: String, to root: String) -> String {
+        let normalizedRoot = root.hasSuffix("/") ? root : root + "/"
+        return path.hasPrefix(normalizedRoot) ? String(path.dropFirst(normalizedRoot.count)) : path
+    }
+
+    /// Counts additions and deletions in a unified diff.
+    static func diffStats(_ diff: String) -> (additions: Int, deletions: Int) {
+        var additions = 0
+        var deletions = 0
+        for line in diff.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("+++") || line.hasPrefix("---") { continue }
+            if line.hasPrefix("+") { additions += 1 } else if line.hasPrefix("-") { deletions += 1 }
+        }
+        return (additions, deletions)
+    }
+}
