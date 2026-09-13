@@ -76,6 +76,8 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     var isArchived: Bool
     var hasUnread: Bool
     var hasCustomTitle: Bool
+    /// The thread's place once its project has been reordered by dragging; nil keeps newest first.
+    var sortOrder: Double?
     var lastStatus: TurnStatus?
 
     init(projectID: UUID, provider: ProviderKind, model: String?, effort: String?, runtimeMode: RuntimeMode, fastMode: Bool = false) {
@@ -116,6 +118,7 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         isArchived = container.value(.isArchived, default: false)
         hasUnread = container.value(.hasUnread, default: false)
         hasCustomTitle = container.value(.hasCustomTitle, default: false)
+        sortOrder = container.value(.sortOrder, default: nil)
         lastStatus = container.value(.lastStatus, default: nil)
     }
 }

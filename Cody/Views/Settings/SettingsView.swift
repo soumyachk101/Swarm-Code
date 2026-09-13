@@ -406,40 +406,6 @@ private struct SourceControlSettingsPage: View {
     }
 }
 
-private struct ShortcutsSettingsPage: View {
-    private let shortcuts: [(String, String)] = [
-        ("New thread", "⌘N"),
-        ("New thread in worktree", "⇧⌘N"),
-        ("Add project", "⌘O"),
-        ("Command palette", "⌘K"),
-        ("Toggle sidebar", "⌃⌘S"),
-        ("Toggle terminal", "⌘J"),
-        ("Toggle changes", "⌘D"),
-        ("Plan mode", "⇧⌘P"),
-        ("Stop the running turn", "⌘. or Esc"),
-        ("Send", "Return"),
-        ("New line", "⇧Return"),
-        ("Recall an earlier prompt", "↑ in an empty composer"),
-        ("Approve a request", "⌘Return"),
-        ("Previous or next thread", "⌥⌘↑ / ⌥⌘↓"),
-        ("Jump to a thread", "⌘1 to ⌘9"),
-        ("Archive thread", "⇧⌘⌫"),
-    ]
-
-    var body: some View {
-        ChromeCard {
-            ForEach(Array(shortcuts.enumerated()), id: \.offset) { index, shortcut in
-                if index > 0 { ChromeRowDivider() }
-                ChromeRow(title: shortcut.0) {
-                    Text(verbatim: shortcut.1)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(Chrome.secondaryText)
-                }
-            }
-        }
-    }
-}
-
 private struct ArchiveSettingsPage: View {
     @Environment(AppModel.self) private var model
 

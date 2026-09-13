@@ -75,8 +75,30 @@ final class AppModel {
             .filter { $0.projectID == project.id && !$0.isArchived }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                return lhs.createdAt > rhs.createdAt
+                switch (lhs.sortOrder, rhs.sortOrder) {
+                case let (left?, right?) where left != right: return left < right
+                // Threads created after a reorder have no place yet and stay on top.
+                case (nil, .some): return true
+                case (.some, nil): return false
+                default: return lhs.createdAt > rhs.createdAt
+                }
             }
+    }
+
+    /// Places a thread directly above or below another thread in the same project.
+    func moveThread(_ id: UUID, to targetID: UUID, placeAfter: Bool) {
+        guard id != targetID, let moving = thread(id), let target = thread(targetID),
+              moving.projectID == target.projectID, let project = project(moving.projectID) else { return }
+        var order = threads(in: project).map(\.id)
+        order.removeAll { $0 == id }
+        guard let index = order.firstIndex(of: targetID) else { return }
+        order.insert(id, at: placeAfter ? index + 1 : index)
+        if moving.isPinned != target.isPinned {
+            updateThread(id) { $0.isPinned = target.isPinned }
+        }
+        for (position, threadID) in order.enumerated() {
+            updateThread(threadID) { $0.sortOrder = Double(position) }
+        }
     }
 
     var archivedThreads: [ChatThread] {

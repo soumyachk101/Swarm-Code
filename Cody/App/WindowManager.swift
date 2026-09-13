@@ -86,6 +86,7 @@ private struct HostedRoot<Content: View>: View {
     var body: some View {
         content
             .environment(model)
+            .buttonBorderShape(.capsule)
             .preferredColorScheme(model.settings.appearance.colorScheme)
             .onChange(of: model.settings.appearance, initial: true) { _, appearance in
                 NSApp.appearance = switch appearance {

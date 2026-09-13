@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
@@ -7,6 +8,8 @@ struct SidebarView: View {
     @State private var renaming: ChatThread?
     @State private var renameText = ""
     @State private var pendingDeletion: ChatThread?
+    @State private var draggingThreadID: UUID?
+    @State private var dropTarget: ThreadDropTarget?
 
     private var query: String {
         search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -91,7 +94,7 @@ struct SidebarView: View {
             ProjectRow(project: project)
             if project.isExpanded {
                 ForEach(model.threads(in: project)) { thread in
-                    threadRow(thread)
+                    reorderableThreadRow(thread)
                 }
             }
         }
@@ -122,6 +125,41 @@ struct SidebarView: View {
                 }
             }
         }
+    }
+
+    private func reorderableThreadRow(_ thread: ChatThread) -> some View {
+        let target = dropTarget?.id == thread.id ? dropTarget : nil
+        return threadRow(thread)
+            .onDrag {
+                draggingThreadID = thread.id
+                return NSItemProvider(object: thread.id.uuidString as NSString)
+            }
+            .onDrop(
+                of: [.plainText],
+                delegate: ThreadDropDelegate(
+                    threadID: thread.id,
+                    dragging: $draggingThreadID,
+                    target: $dropTarget,
+                    accepts: { model.thread($0)?.projectID == thread.projectID },
+                    onMove: { id, placeAfter in
+                        withAnimation(Chrome.panelSlide) {
+                            model.moveThread(id, to: thread.id, placeAfter: placeAfter)
+                        }
+                    }
+                )
+            )
+            .overlay(alignment: target?.placeAfter == true ? .bottom : .top) {
+                if let target {
+                    Capsule()
+                        .fill(Chrome.accent)
+                        .frame(height: 2)
+                        .padding(.horizontal, 6)
+                        .offset(y: target.placeAfter ? 1 : -1)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .animation(Chrome.hover, value: target)
     }
 
     private func threadRow(_ thread: ChatThread) -> some View {
@@ -223,12 +261,21 @@ private struct ThreadRow: View {
             title: thread.title,
             isSelected: model.selectedThreadID == thread.id,
             isEmphasized: thread.hasUnread,
-            accessoryWidth: 30,
+            accessoryWidth: 52,
             action: { model.selectedThreadID = thread.id },
             icon: { ThreadBadge(thread: thread) },
             accessory: { hovering in
                 if hovering || isMenuPresented {
-                    RowActionsButton(actions: actions, isPresented: $isMenuPresented)
+                    HStack(spacing: 0) {
+                        Button {
+                            withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
+                        } label: {
+                            RowAccessoryIcon("archivebox")
+                        }
+                        .buttonStyle(.plain)
+                        .help("Archive thread")
+                        RowActionsButton(actions: actions, isPresented: $isMenuPresented)
+                    }
                 } else {
                     Text(verbatim: RelativeTime.short(thread.updatedAt))
                         .font(.system(size: 11).monospacedDigit())
@@ -285,5 +332,45 @@ private struct ThreadBadge: View {
                     .offset(x: 2.5, y: -2.5)
             }
         }
+    }
+}
+
+private struct ThreadDropTarget: Equatable {
+    let id: UUID
+    let placeAfter: Bool
+}
+
+/// Reorders threads within a project: the upper half of a row drops above it, the lower half below.
+private struct ThreadDropDelegate: DropDelegate {
+    let threadID: UUID
+    @Binding var dragging: UUID?
+    @Binding var target: ThreadDropTarget?
+    let accepts: (UUID) -> Bool
+    let onMove: (UUID, Bool) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        guard let dragging else { return false }
+        return dragging != threadID && accepts(dragging)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard validateDrop(info: info) else { return nil }
+        let next = ThreadDropTarget(id: threadID, placeAfter: info.location.y > Chrome.rowHeight / 2)
+        if target != next { target = next }
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if target?.id == threadID { target = nil }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        defer {
+            target = nil
+            dragging = nil
+        }
+        guard let dragging, dragging != threadID, accepts(dragging) else { return false }
+        onMove(dragging, info.location.y > Chrome.rowHeight / 2)
+        return true
     }
 }

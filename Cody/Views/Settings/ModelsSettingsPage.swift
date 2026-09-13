@@ -162,7 +162,15 @@ private struct ProviderModelsSection: View {
         let registry = model.providers
         let options = registry.models(for: provider)
         let isFull = settings.modelList.count >= AppSettings.modelListLimit
-        ChromeSection(title: provider.displayName) {
+        VStack(alignment: .leading, spacing: Chrome.sectionHeaderSpacing) {
+            HStack(spacing: 8) {
+                ProviderIcon(provider: provider, size: 16)
+                    .foregroundStyle(Chrome.primaryText)
+                Text(verbatim: provider.displayName)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(height: 22)
             ChromeCard {
                 if options.isEmpty {
                     ChromeRow(title: registry.loadingCatalogs.contains(provider) ? "Loading models…" : "No models loaded") {

@@ -171,6 +171,12 @@ private struct ModelList: View {
     let onChoose: (ModelCatalog.Entry) -> Void
     let onBack: () -> Void
 
+    @State private var contentHeight: CGFloat = 0
+
+    private nonisolated static func height(_ proxy: GeometryProxy) -> CGFloat {
+        proxy.size.height
+    }
+
     var body: some View {
         let entries = ModelCatalog.entries(model, including: thread)
         let showsProviders = Set(entries.map(\.provider)).count > 1
@@ -215,9 +221,10 @@ private struct ModelList: View {
                             .padding(10)
                     }
                 }
+                .onGeometryChange(for: CGFloat.self, of: Self.height) { contentHeight = $0 }
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(maxHeight: 420)
+            .frame(height: min(contentHeight > 0 ? contentHeight : CGFloat(max(entries.count, 1)) * (showsProviders ? 50 : 36), 440))
         }
         .padding(6)
     }
