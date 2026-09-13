@@ -15,7 +15,7 @@ struct ThreadTimeline: View {
     var body: some View {
         let groups = TimelineGroup.build(runtime.entries, showReasoning: model.settings.showReasoning)
         if groups.isEmpty && !runtime.isRunning {
-            NewThreadPrompt(projectName: projectName)
+            NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
                 .onAppear {
                     scrollChrome.update(travel: 0)
                     scrollState.showsJumpButton = false

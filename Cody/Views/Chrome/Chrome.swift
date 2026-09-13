@@ -51,6 +51,8 @@ enum Chrome {
     static let sectionSpacing: CGFloat = 20
     static let sectionHeaderSpacing: CGFloat = 10
     static let contentHorizontalPadding: CGFloat = 16
+    /// The gap between a row's trailing control and the card edge.
+    static let rowControlTrailingPadding: CGFloat = 10
 
     // MARK: Color and motion
 
@@ -673,7 +675,8 @@ struct ChromeRow<Control: View>: View {
             Spacer(minLength: 12)
             control
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
+        .padding(.trailing, Chrome.rowControlTrailingPadding)
         .padding(.vertical, 11)
     }
 }

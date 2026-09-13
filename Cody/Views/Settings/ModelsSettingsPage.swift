@@ -116,7 +116,8 @@ private struct PinnedModelRow: View {
                 }
             }
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
+        .padding(.trailing, Chrome.rowControlTrailingPadding)
         .padding(.vertical, 9)
         .task { await model.providers.loadCatalog(pin.provider) }
     }

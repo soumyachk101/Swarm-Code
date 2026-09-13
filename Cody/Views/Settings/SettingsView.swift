@@ -297,7 +297,8 @@ private struct ProviderSettingsSection: View {
                         set: { model.settings.setEnabled($0, for: provider) }
                     ))
                 }
-                .padding(.horizontal, 16)
+                .padding(.leading, 16)
+                .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
                 ChromeRowDivider()
                 ChromeRow(title: "Binary path", detail: status.executable?.path) {
@@ -423,13 +424,15 @@ private struct AboutSettingsPage: View {
             ChromeRowDivider()
             Text("A native home for your coding agents, built in Swift with Liquid Glass.")
                 .font(.system(size: 13))
-                .padding(.horizontal, 16)
+                .padding(.leading, 16)
+                .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
             ChromeRowDivider()
             Text("Cody and SwiftTerm are MIT licensed.")
                 .font(.system(size: 12))
                 .foregroundStyle(Chrome.secondaryText)
-                .padding(.horizontal, 16)
+                .padding(.leading, 16)
+                .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
         }
     }
