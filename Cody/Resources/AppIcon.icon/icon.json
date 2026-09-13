@@ -3,8 +3,17 @@
     {
       "value" : {
         "linear-gradient" : [
-          "srgb:0.15686,0.18824,0.30196,1.00000",
-          "srgb:0.03137,0.03922,0.08235,1.00000"
+          "display-p3:0.07451,0.16863,0.39216,1.00000",
+          "display-p3:0.00000,0.00000,0.00000,1.00000"
+        ]
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "linear-gradient" : [
+          "display-p3:0.07451,0.16863,0.39216,1.00000",
+          "display-p3:0.00000,0.00000,0.00000,1.00000"
         ]
       }
     }
@@ -13,13 +22,20 @@
     {
       "layers" : [
         {
-          "image-name" : "glyph.svg",
-          "name" : "Glyph",
+          "blend-mode-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : "normal"
+            }
+          ],
+          "glass" : true,
+          "image-name" : "Cody.png",
+          "name" : "Cody",
           "position" : {
             "scale" : 1,
             "translation-in-points" : [
               0,
-              0
+              15
             ]
           }
         }
@@ -30,7 +46,7 @@
       },
       "translucency" : {
         "enabled" : true,
-        "value" : 0.5
+        "value" : 0.3
       }
     }
   ],

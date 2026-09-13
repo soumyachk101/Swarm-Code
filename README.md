@@ -1,3 +1,5 @@
+<img src="docs/icon.png" width="128" alt="Cody icon">
+
 # Cody
 
 A native macOS app for your coding agents. Written entirely in Swift and SwiftUI with Liquid Glass, for Macs with Apple silicon on macOS 26 and later.
