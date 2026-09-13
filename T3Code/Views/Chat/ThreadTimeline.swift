@@ -7,6 +7,7 @@ struct ThreadTimeline: View {
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isPinnedToBottom = true
     @State private var bottomInset: CGFloat = 0
+    @State private var viewportHeight: CGFloat = 0
 
     var body: some View {
         let groups = TimelineGroup.build(runtime.entries, showReasoning: model.settings.showReasoning)
@@ -23,10 +24,13 @@ struct ThreadTimeline: View {
             .padding(.horizontal, 28)
             .padding(.top, 24)
             .padding(.bottom, 18)
-            .frame(maxWidth: .infinity)
+            // A short conversation fills the viewport and rests at the bottom, so the empty space is plain content.
+            .frame(maxWidth: .infinity, minHeight: viewportHeight, alignment: .bottom)
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
+        .scrollEdgeEffectStyle(.soft, for: .top)
+        .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             bottomInset = new.bottomInset
             if new.contentHeight != old.contentHeight {
@@ -54,6 +58,10 @@ struct ThreadTimeline: View {
         }
         .animation(.snappy(duration: 0.2), value: isPinnedToBottom)
     }
+
+    private nonisolated static func visibleHeight(_ proxy: GeometryProxy) -> CGFloat {
+        max(0, proxy.size.height - proxy.safeAreaInsets.top - proxy.safeAreaInsets.bottom)
+    }
 }
 
 /// Scroll measurements, built by a plain initializer rather than an inline closure.
@@ -65,8 +73,13 @@ private struct ScrollMetrics: Equatable {
     init(geometry: ScrollGeometry) {
         contentHeight = geometry.contentSize.height
         bottomInset = geometry.contentInsets.bottom
-        distanceFromBottom = geometry.contentSize.height + geometry.contentInsets.bottom
-            - geometry.contentOffset.y - geometry.containerSize.height
+        let insets = geometry.contentInsets.top + geometry.contentInsets.bottom
+        if geometry.contentSize.height + insets <= geometry.containerSize.height + 1 {
+            distanceFromBottom = 0
+        } else {
+            distanceFromBottom = geometry.contentSize.height + geometry.contentInsets.bottom
+                - geometry.contentOffset.y - geometry.containerSize.height
+        }
     }
 }
 

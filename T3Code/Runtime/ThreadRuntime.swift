@@ -466,9 +466,10 @@ final class ThreadRuntime {
         case .commands(let list):
             if let provider = thread?.provider { app?.providers.updateCommands(list, for: provider) }
         case .title(let title):
-            if turns.count <= 1, thread?.hasCustomTitle == false {
-                app?.updateThread(threadID) { $0.title = title }
-            }
+            // Provider titles are only a fallback; they must not replace the one T3 Code writes.
+            guard turns.count <= 1, let app, let thread, !thread.hasCustomTitle,
+                  app.textEngine(preferring: thread.provider) == nil else { break }
+            app.updateThread(threadID) { $0.title = title }
         case .assistantMessageID(let anchor):
             if let currentTurnID { updateTurn(currentTurnID) { $0.providerAnchor = anchor } }
         case .turnCompleted(let status, let error):
