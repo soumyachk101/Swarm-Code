@@ -126,6 +126,9 @@ struct DownloadsPopover: View {
                 chooseOther()
             }
         }
+        // Breed genoeg voor lange bestandsnamen en groottes: zonder vaste breedte
+        // krimpt de popover naar de min-breedte van PopoverMenu en breekt alles af.
+        .frame(width: 360)
         .task { await downloads.load() }
     }
 }
