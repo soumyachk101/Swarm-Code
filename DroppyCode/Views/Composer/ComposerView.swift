@@ -20,7 +20,7 @@ struct ComposerArea: View {
                         FollowUpQueueTab(runtime: runtime)
                             .transition(.softAppear)
                     } else if let stats = runtime.changeStats {
-                        ThreadChangesTab(stats: stats) {
+                        ThreadChangesTab(stats: stats, isActive: runtime.isDiffVisible) {
                             if runtime.diffSelection != nil { runtime.diffSelection = nil }
                             // Set last so a redundant write never restarts the diff load
                             // or steals the panel-slide transaction.
