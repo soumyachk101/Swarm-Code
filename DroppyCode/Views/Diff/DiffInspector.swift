@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 
 struct DiffInspector: View {
-    @Environment(AppModel.self) private var model
     let runtime: ThreadRuntime
 
     @State private var files: [DiffFile] = []
