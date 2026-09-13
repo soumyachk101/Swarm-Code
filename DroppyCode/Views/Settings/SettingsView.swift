@@ -50,7 +50,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var keywords: [String] {
         switch self {
-        case .general: ["permissions", "worktree", "reasoning", "notifications", "theme", "appearance", "dark", "light"]
+        case .general: ["permissions", "worktree", "reasoning", "notifications", "theme", "appearance", "dark", "light", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "binary", "path", "sign in", "login", "api key"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
@@ -212,6 +212,9 @@ private struct GeneralSettingsPage: View {
 
     var body: some View {
         @Bindable var settings = model.settings
+        // The Token activity heatmap leads the page: it summarizes what the
+        // settings below configure, rather than configuring anything itself.
+        TokenActivitySection()
         ChromeSection(title: "New threads") {
             ChromeCard {
                 ChromeRow(title: "Provider") {

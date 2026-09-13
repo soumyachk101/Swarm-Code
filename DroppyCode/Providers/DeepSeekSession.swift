@@ -84,7 +84,12 @@ final class DeepSeekSession: ProviderSession {
                 if interrupted { break }
                 rounds += 1
                 let round = try await streamOneRound(model: currentModel, effort: input.effort)
-                if let usage = round.usage { onEvent?(.usage(usage)) }
+                // A round is one API response, so its total is exactly that
+                // response's spend.
+                if let usage = round.usage {
+                    onEvent?(.usage(usage))
+                    TokenLedger.shared.record(spend: usage.usedTokens)
+                }
                 if round.statusCode == 401 || (round.rawError?.localizedCaseInsensitiveContains("invalid") == true && round.rawError?.localizedCaseInsensitiveContains("key") == true) {
                     throw ProviderError.failed("DeepSeek rejected the API key. Check it in Settings → Providers → DeepSeek.")
                 }
