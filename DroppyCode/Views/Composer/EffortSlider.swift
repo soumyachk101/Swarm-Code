@@ -54,12 +54,17 @@ struct ModelEffortButton: View {
                 }
                 if isPresented {
                     Text("Select effort")
+                        .lineLimit(1)
                 } else {
                     Text(verbatim: current?.shortName ?? thread.model ?? thread.provider.displayName)
                         .foregroundStyle(Chrome.primaryText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     if let current, !current.efforts.isEmpty {
                         Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
                             .foregroundStyle(Chrome.primaryText.opacity(0.72))
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                 }
                 Image(systemName: "chevron.down")
@@ -67,7 +72,6 @@ struct ModelEffortButton: View {
             }
         }
         .buttonStyle(.chip)
-        .fixedSize()
         .help("Model and reasoning effort")
         .popover(isPresented: $isPresented, arrowEdge: .top) {
             ModelEffortPanel(threadID: thread.id, hasHistory: hasHistory)

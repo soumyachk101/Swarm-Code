@@ -103,6 +103,22 @@ final class AppModel {
         }
     }
 
+    /// Places a thread directly above or below another within the same group of the activity layout.
+    func moveInActivity(_ id: UUID, to targetID: UUID, placeAfter: Bool, among peers: [UUID]) {
+        guard id != targetID, peers.contains(id), peers.contains(targetID) else { return }
+        var order = peers
+        order.removeAll { $0 == id }
+        guard let index = order.firstIndex(of: targetID) else { return }
+        order.insert(id, at: placeAfter ? index + 1 : index)
+        let calendar = Calendar.current
+        for (position, threadID) in order.enumerated() {
+            updateThread(threadID) {
+                $0.activityOrder = Double(position)
+                $0.activityOrderDay = calendar.startOfDay(for: $0.updatedAt)
+            }
+        }
+    }
+
     var archivedThreads: [ChatThread] {
         threads.filter(\.isArchived).sorted { $0.updatedAt > $1.updatedAt }
     }

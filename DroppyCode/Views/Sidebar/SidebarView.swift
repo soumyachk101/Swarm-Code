@@ -39,15 +39,18 @@ struct SidebarView: View {
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if query.isEmpty {
-                        if model.settings.sidebarActivityView {
-                            activityList
-                        } else {
-                            projectList
+                        // One list for both layouts: a thread keeps its row when the layout changes, so the
+                        // row grows or shrinks and slides to its new place instead of being replaced.
+                        ForEach(model.settings.sidebarActivityView ? activityItems : projectItems) { item in
+                            itemView(item)
+                                .transition(.sidebarRow)
                         }
                     } else {
                         searchList
                     }
                 }
+                // Adding or deleting a thread opens and closes its space with the same motion as every other row.
+                .animation(Chrome.panelSlide, value: model.threads.count)
                 .padding(.horizontal, Chrome.listInset)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
@@ -96,44 +99,71 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private var projectList: some View {
-        ForEach(Array(model.projects.enumerated()), id: \.element.id) { index, project in
-            if index > 0 {
-                Color.clear.frame(height: Chrome.groupGap)
-            }
+    private func itemView(_ item: SidebarItem) -> some View {
+        switch item.kind {
+        case .gap:
+            Color.clear.frame(height: Chrome.groupGap)
+        case .project(let project):
             ProjectRow(project: project)
-            if project.isExpanded {
-                ForEach(model.threads(in: project)) { thread in
-                    reorderableThreadRow(thread)
-                }
-            }
-        }
-    }
-
-    // MARK: Activity view
-
-    @ViewBuilder
-    private var activityList: some View {
-        let active = model.threads.filter { !$0.isArchived }
-        let attention = active.filter(needsAttention).sorted { $0.updatedAt > $1.updatedAt }
-        if attention.isEmpty {
-            Text("Nothing needs attention")
+        case .header(let title, let isFirst):
+            ActivityHeader(title: title, isFirst: isFirst)
+        case .note(let text):
+            Text(verbatim: text)
                 .font(.system(size: 12))
                 .foregroundStyle(Chrome.secondaryText.opacity(0.7))
                 .padding(.horizontal, Chrome.rowHorizontalPadding)
                 .padding(.top, 2)
                 .padding(.bottom, 4)
-        } else {
-            ActivityHeader(title: "Needs attention", isFirst: true)
-            ForEach(attention) { thread in
-                activityRow(thread)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .thread(let thread, let projectName, let peers):
+            reorderableRow(thread, projectName: projectName, peers: peers)
+        }
+    }
+
+    // MARK: Project layout
+
+    private var projectItems: [SidebarItem] {
+        var items: [SidebarItem] = []
+        for (index, project) in model.projects.enumerated() {
+            if index > 0 {
+                items.append(SidebarItem(id: "gap-\(project.id)", kind: .gap))
+            }
+            items.append(SidebarItem(id: "project-\(project.id)", kind: .project(project)))
+            guard project.isExpanded else { continue }
+            for thread in model.threads(in: project) {
+                items.append(SidebarItem(id: thread.id.uuidString, kind: .thread(thread, projectName: nil, peers: nil)))
             }
         }
-        ForEach(Self.activityGroups(active.filter { !needsAttention($0) })) { group in
-            ActivityHeader(title: group.title, isFirst: false)
-            ForEach(group.threads) { thread in
-                activityRow(thread)
-            }
+        return items
+    }
+
+    // MARK: Activity layout
+
+    private var activityItems: [SidebarItem] {
+        let active = model.threads.filter { !$0.isArchived }
+        let attention = Self.placed(active.filter(needsAttention))
+        var items: [SidebarItem] = []
+        if attention.isEmpty {
+            items.append(SidebarItem(id: "attention-none", kind: .note("Nothing needs attention")))
+        } else {
+            items.append(SidebarItem(id: "attention", kind: .header("Needs attention", isFirst: true)))
+            items.append(contentsOf: activityThreadItems(attention))
+        }
+        for group in Self.activityGroups(active.filter { !needsAttention($0) }) {
+            items.append(SidebarItem(id: "day-\(group.title)", kind: .header(group.title, isFirst: false)))
+            items.append(contentsOf: activityThreadItems(group.threads))
+        }
+        return items
+    }
+
+    /// Threads of one activity group. A thread can be dragged to another place within its own group.
+    private func activityThreadItems(_ threads: [ChatThread]) -> [SidebarItem] {
+        let peers = threads.map(\.id)
+        return threads.map { thread in
+            SidebarItem(
+                id: thread.id.uuidString,
+                kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: peers)
+            )
         }
     }
 
@@ -142,32 +172,12 @@ struct SidebarView: View {
         return !runtime.approvals.isEmpty || !runtime.questions.isEmpty
     }
 
-    private func activityRow(_ thread: ChatThread) -> some View {
-        ActivityThreadRow(
-            thread: thread,
-            projectName: model.project(thread.projectID)?.name ?? "",
-            onRename: {
-                renameText = thread.title
-                renaming = thread
-            },
-            onDelete: {
-                if model.settings.confirmBeforeDeleting {
-                    pendingDeletion = thread
-                } else {
-                    model.delete(thread.id)
-                }
-            }
-        )
-    }
-
-    private struct ActivityGroup: Identifiable {
+    private struct ActivityGroup {
         let title: String
         var threads: [ChatThread]
-
-        var id: String { title }
     }
 
-    /// Threads newest first, grouped under Today, Yesterday, a weekday within the week, then a date.
+    /// Threads grouped under Today, Yesterday, a weekday within the week, then a date.
     private static func activityGroups(_ threads: [ChatThread]) -> [ActivityGroup] {
         let calendar = Calendar.current
         var groups: [ActivityGroup] = []
@@ -179,7 +189,26 @@ struct SidebarView: View {
                 groups.append(ActivityGroup(title: title, threads: [thread]))
             }
         }
-        return groups
+        return groups.map { ActivityGroup(title: $0.title, threads: placed($0.threads)) }
+    }
+
+    /// Newest first, except threads dragged into place, which keep that place for the rest of their day.
+    private static func placed(_ threads: [ChatThread]) -> [ChatThread] {
+        let calendar = Calendar.current
+        func order(_ thread: ChatThread) -> Double? {
+            guard let order = thread.activityOrder, let day = thread.activityOrderDay,
+                  calendar.isDate(day, inSameDayAs: thread.updatedAt) else { return nil }
+            return order
+        }
+        return threads.sorted { lhs, rhs in
+            switch (order(lhs), order(rhs)) {
+            case let (left?, right?) where left != right: return left < right
+            // Threads that became active after a reorder have no place yet and stay on top.
+            case (nil, .some): return true
+            case (.some, nil): return false
+            default: return lhs.updatedAt > rhs.updatedAt
+            }
+        }
     }
 
     private static func dayTitle(for date: Date, calendar: Calendar) -> String {
@@ -192,6 +221,8 @@ struct SidebarView: View {
         }
         return date.formatted(.dateTime.month(.wide).day().year())
     }
+
+    // MARK: Search
 
     @ViewBuilder
     private var searchList: some View {
@@ -214,15 +245,29 @@ struct SidebarView: View {
                 }
                 ProjectRow(project: result.project, togglesExpansion: false)
                 ForEach(result.threads) { thread in
-                    threadRow(thread)
+                    threadRow(thread, projectName: nil)
                 }
             }
         }
     }
 
-    private func reorderableThreadRow(_ thread: ChatThread) -> some View {
+    private var searchResults: [(project: Project, threads: [ChatThread])] {
+        model.projects.compactMap { project in
+            let all = model.threads(in: project)
+            let threads = project.name.localizedCaseInsensitiveContains(query)
+                ? all
+                : all.filter { $0.title.localizedCaseInsensitiveContains(query) }
+            return threads.isEmpty ? nil : (project, threads)
+        }
+    }
+
+    // MARK: Rows
+
+    /// Drag a row above or below another: within its project in the project layout, within its group
+    /// in the activity layout.
+    private func reorderableRow(_ thread: ChatThread, projectName: String?, peers: [UUID]?) -> some View {
         let target = dropTarget?.id == thread.id ? dropTarget : nil
-        return threadRow(thread)
+        return threadRow(thread, projectName: projectName)
             .onDrag {
                 draggingThreadID = thread.id
                 return NSItemProvider(object: thread.id.uuidString as NSString)
@@ -231,33 +276,33 @@ struct SidebarView: View {
                 of: [.plainText],
                 delegate: ThreadDropDelegate(
                     threadID: thread.id,
+                    rowHeight: projectName == nil ? Chrome.rowHeight : ThreadRowMetrics.detailedHeight,
                     dragging: $draggingThreadID,
                     target: $dropTarget,
-                    accepts: { model.thread($0)?.projectID == thread.projectID },
+                    accepts: { id in
+                        if let peers { return peers.contains(id) }
+                        return model.thread(id)?.projectID == thread.projectID
+                    },
                     onMove: { id, placeAfter in
                         withAnimation(Chrome.panelSlide) {
-                            model.moveThread(id, to: thread.id, placeAfter: placeAfter)
+                            if let peers {
+                                model.moveInActivity(id, to: thread.id, placeAfter: placeAfter, among: peers)
+                            } else {
+                                model.moveThread(id, to: thread.id, placeAfter: placeAfter)
+                            }
                         }
                     }
                 )
             )
             .overlay(alignment: target?.placeAfter == true ? .bottom : .top) {
-                if let target {
-                    Capsule()
-                        .fill(Chrome.accent)
-                        .frame(height: 2)
-                        .padding(.horizontal, 6)
-                        .offset(y: target.placeAfter ? 1 : -1)
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
-                }
+                DropIndicator(target: target)
             }
-            .animation(Chrome.hover, value: target)
     }
 
-    private func threadRow(_ thread: ChatThread) -> some View {
-        ThreadRow(
+    private func threadRow(_ thread: ChatThread, projectName: String?) -> some View {
+        SidebarThreadRow(
             thread: thread,
+            projectName: projectName,
             onRename: {
                 renameText = thread.title
                 renaming = thread
@@ -271,15 +316,31 @@ struct SidebarView: View {
             }
         )
     }
+}
 
-    private var searchResults: [(project: Project, threads: [ChatThread])] {
-        model.projects.compactMap { project in
-            let all = model.threads(in: project)
-            let threads = project.name.localizedCaseInsensitiveContains(query)
-                ? all
-                : all.filter { $0.title.localizedCaseInsensitiveContains(query) }
-            return threads.isEmpty ? nil : (project, threads)
-        }
+/// One entry of the sidebar list. Thread entries use the thread's id in both layouts.
+private struct SidebarItem: Identifiable {
+    enum Kind {
+        case gap
+        case project(Project)
+        case header(String, isFirst: Bool)
+        case note(String)
+        /// A thread, with its project's name in the activity layout and the threads it can be reordered among.
+        case thread(ChatThread, projectName: String?, peers: [UUID]?)
+    }
+
+    let id: String
+    let kind: Kind
+}
+
+private extension AnyTransition {
+    /// A row leaves at once and arrives once its neighbours have mostly made room, so rows moving past
+    /// each other never draw over one another.
+    static var sidebarRow: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.animation(.easeIn(duration: 0.18).delay(0.12)),
+            removal: .opacity.animation(.easeOut(duration: 0.06))
+        )
     }
 }
 
@@ -341,26 +402,80 @@ private struct ProjectRow: View {
     }
 }
 
-private struct ThreadRow: View {
+private enum ThreadRowMetrics {
+    static let detailedVerticalPadding: CGFloat = 7
+    /// A two-line activity row: title, project line and their padding.
+    static let detailedHeight: CGFloat = 48
+}
+
+/// A thread in either sidebar layout. In the project layout it is one line with the thread's badge; in
+/// the activity layout the project it belongs to shows underneath. It is the same row in both, so
+/// switching layouts animates its height and contents rather than swapping one row for another.
+private struct SidebarThreadRow: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
     let thread: ChatThread
+    /// The project shown under the title in the activity layout; nil in the project layout.
+    let projectName: String?
     let onRename: () -> Void
     let onDelete: () -> Void
 
+    @State private var isHovering = false
     @State private var isMenuPresented = false
     @State private var windowFrame = FrameHolder()
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        SidebarRow(
-            title: thread.title,
-            isSelected: model.selectedThreadID == thread.id,
-            isEmphasized: thread.hasUnread,
-            accessoryWidth: 52,
-            action: { model.selectedThreadID = thread.id },
-            icon: { ThreadBadge(thread: thread) },
-            accessory: { hovering in
-                if hovering || isMenuPresented {
+        let isSelected = model.selectedThreadID == thread.id
+        let isDetailed = projectName != nil
+        let showsActions = isHovering || isMenuPresented
+        let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
+        let actions = ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
+        Button {
+            model.selectedThreadID = thread.id
+        } label: {
+            HStack(spacing: 8) {
+                if !isDetailed {
+                    ThreadBadge(thread: thread)
+                        .frame(width: Chrome.iconSize)
+                        .transition(.opacity)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: thread.title)
+                        .font(.system(size: 13, weight: isSelected || thread.hasUnread ? .medium : .regular))
+                        .foregroundStyle(Chrome.primaryText.opacity(isSelected ? 1 : 0.92))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let projectName {
+                        HStack(spacing: 4) {
+                            Image(systemName: thread.worktreePath == nil ? "folder" : "arrow.triangle.branch")
+                                .font(.system(size: 10))
+                            Text(verbatim: projectName)
+                                .font(.system(size: 12))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(Chrome.secondaryText)
+                        .transition(.opacity)
+                    }
+                }
+                Spacer(minLength: 4)
+            }
+            .padding(.leading, Chrome.rowHorizontalPadding)
+            .padding(.trailing, Chrome.rowHorizontalPadding + (isDetailed && !showsActions ? 18 : 52))
+            .padding(.vertical, isDetailed ? ThreadRowMetrics.detailedVerticalPadding : 0)
+            .frame(minHeight: Chrome.rowHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                // Only the fill animates with selection; the row's place is never animated from here.
+                shape
+                    .fill(isSelected ? Chrome.overlay(0.12) : (isHovering ? Chrome.overlay(0.06) : Color.clear))
+                    .animation(Chrome.hover, value: isSelected)
+            }
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .trailing) {
+            Group {
+                if showsActions {
                     HStack(spacing: 0) {
                         Button {
                             archiveWithGenie()
@@ -371,6 +486,8 @@ private struct ThreadRow: View {
                         .help("Archive thread")
                         RowActionsButton(actions: actions, isPresented: $isMenuPresented)
                     }
+                } else if isDetailed {
+                    ActivityStatus(thread: thread)
                 } else {
                     Text(verbatim: RelativeTime.short(thread.updatedAt))
                         .font(.system(size: 11).monospacedDigit())
@@ -378,9 +495,14 @@ private struct ThreadRow: View {
                         .padding(.trailing, 4)
                 }
             }
-        )
+            .padding(.trailing, 6)
+        }
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
         .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame.frame = $0 }
         .contextMenu { RowActionMenuButtons(actions: actions) }
+        .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
 
     private nonisolated static func windowFrame(_ proxy: GeometryProxy) -> CGRect {
@@ -388,12 +510,38 @@ private struct ThreadRow: View {
     }
 
     private func archiveWithGenie() {
-        GenieAnimator.shared.launch(title: thread.title, subtitle: nil, frame: windowFrame.frame, colorScheme: colorScheme)
+        let title = thread.title
+        let projectName = projectName
+        let provider = thread.provider
+        let symbol = thread.worktreePath == nil ? "folder" : "arrow.triangle.branch"
+        let weight: Font.Weight = model.selectedThreadID == thread.id || thread.hasUnread ? .medium : .regular
+        // The ghost is drawn like the row it replaces, so the row hands over to it without a visible change.
+        GenieAnimator.shared.launch(frame: windowFrame.frame, colorScheme: colorScheme) {
+            HStack(spacing: 8) {
+                if projectName == nil {
+                    ProviderIcon(provider: provider, size: 14)
+                        .frame(width: Chrome.iconSize)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: title)
+                        .font(.system(size: 13, weight: weight))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    if let projectName {
+                        HStack(spacing: 4) {
+                            Image(systemName: symbol)
+                                .font(.system(size: 10))
+                            Text(verbatim: projectName)
+                                .font(.system(size: 12))
+                                .lineLimit(1)
+                        }
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, Chrome.rowHorizontalPadding)
+        }
         withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
-    }
-
-    private var actions: [RowAction] {
-        ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
     }
 }
 
@@ -433,9 +581,30 @@ private struct ThreadDropTarget: Equatable {
     let placeAfter: Bool
 }
 
-/// Reorders threads within a project: the upper half of a row drops above it, the lower half below.
+/// The accent line where a dragged thread will land. Its fade animates here, never the row under it.
+private struct DropIndicator: View {
+    let target: ThreadDropTarget?
+
+    var body: some View {
+        ZStack {
+            if let target {
+                Capsule()
+                    .fill(Chrome.accent)
+                    .frame(height: 2)
+                    .padding(.horizontal, 6)
+                    .offset(y: target.placeAfter ? 1 : -1)
+                    .transition(.opacity)
+            }
+        }
+        .allowsHitTesting(false)
+        .animation(Chrome.hover, value: target)
+    }
+}
+
+/// Reorders threads: the upper half of a row drops above it, the lower half below.
 private struct ThreadDropDelegate: DropDelegate {
     let threadID: UUID
+    let rowHeight: CGFloat
     @Binding var dragging: UUID?
     @Binding var target: ThreadDropTarget?
     let accepts: (UUID) -> Bool
@@ -448,7 +617,7 @@ private struct ThreadDropDelegate: DropDelegate {
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         guard validateDrop(info: info) else { return nil }
-        let next = ThreadDropTarget(id: threadID, placeAfter: info.location.y > Chrome.rowHeight / 2)
+        let next = ThreadDropTarget(id: threadID, placeAfter: info.location.y > rowHeight / 2)
         if target != next { target = next }
         return DropProposal(operation: .move)
     }
@@ -463,7 +632,7 @@ private struct ThreadDropDelegate: DropDelegate {
             dragging = nil
         }
         guard let dragging, dragging != threadID, accepts(dragging) else { return false }
-        onMove(dragging, info.location.y > Chrome.rowHeight / 2)
+        onMove(dragging, info.location.y > rowHeight / 2)
         return true
     }
 }
@@ -475,13 +644,17 @@ private enum ThreadActions {
         var items = [
             RowAction(title: "Rename", symbol: "pencil") { onRename() },
             RowAction(title: thread.isPinned ? "Unpin" : "Pin", symbol: thread.isPinned ? "pin.slash" : "pin") {
-                model.updateThread(thread.id) { $0.isPinned.toggle() }
+                withAnimation(Chrome.panelSlide) {
+                    model.updateThread(thread.id) { $0.isPinned.toggle() }
+                }
             },
         ]
         if let path = thread.worktreePath {
             items.append(RowAction(title: "Reveal worktree in Finder", symbol: "folder") { Workspace.revealInFinder(path) })
         }
-        items.append(RowAction(title: "Archive", symbol: "archivebox", startsGroup: true) { model.archive(thread.id) })
+        items.append(RowAction(title: "Archive", symbol: "archivebox", startsGroup: true) {
+            withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
+        })
         items.append(RowAction(title: "Delete…", symbol: "trash", isDestructive: true) { onDelete() })
         return items
     }
@@ -529,89 +702,6 @@ private struct ActivityHeader: View {
             .padding(.top, isFirst ? 2 : 14)
             .padding(.bottom, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// A thread in the activity view: its title, and the project it belongs to underneath.
-private struct ActivityThreadRow: View {
-    @Environment(AppModel.self) private var model
-    let thread: ChatThread
-    let projectName: String
-    let onRename: () -> Void
-    let onDelete: () -> Void
-
-    @State private var isHovering = false
-    @State private var isMenuPresented = false
-    @State private var windowFrame = FrameHolder()
-    @Environment(\.colorScheme) private var colorScheme
-
-    var body: some View {
-        let isSelected = model.selectedThreadID == thread.id
-        let showsActions = isHovering || isMenuPresented
-        let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
-        let actions = ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
-        Button {
-            model.selectedThreadID = thread.id
-        } label: {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: thread.title)
-                    .font(.system(size: 13, weight: isSelected || thread.hasUnread ? .medium : .regular))
-                    .foregroundStyle(Chrome.primaryText.opacity(isSelected ? 1 : 0.92))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                HStack(spacing: 4) {
-                    Image(systemName: thread.worktreePath == nil ? "folder" : "arrow.triangle.branch")
-                        .font(.system(size: 10))
-                    Text(verbatim: projectName)
-                        .font(.system(size: 12))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(Chrome.secondaryText)
-            }
-            .padding(.leading, Chrome.rowHorizontalPadding)
-            .padding(.trailing, Chrome.rowHorizontalPadding + (showsActions ? 52 : 18))
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                shape.fill(isSelected ? Chrome.overlay(0.12) : (isHovering ? Chrome.overlay(0.06) : Color.clear))
-            }
-            .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .overlay(alignment: .trailing) {
-            Group {
-                if showsActions {
-                    HStack(spacing: 0) {
-                        Button {
-                            archiveWithGenie()
-                        } label: {
-                            RowAccessoryIcon("archivebox")
-                        }
-                        .buttonStyle(.plain)
-                        .help("Archive thread")
-                        RowActionsButton(actions: actions, isPresented: $isMenuPresented)
-                    }
-                } else {
-                    ActivityStatus(thread: thread)
-                }
-            }
-            .padding(.trailing, 6)
-        }
-        .onHover { hovering in
-            withAnimation(Chrome.hover) { isHovering = hovering }
-        }
-        .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame.frame = $0 }
-        .contextMenu { RowActionMenuButtons(actions: actions) }
-        .animation(Chrome.hover, value: isSelected)
-    }
-
-    private nonisolated static func windowFrame(_ proxy: GeometryProxy) -> CGRect {
-        proxy.frame(in: .named(GenieAnimator.coordinateSpace))
-    }
-
-    private func archiveWithGenie() {
-        GenieAnimator.shared.launch(title: thread.title, subtitle: projectName, frame: windowFrame.frame, colorScheme: colorScheme)
-        withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
     }
 }
 

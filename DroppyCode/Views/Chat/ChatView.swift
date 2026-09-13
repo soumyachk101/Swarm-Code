@@ -30,7 +30,8 @@ struct ChatView: View {
                                 ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
                                     scrollState.jumpToLatest()
                                 }
-                                .alignmentGuide(.top) { $0[.bottom] + 10 }
+                                .padding(.bottom, 10)
+                                .frame(height: 0, alignment: .bottom)
                                 .transition(
                                     .asymmetric(
                                         insertion: .scale(scale: 0.6).combined(with: .opacity).combined(with: .offset(y: 10)),
@@ -59,14 +60,27 @@ struct ChatView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
             .detailSheet()
 
-            if runtime.isDiffVisible {
+            if runtime.isDiffVisible, !diffFloats {
                 DiffInspector(runtime: runtime)
                     .frame(width: diffWidth)
                     .frame(maxHeight: .infinity)
                     .detailSheet()
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if runtime.isDiffVisible, diffFloats {
+                DiffInspector(runtime: runtime)
+                    .frame(width: floatingDiffWidth)
+                    .frame(maxHeight: .infinity)
+                    .detailSheet()
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Chrome.sheetCornerRadius, style: .continuous))
+                    .shadow(color: .black.opacity(0.22), radius: 18, y: 4)
+                    // Below the chat's controls, so the changes button that closes it stays reachable.
+                    .padding(.top, Chrome.chromeTopPadding + Chrome.capsuleHeight + 8)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
@@ -78,8 +92,21 @@ struct ChatView: View {
         }
     }
 
+    private static let chatMinimumWidth: CGFloat = 440
+    private static let diffMinimumWidth: CGFloat = 320
+
+    /// Whether the diff panel floats over the chat, because both no longer fit side by side.
+    private var diffFloats: Bool {
+        paneWidth - Chrome.sheetInset - Self.diffMinimumWidth < Self.chatMinimumWidth
+    }
+
     private var diffWidth: CGFloat {
-        min(560, max(340, (paneWidth - Chrome.sheetInset) * 0.42))
+        let available = paneWidth - Chrome.sheetInset
+        return max(Self.diffMinimumWidth, min(560, available * 0.42, available - Self.chatMinimumWidth))
+    }
+
+    private var floatingDiffWidth: CGFloat {
+        min(paneWidth, max(Self.diffMinimumWidth, paneWidth * 0.62))
     }
 
     private nonisolated static func measureWidth(_ proxy: GeometryProxy) -> CGFloat {

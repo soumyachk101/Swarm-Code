@@ -22,6 +22,7 @@ struct RootView: View {
                 }
 
             DetailView()
+                .frame(minWidth: 0, maxWidth: .infinity)
                 .padding(.leading, sidebar.isVisible ? 0 : Chrome.sheetInset)
                 .padding(.trailing, Chrome.sheetInset)
                 .padding(.vertical, Chrome.sheetInset)

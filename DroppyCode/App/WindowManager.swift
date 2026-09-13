@@ -11,6 +11,7 @@ final class WindowManager {
 
     private var mainWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    private var settingsToolbar: SettingsToolbar?
 
     private enum Size {
         static let main = NSSize(width: 1320, height: 860)
@@ -67,6 +68,7 @@ final class WindowManager {
 
     private func makeSettingsWindow() -> NSWindow {
         let window = makeWindow(title: "Settings", size: Size.settings, resizable: false) { SettingsView() }
+        settingsToolbar = SettingsToolbar(window: window)
         window.center()
         return window
     }

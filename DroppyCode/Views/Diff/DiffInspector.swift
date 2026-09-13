@@ -226,14 +226,47 @@ struct DiffLinesView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.accentColor.opacity(0.06))
                 }
-                ForEach(hunk.lines) { line in
-                    DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
+                ForEach(lineBlocks(hunk.lines)) { block in
+                    if block.isTinted {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(block.lines) { line in
+                                DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
+                            }
+                        }
+                        .clipShape(.rect(cornerRadius: 8, style: .continuous))
+                    } else {
+                        ForEach(block.lines) { line in
+                            DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
+                        }
+                    }
                 }
             }
         }
         .font(.system(size: 11.5, design: .monospaced))
         .textSelection(.enabled)
     }
+}
+
+/// A maximal run of lines that share tinting, so a contiguous addition/deletion
+/// block draws as one shape: corners only on its top and bottom lines.
+private struct DiffLineBlock: Identifiable {
+    var lines: [DiffLine]
+    var isTinted: Bool
+
+    var id: Int { lines.first?.id ?? 0 }
+}
+
+private func lineBlocks(_ lines: [DiffLine]) -> [DiffLineBlock] {
+    var blocks: [DiffLineBlock] = []
+    for line in lines {
+        let tinted = line.kind == .addition || line.kind == .deletion
+        if blocks.last?.isTinted == tinted {
+            blocks[blocks.count - 1].lines.append(line)
+        } else {
+            blocks.append(DiffLineBlock(lines: [line], isTinted: tinted))
+        }
+    }
+    return blocks
 }
 
 private struct DiffLineRow: View {

@@ -65,7 +65,6 @@ struct SettingsView: View {
     @State private var page: SettingsPage = .general
     @State private var search = ""
     @State private var scrollChrome = ChromeScrollModel()
-    @State private var modelSearch = ""
 
     private var visiblePages: [SettingsPage] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -157,9 +156,6 @@ struct SettingsView: View {
                 if page == .providers {
                     ProvidersRefreshButton()
                 }
-                if page == .models {
-                    ChromeSearchField(query: $modelSearch, prompt: "Search models")
-                }
             }
             .frame(minHeight: Chrome.capsuleHeight)
             .padding(.horizontal, Chrome.chromeHorizontalPadding)
@@ -167,9 +163,10 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .detailSheet()
-        .onChange(of: page) {
+        .onChange(of: page, initial: true) {
             scrollChrome.update(travel: 0)
-            modelSearch = ""
+            SettingsSearch.shared.query = ""
+            SettingsSearch.shared.prompt = page == .models ? "Search models" : nil
         }
     }
 
@@ -183,7 +180,7 @@ struct SettingsView: View {
         case .general: GeneralSettingsPage()
         case .providers: ProvidersSettingsPage()
         case .models:
-            ModelsSettingsPage(query: modelSearch)
+            ModelsSettingsPage(query: SettingsSearch.shared.query)
         case .sourceControl: SourceControlSettingsPage()
         case .shortcuts: ShortcutsSettingsPage()
         case .archive: ArchiveSettingsPage()

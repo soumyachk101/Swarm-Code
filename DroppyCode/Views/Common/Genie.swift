@@ -20,10 +20,11 @@ final class GenieAnimator {
 
     private(set) var flights: [Flight] = []
 
-    func launch(title: String, subtitle: String?, frame: CGRect, colorScheme: ColorScheme) {
+    /// Flies a ghost of a row from `frame`. The ghost is drawn once from `ghost`, on an opaque row fill.
+    func launch<Ghost: View>(frame: CGRect, colorScheme: ColorScheme, @ViewBuilder ghost: () -> Ghost) {
         guard frame.width > 1, frame.height > 1,
               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        let renderer = ImageRenderer(content: GenieGhostRow(title: title, subtitle: subtitle, size: frame.size)
+        let renderer = ImageRenderer(content: GenieGhost(size: frame.size, content: ghost())
             .environment(\.colorScheme, colorScheme))
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         guard let image = renderer.nsImage else { return }
@@ -35,32 +36,20 @@ final class GenieAnimator {
     }
 }
 
-/// A flat stand-in for a sidebar row, drawn once for the flight.
-private struct GenieGhostRow: View {
-    let title: String
-    let subtitle: String?
+/// The flat stand-in a row becomes for its flight. Its fill is opaque, so rows sliding up underneath
+/// are hidden by it instead of mixing with its text.
+private struct GenieGhost<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
     let size: CGSize
+    let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(verbatim: title)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-            if let subtitle, !subtitle.isEmpty {
-                HStack(spacing: 4) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 10))
-                    Text(verbatim: subtitle)
-                        .font(.system(size: 12))
-                        .lineLimit(1)
-                }
-                .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 8)
-        .frame(width: size.width, height: size.height, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color.primary.opacity(0.1)))
+        content
+            .frame(width: size.width, height: size.height, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
+                    .fill(colorScheme == .dark ? Color(white: 0.21) : Color(white: 0.9))
+            )
     }
 }
 

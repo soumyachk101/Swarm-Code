@@ -13,13 +13,12 @@ struct ComposerArea: View {
                 ForEach(runtime.questions) { request in
                     QuestionCard(request: request, runtime: runtime)
                 }
-                VStack(alignment: .leading, spacing: -ThreadChangesTab.overlap) {
+                VStack(alignment: .center, spacing: -ThreadChangesTab.overlap) {
                     if let stats = runtime.changeStats {
                         ThreadChangesTab(stats: stats) {
                             runtime.diffSelection = nil
                             runtime.isDiffVisible = true
                         }
-                        .padding(.leading, 18)
                         .transition(.softAppear)
                     }
                     ComposerView(runtime: runtime)
@@ -87,10 +86,23 @@ struct ComposerView: View {
         .padding(.top, 12)
         .padding(.bottom, 9)
         .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-        .overlay(alignment: .top) {
-            if suggestions.isVisible {
-                SuggestionList(state: suggestions, pick: pick)
-                    .alignmentGuide(.top) { $0[.bottom] + 14 }
+        .popover(
+            isPresented: Binding(
+                get: { suggestions.isVisible },
+                set: { if !$0 { suggestions = SuggestionState() } }
+            ),
+            arrowEdge: .top
+        ) {
+            PopoverMenu {
+                PopoverSectionHeader(suggestions.kind == .command ? "Commands" : "Files")
+                ForEach(Array(suggestions.items.enumerated()), id: \.element.id) { index, item in
+                    SuggestionPopoverRow(
+                        item: item,
+                        isSelected: index == suggestions.selected,
+                        select: { suggestions.selected = index },
+                        pick: { pick(item) }
+                    )
+                }
             }
         }
         .task(id: workingDirectory(for: thread)) {
@@ -235,6 +247,7 @@ struct ComposerView: View {
         let range = suggestions.range
         suggestions = SuggestionState()
         controller.replaceCharacters(in: range, with: suggestion.value)
+        controller.focus()
     }
 
     // MARK: - Attachments
@@ -423,41 +436,44 @@ struct Suggestion: Identifiable, Equatable {
     var id: String { value }
 }
 
-private struct SuggestionList: View {
-    let state: SuggestionState
-    let pick: (Suggestion) -> Void
+private struct SuggestionPopoverRow: View {
+    let item: Suggestion
+    let isSelected: Bool
+    let select: () -> Void
+    let pick: () -> Void
+
+    @State private var isHovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(state.items.enumerated()), id: \.element.id) { index, item in
-                Button {
-                    pick(item)
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: item.symbol)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 16)
-                        Text(item.title)
-                            .lineLimit(1)
-                            .fixedSize()
-                        Text(item.detail)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.head)
-                        Spacer(minLength: 0)
-                    }
-                    .font(.callout)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(index == state.selected ? AnyShapeStyle(.tint.opacity(0.18)) : AnyShapeStyle(Color.clear), in: .rect(cornerRadius: 9, style: .continuous))
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
+        Button(action: pick) {
+            HStack(spacing: 8) {
+                Image(systemName: item.symbol)
+                    .font(.system(size: 12))
+                    .frame(width: 16)
+                Text(verbatim: item.title)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 16)
+                Text(verbatim: item.detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .lineLimit(1)
             }
+            .foregroundStyle(Chrome.primaryText)
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected || isHovering ? Chrome.overlay(0.1) : Color.clear)
+            }
+            .contentShape(.rect)
         }
-        .padding(6)
-        .frame(maxWidth: 560, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+            if hovering { select() }
+        }
     }
 }
 

@@ -78,6 +78,10 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     var hasCustomTitle: Bool
     /// The thread's place once its project has been reordered by dragging; nil keeps newest first.
     var sortOrder: Double?
+    /// The thread's place within its group in the activity layout once dragged there.
+    var activityOrder: Double?
+    /// The day that place was given; a thread active on a later day is newest first again.
+    var activityOrderDay: Date?
     var lastStatus: TurnStatus?
 
     init(projectID: UUID, provider: ProviderKind, model: String?, effort: String?, runtimeMode: RuntimeMode, fastMode: Bool = false) {
@@ -119,6 +123,8 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         hasUnread = container.value(.hasUnread, default: false)
         hasCustomTitle = container.value(.hasCustomTitle, default: false)
         sortOrder = container.value(.sortOrder, default: nil)
+        activityOrder = container.value(.activityOrder, default: nil)
+        activityOrderDay = container.value(.activityOrderDay, default: nil)
         lastStatus = container.value(.lastStatus, default: nil)
     }
 }

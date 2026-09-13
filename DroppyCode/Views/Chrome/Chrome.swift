@@ -491,7 +491,7 @@ struct SidebarRow<Icon: View, Accessory: View>: View {
             .padding(.trailing, Chrome.rowHorizontalPadding + accessoryWidth)
             .frame(height: Chrome.rowHeight)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background { shape.fill(fill) }
+            .background { shape.fill(fill).animation(Chrome.hover, value: isSelected) }
             .contentShape(shape)
         }
         .buttonStyle(.plain)
@@ -502,7 +502,6 @@ struct SidebarRow<Icon: View, Accessory: View>: View {
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
-        .animation(Chrome.hover, value: isSelected)
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
 
@@ -622,72 +621,6 @@ struct GlassPickerButton<Value: Hashable>: View {
                         selection = option.value
                     }
                 }
-            }
-        }
-    }
-}
-
-/// The system search field in a pane's chrome row: AppKit's own `NSSearchField`, with its native
-/// bezel, caret, clear button and Escape behavior, and nothing drawn over it.
-struct ChromeSearchField: View {
-    static let width: CGFloat = 220
-
-    @Binding var query: String
-    var prompt = "Search"
-
-    var body: some View {
-        NativeSearchField(text: $query, prompt: prompt)
-            .frame(width: Self.width)
-            .fixedSize()
-    }
-}
-
-private struct NativeSearchField: NSViewRepresentable {
-    @Binding var text: String
-    let prompt: String
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text)
-    }
-
-    func makeNSView(context: Context) -> NSSearchField {
-        let field = NSSearchField()
-        field.placeholderString = prompt
-        field.controlSize = .large
-        field.sendsSearchStringImmediately = true
-        field.sendsWholeSearchString = false
-        field.delegate = context.coordinator
-        field.setAccessibilityLabel(prompt)
-        return field
-    }
-
-    func updateNSView(_ field: NSSearchField, context: Context) {
-        context.coordinator.text = $text
-        if field.stringValue != text {
-            field.stringValue = text
-        }
-        if field.placeholderString != prompt {
-            field.placeholderString = prompt
-        }
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, NSSearchFieldDelegate {
-        var text: Binding<String>
-
-        init(text: Binding<String>) {
-            self.text = text
-        }
-
-        func controlTextDidChange(_ notification: Notification) {
-            guard let field = notification.object as? NSSearchField, field.stringValue != text.wrappedValue else { return }
-            text.wrappedValue = field.stringValue
-        }
-
-        /// The clear button and Escape end searching without typing, so they report here.
-        func searchFieldDidEndSearching(_ sender: NSSearchField) {
-            if !text.wrappedValue.isEmpty {
-                text.wrappedValue = ""
             }
         }
     }
