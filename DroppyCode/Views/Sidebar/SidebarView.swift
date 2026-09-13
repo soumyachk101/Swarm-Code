@@ -514,19 +514,41 @@ private struct SidebarThreadRow: View {
         let projectName = projectName
         let provider = thread.provider
         let symbol = thread.worktreePath == nil ? "folder" : "arrow.triangle.branch"
-        let weight: Font.Weight = model.selectedThreadID == thread.id || thread.hasUnread ? .medium : .regular
-        // The ghost is drawn like the row it replaces, so the row hands over to it without a visible change.
+        let isSelected = model.selectedThreadID == thread.id
+        let isDetailed = projectName != nil
+        let isPinned = thread.isPinned
+        let hasUnread = thread.hasUnread
+        let runtime = model.existingRuntime(for: thread.id)
+        let needsInput = !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true)
+        let isRunning = runtime?.isRunning == true
+        let weight: Font.Weight = isSelected || hasUnread ? .medium : .regular
+        // The ghost mirrors the row's label — same text, badge, padding and
+        // translucent fill — so the row hands over to it without a visible change.
+        let fill = isSelected ? Chrome.overlay(0.12) : Chrome.overlay(0.06)
+        let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         GenieAnimator.shared.launch(frame: windowFrame.frame, colorScheme: colorScheme) {
             HStack(spacing: 8) {
-                if projectName == nil {
-                    ProviderIcon(provider: provider, size: 14)
-                        .frame(width: Chrome.iconSize)
+                if !isDetailed {
+                    SidebarIconBadge {
+                        if needsInput {
+                            SidebarSymbol("hand.raised.fill")
+                                .foregroundStyle(Chrome.orange)
+                        } else if isRunning {
+                            MiniSpinner(cellSize: 2.4)
+                        } else if isPinned {
+                            SidebarSymbol("pin.fill", scale: 0.9)
+                        } else {
+                            ProviderIcon(provider: provider, size: 14)
+                        }
+                    }
+                    .frame(width: Chrome.iconSize)
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(verbatim: title)
                         .font(.system(size: 13, weight: weight))
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(Chrome.primaryText.opacity(isSelected ? 1 : 0.92))
                         .lineLimit(1)
+                        .truncationMode(.tail)
                     if let projectName {
                         HStack(spacing: 4) {
                             Image(systemName: symbol)
@@ -535,11 +557,17 @@ private struct SidebarThreadRow: View {
                                 .font(.system(size: 12))
                                 .lineLimit(1)
                         }
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Chrome.secondaryText)
                     }
                 }
+                Spacer(minLength: 4)
             }
-            .padding(.horizontal, Chrome.rowHorizontalPadding)
+            .padding(.leading, Chrome.rowHorizontalPadding)
+            .padding(.trailing, Chrome.rowHorizontalPadding + 52)
+            .padding(.vertical, isDetailed ? ThreadRowMetrics.detailedVerticalPadding : 0)
+            .frame(minHeight: Chrome.rowHeight)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background { shape.fill(fill) }
         }
         withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
     }

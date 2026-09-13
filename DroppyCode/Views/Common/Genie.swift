@@ -20,7 +20,9 @@ final class GenieAnimator {
 
     private(set) var flights: [Flight] = []
 
-    /// Flies a ghost of a row from `frame`. The ghost is drawn once from `ghost`, on an opaque row fill.
+    /// Flies a ghost of a row from `frame`. The ghost draws exactly what `ghost`
+    /// returns, so pass the row as it looks — background included — and the row
+    /// hands over to it without a visible change.
     func launch<Ghost: View>(frame: CGRect, colorScheme: ColorScheme, @ViewBuilder ghost: () -> Ghost) {
         guard frame.width > 1, frame.height > 1,
               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
@@ -36,20 +38,16 @@ final class GenieAnimator {
     }
 }
 
-/// The flat stand-in a row becomes for its flight. Its fill is opaque, so rows sliding up underneath
-/// are hidden by it instead of mixing with its text.
+/// The flat stand-in a row becomes for its flight. It adds no fill of its own:
+/// the ghost already carries the row's background, so a transparent row stays
+/// transparent instead of flashing opaque when archiving starts.
 private struct GenieGhost<Content: View>: View {
-    @Environment(\.colorScheme) private var colorScheme
     let size: CGSize
     let content: Content
 
     var body: some View {
         content
-            .frame(width: size.width, height: size.height, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
-                    .fill(colorScheme == .dark ? Color(white: 0.21) : Color(white: 0.9))
-            )
+            .frame(width: size.width, height: size.height, alignment: .topLeading)
     }
 }
 
