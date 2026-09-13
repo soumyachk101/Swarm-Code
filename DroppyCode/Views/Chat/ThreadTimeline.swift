@@ -36,7 +36,63 @@ struct ThreadTimeline: View {
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
         let visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
-        return ScrollView {
+        let minimapEntries = TimelineMinimap.entries(for: blocks)
+        return HStack(spacing: 0) {
+            if minimapEntries.count > 1 {
+                TimelineMinimapRail(
+                    entries: minimapEntries,
+                    selectedID: activeMinimapID(entries: minimapEntries),
+                    onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
+                )
+                .frame(width: 30)
+            }
+            timelineScroll(visible: visible, hidden: hidden, meta: meta)
+        }
+    }
+
+    /// The block the reader is on: the view at the bottom-anchored scroll
+    /// position when it matches a block, else the latest block while pinned
+    /// to the bottom, else nothing.
+    private func activeMinimapID(entries: [TimelineMinimapEntry]) -> String? {
+        if let id = position.viewID as? String, entries.contains(where: { $0.id == id }) { return id }
+        if isPinnedToBottom { return entries.last?.id }
+        return nil
+    }
+
+    /// Jump the timeline to a minimap block. A target above the loaded
+    /// window first loads history down to it, then scrolls once layout
+    /// exists. Jumping away from the latest unpins the follow behavior, so
+    /// streaming text never yanks the reader back down.
+    private func jump(to id: String, in blocks: [DisplayBlock], animated: Bool) {
+        var needsExpand = false
+        if let index = blocks.firstIndex(where: { $0.id == id }) {
+            let firstVisible = blocks.count - visibleCount
+            if index < firstVisible {
+                visibleCount = blocks.count - index
+                needsExpand = true
+            }
+            isPinnedToBottom = (id == blocks.last?.id)
+        }
+        let scroll = { position.scrollTo(id: id, anchor: .top) }
+        if animated {
+            if needsExpand {
+                DispatchQueue.main.async { withAnimation(.smooth(duration: 0.35)) { scroll() } }
+            } else {
+                withAnimation(.smooth(duration: 0.35)) { scroll() }
+            }
+        } else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            if needsExpand {
+                DispatchQueue.main.async { withTransaction(transaction) { scroll() } }
+            } else {
+                withTransaction(transaction) { scroll() }
+            }
+        }
+    }
+
+    private func timelineScroll(visible: [DisplayBlock], hidden: Int, meta: TimelineMeta) -> some View {
+        ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
                 if hidden > 0 {
@@ -59,6 +115,7 @@ struct ThreadTimeline: View {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     ForEach(visible) { block in
                         DisplayBlockView(block: block, runtime: runtime, meta: meta)
+                            .id(block.id)
                             .transition(.softAppear)
                     }
                     if runtime.isRunning {
@@ -385,6 +442,8 @@ private struct WorkingIndicator: View {
                 }
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .environment(\.markdownPointSize, 12)
+                .environment(\.markdownDimmed, true)
                 .padding(.leading, 23)
                 .transition(.softAppear)
             }

@@ -79,6 +79,7 @@ struct MarkdownBlockView: View, Equatable {
                 }
             }
             .foregroundStyle(.secondary)
+            .environment(\.markdownDimmed, true)
         case .table(let header, let rows):
             TableBlock(header: header, rows: rows)
         case .rule:
@@ -130,21 +131,24 @@ enum RichLink {
         var result = AttributedString()
         for run in base.runs {
             let slice = AttributedString(base[run.range])
-            if let url = run.link {
-                let display = String(slice.characters)
-                if isBareDisplay(display, url: url) {
-                    var replacement = AttributedString(prettyTitle(for: url))
-                    replacement.link = url
-                    if let intent = run.inlinePresentationIntent {
-                        replacement.inlinePresentationIntent = intent
-                    }
-                    result.append(replacement)
-                } else {
-                    result.append(slice)
-                }
-            } else {
+            guard let url = run.link else {
                 result.append(slice)
+                continue
             }
+            let display = String(slice.characters)
+            var linkSlice: AttributedString
+            if isBareDisplay(display, url: url) {
+                linkSlice = AttributedString(prettyTitle(for: url))
+                linkSlice.link = url
+            } else {
+                linkSlice = slice
+            }
+            // Every link renders bold, whether the author titled it or the
+            // URL was bare. Other intent bits (italic, code) are preserved.
+            var intent = run.inlinePresentationIntent ?? []
+            intent.insert(.stronglyEmphasized)
+            linkSlice.inlinePresentationIntent = intent
+            result.append(linkSlice)
         }
         if prettyCache.count >= prettyCacheLimit { prettyCache.removeAll(keepingCapacity: true) }
         prettyCache[source] = result
@@ -164,19 +168,61 @@ enum RichLink {
         return hosts
     }
 
+    /// Short display title for a bare URL. Forge links collapse to their
+    /// native reference (`!3190`, `#123`); everything else keeps the host
+    /// plus the last path segment, so a deep path never spills into chat.
     static func prettyTitle(for url: URL) -> String {
+        if let reference = forgeReference(for: url) { return reference }
         guard var host = url.host?.lowercased(), !host.isEmpty else {
-            return url.absoluteString
+            return compactFallback(url.absoluteString)
         }
         if host.hasPrefix("www.") { host.removeFirst(4) }
-        var path = url.path.removingPercentEncoding ?? url.path
-        if path == "/" { path = "" }
-        if path.hasSuffix("/"), path.count > 1 { path.removeLast() }
-        var title = host + path
-        if title.count > 64 {
-            title = String(title.prefix(32)) + "…" + String(title.suffix(27))
+        let segments = (url.path.removingPercentEncoding ?? url.path)
+            .split(separator: "/")
+            .map(String.init)
+            .filter { !$0.isEmpty }
+        guard let last = segments.last else { return host }
+        let tail = last.count > 24 ? String(last.prefix(21)) + "…" : last
+        let title = segments.count == 1 ? host + "/" + tail : host + "/…/" + tail
+        if title.count > 40 {
+            return String(title.prefix(19)) + "…" + String(title.suffix(18))
         }
         return title
+    }
+
+    /// `!3190` for merge requests, `#123` for issues and pull requests.
+    /// Matches GitLab (`/-/merge_requests/`, `/-/issues/`) and GitHub-style
+    /// (`/pull/`, `/issues/`) paths on any host.
+    static func forgeReference(for url: URL) -> String? {
+        let segments = url.path.split(separator: "/").map(String.init)
+        // GitLab nests the kind behind /-/: /group/project/-/merge_requests/3190
+        if let dash = segments.firstIndex(of: "-"),
+           dash + 2 < segments.count,
+           let id = Int(segments[dash + 2]) {
+            switch segments[dash + 1] {
+            case "merge_requests": return "!\(id)"
+            case "issues": return "#\(id)"
+            default: break
+            }
+        }
+        // GitHub style: /owner/repo/pull/123 or /owner/repo/issues/123
+        if segments.count >= 2, let id = Int(segments.last ?? "") {
+            let kind = segments[segments.count - 2]
+            if kind == "pull" || kind == "issues" { return "#\(id)" }
+        }
+        return nil
+    }
+
+    /// Hostless URLs (mailto:, custom schemes) have no host to lean on, so
+    /// they only get the length cap.
+    static func compactFallback(_ absolute: String) -> String {
+        guard absolute.count > 40 else { return absolute }
+        return String(absolute.prefix(19)) + "…" + String(absolute.suffix(18))
+    }
+
+    @MainActor
+    static func containsLinks(in source: String) -> Bool {
+        prettyAttributed(source).runs.contains { $0.link != nil }
     }
 
     static func isBareDisplay(_ display: String, url: URL) -> Bool {
@@ -198,6 +244,30 @@ enum RichLink {
             failurePolicy: .returnPartiallyParsedIfPossible
         )
         return (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
+    }
+}
+
+/// Base point size for link paragraphs. SwiftUI's `.font` environment is
+/// opaque, so the two non-default contexts (thinking text, headings) set
+/// this explicitly; everything else reads the 13 pt chat default.
+private struct MarkdownPointSizeKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 13
+}
+
+/// Whether the paragraph renders in secondary styling (quotes, thinking).
+/// Threaded explicitly for the same reason as the point size above.
+private struct MarkdownDimmedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var markdownPointSize: CGFloat {
+        get { self[MarkdownPointSizeKey.self] }
+        set { self[MarkdownPointSizeKey.self] = newValue }
+    }
+    var markdownDimmed: Bool {
+        get { self[MarkdownDimmedKey.self] }
+        set { self[MarkdownDimmedKey.self] = newValue }
     }
 }
 
@@ -263,6 +333,8 @@ enum RichInlineBuilder {
 
 struct InlineText: View {
     let source: String
+    @Environment(\.markdownPointSize) private var pointSize
+    @Environment(\.markdownDimmed) private var dimmed
     @State private var faviconRevision = 0
 
     init(_ source: String) {
@@ -270,20 +342,27 @@ struct InlineText: View {
     }
 
     var body: some View {
-        // faviconRevision gelezen zodat geladen favicons de Text opnieuw opbouwen.
+        // faviconRevision read so loaded favicons rebuild the text.
         let _ = faviconRevision
-        RichInlineBuilder.text(for: source)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .task(id: source) {
-                let hosts = await MainActor.run { RichLink.linkHosts(for: source) }
-                var changed = false
-                for host in hosts where FaviconCache.cached(host: host) == nil {
-                    if await FaviconCache.image(for: host) != nil { changed = true }
-                }
-                if changed { await MainActor.run { faviconRevision += 1 } }
-            }
+        if RichLink.containsLinks(in: source) {
+            LinkParagraphView(source: source, pointSize: pointSize, dimmed: dimmed, revision: faviconRevision)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .task(id: source) { await fetchFavicons() }
+        } else {
+            RichInlineBuilder.text(for: source)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func fetchFavicons() async {
+        let hosts = await MainActor.run { RichLink.linkHosts(for: source) }
+        var changed = false
+        for host in hosts where FaviconCache.cached(host: host) == nil {
+            if await FaviconCache.image(for: host) != nil { changed = true }
+        }
+        if changed { await MainActor.run { faviconRevision += 1 } }
     }
 
     @MainActor
