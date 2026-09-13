@@ -15,7 +15,7 @@ struct TurnInput: Sendable {
 /// Everything a provider session needs to launch.
 struct SessionConfiguration: Sendable {
     var provider: ProviderKind
-    var executable: URL
+    var executable: URL?
     var workingDirectory: URL
     var environment: [String: String]
     var resumeID: String?
@@ -25,6 +25,8 @@ struct SessionConfiguration: Sendable {
     var fastMode = false
     var runtimeMode: RuntimeMode
     var interactionMode: InteractionMode
+    /// Native API providers (DeepSeek) authenticate with this instead of a CLI.
+    var apiKey: String?
 }
 
 enum ApprovalDecision: Sendable {
@@ -93,7 +95,11 @@ enum ProviderError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notInstalled(let provider):
-            "\(provider.displayName) is not installed. Install it and sign in with `\(provider.loginCommand)`."
+            if provider.isAPIKeyBased {
+                "\(provider.displayName) needs an API key. Add one in Settings → Providers → \(provider.displayName)."
+            } else {
+                "\(provider.displayName) is not installed. Install it and sign in with `\(provider.loginCommand)`."
+            }
         case .notRunning:
             "The agent session is not running."
         case .failed(let message):

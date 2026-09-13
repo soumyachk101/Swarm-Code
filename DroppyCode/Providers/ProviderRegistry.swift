@@ -11,8 +11,10 @@ struct ProviderStatus: Equatable, Sendable {
     var version: String?
     var auth: Auth = .unknown
     var isChecking = false
+    /// Native API providers (DeepSeek) have no CLI; they are installed once an API key exists.
+    var apiKeyConfigured = false
 
-    var isInstalled: Bool { executable != nil }
+    var isInstalled: Bool { executable != nil || apiKeyConfigured }
 
     var summary: String {
         guard isInstalled else { return "Not installed" }
@@ -47,6 +49,12 @@ final class ProviderRegistry {
         ModelOption(id: "haiku", name: "Haiku"),
     ]
 
+    static let deepseekEfforts = ["low", "high", "max"]
+    static let deepseekSeed = [
+        ModelOption(id: "deepseek-v4-pro", name: "V4 Pro", detail: "Best reasoning and coding quality", efforts: deepseekEfforts, defaultEffort: "high", isDefault: true),
+        ModelOption(id: "deepseek-flash", name: "V4 Flash", detail: "Fast everyday chat and edits", efforts: deepseekEfforts, defaultEffort: "high"),
+    ]
+
     init(settings: AppSettings) {
         self.settings = settings
         if let data = UserDefaults.standard.data(forKey: cacheKey),
@@ -56,6 +64,7 @@ final class ProviderRegistry {
             }
         }
         if catalogs[.claude]?.isEmpty ?? true { catalogs[.claude] = Self.claudeSeed }
+        if catalogs[.deepseek]?.isEmpty ?? true { catalogs[.deepseek] = Self.deepseekSeed }
     }
 
     var availableProviders: [ProviderKind] {
@@ -67,7 +76,9 @@ final class ProviderRegistry {
     }
 
     func executable(for provider: ProviderKind) -> URL? {
+        guard !provider.isAPIKeyBased else { return nil }
         let custom = settings.binaryPath(for: provider)
+        guard !custom.isEmpty || !provider.executableName.isEmpty else { return nil }
         return LoginEnvironment.which(custom.isEmpty ? provider.executableName : custom)
     }
 
@@ -102,6 +113,10 @@ final class ProviderRegistry {
         var status = statuses[provider] ?? ProviderStatus()
         status.isChecking = true
         statuses[provider] = status
+        if provider.isAPIKeyBased {
+            await refreshAPIProvider(provider)
+            return
+        }
         guard let executable = executable(for: provider) else {
             statuses[provider] = ProviderStatus()
             return
@@ -110,6 +125,25 @@ final class ProviderRegistry {
         async let version = Self.version(executable, environment)
         async let auth = Self.auth(provider, executable, environment)
         statuses[provider] = ProviderStatus(executable: executable, version: await version, auth: await auth)
+    }
+
+    /// API-key providers have no binary: presence (and validity) of the key is the install state.
+    private func refreshAPIProvider(_ provider: ProviderKind) async {
+        let apiKey = settings.apiKey(for: provider)
+        guard !apiKey.isEmpty else {
+            statuses[provider] = ProviderStatus(auth: .signedOut)
+            return
+        }
+        if provider == .deepseek {
+            let valid = await DeepSeekAPI.validate(apiKey: apiKey)
+            statuses[provider] = ProviderStatus(
+                version: "API",
+                auth: valid ? .signedIn(nil) : .signedOut,
+                apiKeyConfigured: true
+            )
+        } else {
+            statuses[provider] = ProviderStatus(auth: .signedIn(nil), apiKeyConfigured: true)
+        }
     }
 
     // MARK: - Models
@@ -133,17 +167,34 @@ final class ProviderRegistry {
 
     func loadCatalog(_ provider: ProviderKind, force: Bool = false) async {
         guard provider != .claude else { return }
-        guard force || models(for: provider).isEmpty, !loadingCatalogs.contains(provider),
-              let executable = executable(for: provider) else { return }
+        guard force || models(for: provider).isEmpty, !loadingCatalogs.contains(provider) else { return }
+        if provider.isAPIKeyBased {
+            await loadAPICatalog(provider, force: force)
+            return
+        }
+        guard let executable = executable(for: provider) else { return }
         loadingCatalogs.insert(provider)
         defer { loadingCatalogs.remove(provider) }
         let environment = environment(for: provider)
         let list: [ModelOption]? = switch provider {
         case .codex: try? await CodexSession.listModels(executable: executable, environment: environment)
         case .cursor, .opencode, .grok: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
-        case .claude: nil
+        case .claude, .deepseek: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
+    }
+
+    private func loadAPICatalog(_ provider: ProviderKind, force: Bool) async {
+        guard provider == .deepseek else { return }
+        // The seed keeps DeepSeek usable offline; a live fetch only refines it.
+        if models(for: provider).isEmpty { updateCatalog(Self.deepseekSeed, for: provider) }
+        loadingCatalogs.insert(provider)
+        defer { loadingCatalogs.remove(provider) }
+        let apiKey = settings.apiKey(for: provider)
+        guard !apiKey.isEmpty else { return }
+        if let list = try? await DeepSeekAPI.listModels(apiKey: apiKey), !list.isEmpty {
+            updateCatalog(list, for: provider)
+        }
     }
 
     /// Reads the provider's plan limits, at most once a minute after a successful read unless forced.
@@ -207,7 +258,7 @@ final class ProviderRegistry {
             let text = TextCleanup.stripANSI(result.output + result.errorOutput)
             if let match = text.firstMatch(of: #/Logged in as (\S+)/#) { return .signedIn(String(match.output.1)) }
             return text.localizedCaseInsensitiveContains("not logged in") ? .signedOut : .unknown
-        case .opencode, .grok:
+        case .opencode, .grok, .deepseek:
             return .unknown
         }
     }

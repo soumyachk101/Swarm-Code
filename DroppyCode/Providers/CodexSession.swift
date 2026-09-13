@@ -38,8 +38,9 @@ final class CodexSession: ProviderSession {
     private var workingDirectory: String { configuration.workingDirectory.path }
 
     func start() async throws -> String {
+        guard let executable = configuration.executable else { throw ProviderError.notInstalled(configuration.provider) }
         let connection = try await Self.connect(
-            executable: configuration.executable,
+            executable: executable,
             directory: configuration.workingDirectory,
             environment: configuration.environment
         ) { [weak self] connection in

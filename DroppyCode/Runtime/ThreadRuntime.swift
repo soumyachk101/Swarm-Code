@@ -181,7 +181,7 @@ final class ThreadRuntime {
         case "/plan":
             app?.updateThread(threadID) { $0.interactionMode = $0.interactionMode == .plan ? .build : .plan }
             return true
-        case "/compact" where thread?.provider == .codex:
+        case "/compact" where thread?.provider == .codex || thread?.provider == .deepseek:
             compact()
             return true
         default:
@@ -273,6 +273,46 @@ final class ThreadRuntime {
         session?.stop()
         session = nil
 
+        if thread.provider.isAPIKeyBased {
+            guard !app.settings.apiKey(for: thread.provider).isEmpty else {
+                throw ProviderError.notInstalled(thread.provider)
+            }
+            func makeAPISession(resumeID: String?) -> any ProviderSession {
+                let configuration = SessionConfiguration(
+                    provider: thread.provider,
+                    executable: nil,
+                    workingDirectory: URL(fileURLWithPath: directory),
+                    environment: app.providers.environment(for: thread.provider),
+                    resumeID: resumeID,
+                    resumeAt: resumeID == nil ? nil : resumeAnchor,
+                    model: thread.model,
+                    effort: thread.effort,
+                    fastMode: thread.fastMode,
+                    runtimeMode: thread.runtimeMode,
+                    interactionMode: thread.interactionMode,
+                    apiKey: app.settings.apiKey(for: thread.provider)
+                )
+                let created: any ProviderSession = DeepSeekSession(configuration: configuration)
+                created.onEvent = { [weak self] event in self?.handle(event) }
+                return created
+            }
+            var candidate = makeAPISession(resumeID: thread.providerSessionID)
+            session = candidate
+            sessionSignature = signature
+            let sessionID: String
+            do {
+                sessionID = try await candidate.start()
+            } catch where thread.providerSessionID != nil {
+                candidate.stop()
+                candidate = makeAPISession(resumeID: nil)
+                session = candidate
+                sessionID = try await candidate.start()
+            }
+            resumeAnchor = nil
+            app.updateThread(threadID) { $0.providerSessionID = sessionID }
+            return candidate
+        }
+
         guard let executable = app.providers.executable(for: thread.provider) else {
             throw ProviderError.notInstalled(thread.provider)
         }
@@ -294,6 +334,7 @@ final class ThreadRuntime {
             case .codex: CodexSession(configuration: configuration)
             case .claude: ClaudeSession(configuration: configuration)
             case .cursor, .opencode, .grok: ACPSession(configuration: configuration)
+            case .deepseek: DeepSeekSession(configuration: configuration)
             }
             created.onEvent = { [weak self] event in self?.handle(event) }
             return created

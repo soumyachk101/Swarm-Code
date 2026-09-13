@@ -52,7 +52,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: ["permissions", "worktree", "reasoning", "notifications", "theme", "appearance", "dark", "light"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
-        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "binary", "path", "sign in", "login"]
+        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "binary", "path", "sign in", "login", "api key"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
         case .shortcuts: ["keyboard", "keys"]
         case .archive: ["archived", "restore"]
@@ -265,6 +265,7 @@ private struct ProvidersRefreshButton: View {
                 Task {
                     await model.providers.refreshAll()
                     await model.providers.loadCatalog(.codex, force: true)
+                    await model.providers.loadCatalog(.deepseek, force: true)
                 }
             }
         }
@@ -289,6 +290,8 @@ private struct ProviderSettingsSection: View {
     let provider: ProviderKind
 
     @State private var binaryPath = ""
+    @State private var apiKey = ""
+    @State private var showsAPIKey = false
 
     var body: some View {
         let status = model.providers.status(provider)
@@ -301,8 +304,12 @@ private struct ProviderSettingsSection: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: status.isChecking ? "Checking…" : status.summary)
                             .font(.system(size: 13))
-                        if let version = status.version {
+                        if let version = status.version, !provider.isAPIKeyBased {
                             Text(verbatim: "Version \(version)")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Chrome.secondaryText)
+                        } else if provider.isAPIKeyBased, status.apiKeyConfigured {
+                            Text(verbatim: "Native API · api.deepseek.com")
                                 .font(.system(size: 11))
                                 .foregroundStyle(Chrome.secondaryText)
                         }
@@ -316,30 +323,82 @@ private struct ProviderSettingsSection: View {
                 .padding(.leading, 16)
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
-                ChromeRowDivider()
-                ChromeRow(title: "Binary path", detail: status.executable?.path) {
-                    TextField("", text: $binaryPath, prompt: Text(provider.executableName))
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 12, design: .monospaced))
-                        .frame(width: 200)
-                }
-                if !status.isInstalled {
+                if provider.isAPIKeyBased {
                     ChromeRowDivider()
-                    ChromeRow(title: "Install", detail: "\(provider.displayName) was not found on your PATH.") {
-                        Link("Get \(provider.displayName)", destination: provider.installURL)
-                            .buttonStyle(.glass)
+                    ChromeRow(title: "API key", detail: "Stored in your Keychain. Get one at platform.deepseek.com.") {
+                        HStack(spacing: 8) {
+                            Group {
+                                if showsAPIKey {
+                                    TextField("", text: $apiKey, prompt: Text("sk-…"))
+                                } else {
+                                    SecureField("", text: $apiKey, prompt: Text("sk-…"))
+                                }
+                            }
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(width: 200)
+                            Button {
+                                showsAPIKey.toggle()
+                            } label: {
+                                Image(systemName: showsAPIKey ? "eye.slash" : "eye")
+                                    .font(.system(size: 12))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Chrome.secondaryText)
+                            .help(showsAPIKey ? "Hide the API key" : "Show the API key")
+                        }
                     }
-                } else if status.auth == .signedOut {
+                    if !status.isInstalled {
+                        ChromeRowDivider()
+                        ChromeRow(title: "Get a key", detail: "DeepSeek needs an API key — no install required.") {
+                            Link("Get a DeepSeek key", destination: provider.installURL)
+                                .buttonStyle(.glass)
+                        }
+                    }
+                } else {
                     ChromeRowDivider()
-                    ChromeRow(title: "Sign in", detail: "Run this command in Terminal.") {
-                        CopyCommandButton(command: provider.loginCommand)
+                    ChromeRow(title: "Binary path", detail: status.executable?.path) {
+                        TextField("", text: $binaryPath, prompt: Text(provider.executableName))
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 12, design: .monospaced))
+                            .frame(width: 200)
+                    }
+                    if !status.isInstalled {
+                        ChromeRowDivider()
+                        ChromeRow(title: "Install", detail: "\(provider.displayName) was not found on your PATH.") {
+                            Link("Get \(provider.displayName)", destination: provider.installURL)
+                                .buttonStyle(.glass)
+                        }
+                    } else if status.auth == .signedOut {
+                        ChromeRowDivider()
+                        ChromeRow(title: "Sign in", detail: "Run this command in Terminal.") {
+                            CopyCommandButton(command: provider.loginCommand)
+                        }
                     }
                 }
             }
         }
-        .onAppear { binaryPath = model.settings.binaryPath(for: provider) }
+        .onAppear {
+            binaryPath = model.settings.binaryPath(for: provider)
+            if provider.isAPIKeyBased { apiKey = model.settings.deepseekAPIKeyInput }
+        }
         .onChange(of: binaryPath) { _, value in
             model.settings.setBinaryPath(value, for: provider)
+        }
+        .onChange(of: apiKey) { _, value in
+            guard provider.isAPIKeyBased else { return }
+            model.settings.deepseekAPIKeyInput = value
+        }
+        .onChange(of: model.settings.deepseekAPIKeyInput) { _, value in
+            guard provider.isAPIKeyBased, value != apiKey else { return }
+            apiKey = value
+        }
+        .task(id: apiKey) {
+            guard provider.isAPIKeyBased else { return }
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            await model.providers.refresh(provider)
+            await model.providers.loadCatalog(provider)
         }
     }
 }

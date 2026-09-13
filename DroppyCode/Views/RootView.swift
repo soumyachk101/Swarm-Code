@@ -188,10 +188,21 @@ private struct ProviderStatusRow: View {
                 ProgressView()
                     .controlSize(.small)
             } else if !status.isInstalled {
-                Link("Install", destination: provider.installURL)
-                    .buttonStyle(.glass)
+                if provider.isAPIKeyBased {
+                    Link("Add key", destination: provider.installURL)
+                        .buttonStyle(.glass)
+                } else {
+                    Link("Install", destination: provider.installURL)
+                        .buttonStyle(.glass)
+                }
             } else if status.auth == .signedOut {
-                CopyCommandButton(command: provider.loginCommand)
+                if provider.isAPIKeyBased {
+                    Text("Add an API key in Settings")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                } else {
+                    CopyCommandButton(command: provider.loginCommand)
+                }
             } else {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.green)
