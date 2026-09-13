@@ -40,9 +40,15 @@ for _ in $(seq 1 20); do
 done
 rm -rf "$TARGET"
 ditto "$PRODUCT" "$TARGET"
-# Ad-hoc sign the installed copy so Gatekeeper never blocks the dev loop,
-# regardless of which build the signature came from.
-codesign --force --deep --preserve-metadata=entitlements --sign - "$TARGET"
+# Keep Xcode's Development signature (Team NARHG44L48). macOS TCC ties granted
+# permissions to the app's signed identity, so re-signing ad-hoc here gave every
+# build a new identity with no Team ID and macOS forgot all approvals on each
+# run. Only fall back to ad-hoc when the fresh build has no valid signature.
+if codesign --verify --deep --strict "$TARGET" 2>/dev/null; then
+  xattr -dr com.apple.quarantine "$TARGET" 2>/dev/null || true
+else
+  codesign --force --deep --sign - "$TARGET"
+fi
 
 step "Relaunching"
 open "$TARGET"
