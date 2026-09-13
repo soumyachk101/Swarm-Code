@@ -46,6 +46,30 @@ final class ComposerNSTextView: NSTextView {
         if widthChanged { onWidthChange?() }
     }
 
+    private static let imageTypes: [NSPasteboard.PasteboardType] = [.png, .tiff, NSPasteboard.PasteboardType("public.jpeg"), NSPasteboard.PasteboardType("public.heic")]
+
+    /// Files, or image data with no text beside it, which paste as attachments instead of text.
+    private var pasteboardHoldsAttachment: Bool {
+        let pasteboard = NSPasteboard.general
+        if pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) { return true }
+        return pasteboard.availableType(from: Self.imageTypes) != nil && pasteboard.string(forType: .string) == nil
+    }
+
+    /// A plain-text view disables Paste when the clipboard has no text, so an image never reached `paste(_:)`.
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(paste(_:)), pasteboardHoldsAttachment { return true }
+        return super.validateUserInterfaceItem(item)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if window?.firstResponder === self, flags == .command, event.charactersIgnoringModifiers == "v", pasteboardHoldsAttachment {
+            paste(nil)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
     override func paste(_ sender: Any?) {
         let pasteboard = NSPasteboard.general
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],

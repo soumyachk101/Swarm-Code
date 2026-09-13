@@ -68,6 +68,7 @@ struct PopoverItem: View {
     var detail: String?
     var symbol: String?
     var image: NSImage?
+    var asset: String?
     var isChecked: Bool?
     var isEnabled = true
     var isDestructive = false
@@ -81,6 +82,7 @@ struct PopoverItem: View {
         detail: String? = nil,
         symbol: String? = nil,
         image: NSImage? = nil,
+        asset: String? = nil,
         isChecked: Bool? = nil,
         isEnabled: Bool = true,
         isDestructive: Bool = false,
@@ -90,6 +92,7 @@ struct PopoverItem: View {
         self.detail = detail
         self.symbol = symbol
         self.image = image
+        self.asset = asset
         self.isChecked = isChecked
         self.isEnabled = isEnabled
         self.isDestructive = isDestructive
@@ -109,7 +112,12 @@ struct PopoverItem: View {
                         .opacity(isChecked ? 1 : 0)
                         .frame(width: 14)
                 }
-                if let image {
+                if let asset {
+                    Image(asset)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 16, height: 16)
+                } else if let image {
                     Image(nsImage: image)
                         .resizable()
                         .interpolation(.high)

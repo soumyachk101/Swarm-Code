@@ -575,6 +575,7 @@ struct SidebarSearchField: View {
 struct GlassPickerButton<Value: Hashable>: View {
     let options: [(value: Value, title: String)]
     @Binding var selection: Value
+    var asset: (Value) -> String? = { _ in nil }
 
     @State private var isPresented = false
     @State private var isHovering = false
@@ -585,6 +586,12 @@ struct GlassPickerButton<Value: Hashable>: View {
             isPresented.toggle()
         } label: {
             HStack(spacing: 6) {
+                if let name = asset(selection) {
+                    Image(name)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 14, height: 14)
+                }
                 Text(verbatim: title)
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
@@ -606,7 +613,7 @@ struct GlassPickerButton<Value: Hashable>: View {
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             PopoverMenu {
                 ForEach(Array(options.enumerated()), id: \.offset) { _, option in
-                    PopoverItem(option.title, isChecked: option.value == selection) {
+                    PopoverItem(option.title, asset: asset(option.value), isChecked: option.value == selection) {
                         selection = option.value
                     }
                 }

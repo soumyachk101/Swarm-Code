@@ -203,7 +203,7 @@ private struct GeneralSettingsPage: View {
         ChromeSection(title: "New threads") {
             ChromeCard {
                 ChromeRow(title: "Provider") {
-                    GlassPickerButton(options: ProviderKind.allCases.map { ($0, $0.displayName) }, selection: $settings.defaultProvider)
+                    GlassPickerButton(options: ProviderKind.allCases.map { ($0, $0.displayName) }, selection: $settings.defaultProvider, asset: { $0.iconName })
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Permissions", detail: settings.defaultRuntimeMode.summary) {
@@ -338,7 +338,7 @@ private struct SourceControlSettingsPage: View {
                     title: "Thread titles and commit messages",
                     detail: "Automatic uses the thread's own provider. Claude uses Haiku, Codex your default model."
                 ) {
-                    GlassPickerButton(options: TextGenerationChoice.allCases.map { ($0, $0.title) }, selection: $settings.textGeneration)
+                    GlassPickerButton(options: TextGenerationChoice.allCases.map { ($0, $0.title) }, selection: $settings.textGeneration, asset: { ProviderKind(rawValue: $0.rawValue)?.iconName })
                 }
             }
         }
