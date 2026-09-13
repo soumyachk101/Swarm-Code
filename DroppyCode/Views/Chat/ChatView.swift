@@ -8,112 +8,70 @@ struct ChatView: View {
     @State private var git = GitStatusModel()
     @State private var scrollChrome = ChromeScrollModel()
     @State private var scrollState = TimelineScrollState()
-    @State private var paneWidth: CGFloat = 1_000
+    /// Full column height. The timeline rail centres in this, so composer and
+    /// queue growth never shifts it.
+    @State private var columnHeight: CGFloat = 0
 
     var body: some View {
         let thread = model.thread(runtime.threadID)
         let project = thread.flatMap { model.project($0.projectID) }
         let directory = thread?.worktreePath ?? project?.path ?? LoginEnvironment.homeDirectory
         let title = thread?.title ?? ""
-        HStack(spacing: Chrome.sheetInset) {
-            VStack(spacing: 0) {
-                ThreadTimeline(
+        VStack(spacing: 0) {
+            ThreadTimeline(
+                runtime: runtime,
+                scrollChrome: scrollChrome,
+                scrollState: scrollState,
+                projectName: project?.name,
+                columnHeight: columnHeight
+            )
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                ComposerArea(runtime: runtime)
+                    .overlay(alignment: .top) {
+                        if scrollState.showsJumpButton {
+                            ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
+                                scrollState.jumpToLatest()
+                            }
+                            .padding(.bottom, 10)
+                            .frame(height: 0, alignment: .bottom)
+                            .transition(
+                                .asymmetric(
+                                    insertion: .scale(scale: 0.6).combined(with: .opacity).combined(with: .offset(y: 10)),
+                                    removal: .scale(scale: 0.85).combined(with: .opacity).combined(with: .offset(y: 6))
+                                )
+                            )
+                        }
+                    }
+            }
+            .overlay(alignment: .top) {
+                PaneTopVeil(model: scrollChrome)
+            }
+            .overlay(alignment: .top) {
+                ChatChromeRow(
                     runtime: runtime,
                     scrollChrome: scrollChrome,
-                    scrollState: scrollState,
-                    projectName: project?.name
+                    title: title,
+                    project: project,
+                    directory: directory,
+                    git: git
                 )
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    ComposerArea(runtime: runtime)
-                        .overlay(alignment: .top) {
-                            if scrollState.showsJumpButton {
-                                ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
-                                    scrollState.jumpToLatest()
-                                }
-                                .padding(.bottom, 10)
-                                .frame(height: 0, alignment: .bottom)
-                                .transition(
-                                    .asymmetric(
-                                        insertion: .scale(scale: 0.6).combined(with: .opacity).combined(with: .offset(y: 10)),
-                                        removal: .scale(scale: 0.85).combined(with: .opacity).combined(with: .offset(y: 6))
-                                    )
-                                )
-                            }
-                        }
-                }
-                .overlay(alignment: .top) {
-                    PaneTopVeil(model: scrollChrome)
-                }
-                .overlay(alignment: .top) {
-                    ChatChromeRow(
-                        runtime: runtime,
-                        scrollChrome: scrollChrome,
-                        title: title,
-                        project: project,
-                        directory: directory,
-                        git: git
-                    )
-                }
-
-                if runtime.isTerminalVisible {
-                    TerminalPanel(runtime: runtime, directory: directory)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
             }
-            .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
-            .detailSheet()
 
-            if runtime.isDiffVisible, !diffFloats {
-                DiffInspector(runtime: runtime)
-                    .frame(width: diffWidth)
-                    .frame(maxHeight: .infinity)
-                    .detailSheet()
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            if runtime.isTerminalVisible {
+                TerminalPanel(runtime: runtime, directory: directory)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .overlay(alignment: .trailing) {
-            if runtime.isDiffVisible, diffFloats {
-                DiffInspector(runtime: runtime)
-                    .frame(width: floatingDiffWidth)
-                    .frame(maxHeight: .infinity)
-                    .detailSheet()
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: Chrome.sheetCornerRadius, style: .continuous))
-                    .shadow(color: .black.opacity(0.22), radius: 18, y: 4)
-                    // Below the chat's controls, so the changes button that closes it stays reachable.
-                    .padding(.top, Chrome.chromeTopPadding + Chrome.capsuleHeight + 8)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
-        }
-        .onGeometryChange(for: CGFloat.self, of: Self.measureWidth) { paneWidth = $0 }
+        .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
+        .detailSheet()
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { columnHeight = $0 }
         .animation(Chrome.panelSlide, value: runtime.isTerminalVisible)
-        .animation(Chrome.panelSlide, value: runtime.isDiffVisible)
         .task(id: directory) {
             await git.refresh(directory, force: false)
         }
         .onChange(of: runtime.diffRevision) {
             Task { await git.refresh(directory) }
         }
-    }
-
-    private static let chatMinimumWidth: CGFloat = 440
-    private static let diffMinimumWidth: CGFloat = 320
-
-    /// Whether the diff panel floats over the chat, because both no longer fit side by side.
-    private var diffFloats: Bool {
-        paneWidth - Chrome.sheetInset - Self.diffMinimumWidth < Self.chatMinimumWidth
-    }
-
-    private var diffWidth: CGFloat {
-        let available = paneWidth - Chrome.sheetInset
-        return max(Self.diffMinimumWidth, min(560, available * 0.42, available - Self.chatMinimumWidth))
-    }
-
-    private var floatingDiffWidth: CGFloat {
-        min(paneWidth, max(Self.diffMinimumWidth, paneWidth * 0.62))
-    }
-
-    private nonisolated static func measureWidth(_ proxy: GeometryProxy) -> CGFloat {
-        proxy.size.width
     }
 }
 

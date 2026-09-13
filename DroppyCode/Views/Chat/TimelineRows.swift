@@ -86,8 +86,8 @@ struct UserMessageRow: View {
 struct AttachmentStrip: View {
     let attachments: [Attachment]
 
-    /// One preview panel for the strip, anchored to the tapped thumbnail, so
-    /// every photo opens in a single tap no matter how many are attached.
+    /// One preview panel for the strip, so every photo opens in a single tap
+    /// no matter how many are attached.
     @State private var preview = AttachmentPreviewCoordinator()
 
     var body: some View {
@@ -96,6 +96,9 @@ struct AttachmentStrip: View {
                 AttachmentThumbnail(attachment: attachment, preview: preview)
                     .help(attachment.name)
             }
+        }
+        .background {
+            AttachmentAnchorCapture { preview.setAnchor($0) }
         }
         .onDisappear { preview.close() }
     }
@@ -142,10 +145,6 @@ struct AttachmentThumbnail: View {
             }
         }
         .buttonStyle(.plain)
-        .background {
-            AttachmentAnchorCapture { preview.register($0, for: attachment.id) }
-        }
-        .onDisappear { preview.unregister(attachment.id) }
         .task(id: attachment.path) {
             guard attachment.isImage else { return }
             let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size)

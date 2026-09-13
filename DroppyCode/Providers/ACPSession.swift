@@ -1,6 +1,6 @@
 import Foundation
 
-/// Drives Agent Client Protocol agents: Cursor, OpenCode and Grok.
+/// Drives Agent Client Protocol agents: Cursor, OpenCode, Grok and Devin.
 @MainActor
 final class ACPSession: ProviderSession {
     var onEvent: ((ProviderEvent) -> Void)?
@@ -63,6 +63,16 @@ final class ACPSession: ProviderSession {
             case .autoAcceptEdits: ["--permission-mode", "acceptEdits", "agent", "stdio"]
             case .auto: ["--permission-mode", "auto", "agent", "stdio"]
             case .fullAccess: ["agent", "--always-approve", "stdio"]
+            }
+        case .devin:
+            // Devin's modes at a glance: auto approves read-only tools, accept-edits
+            // adds workspace edits, smart adds model-judged-safe actions, dangerous
+            // approves everything. Passed before the subcommand, like its CLI expects.
+            switch configuration.runtimeMode {
+            case .supervised: ["--permission-mode", "auto", "acp"]
+            case .autoAcceptEdits: ["--permission-mode", "accept-edits", "acp"]
+            case .auto: ["--permission-mode", "smart", "acp"]
+            case .fullAccess: ["--permission-mode", "dangerous", "acp"]
             }
         default:
             ["acp"]

@@ -63,10 +63,6 @@ final class ThreadRuntime {
     private(set) var turns: [TurnRecord] = []
     private(set) var usage: ContextUsage?
     private(set) var phase: RuntimePhase = .idle
-    /// Live generation speed in tokens/sec while streaming, and the previous
-    /// turn's average once idle. Estimated from streamed output characters.
-    private(set) var tokenRate: Double?
-    private(set) var lastTokenRate: Double?
     private(set) var approvals: [ApprovalRequest] = []
     private(set) var questions: [QuestionRequest] = []
     private(set) var turnStartedAt: Date?
@@ -90,10 +86,6 @@ final class ThreadRuntime {
     @ObservationIgnored private var currentTurnID: UUID?
     @ObservationIgnored private var resumeAnchor: String?
     @ObservationIgnored private var interruptWatchdog: Task<Void, Never>?
-    /// Trailing (date, cumulative output chars) samples for the tok/s estimate.
-    @ObservationIgnored private var outputSamples: [(Date, Int)] = []
-    @ObservationIgnored private var outputChars = 0
-    @ObservationIgnored private var lastRatePublishedAt: Date?
 
     private struct SessionSignature: Equatable {
         var provider: ProviderKind
@@ -176,6 +168,26 @@ final class ThreadRuntime {
         draft = ComposerDraft()
     }
 
+    /// Draft captured by Return while a turn runs: stop the turn, then send this
+    /// right away instead of queueing it behind the queue.
+    @ObservationIgnored private var pendingSend: PendingSend?
+
+    private struct PendingSend {
+        var text: String
+        var attachments: [Attachment]
+    }
+
+    /// Interrupts the running turn and sends the draft as soon as the stop
+    /// lands, instead of queueing it as a follow-up. The composer clears at
+    /// once; the message goes out when the turn fully stops (or immediately,
+    /// if the turn finished on its own in the meantime).
+    func interruptAndSend() {
+        guard !draft.isEmpty, phase != .idle else { return }
+        pendingSend = PendingSend(text: draft.text, attachments: draft.attachments)
+        draft = ComposerDraft()
+        interrupt()
+    }
+
     func enqueueFollowUp(text: String, attachments: [Attachment]) {
         let prompt = FollowUpPrompt(
             text: text.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -191,11 +203,17 @@ final class ThreadRuntime {
         scheduleSave()
     }
 
-    func moveFollowUp(_ id: UUID, earlier: Bool) {
-        guard let index = followUps.firstIndex(where: { $0.id == id }) else { return }
-        let target = earlier ? index - 1 : index + 1
-        guard followUps.indices.contains(target) else { return }
-        followUps.swapAt(index, target)
+    /// Moves a queued follow-up next to another one, for drag reordering. A no-op
+    /// when it is already there, so hovering the same half never churns.
+    func moveFollowUp(_ id: UUID, to target: UUID, placeAfter: Bool) {
+        guard id != target,
+              let from = followUps.firstIndex(where: { $0.id == id }),
+              let to = followUps.firstIndex(where: { $0.id == target }) else { return }
+        var dest = to + (placeAfter ? 1 : 0)
+        if from < dest { dest -= 1 }
+        guard from != dest else { return }
+        let prompt = followUps.remove(at: from)
+        followUps.insert(prompt, at: dest)
         scheduleSave()
     }
 
@@ -337,7 +355,7 @@ final class ThreadRuntime {
         let signature = SessionSignature(
             provider: thread.provider,
             directory: directory,
-            launchRuntimeMode: thread.provider == .cursor || thread.provider == .grok ? thread.runtimeMode : nil,
+            launchRuntimeMode: thread.provider == .cursor || thread.provider == .grok || thread.provider == .devin ? thread.runtimeMode : nil,
             launchEffort: thread.provider == .claude ? thread.effort : nil,
             launchFast: thread.provider == .claude ? thread.fastMode : nil
         )
@@ -409,7 +427,7 @@ final class ThreadRuntime {
             let created: any ProviderSession = switch thread.provider {
             case .codex: CodexSession(configuration: configuration)
             case .claude: ClaudeSession(configuration: configuration)
-            case .cursor, .opencode, .grok: ACPSession(configuration: configuration)
+            case .cursor, .opencode, .grok, .devin: ACPSession(configuration: configuration)
             case .deepseek: DeepSeekSession(configuration: configuration)
             case .meta: MetaSession(configuration: configuration)
             }
@@ -634,10 +652,6 @@ final class ThreadRuntime {
             app?.updateThread(threadID) { $0.providerSessionID = sessionID }
         case .turnStarted(let providerTurnID):
             phase = .running
-            outputSamples = []
-            outputChars = 0
-            tokenRate = nil
-            lastRatePublishedAt = nil
             if let currentTurnID, let providerTurnID {
                 updateTurn(currentTurnID) { $0.providerTurnID = providerTurnID }
             }
@@ -720,6 +734,7 @@ final class ThreadRuntime {
         guard let turnID = currentTurnID, let turn = turns.first(where: { $0.id == turnID }) else {
             phase = .idle
             turnStartedAt = nil
+            drainPendingSend()
             return
         }
         currentTurnID = nil
@@ -778,20 +793,33 @@ final class ThreadRuntime {
             deletions: files.reduce(0) { $0 + $1.deletions }
         )
         append(TimelineItem(turnID: turnID, content: .turnEnd(summary)))
-        if let first = outputSamples.first, let last = outputSamples.last {
-            let span = last.0.timeIntervalSince(first.0)
-            if span >= 0.5, last.1 > first.1 {
-                lastTokenRate = (Double(last.1 - first.1) / span / 4).rounded()
-            }
-        }
-        outputSamples = []
-        tokenRate = nil
         phase = .idle
         turnStartedAt = nil
         diffRevision += 1
         app?.turnFinished(threadID, status: status)
         scheduleSave()
-        drainFollowUps(after: status)
+        // The Return-while-running message jumps the queue: it goes right away
+        // and anything queued waits for it.
+        if pendingSend != nil {
+            drainPendingSend()
+        } else {
+            drainFollowUps(after: status)
+        }
+    }
+
+    /// Sends the message captured by Return while a turn ran, once the stop
+    /// lands. Runs for any finish status: if the turn completed on its own in
+    /// the meantime, the message still goes right away.
+    private func drainPendingSend() {
+        guard phase == .idle, let pending = pendingSend else { return }
+        pendingSend = nil
+        let text = pending.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty || !pending.attachments.isEmpty else {
+            scheduleSave()
+            return
+        }
+        if handleLocalCommand(text) { return }
+        Task { await startTurn(text: pending.text, attachments: pending.attachments) }
     }
 
     // MARK: - Timeline mutations
@@ -838,13 +866,6 @@ final class ThreadRuntime {
             }
         }
         guard !text.isEmpty else { return }
-        // Tool outputs are environment data, not generated tokens, so they
-        // stay out of the tok/s estimate.
-        if kind == .message || kind == .reasoning || kind == .plan {
-            outputChars += text.count
-            outputSamples.append((.now, outputChars))
-            if outputSamples.count > 40 { outputSamples.removeFirst(outputSamples.count - 40) }
-        }
         pendingDeltas[id, default: PendingDelta(kind: kind, text: "")].text += text
         guard flushTask == nil else { return }
         flushTask = Task { [weak self] in
@@ -853,30 +874,9 @@ final class ThreadRuntime {
         }
     }
 
-    /// Windowed generation speed over the trailing output samples. Published at
-    /// most ~4x/sec and only on whole-number changes, so the meter never
-    /// costs renders while streaming.
-    private func refreshTokenRate() {
-        let now = Date.now
-        outputSamples.removeAll { now.timeIntervalSince($0.0) > 6 }
-        guard outputSamples.count >= 2,
-              let first = outputSamples.first, let last = outputSamples.last else {
-            if tokenRate != nil { tokenRate = nil }
-            return
-        }
-        let span = last.0.timeIntervalSince(first.0)
-        guard span >= 0.5, last.1 > first.1 else { return }
-        let rounded = (Double(last.1 - first.1) / span / 4).rounded()
-        guard tokenRate != rounded,
-              lastRatePublishedAt == nil || now.timeIntervalSince(lastRatePublishedAt!) >= 0.25 else { return }
-        lastRatePublishedAt = now
-        tokenRate = rounded
-    }
-
     private func flushDeltas() {
         flushTask?.cancel()
         flushTask = nil
-        refreshTokenRate()
         guard !pendingDeltas.isEmpty else { return }
         let deltas = pendingDeltas
         pendingDeltas.removeAll()

@@ -6,6 +6,9 @@ struct ThreadTimeline: View {
     let scrollChrome: ChromeScrollModel
     let scrollState: TimelineScrollState
     let projectName: String?
+    /// Full chat-column height, so the rail stays centred when the composer
+    /// or queue tab grows.
+    let columnHeight: CGFloat
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isPinnedToBottom = true
@@ -39,16 +42,20 @@ struct ThreadTimeline: View {
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
         let visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
-        // One tick per block, so the rail's size and selection come from block ids alone; the
-        // column reads the text itself, which keeps streaming out of this body.
+        // One tick per message the user sent, so the rail's size and selection come
+        // from those block ids alone; the column reads the text itself, which keeps
+        // streaming out of this body.
         // The rail floats over the timeline's leading gutter instead of taking layout
         // space, so the conversation stays centered exactly like the composer.
+        // Ticks centre in the full column height, so the queue tab opening never moves them.
+        let railBlocks = blocks.filter { $0.hasUserMessage }
         return ZStack(alignment: .leading) {
             timelineScroll(visible: visible, hidden: hidden, meta: meta)
-            if blocks.count > 1 {
+            if railBlocks.count > 1 {
                 TimelineMinimapColumn(
-                    blocks: blocks,
-                    selectedID: activeMinimapID(blocks: blocks),
+                    blocks: railBlocks,
+                    centerHeight: columnHeight,
+                    selectedID: activeMinimapID(blocks: railBlocks),
                     onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
                 )
                 .frame(width: 30)
@@ -283,6 +290,16 @@ enum DisplayBlock: Identifiable {
         switch self {
         case .turn(let id, _, _, _, _): id
         case .group(let group): group.id
+        }
+    }
+
+    /// Whether the block holds a message the user sent (a turn prompt or a
+    /// standalone user message). Only these get rail ticks.
+    var hasUserMessage: Bool {
+        switch self {
+        case .turn(_, _, let userEntries, _, _): !userEntries.isEmpty
+        case .group(.single(let entry)): entry.kind == .user
+        case .group(.work): false
         }
     }
 

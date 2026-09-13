@@ -7,6 +7,8 @@ enum ComposerKey {
     case tab
     case escape
     case submit
+    /// Command-Return: steer the running turn (queue as a follow-up).
+    case steer
 }
 
 /// Lets SwiftUI reach into the text view for focus and in-place replacements.
@@ -310,6 +312,9 @@ struct ComposerTextView: NSViewRepresentable {
                 if flags.contains(.shift) || flags.contains(.option) {
                     textView.insertNewlineIgnoringFieldEditor(nil)
                     return true
+                }
+                if flags.contains(.command) {
+                    return parent.onKey(.steer)
                 }
                 return parent.onKey(.submit)
             case #selector(NSResponder.moveUp(_:)):

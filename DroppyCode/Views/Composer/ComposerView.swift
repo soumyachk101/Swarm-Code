@@ -4,6 +4,10 @@ import SwiftUI
 struct ComposerArea: View {
     let runtime: ThreadRuntime
 
+    /// The changes popover presented from the tab. Driven by
+    /// `runtime.isDiffVisible`, so every opener (tab, Review, ⌘D) shares it.
+    @State private var diffPopover = DiffPopoverCoordinator()
+
     var body: some View {
         GlassEffectContainer(spacing: 8) {
             VStack(spacing: 12) {
@@ -20,21 +24,28 @@ struct ComposerArea: View {
                         FollowUpQueueTab(runtime: runtime)
                             .transition(.softAppear)
                     } else if let stats = runtime.changeStats {
-                        ThreadChangesTab(stats: stats, isActive: runtime.isDiffVisible) {
+                        ThreadChangesTab(
+                            stats: stats,
+                            anchor: { diffPopover.setAnchor($0) }
+                        ) {
                             if runtime.diffSelection != nil { runtime.diffSelection = nil }
                             // Set last so a redundant write never restarts the diff load
-                            // or steals the panel-slide transaction.
+                            // or steals the presentation.
                             if !runtime.isDiffVisible { runtime.isDiffVisible = true }
                         }
                         .transition(.softAppear)
                     }
                     ComposerView(runtime: runtime)
                 }
-                // NB: no .animation(..., value: changeStats) here on purpose. The tab's
-                // insertion animates via its .softAppear transition, and a container-level
-                // animation would hijack the outer panel-slide transaction, so the tab
-                // would jump instead of gliding along when the diff panel opens.
+                // NB: no .animation(..., value: changeStats) here on purpose: the tab's
+                // insertion animates via its .softAppear transition, and opening the
+                // popover moves nothing, so there is nothing else to drive.
                 .task(id: runtime.diffRevision) { await runtime.refreshChangeStats() }
+                .onAppear { diffPopover.sync(isVisible: runtime.isDiffVisible, runtime: runtime) }
+                .onChange(of: runtime.isDiffVisible) { _, visible in
+                    diffPopover.sync(isVisible: visible, runtime: runtime)
+                }
+                .onDisappear { diffPopover.close() }
             }
         }
         .frame(maxWidth: 820)
@@ -102,9 +113,7 @@ struct ComposerView: View {
                     Spacer(minLength: 8)
                     ContextMeter(
                         usage: runtime.usage,
-                        provider: thread.provider,
-                        rate: runtime.isRunning ? runtime.tokenRate : runtime.lastTokenRate,
-                        live: runtime.isRunning && runtime.tokenRate != nil
+                        provider: thread.provider
                     )
                     Button {
                         if model.settings.recentDownloadsPicker {
@@ -122,9 +131,6 @@ struct ComposerView: View {
                             pick: { showingRecents = false; attach(urls: [$0]) },
                             chooseOther: { showingRecents = false; chooseFiles() }
                         )
-                    }
-                    if runtime.isRunning {
-                        QueueButton(runtime: runtime) { send() }
                     }
                     SendButton(runtime: runtime) { send() }
                 }
@@ -186,7 +192,7 @@ struct ComposerView: View {
             case .down:
                 suggestions.selected = min(suggestions.items.count - 1, suggestions.selected + 1)
                 return true
-            case .tab, .submit:
+            case .tab, .submit, .steer:
                 pick(suggestions.items[suggestions.selected])
                 return true
             case .escape:
@@ -197,6 +203,9 @@ struct ComposerView: View {
         switch key {
         case .submit:
             send()
+            return true
+        case .steer:
+            steer()
             return true
         case .up:
             return recall(older: true)
@@ -212,6 +221,20 @@ struct ComposerView: View {
     }
 
     private func send() {
+        guard !runtime.draft.isEmpty else { return }
+        historyIndex = nil
+        suggestions = SuggestionState()
+        if runtime.isRunning {
+            // Return while the turn runs stops it and sends right away.
+            runtime.interruptAndSend()
+        } else {
+            runtime.send()
+        }
+    }
+
+    /// Command-Return: steer the running turn by queueing the draft behind it.
+    /// Idle, there is nothing to steer behind, so it just sends.
+    private func steer() {
         guard !runtime.draft.isEmpty else { return }
         historyIndex = nil
         suggestions = SuggestionState()
@@ -387,8 +410,6 @@ private struct PermissionMenu: View {
 private struct ContextMeter: View {
     let usage: ContextUsage?
     let provider: ProviderKind
-    let rate: Double?
-    let live: Bool
 
     @State private var isPresented = false
 
@@ -414,29 +435,9 @@ private struct ContextMeter: View {
             .buttonStyle(.plain)
             .help(fraction.map { "\(Int($0 * 100))% of the context window used" } ?? "Usage limits")
             .popover(isPresented: $isPresented, arrowEdge: .top) {
-                UsagePanel(usage: usage, provider: provider, rate: rate, live: live)
+                UsagePanel(usage: usage, provider: provider)
             }
         }
-    }
-}
-
-private struct QueueButton: View {
-    let runtime: ThreadRuntime
-    let queue: () -> Void
-
-    var body: some View {
-        let isEnabled = !runtime.draft.isEmpty
-        Button(action: queue) {
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 28, height: 28)
-                .background(isEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary), in: .circle)
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-        .padding(.leading, 4)
-        .help("Queue as follow-up (Return)")
     }
 }
 
@@ -460,28 +461,25 @@ private struct SendButton: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .padding(.leading, 4)
-        .help(isRunning ? "Stop (⌘.)" : "Send (Return)")
+        .help(isRunning ? "Stop (⌘.) · Return interrupts and sends" : "Send (Return)")
     }
 }
 
 private struct DraftAttachments: View {
     @Binding var attachments: [Attachment]
 
-    /// Same shape as the chat strip: one preview panel anchored to the tapped
-    /// thumbnail, so every draft photo opens in a single tap.
+    /// Same shape as the chat strip: one preview panel for the strip, so every
+    /// draft photo opens in a single tap.
     @State private var preview = AttachmentPreviewCoordinator()
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            // The delete badge hangs over the thumbnail's top-trailing corner into the
-            // gap on its right. Without reserved dead space there the next thumbnail
-            // (a later sibling, so frontmost) covers the badge and eats its taps, leaving
-            // only the last photo deletable. The per-cell trailing padding keeps the exact
-            // same pitch with the badge always on tappable space.
-            HStack(spacing: 2) {
+            // The delete badge sits fully inside the thumbnail's top-trailing
+            // corner: nothing overhangs into the next cell, so no later
+            // sibling can cover it and every photo stays deletable.
+            HStack(spacing: 8) {
                 ForEach(attachments) { attachment in
                     AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
-                        .padding(.trailing, 14)
                         .overlay(alignment: .topTrailing) {
                             Button {
                                 attachments.removeAll { $0.id == attachment.id }
@@ -489,14 +487,19 @@ private struct DraftAttachments: View {
                                 Image(systemName: "xmark.circle.fill")
                                     .symbolRenderingMode(.palette)
                                     .foregroundStyle(.white, .black.opacity(0.6))
+                                    .padding(4)
                             }
                             .buttonStyle(.plain)
-                            .offset(x: 6, y: -6)
+                            .padding(.top, 2)
+                            .padding(.trailing, 2)
+                            .accessibilityLabel(Text("Remove \(attachment.name)"))
                         }
                 }
             }
             .padding(.top, 6)
-            .padding(.trailing, 6)
+        }
+        .background {
+            AttachmentAnchorCapture { preview.setAnchor($0) }
         }
         .onChange(of: attachments) {
             preview.retire(except: Set(attachments.map(\.id)))

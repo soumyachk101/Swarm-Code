@@ -197,7 +197,7 @@ final class ProviderRegistry {
         let environment = environment(for: provider)
         let list: [ModelOption]? = switch provider {
         case .codex: try? await CodexSession.listModels(executable: executable, environment: environment)
-        case .cursor, .opencode, .grok: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
+        case .cursor, .opencode, .grok, .devin: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
         case .claude, .deepseek, .meta: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
@@ -286,8 +286,27 @@ final class ProviderRegistry {
             let text = TextCleanup.stripANSI(result.output + result.errorOutput)
             if let match = text.firstMatch(of: #/Logged in as (\S+)/#) { return .signedIn(String(match.output.1)) }
             return text.localizedCaseInsensitiveContains("not logged in") ? .signedOut : .unknown
+        case .devin:
+            guard let result = try? await Shell.run(executable, ["auth", "status"], environment: environment, timeout: 20) else {
+                return .unknown
+            }
+            let text = TextCleanup.stripANSI(result.output + result.errorOutput)
+            if text.localizedCaseInsensitiveContains("not logged in") { return .signedOut }
+            guard text.localizedCaseInsensitiveContains("logged in") else { return .unknown }
+            return .signedIn(Self.devinAccount(from: text))
         case .opencode, .grok, .deepseek, .meta:
             return .unknown
         }
+    }
+
+    /// The `Name:` line of `devin auth status`, so Settings reads "Signed in as …".
+    private static func devinAccount(from text: String) -> String? {
+        for line in text.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.lowercased().hasPrefix("name:") else { continue }
+            let name = trimmed.dropFirst("name:".count).trimmingCharacters(in: .whitespaces)
+            return name.isEmpty ? nil : name
+        }
+        return nil
     }
 }

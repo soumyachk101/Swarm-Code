@@ -52,7 +52,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: ["permissions", "worktree", "reasoning", "notifications", "theme", "appearance", "dark", "light", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
-        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "binary", "path", "sign in", "login", "api key"]
+        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "binary", "path", "sign in", "login", "api key"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
         case .shortcuts: ["keyboard", "keys"]
         case .archive: ["archived", "restore"]

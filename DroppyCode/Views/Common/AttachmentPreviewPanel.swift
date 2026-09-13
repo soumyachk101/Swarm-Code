@@ -1,23 +1,25 @@
 import AppKit
 import SwiftUI
 
-/// One attachment preview panel per thumbnail strip, anchored to the tapped
-/// thumbnail. A custom NSPopover (not SwiftUI's `.popover`) for two reasons:
+/// One attachment preview panel per thumbnail strip. A custom NSPopover (not
+/// SwiftUI's `.popover`) because SwiftUI resolves several sibling popovers to
+/// a single presentation, so with several pics only the last photo opened.
+/// Here one panel is shared and every tap swaps its content, so any photo
+/// opens in a single tap.
 ///
-/// - SwiftUI resolves several sibling popovers to a single presentation, and a
-///   transient popover swallows the tap that would switch to another photo, so
-///   with several pics not every preview opens. Here one panel is shared and
-///   every tap re-anchors it, so any photo opens in a single tap.
-/// - The panel is shown relative to the tapped thumbnail's own view, so the
-///   arrow always sits on the photo that was tapped.
+/// The panel anchors to the strip itself rather than to each thumbnail: one
+/// stable anchor means no per-photo bookkeeping that can go stale (recycled
+/// views, unregistered ids) and silently swallow taps. While open, tapping
+/// another photo swaps the content in place instead of re-showing, which is
+/// the unreliable step for an already-shown popover.
 ///
 /// The panel is semitransient: taps elsewhere in the window still reach their
-/// target, and a tap outside every thumbnail dismisses it, as does Escape,
-/// tapping the same thumbnail again, or the strip going away.
+/// target, and a tap outside the strip dismisses it, as does Escape, tapping
+/// the same thumbnail again, or the strip going away.
 @MainActor
 final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
-    private var anchors: [Attachment.ID: WeakView] = [:]
+    private var anchor: WeakView?
     private var currentID: Attachment.ID?
     private var monitors: [Any] = []
 
@@ -28,19 +30,15 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         popover.delegate = self
     }
 
-    func register(_ view: NSView, for id: Attachment.ID) {
-        anchors[id] = WeakView(view)
+    /// The strip's own view, captured from the strip's background. One stable
+    /// view per strip: never a recycled row, never a stale id.
+    func setAnchor(_ view: NSView) {
+        anchor = WeakView(view)
     }
 
-    func unregister(_ id: Attachment.ID) {
-        anchors[id] = nil
-        if currentID == id { close() }
-    }
-
-    /// Forget anchors for attachments that are gone, closing the panel when
-    /// its own attachment left (e.g. removed from the draft while previewing).
+    /// Forget the panel when its attachment left
+    /// (e.g. removed from the draft while previewing).
     func retire(except ids: Set<Attachment.ID>) {
-        anchors = anchors.filter { ids.contains($0.key) && $0.value.value != nil }
         if let currentID, !ids.contains(currentID) { close() }
     }
 
@@ -59,11 +57,19 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     }
 
     private func show(_ attachment: Attachment) {
-        anchors = anchors.filter { $0.value.value != nil }
-        guard let anchor = anchors[attachment.id]?.value, anchor.window != nil else { return }
-        popover.contentViewController = NSHostingController(rootView: AttachmentLargePreview(attachment: attachment))
-        popover.contentSize = Self.contentSize(for: attachment)
+        let content = AttachmentLargePreview(attachment: attachment)
+        let size = Self.contentSize(for: attachment)
         currentID = attachment.id
+        if popover.isShown {
+            // Already open: swap the content in place. Re-showing a shown
+            // popover is unreliable, and the strip anchor never moves anyway.
+            popover.contentViewController = NSHostingController(rootView: content)
+            popover.contentSize = size
+            return
+        }
+        guard let anchor = anchor?.value, anchor.window != nil else { return }
+        popover.contentViewController = NSHostingController(rootView: content)
+        popover.contentSize = size
         startMonitors()
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
@@ -91,16 +97,14 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         }
     }
 
-    /// Clicks inside the panel or on any thumbnail pass through (the button
-    /// toggles or switches the panel); any other click dismisses first.
+    /// Clicks inside the panel or anywhere on the strip pass through (a
+    /// thumbnail button toggles or switches the panel); any other click
+    /// dismisses first.
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
         if event.window === popover.contentViewController?.view.window { return event }
-        if let window = event.window {
-            for weakView in anchors.values {
-                guard let view = weakView.value, view.window === window, !view.isHiddenOrHasHiddenAncestor else { continue }
-                if view.bounds.contains(view.convert(event.locationInWindow, from: nil)) { return event }
-            }
-        }
+        if let window = event.window,
+           let view = anchor?.value, view.window === window, !view.isHiddenOrHasHiddenAncestor,
+           view.bounds.contains(view.convert(event.locationInWindow, from: nil)) { return event }
         close()
         return event
     }
@@ -144,13 +148,14 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     }
 }
 
-private final class WeakView {
+/// A weak box for an NSView anchor, so coordinators never keep views alive.
+final class WeakView {
     weak var value: NSView?
     init(_ value: NSView) { self.value = value }
 }
 
-/// Captures the thumbnail's own NSView so the preview panel can anchor to it.
-/// Mounted as the button's background, so it fills exactly the thumbnail.
+/// Captures the strip's own NSView so the preview panel can anchor to it.
+/// Mounted as the strip's background, so it fills exactly the strip.
 struct AttachmentAnchorCapture: NSViewRepresentable {
     let onResolve: (NSView) -> Void
 

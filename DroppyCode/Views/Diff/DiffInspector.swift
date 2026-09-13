@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct DiffInspector: View {
@@ -95,9 +96,9 @@ struct DiffInspector: View {
             }
         }
         .task(id: loadKey) {
-            // Let the panel slide in first. Kicking off git + parse + a big view build
-            // in the same transaction as the spring is what made opening feel laggy:
-            // the empty panel glides in cheaply, content fills in right after.
+            // Let the popover appear first. Kicking off git + parse + a big view build
+            // in the same transaction is what made opening feel laggy: the empty
+            // popover appears cheaply, content fills in right after.
             // A diff the runtime already parsed skips the wait and fills in at once.
             if !runtime.hasCachedDiff(selection: runtime.diffSelection) {
                 try? await Task.sleep(for: .milliseconds(180))
@@ -420,5 +421,112 @@ private struct DiffLineRow: View {
         case .deletion: .red.opacity(0.12)
         default: .clear
         }
+    }
+}
+
+/// The thread's diff as a tall, wide popover anchored to the changes tab,
+/// instead of a side panel. Semitransient with a pass-through monitor: taps
+/// outside close it but still reach their target, so picking another turn's
+/// Review opens its diff in a single tap. Closes on Escape, the X button,
+/// ⌘D, tapping the tab, or the thread going away.
+@MainActor
+final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
+    static let width: CGFloat = 640
+    static let height: CGFloat = 540
+
+    private let popover = NSPopover()
+    private var anchor: WeakView?
+    private var runtime: ThreadRuntime?
+    private var desiredVisible = false
+    private var monitors: [Any] = []
+    /// Bumps on every show and close, so a stale didClose can never clobber a fresh open.
+    private var session = 0
+    private var pendingSession = 0
+
+    override init() {
+        super.init()
+        popover.behavior = .semitransient
+        popover.animates = true
+        popover.delegate = self
+    }
+
+    /// The changes tab's own view, captured from the tab's background.
+    func setAnchor(_ view: NSView) {
+        anchor = WeakView(view)
+        if desiredVisible { show() }
+    }
+
+    /// Drives the popover from `runtime.isDiffVisible`. Call on change and on appear.
+    func sync(isVisible: Bool, runtime: ThreadRuntime) {
+        self.runtime = runtime
+        desiredVisible = isVisible
+        if isVisible { show() } else { close() }
+    }
+
+    func close() {
+        stopMonitors()
+        desiredVisible = false
+        session += 1
+        pendingSession = session
+        if popover.isShown { popover.performClose(nil) }
+    }
+
+    private func show() {
+        guard let runtime, let anchor = anchor?.value, anchor.window != nil else { return }
+        session += 1
+        guard !popover.isShown else { return }
+        popover.contentViewController = NSHostingController(rootView: DiffInspector(runtime: runtime)
+            .frame(width: Self.width, height: Self.height))
+        popover.contentSize = NSSize(width: Self.width, height: Self.height)
+        startMonitors()
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+    }
+
+    // MARK: - Dismissal
+
+    nonisolated func popoverDidClose(_ notification: Notification) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.stopMonitors()
+            self.desiredVisible = false
+            // Only the close that posted this may clear the flag: a Review tap
+            // that already reopened (newer session) must survive.
+            if self.session == self.pendingSession {
+                self.runtime?.isDiffVisible = false
+            }
+        }
+    }
+
+    /// Clicks inside the panel pass through; any other click dismisses first
+    /// but still reaches its target (e.g. another turn's Review button).
+    private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
+        if event.window === popover.contentViewController?.view.window { return event }
+        close()
+        return event
+    }
+
+    private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
+        guard event.keyCode == 53 else { return event } // Escape
+        close()
+        return nil
+    }
+
+    private func startMonitors() {
+        guard monitors.isEmpty else { return }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
+            self?.handleMouseDown(event) ?? event
+        }) {
+            monitors.append(monitor)
+        }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
+            self?.handleKeyDown(event) ?? event
+        }) {
+            monitors.append(monitor)
+        }
+    }
+
+    private func stopMonitors() {
+        for monitor in monitors { NSEvent.removeMonitor(monitor) }
+        monitors.removeAll()
     }
 }
