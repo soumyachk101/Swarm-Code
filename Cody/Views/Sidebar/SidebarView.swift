@@ -398,9 +398,7 @@ private struct ThreadBadge: View {
                 SidebarSymbol("hand.raised.fill")
                     .foregroundStyle(Chrome.orange)
             } else if isRunning {
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(0.8)
+                MiniSpinner(cellSize: 2.4)
             } else if thread.isPinned {
                 SidebarSymbol("pin.fill", scale: 0.9)
             } else {
@@ -604,8 +602,7 @@ private struct ActivityStatus: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.orange)
         } else if runtime?.isRunning == true {
-            ProgressView()
-                .controlSize(.mini)
+            MiniSpinner(cellSize: 2.4)
         } else if thread.hasUnread {
             Circle()
                 .fill(thread.lastStatus == .failed ? Color.red : Chrome.accent)

@@ -59,6 +59,10 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 | `Cody/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
 | `Cody/Support` | Process I/O, JSON-RPC and the login shell environment |
 
+## Acknowledgements
+
+The working indicators, the gradient pulse beside a reply and the mini pulse on working threads, along with their rotating words, are ported from [Zeron](https://github.com/zeronsh/zeron) by Wing, under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

@@ -34,7 +34,7 @@ struct ThreadTimeline: View {
                         TimelineGroupView(group: group, runtime: runtime)
                     }
                     if runtime.isRunning {
-                        WorkingIndicator(startedAt: runtime.turnStartedAt ?? .now)
+                        WorkingIndicator(startedAt: runtime.turnStartedAt ?? .now, seed: WorkingWords.seed(runtime.threadID.uuidString))
                     }
                 }
                 // The end of the conversation. While it is on screen the reader is at the latest message.
@@ -162,20 +162,26 @@ private struct TimelineGroupView: View {
     }
 }
 
+/// Zeron's gradient pulse with a word that changes every few seconds, and the elapsed time.
 private struct WorkingIndicator: View {
     let startedAt: Date
+    let seed: UInt64
     @State private var now = Date.now
 
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .controlSize(.small)
-            Text("Working")
+        let elapsed = now.timeIntervalSince(startedAt)
+        let word = WorkingWords.word(seed: seed, elapsedSeconds: Int64(max(0, elapsed)))
+        HStack(spacing: 10) {
+            WorkingSpinner(cellSize: 3.5)
+            Text(verbatim: "\(word)…")
                 .foregroundStyle(.secondary)
-            Text(RelativeTime.duration(now.timeIntervalSince(startedAt)))
+                .id(word)
+                .transition(.opacity.combined(with: .offset(y: 3)))
+            Text(RelativeTime.duration(elapsed))
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
         }
+        .animation(.smooth(duration: 0.35), value: word)
         .font(.callout)
         .task {
             while !Task.isCancelled {
