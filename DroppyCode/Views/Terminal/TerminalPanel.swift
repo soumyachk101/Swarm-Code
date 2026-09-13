@@ -60,7 +60,15 @@ struct TerminalPanel: View {
             }
         }
         .frame(height: model.settings.terminalHeight)
-        .background(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.985))
+        // Rounded top corners, so the panel reads as a sheet rising into the conversation.
+        .background(
+            UnevenRoundedRectangle(
+                topLeadingRadius: Chrome.sheetCornerRadius,
+                topTrailingRadius: Chrome.sheetCornerRadius,
+                style: .continuous
+            )
+            .fill(colorScheme == .dark ? Color(white: 0.08) : Color(white: 0.985))
+        )
         .onAppear { terminals.ensureTerminal(threadID: runtime.threadID, directory: directory) }
     }
 
