@@ -67,6 +67,7 @@ final class AppSettings {
         static let notify = "notifyWhenFinished"
         static let confirmDelete = "confirmBeforeDeleting"
         static let showReasoning = "showReasoning"
+        static let sidebarActivityView = "sidebarActivityView"
         static let appearance = "appearance"
         static let binaryPaths = "providerBinaryPaths"
         static let disabledProviders = "disabledProviders"
@@ -105,6 +106,11 @@ final class AppSettings {
 
     var showReasoning: Bool {
         didSet { defaults.set(showReasoning, forKey: Key.showReasoning) }
+    }
+
+    /// The sidebar lists every thread by when it was last active, instead of by project.
+    var sidebarActivityView: Bool {
+        didSet { defaults.set(sidebarActivityView, forKey: Key.sidebarActivityView) }
     }
 
     var appearance: AppearancePreference {
@@ -155,6 +161,7 @@ final class AppSettings {
         notifyWhenFinished = defaults.object(forKey: Key.notify) as? Bool ?? true
         confirmBeforeDeleting = defaults.object(forKey: Key.confirmDelete) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? true
+        sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
         appearance = AppearancePreference(rawValue: defaults.string(forKey: Key.appearance) ?? "") ?? .system
         textGeneration = TextGenerationChoice(rawValue: defaults.string(forKey: Key.textGeneration) ?? "") ?? .automatic
         commitInstructions = defaults.string(forKey: Key.commitInstructions) ?? ""

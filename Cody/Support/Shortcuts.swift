@@ -119,6 +119,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
     case toggleSidebar
     case toggleTerminal
     case toggleChanges
+    case toggleActivityView
     case showMainWindow
     case openSettings
 
@@ -160,7 +161,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         switch self {
         case .newThread, .newWorktreeThread, .addProject, .stopTurn, .togglePlanMode, .previousThread, .nextThread, .archiveThread:
             .threads
-        case .commandPalette, .toggleSidebar, .toggleTerminal, .toggleChanges, .showMainWindow, .openSettings:
+        case .commandPalette, .toggleSidebar, .toggleTerminal, .toggleChanges, .toggleActivityView, .showMainWindow, .openSettings:
             .window
         }
     }
@@ -179,6 +180,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .toggleSidebar: "Toggle sidebar"
         case .toggleTerminal: "Toggle terminal"
         case .toggleChanges: "Toggle changes"
+        case .toggleActivityView: "Activity view"
         case .showMainWindow: "Show Cody"
         case .openSettings: "Settings"
         }
@@ -198,6 +200,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .toggleSidebar: "Shows or hides the sidebar."
         case .toggleTerminal: "Shows or hides the thread's terminal."
         case .toggleChanges: "Shows or hides the changes panel."
+        case .toggleActivityView: "Lists every thread by when it was last active."
         case .showMainWindow: "Brings the main window to the front."
         case .openSettings: "Opens this window."
         }
@@ -217,6 +220,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .toggleSidebar: KeyChord(keyCode: 1, modifiers: [.control, .command])
         case .toggleTerminal: KeyChord(keyCode: 38, modifiers: .command)
         case .toggleChanges: KeyChord(keyCode: 2, modifiers: .command)
+        case .toggleActivityView: KeyChord(keyCode: 32, modifiers: [.option, .command])
         case .showMainWindow: KeyChord(keyCode: 29, modifiers: .command)
         case .openSettings: KeyChord(keyCode: 43, modifiers: .command)
         }

@@ -41,6 +41,10 @@ struct AppCommands: Commands {
             Button("Toggle changes") { runtime?.isDiffVisible.toggle() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .toggleChanges))
                 .disabled(model.selectedThreadID == nil)
+            Button("Toggle activity view") {
+                withAnimation(Chrome.panelSlide) { model.settings.sidebarActivityView.toggle() }
+            }
+            .keyboardShortcut(shortcuts.keyboardShortcut(for: .toggleActivityView))
             Divider()
         }
 

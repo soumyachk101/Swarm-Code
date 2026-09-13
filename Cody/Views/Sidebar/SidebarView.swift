@@ -22,10 +22,16 @@ struct SidebarView: View {
                 .frame(height: Chrome.trafficLightDiameter)
                 .padding(.top, Chrome.trafficLightTop)
 
-            SidebarSearchField(text: $search, prompt: "Search threads") {
-                if let first = searchResults.first?.threads.first {
-                    model.selectedThreadID = first.id
+            HStack(spacing: 6) {
+                SidebarSearchField(text: $search, prompt: "Search threads") {
+                    if let first = searchResults.first?.threads.first {
+                        model.selectedThreadID = first.id
+                    }
                 }
+                ActivityViewToggle(isOn: Binding(
+                    get: { model.settings.sidebarActivityView },
+                    set: { model.settings.sidebarActivityView = $0 }
+                ))
             }
             .padding(.horizontal, Chrome.listInset)
             .padding(.top, 14)
@@ -33,7 +39,11 @@ struct SidebarView: View {
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if query.isEmpty {
-                        projectList
+                        if model.settings.sidebarActivityView {
+                            activityList
+                        } else {
+                            projectList
+                        }
                     } else {
                         searchList
                     }
@@ -98,6 +108,89 @@ struct SidebarView: View {
                 }
             }
         }
+    }
+
+    // MARK: Activity view
+
+    @ViewBuilder
+    private var activityList: some View {
+        let active = model.threads.filter { !$0.isArchived }
+        let attention = active.filter(needsAttention).sorted { $0.updatedAt > $1.updatedAt }
+        if attention.isEmpty {
+            Text("Nothing needs attention")
+                .font(.system(size: 12))
+                .foregroundStyle(Chrome.secondaryText.opacity(0.7))
+                .padding(.horizontal, Chrome.rowHorizontalPadding)
+                .padding(.top, 2)
+                .padding(.bottom, 4)
+        } else {
+            ActivityHeader(title: "Needs attention", isFirst: true)
+            ForEach(attention) { thread in
+                activityRow(thread)
+            }
+        }
+        ForEach(Self.activityGroups(active.filter { !needsAttention($0) })) { group in
+            ActivityHeader(title: group.title, isFirst: false)
+            ForEach(group.threads) { thread in
+                activityRow(thread)
+            }
+        }
+    }
+
+    private func needsAttention(_ thread: ChatThread) -> Bool {
+        guard let runtime = model.existingRuntime(for: thread.id) else { return false }
+        return !runtime.approvals.isEmpty || !runtime.questions.isEmpty
+    }
+
+    private func activityRow(_ thread: ChatThread) -> some View {
+        ActivityThreadRow(
+            thread: thread,
+            projectName: model.project(thread.projectID)?.name ?? "",
+            onRename: {
+                renameText = thread.title
+                renaming = thread
+            },
+            onDelete: {
+                if model.settings.confirmBeforeDeleting {
+                    pendingDeletion = thread
+                } else {
+                    model.delete(thread.id)
+                }
+            }
+        )
+    }
+
+    private struct ActivityGroup: Identifiable {
+        let title: String
+        var threads: [ChatThread]
+
+        var id: String { title }
+    }
+
+    /// Threads newest first, grouped under Today, Yesterday, a weekday within the week, then a date.
+    private static func activityGroups(_ threads: [ChatThread]) -> [ActivityGroup] {
+        let calendar = Calendar.current
+        var groups: [ActivityGroup] = []
+        for thread in threads.sorted(by: { $0.updatedAt > $1.updatedAt }) {
+            let title = dayTitle(for: thread.updatedAt, calendar: calendar)
+            if groups.last?.title == title {
+                groups[groups.count - 1].threads.append(thread)
+            } else {
+                groups.append(ActivityGroup(title: title, threads: [thread]))
+            }
+        }
+        return groups
+    }
+
+    private static func dayTitle(for date: Date, calendar: Calendar) -> String {
+        if calendar.isDateInToday(date) { return "Today" }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: .now)).day ?? 0
+        if days < 7 { return date.formatted(.dateTime.weekday(.wide)) }
+        if calendar.isDate(date, equalTo: .now, toGranularity: .year) {
+            return date.formatted(.dateTime.month(.wide).day())
+        }
+        return date.formatted(.dateTime.month(.wide).day().year())
     }
 
     @ViewBuilder
@@ -288,18 +381,7 @@ private struct ThreadRow: View {
     }
 
     private var actions: [RowAction] {
-        var items = [
-            RowAction(title: "Rename", symbol: "pencil") { onRename() },
-            RowAction(title: thread.isPinned ? "Unpin" : "Pin", symbol: thread.isPinned ? "pin.slash" : "pin") {
-                model.updateThread(thread.id) { $0.isPinned.toggle() }
-            },
-        ]
-        if let path = thread.worktreePath {
-            items.append(RowAction(title: "Reveal worktree in Finder", symbol: "folder") { Workspace.revealInFinder(path) })
-        }
-        items.append(RowAction(title: "Archive", symbol: "archivebox", startsGroup: true) { model.archive(thread.id) })
-        items.append(RowAction(title: "Delete…", symbol: "trash", isDestructive: true) { onDelete() })
-        return items
+        ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
     }
 }
 
@@ -373,5 +455,162 @@ private struct ThreadDropDelegate: DropDelegate {
         guard let dragging, dragging != threadID, accepts(dragging) else { return false }
         onMove(dragging, info.location.y > Chrome.rowHeight / 2)
         return true
+    }
+}
+
+/// What a thread row offers from its ellipsis popover and its context menu, in both sidebar layouts.
+@MainActor
+private enum ThreadActions {
+    static func make(model: AppModel, thread: ChatThread, onRename: @escaping () -> Void, onDelete: @escaping () -> Void) -> [RowAction] {
+        var items = [
+            RowAction(title: "Rename", symbol: "pencil") { onRename() },
+            RowAction(title: thread.isPinned ? "Unpin" : "Pin", symbol: thread.isPinned ? "pin.slash" : "pin") {
+                model.updateThread(thread.id) { $0.isPinned.toggle() }
+            },
+        ]
+        if let path = thread.worktreePath {
+            items.append(RowAction(title: "Reveal worktree in Finder", symbol: "folder") { Workspace.revealInFinder(path) })
+        }
+        items.append(RowAction(title: "Archive", symbol: "archivebox", startsGroup: true) { model.archive(thread.id) })
+        items.append(RowAction(title: "Delete…", symbol: "trash", isDestructive: true) { onDelete() })
+        return items
+    }
+}
+
+/// The bell beside the search field that switches the sidebar between projects and activity.
+private struct ActivityViewToggle: View {
+    @Binding var isOn: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        let chord = ShortcutStore.shared.chord(for: .toggleActivityView).map { " (\($0.description))" } ?? ""
+        Button {
+            withAnimation(Chrome.panelSlide) { isOn.toggle() }
+        } label: {
+            Image(systemName: "bell")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isOn ? Chrome.accent : Chrome.secondaryText)
+                .frame(width: 30, height: 30)
+                .background {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(isOn ? Chrome.accent.opacity(0.16) : (isHovering ? Chrome.overlay(0.08) : Color.clear))
+                }
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .help((isOn ? "Turn off activity view" : "Turn on activity view") + chord)
+        .accessibilityLabel(Text("Activity view"))
+        .accessibilityValue(Text(isOn ? "On" : "Off"))
+    }
+}
+
+private struct ActivityHeader: View {
+    let title: String
+    let isFirst: Bool
+
+    var body: some View {
+        Text(verbatim: title)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(Chrome.secondaryText)
+            .padding(.horizontal, Chrome.rowHorizontalPadding)
+            .padding(.top, isFirst ? 2 : 14)
+            .padding(.bottom, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// A thread in the activity view: its title, and the project it belongs to underneath.
+private struct ActivityThreadRow: View {
+    @Environment(AppModel.self) private var model
+    let thread: ChatThread
+    let projectName: String
+    let onRename: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isHovering = false
+    @State private var isMenuPresented = false
+
+    var body: some View {
+        let isSelected = model.selectedThreadID == thread.id
+        let showsActions = isHovering || isMenuPresented
+        let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
+        let actions = ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
+        Button {
+            model.selectedThreadID = thread.id
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verbatim: thread.title)
+                    .font(.system(size: 13, weight: isSelected || thread.hasUnread ? .medium : .regular))
+                    .foregroundStyle(Chrome.primaryText.opacity(isSelected ? 1 : 0.92))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                HStack(spacing: 4) {
+                    Image(systemName: thread.worktreePath == nil ? "folder" : "arrow.triangle.branch")
+                        .font(.system(size: 10))
+                    Text(verbatim: projectName)
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                }
+                .foregroundStyle(Chrome.secondaryText)
+            }
+            .padding(.leading, Chrome.rowHorizontalPadding)
+            .padding(.trailing, Chrome.rowHorizontalPadding + (showsActions ? 52 : 18))
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                shape.fill(isSelected ? Chrome.overlay(0.12) : (isHovering ? Chrome.overlay(0.06) : Color.clear))
+            }
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .trailing) {
+            Group {
+                if showsActions {
+                    HStack(spacing: 0) {
+                        Button {
+                            withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
+                        } label: {
+                            RowAccessoryIcon("archivebox")
+                        }
+                        .buttonStyle(.plain)
+                        .help("Archive thread")
+                        RowActionsButton(actions: actions, isPresented: $isMenuPresented)
+                    }
+                } else {
+                    ActivityStatus(thread: thread)
+                }
+            }
+            .padding(.trailing, 6)
+        }
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .contextMenu { RowActionMenuButtons(actions: actions) }
+        .animation(Chrome.hover, value: isSelected)
+    }
+}
+
+private struct ActivityStatus: View {
+    @Environment(AppModel.self) private var model
+    let thread: ChatThread
+
+    var body: some View {
+        let runtime = model.existingRuntime(for: thread.id)
+        if !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true) {
+            Image(systemName: "hand.raised.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Chrome.orange)
+        } else if runtime?.isRunning == true {
+            ProgressView()
+                .controlSize(.mini)
+        } else if thread.hasUnread {
+            Circle()
+                .fill(thread.lastStatus == .failed ? Color.red : Chrome.accent)
+                .frame(width: 7, height: 7)
+                .padding(.trailing, 4)
+        }
     }
 }
