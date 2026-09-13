@@ -78,6 +78,7 @@ final class AppSettings {
         static let terminalHeight = "terminalHeight"
         static let modelList = "modelList"
         static let modelPreferences = "modelPreferences"
+        static let recentDownloadsPicker = "recentDownloadsPicker"
     }
 
     static let modelListLimit = 15
@@ -129,6 +130,11 @@ final class AppSettings {
         didSet { defaults.set(terminalHeight, forKey: Key.terminalHeight) }
     }
 
+    /// The attach button offers recent downloads first instead of opening Finder straight away.
+    var recentDownloadsPicker: Bool {
+        didSet { defaults.set(recentDownloadsPicker, forKey: Key.recentDownloadsPicker) }
+    }
+
     private(set) var binaryPaths: [String: String] {
         didSet { defaults.set(binaryPaths, forKey: Key.binaryPaths) }
     }
@@ -166,6 +172,7 @@ final class AppSettings {
         textGeneration = TextGenerationChoice(rawValue: defaults.string(forKey: Key.textGeneration) ?? "") ?? .automatic
         commitInstructions = defaults.string(forKey: Key.commitInstructions) ?? ""
         terminalHeight = defaults.object(forKey: Key.terminalHeight) as? Double ?? 260
+        recentDownloadsPicker = defaults.object(forKey: Key.recentDownloadsPicker) as? Bool ?? true
         binaryPaths = defaults.dictionary(forKey: Key.binaryPaths) as? [String: String] ?? [:]
         disabledProviders = defaults.stringArray(forKey: Key.disabledProviders) ?? []
         lastModels = defaults.dictionary(forKey: Key.models) as? [String: String] ?? [:]

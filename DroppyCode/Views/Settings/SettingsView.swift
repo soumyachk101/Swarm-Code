@@ -227,13 +227,17 @@ private struct GeneralSettingsPage: View {
                 }
             }
         }
-        ChromeSection(title: "Conversation") {
-            ChromeCard {
-                ChromeRow(title: "Show reasoning") {
-                    SettingsSwitch(isOn: $settings.showReasoning)
-                }
-                ChromeRowDivider()
-                ChromeRow(title: "Notify when a turn finishes") {
+            ChromeSection(title: "Conversation") {
+                ChromeCard {
+                    ChromeRow(title: "Show reasoning") {
+                        SettingsSwitch(isOn: $settings.showReasoning)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "Recent downloads", detail: "The attach button offers recent downloads first") {
+                        SettingsSwitch(isOn: $settings.recentDownloadsPicker)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "Notify when a turn finishes") {
                     SettingsSwitch(isOn: $settings.notifyWhenFinished)
                 }
                 ChromeRowDivider()
