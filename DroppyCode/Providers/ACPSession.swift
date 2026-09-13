@@ -19,6 +19,10 @@ final class ACPSession: ProviderSession {
     private var pendingPermissions: [String: RPCID] = [:]
     private var promptActive = false
     private var cancelRequested = false
+    /// Tool calls already routed to the checklist (opencode `todowrite` arrives as a
+    /// generic tool_call, not a plan update). Their later updates keep feeding the
+    /// same checklist instead of opening new tool rows.
+    private var todoToolCallIDs: Set<String> = []
     /// Resolves the session usage counter into per-event spend.
     private var spendTracker = TokenSpendTracker()
 
@@ -335,22 +339,26 @@ final class ACPSession: ProviderSession {
             guard let id = update["toolCallId"]?.string else { return }
             messageID = nil
             thoughtID = nil
+            if Self.isTodoCall(update) {
+                todoToolCallIDs.insert(id)
+                let steps = Self.todoSteps(update)
+                if !steps.isEmpty { onEvent?(.todos(steps)) }
+                return
+            }
             onEvent?(.toolStarted(id: id, call: makeToolCall(update)))
             let initial = makeToolUpdate(update)
             if initial.output != nil || initial.status != nil { onEvent?(.toolUpdated(id: id, update: initial)) }
         case "tool_call_update":
             guard let id = update["toolCallId"]?.string else { return }
+            if todoToolCallIDs.contains(id) || Self.isTodoCall(update) {
+                todoToolCallIDs.insert(id)
+                let steps = Self.todoSteps(update)
+                if !steps.isEmpty { onEvent?(.todos(steps)) }
+                return
+            }
             onEvent?(.toolUpdated(id: id, update: makeToolUpdate(update)))
         case "plan":
-            let steps = (update["entries"]?.array ?? []).compactMap { entry -> TodoStep? in
-                guard let text = entry["content"]?.string else { return nil }
-                let status: TodoStep.Status = switch entry["status"]?.string {
-                case "completed": .done
-                case "in_progress": .active
-                default: .pending
-                }
-                return TodoStep(text: text, status: status)
-            }
+            let steps = Self.parseTodoItems(update["entries"])
             onEvent?(.todos(steps))
         case "available_commands_update":
             let commands = (update["availableCommands"]?.array ?? []).compactMap { command -> SlashCommand? in
@@ -454,6 +462,72 @@ final class ACPSession: ProviderSession {
     }
 
     // MARK: - Mapping
+
+    /// True when a tool_call update belongs to a todo-list tool. opencode's `todowrite`
+    /// reports itself with a count title ("3 todos") and the JSON list as its output,
+    /// never as a plan update, so it is detected here instead of in `makeToolCall`.
+    private static func isTodoCall(_ update: JSONValue) -> Bool {
+        if update["rawInput"]?["todos"] != nil { return true }
+        if let title = update["title"]?.string, isTodoTitle(title) { return true }
+        return false
+    }
+
+    private static func isTodoTitle(_ title: String) -> Bool {
+        let text = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch text {
+        case "todo", "todos", "todowrite", "todo write", "write todos":
+            return true
+        default:
+            break
+        }
+        // opencode titles the call "<n> todos", e.g. "3 todos".
+        for suffix in [" todos", " todo"] {
+            guard text.hasSuffix(suffix) else { continue }
+            let count = text.dropLast(suffix.count).trimmingCharacters(in: .whitespaces)
+            if !count.isEmpty, count.allSatisfy(\.isNumber) { return true }
+        }
+        return false
+    }
+
+    /// The checklist carried by a todo tool call: structured input first, then the
+    /// JSON list the tool reports back as its result text.
+    private static func todoSteps(_ update: JSONValue) -> [TodoStep] {
+        var steps = parseTodoItems(update["rawInput"]?["todos"])
+        if !steps.isEmpty { return steps }
+        steps = parseTodoItems(update["rawOutput"]?["todos"])
+        if !steps.isEmpty { return steps }
+        for block in update["content"]?.array ?? [] {
+            guard block["type"]?.string == "content",
+                  let text = block["content"]?["text"]?.string,
+                  let json = JSONValue.parse(text) else { continue }
+            steps = parseTodoItems(json["todos"] ?? json)
+            if !steps.isEmpty { return steps }
+        }
+        if let raw = update["rawOutput"], !raw.isNull {
+            for key in ["output", "stdout", "text"] {
+                guard let text = raw[key]?.string, let json = JSONValue.parse(text) else { continue }
+                steps = parseTodoItems(json["todos"] ?? json)
+                if !steps.isEmpty { return steps }
+            }
+        }
+        return []
+    }
+
+    /// Todo items across provider shapes: ACP plan entries (`content`), Claude's
+    /// TodoWrite (`content`) and Codex-style steps (`step`). Unknown statuses stay
+    /// pending so a new provider state never drops an item.
+    static func parseTodoItems(_ value: JSONValue?) -> [TodoStep] {
+        (value?.array ?? []).compactMap { item -> TodoStep? in
+            guard let text = item["content"]?.string ?? item["text"]?.string ?? item["step"]?.string ?? item["title"]?.string,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            let status: TodoStep.Status = switch item["status"]?.string {
+            case "completed", "complete", "done": .done
+            case "in_progress", "inProgress", "in-progress", "active": .active
+            default: .pending
+            }
+            return TodoStep(text: text, status: status)
+        }
+    }
 
     private func nextID(_ prefix: String) -> String {
         counter += 1

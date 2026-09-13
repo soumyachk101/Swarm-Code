@@ -986,6 +986,7 @@ final class ThreadRuntime {
         } else if !steps.isEmpty {
             append(TimelineItem(turnID: currentTurnID, content: .todos(steps)))
         }
+        scheduleSave()
     }
 
     private func appendNotice(_ level: Notice.Level, _ message: String) {

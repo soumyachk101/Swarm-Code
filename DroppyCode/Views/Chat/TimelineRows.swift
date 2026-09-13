@@ -576,9 +576,12 @@ struct TodoListRow: View {
     var body: some View {
         if case .todos(let steps) = entry.item.content, !steps.isEmpty {
             VStack(alignment: .leading, spacing: 7) {
-                Text("\(steps.count { $0.status == .done }) of \(steps.count) done")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "checklist")
+                    Text("\(steps.count { $0.status == .done }) of \(steps.count) done")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
                 ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         Image(systemName: Self.symbol(for: step.status))
@@ -593,6 +596,9 @@ struct TodoListRow: View {
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.3), in: .rect(cornerRadius: 14, style: .continuous))
+            // One checklist per turn: updates rewrite these steps in place, so
+            // checking an item off animates the same list instead of adding a row.
+            .animation(.snappy(duration: 0.2), value: steps)
         }
     }
 
