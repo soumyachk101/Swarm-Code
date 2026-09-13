@@ -3,6 +3,7 @@ import SwiftUI
 
 /// The native popover every chrome and composer button opens, in place of a pull-down menu.
 struct PopoverMenu<Content: View>: View {
+    var maxHeight: CGFloat = 460
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -15,7 +16,7 @@ struct PopoverMenu<Content: View>: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .scrollIndicators(.automatic)
-        .frame(maxHeight: 460)
+        .frame(maxHeight: maxHeight)
     }
 }
 
