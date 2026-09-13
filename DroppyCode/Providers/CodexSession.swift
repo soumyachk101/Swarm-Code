@@ -25,6 +25,8 @@ final class CodexSession: ProviderSession {
     private var activeModel: String?
     private var pendingRequests: [String: PendingRequest] = [:]
     private var isStopping = false
+    /// Resolves the cumulative thread total into per-event spend for the ledger.
+    private var spendTracker = TokenSpendTracker()
 
     init(configuration: SessionConfiguration) {
         self.configuration = configuration
@@ -313,6 +315,16 @@ final class CodexSession: ProviderSession {
             if let usage = params["tokenUsage"], let last = usage["last"] {
                 let used = last["totalTokens"]?.int ?? 0
                 onEvent?(.usage(ContextUsage(usedTokens: used, windowTokens: usage["modelContextWindow"]?.int)))
+                // The thread total only ever grows within a session, so its
+                // positive deltas are exact spend no matter how often this
+                // event fires. The per-update `last` value is the fallback
+                // for servers that omit the total.
+                if let total = usage["total"]?["totalTokens"]?.int, total > 0 {
+                    let spend = spendTracker.spend(total: total)
+                    if spend > 0 { TokenLedger.shared.record(spend: spend) }
+                } else {
+                    TokenLedger.shared.record(spend: used)
+                }
             }
         case "error":
             if params["willRetry"]?.bool == true {

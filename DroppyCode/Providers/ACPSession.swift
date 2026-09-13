@@ -19,6 +19,8 @@ final class ACPSession: ProviderSession {
     private var pendingPermissions: [String: RPCID] = [:]
     private var promptActive = false
     private var cancelRequested = false
+    /// Resolves the session usage counter into per-event spend.
+    private var spendTracker = TokenSpendTracker()
 
     private var models: [ModelOption] = []
     private var modelConfigID: String?
@@ -366,6 +368,8 @@ final class ACPSession: ProviderSession {
         case "usage_update":
             if let used = update["used"]?.int {
                 onEvent?(.usage(ContextUsage(usedTokens: used, windowTokens: update["size"]?.int)))
+                let spend = spendTracker.spend(total: used)
+                if spend > 0 { TokenLedger.shared.record(spend: spend) }
             }
         default:
             break

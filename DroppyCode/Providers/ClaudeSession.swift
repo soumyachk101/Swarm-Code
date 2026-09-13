@@ -29,6 +29,8 @@ final class ClaudeSession: ProviderSession {
     private var turnActive = false
     private var interruptRequested = false
     private var isStopping = false
+    /// Resolves the cumulative result-message totals into per-turn spend.
+    private var spendTracker = TokenSpendTracker()
 
     init(configuration: SessionConfiguration) {
         self.configuration = configuration
@@ -351,7 +353,13 @@ final class ClaudeSession: ProviderSession {
 
     private func handleResult(_ message: JSONValue) {
         turnActive = false
-        if let usage = Self.contextUsage(message) { onEvent?(.usage(usage)) }
+        if let usage = Self.contextUsage(message) {
+            onEvent?(.usage(usage))
+            // Result totals are cumulative for the session, so only the
+            // growth since the previous result is new spend.
+            let spend = spendTracker.spend(total: usage.usedTokens)
+            if spend > 0 { TokenLedger.shared.record(spend: spend) }
+        }
         for requestID in pendingTools.keys { onEvent?(.requestResolved(id: requestID)) }
         pendingTools.removeAll()
         openText.removeAll()
