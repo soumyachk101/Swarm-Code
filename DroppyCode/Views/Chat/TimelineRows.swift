@@ -125,14 +125,15 @@ struct AttachmentThumbnail: View {
 
 struct AssistantMessageRow: View {
     let entry: TimelineEntry
-    let runtime: ThreadRuntime
+    /// The turn's summary, set only on the turn's last reply. Precomputed by the
+    /// timeline, so rows never scan the thread.
+    let summary: TurnSummary?
     @State private var isHovering = false
 
     var body: some View {
         if case .assistant(let message) = entry.item.content {
-            let summary = turnSummary
             VStack(alignment: .leading, spacing: 2) {
-                MarkdownView(text: message.text)
+                MarkdownView(text: message.text).equatable()
                 HStack(spacing: 8) {
                     CopyButton(text: message.text)
                     if let summary {
@@ -148,20 +149,6 @@ struct AssistantMessageRow: View {
                 withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
             }
         }
-    }
-
-    /// The turn's summary, on the hover line of the turn's last reply only.
-    private var turnSummary: TurnSummary? {
-        guard let turnID = entry.turnID else { return nil }
-        let lastReply = runtime.entries.last { candidate in
-            guard candidate.turnID == turnID, case .assistant = candidate.kind else { return false }
-            return true
-        }
-        guard lastReply?.id == entry.id else { return nil }
-        for candidate in runtime.entries.reversed() where candidate.kind == .turnEnd && candidate.turnID == turnID {
-            if case .turnEnd(let summary) = candidate.item.content { return summary }
-        }
-        return nil
     }
 }
 
@@ -281,6 +268,13 @@ private struct ToolDetailView: View {
     let call: ToolCall
     var workingDirectory: String?
 
+    @State private var showsFullOutput = false
+
+    /// Tool output renders inline and collapsed: a nested scroll view inside the
+    /// timeline's scroll view fights gestures and hitches, and materializing tens of
+    /// thousands of characters at once is what made expanding feel laggy.
+    private static let outputLineLimit = 30
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let imagePath = PreviewImages.resolveToolImagePath(for: call, workingDirectory: workingDirectory) {
@@ -301,25 +295,51 @@ private struct ToolDetailView: View {
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
-                        DiffLinesView(file: DiffParser.parseHunks(diff, path: edit.path), showsLineNumbers: false)
+                        DiffLinesView(file: DiffDetailCache.file(diff: diff, path: edit.path), showsLineNumbers: false)
                     }
                     .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 10, style: .continuous))
                     .clipShape(.rect(cornerRadius: 10, style: .continuous))
                 }
             }
             if !call.output.isEmpty {
-                ScrollView {
-                    Text(call.output.trimmingCharacters(in: .newlines))
+                let output = call.output.trimmingCharacters(in: .newlines)
+                let lines = output.components(separatedBy: "\n")
+                let collapsed = !showsFullOutput && lines.count > Self.outputLineLimit
+                let visible = collapsed ? lines.prefix(Self.outputLineLimit).joined(separator: "\n") : output
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(visible)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
+                        .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 10, style: .continuous))
+                    if lines.count > Self.outputLineLimit {
+                        Button(showsFullOutput ? "Show less" : "Show full output (\(lines.count) lines)") {
+                            showsFullOutput.toggle()
+                        }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                    }
                 }
-                .frame(maxHeight: 240)
-                .fixedSize(horizontal: false, vertical: true)
-                .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 10, style: .continuous))
             }
         }
+    }
+}
+
+/// Parsed per-file diffs for expanded tool rows. Parsing runs once per distinct diff,
+/// so opening and closing a row is instant no matter how large the patch is.
+private enum DiffDetailCache {
+    @MainActor static var cache: [String: DiffFile] = [:]
+    private static let limit = 60
+
+    @MainActor
+    static func file(diff: String, path: String) -> DiffFile {
+        let key = path + "\n" + diff
+        if let hit = cache[key] { return hit }
+        let parsed = DiffParser.parseHunks(diff, path: path)
+        if cache.count >= limit { cache.removeAll(keepingCapacity: true) }
+        cache[key] = parsed
+        return parsed
     }
 }
 
@@ -390,7 +410,7 @@ struct PlanCard: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    MarkdownView(text: plan.markdown)
+                    MarkdownView(text: plan.markdown).equatable()
                 }
                 if plan.state == .proposed, runtime.pendingPlanApproval == nil, !runtime.isRunning {
                     HStack(spacing: 8) {
@@ -490,27 +510,17 @@ struct NoticeRow: View {
 }
 
 struct TurnEndRow: View {
-    let entry: TimelineEntry
-    let runtime: ThreadRuntime
+    let summary: TurnSummary
+    /// Whether the turn produced a reply. Set by the timeline; when true the duration
+    /// lives on the reply's hover line instead.
+    let hasReply: Bool
 
     var body: some View {
-        if case .turnEnd(let summary) = entry.item.content, !hasReply(summary) {
-            HStack(spacing: 10) {
-                // A turn that replied shows its duration on the reply's hover line instead.
-                if !hasReply(summary) {
-                    Text(Self.label(for: summary))
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private func hasReply(_ summary: TurnSummary) -> Bool {
-        runtime.entries.contains { candidate in
-            guard candidate.turnID == summary.turnID, case .assistant = candidate.kind else { return false }
-            return true
+        if !hasReply {
+            Text(Self.label(for: summary))
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 

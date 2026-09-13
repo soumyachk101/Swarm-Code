@@ -11,11 +11,14 @@ struct ThreadTimeline: View {
     @State private var isPinnedToBottom = true
     /// True while the reader drags or flicks the timeline, as opposed to it following new text.
     @State private var isUserScrolling = false
-    @State private var bottomInset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
+    /// Lazy-loading window: only the newest groups are materialized, so opening a long
+    /// thread and scrolling through it stays instant no matter how much history it holds.
+    @State private var visibleCount = TimelineWindow.initial
 
     var body: some View {
-        let groups = TimelineGroup.build(runtime.entries, showReasoning: model.settings.showReasoning)
+        let entries = runtime.entries
+        let groups = TimelineGroup.build(entries, showReasoning: model.settings.showReasoning)
         if groups.isEmpty && !runtime.isRunning {
             NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
                 .onAppear {
@@ -23,17 +26,38 @@ struct ThreadTimeline: View {
                     scrollState.showsJumpButton = false
                 }
         } else {
-            timeline(groups)
+            timeline(groups, meta: TimelineMeta.build(entries))
         }
     }
 
-    private func timeline(_ groups: [TimelineGroup]) -> some View {
-        ScrollView {
+    private func timeline(_ groups: [TimelineGroup], meta: TimelineMeta) -> some View {
+        // Only the newest window of groups is rendered. Older history loads on demand,
+        // so the view count stays bounded even for very long threads.
+        let hidden = max(0, groups.count - visibleCount)
+        let visible = hidden == 0 ? groups : Array(groups.suffix(visibleCount))
+        return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
+                if hidden > 0 {
+                    Button {
+                        visibleCount += TimelineWindow.page
+                    } label: {
+                        Label("Show \(hidden) earlier messages", systemImage: "chevron.up")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(.quaternary.opacity(0.5), in: Capsule(style: .continuous))
+                            .contentShape(.capsule)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 12)
+                    .padding(.bottom, 4)
+                }
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(groups) { group in
-                        TimelineGroupView(group: group, runtime: runtime)
+                    ForEach(visible) { group in
+                        TimelineGroupView(group: group, runtime: runtime, meta: meta)
                             .transition(.softAppear)
                     }
                     if runtime.isRunning {
@@ -67,11 +91,12 @@ struct ThreadTimeline: View {
             isUserScrolling = phase == .interacting || phase == .decelerating
         }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
-            bottomInset = new.bottomInset
             scrollChrome.update(travel: new.travel)
             if isUserScrolling {
                 // Only the reader's own scrolling decides whether the timeline follows new text.
-                isPinnedToBottom = new.distanceFromBottom < 48
+                // Guarded, so measuring the scroll position never re-renders the timeline itself.
+                let pinned = new.distanceFromBottom < 48
+                if pinned != isPinnedToBottom { isPinnedToBottom = pinned }
             } else if new.contentHeight > old.contentHeight, isPinnedToBottom {
                 withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
             }
@@ -86,6 +111,10 @@ struct ThreadTimeline: View {
             isPinnedToBottom = true
             withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
         }
+        .onChange(of: runtime.threadID) {
+            // A new thread starts with a fresh window on its newest messages.
+            visibleCount = TimelineWindow.initial
+        }
     }
 
     /// The running turn's thinking, for the working indicator to reveal.
@@ -95,15 +124,15 @@ struct ThreadTimeline: View {
 }
 
 /// Scroll measurements, built by a plain initializer rather than an inline closure.
+/// Deliberately minimal: every stored field is compared every scroll frame, and any
+/// write to view state here would re-render the timeline mid-scroll.
 private struct ScrollMetrics: Equatable {
     var contentHeight: CGFloat
     var distanceFromBottom: CGFloat
-    var bottomInset: CGFloat
     var travel: CGFloat
 
     init(geometry: ScrollGeometry) {
         contentHeight = geometry.contentSize.height
-        bottomInset = geometry.contentInsets.bottom
         travel = geometry.contentOffset.y + geometry.contentInsets.top
         let insets = geometry.contentInsets.top + geometry.contentInsets.bottom
         if geometry.contentSize.height + insets <= geometry.containerSize.height + 1 {
@@ -155,27 +184,76 @@ enum TimelineGroup: Identifiable {
     }
 }
 
+/// Lazy-loading window for the timeline: only the newest groups are materialized, so
+/// the number of live views stays bounded even for very long threads.
+enum TimelineWindow {
+    static let initial = 80
+    static let page = 100
+}
+
+/// Per-turn facts computed once per timeline pass, so rows never scan the thread to
+/// find their own summary. `kind`, `id` and `turnID` are fixed for a row's lifetime,
+/// and finished turn summaries never change, so building this never costs renders
+/// while streaming.
+struct TimelineMeta {
+    var lastAssistantIDByTurn: [UUID: String] = [:]
+    var summaryByTurn: [UUID: TurnSummary] = [:]
+    var turnsWithReply: Set<UUID> = []
+
+    @MainActor
+    static func build(_ entries: [TimelineEntry]) -> TimelineMeta {
+        var meta = TimelineMeta()
+        for entry in entries {
+            switch entry.kind {
+            case .assistant:
+                if let turnID = entry.turnID {
+                    meta.lastAssistantIDByTurn[turnID] = entry.id
+                    meta.turnsWithReply.insert(turnID)
+                }
+            case .turnEnd:
+                if case .turnEnd(let summary) = entry.item.content {
+                    meta.summaryByTurn[summary.turnID] = summary
+                }
+            default:
+                break
+            }
+        }
+        return meta
+    }
+}
+
 private struct TimelineGroupView: View {
     @Environment(AppModel.self) private var model
     let group: TimelineGroup
     let runtime: ThreadRuntime
+    let meta: TimelineMeta
 
     var body: some View {
         switch group {
         case .single(let entry):
             switch entry.kind {
             case .user: UserMessageRow(entry: entry, runtime: runtime)
-            case .assistant: AssistantMessageRow(entry: entry, runtime: runtime)
+            case .assistant: AssistantMessageRow(entry: entry, summary: assistantSummary(for: entry))
             case .reasoning: EmptyView()
             case .tool: WorkGroup(entries: [entry], workingDirectory: workingDirectory)
             case .plan: PlanCard(entry: entry, runtime: runtime)
             case .todos: TodoListRow(entry: entry)
             case .notice: NoticeRow(entry: entry)
-            case .turnEnd: TurnEndRow(entry: entry, runtime: runtime)
+            case .turnEnd:
+                if case .turnEnd(let summary) = entry.item.content {
+                    TurnEndRow(summary: summary, hasReply: meta.turnsWithReply.contains(summary.turnID))
+                }
             }
         case .work(_, let entries):
             WorkGroup(entries: entries, workingDirectory: workingDirectory)
         }
+    }
+
+    /// The turn's summary, shown on the turn's last reply only. A dictionary lookup,
+    /// so rows never scan the thread.
+    private func assistantSummary(for entry: TimelineEntry) -> TurnSummary? {
+        guard let turnID = entry.turnID, meta.lastAssistantIDByTurn[turnID] == entry.id else { return nil }
+        return meta.summaryByTurn[turnID]
     }
 
     private var workingDirectory: String? {
@@ -229,7 +307,7 @@ private struct WorkingIndicator: View {
             if showsThinking, canExpand {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
-                        MarkdownView(text: step)
+                        MarkdownView(text: step).equatable()
                     }
                 }
                 .font(.callout)
