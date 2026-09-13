@@ -433,7 +433,7 @@ private struct WorkingIndicator: View {
                         .transition(.opacity.combined(with: .offset(y: 3)))
                     Text(RelativeTime.duration(elapsed))
                         .monospacedDigit()
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                     if canExpand {
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))

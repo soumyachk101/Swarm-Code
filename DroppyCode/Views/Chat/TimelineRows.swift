@@ -240,9 +240,9 @@ struct WorkGroup: View {
                                     .foregroundStyle(.secondary)
                                     .frame(width: TimelineMetrics.iconWidth)
                                 Text("\(hidden) earlier steps")
-                                    .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            .font(.callout)
                             .padding(.trailing, 12)
                             .contentShape(.rect)
                         }
@@ -334,10 +334,10 @@ struct ToolRow: View {
                 } label: {
                     HStack(spacing: TimelineMetrics.iconSpacing) {
                         ToolStatusIcon(call: call)
-                        Text(ToolPresentation.verb(for: call))
+                        // One text run after the icon, so the row reads as
+                        // icon + space + text instead of three spaced items.
+                        Text("\(ToolPresentation.verb(for: call)) \(call.title)")
                             .foregroundStyle(.secondary)
-                        Text(call.title)
-                            .font(call.kind == .command ? .system(.callout, design: .monospaced) : .callout)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         if let stats = ToolPresentation.stats(for: call) {
