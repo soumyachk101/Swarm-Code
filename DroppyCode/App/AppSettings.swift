@@ -80,6 +80,7 @@ final class AppSettings {
         static let modelPreferences = "modelPreferences"
         static let recentDownloadsPicker = "recentDownloadsPicker"
         static let deepseekAPIKey = "deepseekAPIKey"
+        static let metaAPIKey = "metaAPIKey"
     }
 
     static let modelListLimit = 15
@@ -146,6 +147,21 @@ final class AppSettings {
                 defaults.removeObject(forKey: Key.deepseekAPIKey)
             } else {
                 defaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Key.deepseekAPIKey)
+            }
+        }
+    }
+
+    /// Meta Model API (Muse Spark) talks to https://api.meta.ai/v1 directly,
+    /// so it needs a MODEL_API_KEY instead of a CLI login.
+    /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
+    var metaAPIKeyInput: String {
+        get { MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "") }
+        set {
+            MetaKeychain.setAPIKey(newValue)
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                defaults.removeObject(forKey: Key.metaAPIKey)
+            } else {
+                defaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Key.metaAPIKey)
             }
         }
     }
@@ -268,16 +284,38 @@ final class AppSettings {
         lastEfforts[provider.rawValue] = effort
     }
 
-    /// The API key Droppy Code sends to DeepSeek: the value from Settings,
-    /// falling back to `DEEPSEEK_API_KEY` from the login environment.
+    /// The API key Droppy Code sends to an API-key provider: the value from Settings,
+    /// falling back to the provider's env var from the login environment
+    /// (`DEEPSEEK_API_KEY` for DeepSeek, `MODEL_API_KEY` for Meta).
     func apiKey(for provider: ProviderKind) -> String {
-        guard provider == .deepseek else { return "" }
-        let stored = deepseekAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stored: String = switch provider {
+        case .deepseek: deepseekAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .meta: metaAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        default: ""
+        }
         if !stored.isEmpty { return stored }
-        return (LoginEnvironment.current["DEEPSEEK_API_KEY"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard provider.isAPIKeyBased, let envVar = provider.apiKeyEnvVar else { return "" }
+        return (LoginEnvironment.current[envVar] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func hasAPIKey(for provider: ProviderKind) -> Bool {
         !apiKey(for: provider).isEmpty
+    }
+
+    /// Settings-bound value for the Providers page, per API-key provider.
+    func apiKeyInput(for provider: ProviderKind) -> String {
+        switch provider {
+        case .deepseek: deepseekAPIKeyInput
+        case .meta: metaAPIKeyInput
+        default: ""
+        }
+    }
+
+    func setAPIKeyInput(_ value: String, for provider: ProviderKind) {
+        switch provider {
+        case .deepseek: deepseekAPIKeyInput = value
+        case .meta: metaAPIKeyInput = value
+        default: break
+        }
     }
 }

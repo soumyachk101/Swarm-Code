@@ -25,7 +25,7 @@ struct SessionConfiguration: Sendable {
     var fastMode = false
     var runtimeMode: RuntimeMode
     var interactionMode: InteractionMode
-    /// Native API providers (DeepSeek) authenticate with this instead of a CLI.
+    /// Native API providers (DeepSeek, Meta) authenticate with this instead of a CLI.
     var apiKey: String?
 }
 

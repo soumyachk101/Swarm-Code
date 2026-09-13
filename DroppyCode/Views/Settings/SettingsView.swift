@@ -52,7 +52,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: ["permissions", "worktree", "reasoning", "notifications", "theme", "appearance", "dark", "light"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
-        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "binary", "path", "sign in", "login", "api key"]
+        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "binary", "path", "sign in", "login", "api key"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
         case .shortcuts: ["keyboard", "keys"]
         case .archive: ["archived", "restore"]
@@ -266,6 +266,7 @@ private struct ProvidersRefreshButton: View {
                     await model.providers.refreshAll()
                     await model.providers.loadCatalog(.codex, force: true)
                     await model.providers.loadCatalog(.deepseek, force: true)
+                    await model.providers.loadCatalog(.meta, force: true)
                 }
             }
         }
@@ -308,8 +309,8 @@ private struct ProviderSettingsSection: View {
                             Text(verbatim: "Version \(version)")
                                 .font(.system(size: 11))
                                 .foregroundStyle(Chrome.secondaryText)
-                        } else if provider.isAPIKeyBased, status.apiKeyConfigured {
-                            Text(verbatim: "Native API · api.deepseek.com")
+                        } else if provider.isAPIKeyBased, status.apiKeyConfigured, let host = provider.apiHost {
+                            Text(verbatim: "Native API · \(host)")
                                 .font(.system(size: 11))
                                 .foregroundStyle(Chrome.secondaryText)
                         }
@@ -325,7 +326,7 @@ private struct ProviderSettingsSection: View {
                 .padding(.vertical, 11)
                 if provider.isAPIKeyBased {
                     ChromeRowDivider()
-                    ChromeRow(title: "API key", detail: "Stored in your Keychain. Get one at platform.deepseek.com.") {
+                    ChromeRow(title: "API key", detail: "Stored in your Keychain. Get one at \(provider.apiKeySource ?? "the provider dashboard").") {
                         HStack(spacing: 8) {
                             Group {
                                 if showsAPIKey {
@@ -350,8 +351,8 @@ private struct ProviderSettingsSection: View {
                     }
                     if !status.isInstalled {
                         ChromeRowDivider()
-                        ChromeRow(title: "Get a key", detail: "DeepSeek needs an API key — no install required.") {
-                            Link("Get a DeepSeek key", destination: provider.installURL)
+                        ChromeRow(title: "Get a key", detail: "\(provider.displayName) needs an API key — no install required.") {
+                            Link("Get a \(provider.displayName) key", destination: provider.installURL)
                                 .buttonStyle(.glass)
                         }
                     }
@@ -380,17 +381,21 @@ private struct ProviderSettingsSection: View {
         }
         .onAppear {
             binaryPath = model.settings.binaryPath(for: provider)
-            if provider.isAPIKeyBased { apiKey = model.settings.deepseekAPIKeyInput }
+            if provider.isAPIKeyBased { apiKey = model.settings.apiKeyInput(for: provider) }
         }
         .onChange(of: binaryPath) { _, value in
             model.settings.setBinaryPath(value, for: provider)
         }
         .onChange(of: apiKey) { _, value in
             guard provider.isAPIKeyBased else { return }
-            model.settings.deepseekAPIKeyInput = value
+            model.settings.setAPIKeyInput(value, for: provider)
         }
         .onChange(of: model.settings.deepseekAPIKeyInput) { _, value in
-            guard provider.isAPIKeyBased, value != apiKey else { return }
+            guard provider == .deepseek, value != apiKey else { return }
+            apiKey = value
+        }
+        .onChange(of: model.settings.metaAPIKeyInput) { _, value in
+            guard provider == .meta, value != apiKey else { return }
             apiKey = value
         }
         .task(id: apiKey) {

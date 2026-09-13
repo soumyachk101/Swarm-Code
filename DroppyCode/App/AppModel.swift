@@ -55,6 +55,9 @@ final class AppModel {
         if providers.status(.deepseek).isInstalled {
             await providers.loadCatalog(.deepseek)
         }
+        if providers.status(.meta).isInstalled {
+            await providers.loadCatalog(.meta)
+        }
     }
 
     // MARK: - Lookup

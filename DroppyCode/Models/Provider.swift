@@ -7,6 +7,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case opencode
     case grok
     case deepseek
+    case meta
 
     var id: String { rawValue }
 
@@ -18,6 +19,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .opencode: "OpenCode"
         case .grok: "Grok"
         case .deepseek: "DeepSeek"
+        case .meta: "Meta"
         }
     }
 
@@ -29,6 +31,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .opencode: "opencode"
         case .grok: "grok"
         case .deepseek: ""
+        case .meta: ""
         }
     }
 
@@ -42,6 +45,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .opencode: "opencode auth login"
         case .grok: "grok login"
         case .deepseek: "DEEPSEEK_API_KEY=sk-..."
+        case .meta: "MODEL_API_KEY=..."
         }
     }
 
@@ -53,11 +57,39 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .opencode: URL(string: "https://opencode.ai")!
         case .grok: URL(string: "https://x.ai/cli")!
         case .deepseek: URL(string: "https://platform.deepseek.com/api_keys")!
+        case .meta: URL(string: "https://dev.meta.ai/")!
         }
     }
 
     /// API-key providers talk to their cloud API directly instead of a local CLI.
-    var isAPIKeyBased: Bool { self == .deepseek }
+    var isAPIKeyBased: Bool { self == .deepseek || self == .meta }
+
+    /// Host shown in Settings for API-key providers, e.g. "api.meta.ai/v1".
+    var apiHost: String? {
+        switch self {
+        case .deepseek: "api.deepseek.com"
+        case .meta: "api.meta.ai/v1"
+        default: nil
+        }
+    }
+
+    /// Where the dashboard key lives, for the Settings detail line.
+    var apiKeySource: String? {
+        switch self {
+        case .deepseek: "platform.deepseek.com"
+        case .meta: "dev.meta.ai"
+        default: nil
+        }
+    }
+
+    /// Env var fallback read when no key is stored in Settings.
+    var apiKeyEnvVar: String? {
+        switch self {
+        case .deepseek: "DEEPSEEK_API_KEY"
+        case .meta: "MODEL_API_KEY"
+        default: nil
+        }
+    }
 
     /// Whether the provider can drop later turns from its own conversation.
     var supportsRewind: Bool { self == .codex || self == .claude }
