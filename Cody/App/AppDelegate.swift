@@ -7,6 +7,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        let windows = WindowManager.shared
+        model = windows.model
+        windows.showMain()
+        Task { await windows.model.bootstrap() }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { WindowManager.shared.showMain() }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {

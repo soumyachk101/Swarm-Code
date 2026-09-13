@@ -250,22 +250,23 @@ struct ChromeMenuButton<Content: View>: View {
     @ViewBuilder var content: Content
 
     @State private var isHovering = false
+    @State private var isPresented = false
 
     var body: some View {
-        Menu {
-            content
+        Button {
+            isPresented.toggle()
         } label: {
-            ChromeIconLabel(symbol: symbol, isHovering: isHovering)
+            ChromeIconLabel(symbol: symbol, isActive: isPresented, isHovering: isHovering)
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
         .help(help)
         .accessibilityLabel(Text(help))
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            PopoverMenu { content }
+        }
     }
 }
 
@@ -295,7 +296,7 @@ struct ChromeCircleButton: View {
     }
 }
 
-/// A text menu shaped like a chrome capsule, such as the branch picker.
+/// A text button shaped like a chrome capsule that opens a popover, such as the branch picker.
 struct ChromeTextMenu<Content: View>: View {
     let symbol: String
     let title: String
@@ -303,10 +304,11 @@ struct ChromeTextMenu<Content: View>: View {
     @ViewBuilder var content: Content
 
     @State private var isHovering = false
+    @State private var isPresented = false
 
     var body: some View {
-        Menu {
-            content
+        Button {
+            isPresented.toggle()
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: symbol)
@@ -318,21 +320,22 @@ struct ChromeTextMenu<Content: View>: View {
                     .font(.system(size: 8, weight: .bold))
                     .foregroundStyle(Chrome.secondaryText)
             }
-            .foregroundStyle(Chrome.primaryText.opacity(isHovering ? 1 : 0.92))
+            .foregroundStyle(Chrome.primaryText.opacity(isHovering || isPresented ? 1 : 0.92))
             .padding(.horizontal, Chrome.capsuleHorizontalPadding)
             .frame(height: Chrome.capsuleContentHeight)
             .padding(.vertical, Chrome.capsuleVerticalPadding)
             .contentShape(Capsule(style: .continuous))
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .fixedSize()
         .chromeGlassCapsule()
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
         .help(help)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            PopoverMenu { content }
+        }
     }
 }
 
@@ -402,28 +405,6 @@ struct ChromeCompactTitle: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .allowsHitTesting(false)
             .accessibilityHidden(progress < 0.5)
-    }
-}
-
-/// A page's large title, the source the compact chrome title morphs out of.
-struct PaneHero: View {
-    let title: String
-    var subtitle: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: title)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(Chrome.primaryText)
-                .lineLimit(2)
-            if let subtitle, !subtitle.isEmpty {
-                Text(verbatim: subtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Chrome.secondaryText)
-                    .lineLimit(1)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

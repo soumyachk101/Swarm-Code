@@ -2,7 +2,6 @@ import SwiftUI
 
 struct CommandPalette: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openSettings) private var openSettings
 
     @State private var query = ""
     @State private var selection = 0
@@ -120,7 +119,7 @@ struct CommandPalette: View {
                 model.archive(threadID)
             })
         }
-        actions.append(Item(id: "settings", title: "Settings", symbol: "gearshape", shortcut: "⌘,") { openSettings() })
+        actions.append(Item(id: "settings", title: "Settings", symbol: "gearshape", shortcut: "⌘,") { WindowManager.shared.showSettings() })
 
         let matchingActions = needle.isEmpty ? actions : actions.filter { $0.title.lowercased().contains(needle) }
         let threads = model.threads

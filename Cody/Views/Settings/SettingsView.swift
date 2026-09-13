@@ -130,7 +130,6 @@ struct SettingsView: View {
     private var detail: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
-                PaneHero(title: page.title)
                 pageContent
             }
             .padding(.horizontal, Chrome.contentHorizontalPadding + 8)

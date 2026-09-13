@@ -278,49 +278,36 @@ private struct ModelMenu: View {
             $0 == thread.provider || (model.settings.isEnabled($0) && registry.status($0).isInstalled)
         }
         let current = registry.model(thread.model, for: thread.provider)
-        Menu {
-            ForEach(providers) { provider in
-                let locked = hasHistory && provider != thread.provider
-                let options = registry.models(for: provider)
-                Section(locked ? "\(provider.displayName) · new threads only" : provider.displayName) {
-                    if options.isEmpty {
-                        Button(registry.loadingCatalogs.contains(provider) ? "Loading models…" : "Load models") {
-                            Task { await registry.loadCatalog(provider, force: true) }
-                        }
-                    } else {
-                        Picker(provider.displayName, selection: selection(for: provider)) {
-                            ForEach(options) { option in
-                                Text(option.name).tag(option.id)
-                            }
-                        }
-                        .pickerStyle(.inline)
-                        .labelsHidden()
-                        .disabled(locked)
-                    }
-                }
-            }
-        } label: {
+        ChipPopoverButton(help: "Model") {
             HStack(spacing: 6) {
                 ProviderIcon(provider: thread.provider, size: 13)
                 Text(current?.name ?? thread.model ?? thread.provider.displayName)
             }
-        }
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
-        .buttonStyle(.chip)
-        .fixedSize()
-        .help("Model")
-        .task(id: thread.provider) { await registry.loadCatalog(thread.provider) }
-    }
-
-    private func selection(for provider: ProviderKind) -> Binding<String> {
-        Binding(
-            get: { thread.provider == provider ? (thread.model ?? "") : "" },
-            set: { id in
-                guard let option = model.providers.model(id, for: provider) else { return }
-                choose(option, from: provider)
+        } content: {
+            ForEach(Array(providers.enumerated()), id: \.element) { index, provider in
+                let locked = hasHistory && provider != thread.provider
+                let options = registry.models(for: provider)
+                if index > 0 { PopoverDivider() }
+                PopoverSectionHeader(locked ? "\(provider.displayName) · new threads only" : provider.displayName)
+                if options.isEmpty {
+                    let isLoading = registry.loadingCatalogs.contains(provider)
+                    PopoverItem(isLoading ? "Loading models…" : "Load models", symbol: "arrow.clockwise", isEnabled: !isLoading) {
+                        Task { await registry.loadCatalog(provider, force: true) }
+                    }
+                } else {
+                    ForEach(options) { option in
+                        PopoverItem(
+                            option.name,
+                            isChecked: thread.provider == provider && thread.model == option.id,
+                            isEnabled: !locked
+                        ) {
+                            choose(option, from: provider)
+                        }
+                    }
+                }
             }
-        )
+        }
+        .task(id: thread.provider) { await registry.loadCatalog(thread.provider) }
     }
 
     private func choose(_ option: ModelOption, from provider: ProviderKind) {
@@ -348,34 +335,21 @@ private struct EffortMenu: View {
     var body: some View {
         let efforts = model.providers.model(thread.model, for: thread.provider)?.efforts ?? []
         if !efforts.isEmpty {
-            Menu {
-                Picker("Reasoning", selection: effortBinding) {
-                    Text("Default").tag("")
-                    ForEach(efforts, id: \.self) { effort in
-                        Text(ModelOption.effortTitle(effort)).tag(effort)
-                    }
-                }
-                .pickerStyle(.inline)
-            } label: {
+            ChipPopoverButton(help: "Reasoning effort") {
                 Label(thread.effort.map(ModelOption.effortTitle) ?? "Default", systemImage: "gauge.with.dots.needle.50percent")
+            } content: {
+                PopoverSectionHeader("Reasoning")
+                PopoverItem("Default", isChecked: thread.effort == nil) { choose(nil) }
+                ForEach(efforts, id: \.self) { effort in
+                    PopoverItem(ModelOption.effortTitle(effort), isChecked: thread.effort == effort) { choose(effort) }
+                }
             }
-            .menuStyle(.button)
-            .menuIndicator(.hidden)
-            .buttonStyle(.chip)
-            .fixedSize()
-            .help("Reasoning effort")
         }
     }
 
-    private var effortBinding: Binding<String> {
-        Binding(
-            get: { thread.effort ?? "" },
-            set: { value in
-                let effort = value.isEmpty ? nil : value
-                model.updateThread(thread.id) { $0.effort = effort }
-                model.settings.remember(model: thread.model, effort: effort, for: thread.provider)
-            }
-        )
+    private func choose(_ effort: String?) {
+        model.updateThread(thread.id) { $0.effort = effort }
+        model.settings.remember(model: thread.model, effort: effort, for: thread.provider)
     }
 }
 
@@ -400,28 +374,16 @@ private struct PermissionMenu: View {
     let thread: ChatThread
 
     var body: some View {
-        Menu {
-            Picker("Permissions", selection: modeBinding) {
-                ForEach(RuntimeMode.allCases) { mode in
-                    Label(mode.title, systemImage: mode.symbol).tag(mode)
+        ChipPopoverButton(help: thread.runtimeMode.summary) {
+            Label(thread.runtimeMode.title, systemImage: thread.runtimeMode.symbol)
+        } content: {
+            PopoverSectionHeader("Permissions")
+            ForEach(RuntimeMode.allCases) { mode in
+                PopoverItem(mode.title, symbol: mode.symbol, isChecked: thread.runtimeMode == mode) {
+                    model.updateThread(thread.id) { $0.runtimeMode = mode }
                 }
             }
-            .pickerStyle(.inline)
-        } label: {
-            Label(thread.runtimeMode.title, systemImage: thread.runtimeMode.symbol)
         }
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
-        .buttonStyle(.chip)
-        .fixedSize()
-        .help(thread.runtimeMode.summary)
-    }
-
-    private var modeBinding: Binding<RuntimeMode> {
-        Binding(
-            get: { thread.runtimeMode },
-            set: { mode in model.updateThread(thread.id) { $0.runtimeMode = mode } }
-        )
     }
 }
 

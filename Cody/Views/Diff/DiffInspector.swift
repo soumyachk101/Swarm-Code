@@ -28,13 +28,14 @@ struct DiffInspector: View {
                         .map { "Turn \($0.index + 1)" } ?? "All changes",
                     help: "Choose which changes to show"
                 ) {
-                    Picker("Changes", selection: $runtime.diffSelection) {
-                        Text("All changes").tag(UUID?.none)
-                        ForEach(changedTurns) { turn in
-                            Text("Turn \(turn.index + 1)").tag(UUID?.some(turn.id))
+                    PopoverItem("All changes", isChecked: runtime.diffSelection == nil) {
+                        runtime.diffSelection = nil
+                    }
+                    ForEach(changedTurns) { turn in
+                        PopoverItem("Turn \(turn.index + 1)", isChecked: runtime.diffSelection == turn.id) {
+                            runtime.diffSelection = turn.id
                         }
                     }
-                    .pickerStyle(.inline)
                 }
                 Spacer(minLength: 8)
                 if !files.isEmpty {
@@ -48,11 +49,13 @@ struct DiffInspector: View {
                 }
                 ChromeCapsule {
                     ChromeMenuButton(symbol: "ellipsis", help: "More") {
-                        Button("Expand all") { collapsed.removeAll() }
-                        Button("Collapse all") { collapsed = Set(files.map(\.id)) }
+                        PopoverItem("Expand all", symbol: "arrow.down.right.and.arrow.up.left") { collapsed.removeAll() }
+                        PopoverItem("Collapse all", symbol: "arrow.up.left.and.arrow.down.right") { collapsed = Set(files.map(\.id)) }
                         if canRevertSelection {
-                            Divider()
-                            Button("Revert this turn…", role: .destructive) { isConfirmingRevert = true }
+                            PopoverDivider()
+                            PopoverItem("Revert this turn…", symbol: "arrow.uturn.backward", isDestructive: true) {
+                                isConfirmingRevert = true
+                            }
                         }
                     }
                     ChromeDivider()

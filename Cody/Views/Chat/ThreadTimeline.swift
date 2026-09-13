@@ -4,20 +4,28 @@ struct ThreadTimeline: View {
     @Environment(AppModel.self) private var model
     let runtime: ThreadRuntime
     let scrollChrome: ChromeScrollModel
-    let title: String
-    let subtitle: String
+    let projectName: String?
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isPinnedToBottom = true
+    @State private var showsJumpButton = false
     @State private var bottomInset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
 
     var body: some View {
         let groups = TimelineGroup.build(runtime.entries, showReasoning: model.settings.showReasoning)
+        if groups.isEmpty && !runtime.isRunning {
+            NewThreadPrompt(projectName: projectName)
+                .onAppear { scrollChrome.update(travel: 0) }
+        } else {
+            timeline(groups)
+        }
+    }
+
+    private func timeline(_ groups: [TimelineGroup]) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                PaneHero(title: title, subtitle: subtitle)
-                Spacer(minLength: 28)
+                Spacer(minLength: 0)
                 LazyVStack(alignment: .leading, spacing: 16) {
                     ForEach(groups) { group in
                         TimelineGroupView(group: group, runtime: runtime)
@@ -31,7 +39,7 @@ struct ThreadTimeline: View {
             .padding(.horizontal, 28)
             .padding(.top, Chrome.contentTopInset)
             .padding(.bottom, 18)
-            // A short conversation still fills the pane: the title rests at the top and messages at the bottom.
+            // A short conversation still fills the pane, with its messages resting at the bottom.
             .frame(maxWidth: .infinity, minHeight: viewportHeight, alignment: .top)
         }
         .scrollIndicators(.never)
@@ -46,19 +54,30 @@ struct ThreadTimeline: View {
             } else {
                 isPinnedToBottom = new.distanceFromBottom < 56
             }
-        }
-        .overlay(alignment: .bottom) {
-            if !isPinnedToBottom {
-                ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
-                    isPinnedToBottom = true
-                    withAnimation(.snappy) { position.scrollTo(edge: .bottom) }
-                }
-                .padding(.bottom, bottomInset + 12)
-                .transition(.scale(scale: 0.8).combined(with: .opacity))
+            // Only offered once there is real content above the fold and the reader has left the bottom.
+            let showsJump = new.distanceFromBottom > Self.jumpThreshold
+            if showsJump != showsJumpButton {
+                withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) { showsJumpButton = showsJump }
             }
         }
-        .animation(.snappy(duration: 0.2), value: isPinnedToBottom)
+        .overlay(alignment: .bottom) {
+            if showsJumpButton {
+                ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
+                    isPinnedToBottom = true
+                    withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
+                }
+                .padding(.bottom, bottomInset + 12)
+                .transition(
+                    .asymmetric(
+                        insertion: .scale(scale: 0.6).combined(with: .opacity).combined(with: .offset(y: 10)),
+                        removal: .scale(scale: 0.85).combined(with: .opacity).combined(with: .offset(y: 6))
+                    )
+                )
+            }
+        }
     }
+
+    private static let jumpThreshold: CGFloat = 80
 
     private nonisolated static func visibleHeight(_ proxy: GeometryProxy) -> CGFloat {
         max(0, proxy.size.height - proxy.safeAreaInsets.top - proxy.safeAreaInsets.bottom)

@@ -1,0 +1,235 @@
+import AppKit
+import SwiftUI
+
+/// The native popover every chrome and composer button opens, in place of a pull-down menu.
+struct PopoverMenu<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+            .padding(6)
+            .frame(minWidth: 210, maxWidth: 360, alignment: .leading)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .scrollIndicators(.automatic)
+        .frame(maxHeight: 460)
+    }
+}
+
+struct PopoverSectionHeader: View {
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(verbatim: title)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Chrome.secondaryText)
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+            .padding(.bottom, 3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct PopoverNote: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(verbatim: text)
+            .font(.system(size: 12))
+            .foregroundStyle(Chrome.secondaryText)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+struct PopoverDivider: View {
+    var body: some View {
+        Divider()
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+    }
+}
+
+/// One row. Pass `isChecked` (true or false) for choice lists so every row keeps the checkmark column.
+struct PopoverItem: View {
+    let title: String
+    var detail: String?
+    var symbol: String?
+    var image: NSImage?
+    var isChecked: Bool?
+    var isEnabled = true
+    var isDestructive = false
+    let action: @MainActor () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isHovering = false
+
+    init(
+        _ title: String,
+        detail: String? = nil,
+        symbol: String? = nil,
+        image: NSImage? = nil,
+        isChecked: Bool? = nil,
+        isEnabled: Bool = true,
+        isDestructive: Bool = false,
+        action: @escaping @MainActor () -> Void
+    ) {
+        self.title = title
+        self.detail = detail
+        self.symbol = symbol
+        self.image = image
+        self.isChecked = isChecked
+        self.isEnabled = isEnabled
+        self.isDestructive = isDestructive
+        self.action = action
+    }
+
+    var body: some View {
+        Button {
+            dismiss()
+            // Runs after the popover closes, so an action that presents a sheet or alert is not swallowed.
+            Task { @MainActor in action() }
+        } label: {
+            HStack(spacing: 8) {
+                if let isChecked {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .opacity(isChecked ? 1 : 0)
+                        .frame(width: 14)
+                }
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: 16, height: 16)
+                } else if let symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: 12))
+                        .frame(width: 16)
+                }
+                Text(verbatim: title)
+                    .font(.system(size: 13))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 16)
+                if let detail {
+                    Text(verbatim: detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .lineLimit(1)
+                }
+            }
+            .foregroundStyle(isDestructive ? Color.red : Chrome.primaryText)
+            .padding(.horizontal, 8)
+            .frame(height: 26)
+            .background {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isHovering && isEnabled ? Chrome.overlay(0.1) : Color.clear)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.4)
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+    }
+}
+
+/// A composer chip that opens its choices in a popover above the composer.
+struct ChipPopoverButton<Label: View, Content: View>: View {
+    let help: String
+    @ViewBuilder var label: Label
+    @ViewBuilder var content: Content
+
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            label
+        }
+        .buttonStyle(.chip(active: isPresented))
+        .fixedSize()
+        .help(help)
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            PopoverMenu { content }
+        }
+    }
+}
+
+// MARK: - Row actions
+
+/// An action a sidebar row offers both from its ellipsis popover and its context menu.
+struct RowAction: Identifiable {
+    let title: String
+    var symbol: String?
+    var isDestructive = false
+    var startsGroup = false
+    let action: @MainActor () -> Void
+
+    var id: String { title }
+}
+
+struct RowActionItems: View {
+    let actions: [RowAction]
+
+    var body: some View {
+        ForEach(actions) { item in
+            if item.startsGroup { PopoverDivider() }
+            PopoverItem(item.title, symbol: item.symbol, isDestructive: item.isDestructive, action: item.action)
+        }
+    }
+}
+
+struct RowActionMenuButtons: View {
+    let actions: [RowAction]
+
+    var body: some View {
+        ForEach(actions) { item in
+            if item.startsGroup { Divider() }
+            Button(role: item.isDestructive ? .destructive : nil) {
+                item.action()
+            } label: {
+                if let symbol = item.symbol {
+                    Label(item.title, systemImage: symbol)
+                } else {
+                    Text(item.title)
+                }
+            }
+        }
+    }
+}
+
+/// The ellipsis on a hovered sidebar row.
+struct RowActionsButton: View {
+    let actions: [RowAction]
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            RowAccessoryIcon("ellipsis")
+        }
+        .buttonStyle(.plain)
+        .help("More")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            PopoverMenu { RowActionItems(actions: actions) }
+        }
+    }
+}

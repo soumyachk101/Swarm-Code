@@ -8,6 +8,17 @@ struct AppCommands: Commands {
     }
 
     var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { WindowManager.shared.showSettings() }
+                .keyboardShortcut(",")
+        }
+
+        CommandGroup(before: .windowArrangement) {
+            Button("Cody") { WindowManager.shared.showMain() }
+                .keyboardShortcut("0")
+            Divider()
+        }
+
         CommandGroup(replacing: .newItem) {
             Button("New thread") { model.newThread() }
                 .keyboardShortcut("n")

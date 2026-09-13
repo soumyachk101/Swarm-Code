@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
-    @Environment(\.openSettings) private var openSettings
 
     @State private var search = ""
     @State private var renaming: ChatThread?
@@ -46,7 +45,7 @@ struct SidebarView: View {
                 SidebarRow(title: "Add project", action: { model.chooseProjectFolder() }) {
                     SidebarIconBadge(tint: Chrome.blue) { SidebarSymbol("plus") }
                 }
-                SidebarRow(title: "Settings", action: { openSettings() }) {
+                SidebarRow(title: "Settings", action: { WindowManager.shared.showSettings() }) {
                     SidebarIconBadge(tint: Chrome.gray) { SidebarSymbol("gear", scale: 1.15) }
                 }
             }
@@ -158,6 +157,8 @@ private struct ProjectRow: View {
     let project: Project
     var togglesExpansion = true
 
+    @State private var isMenuPresented = false
+
     var body: some View {
         let count = model.threads(in: project).count
         SidebarRow(
@@ -173,17 +174,9 @@ private struct ProjectRow: View {
                 SidebarIconBadge(tint: Chrome.tileHue(for: project.id)) { SidebarSymbol("folder.fill") }
             },
             accessory: { hovering in
-                if hovering {
+                if hovering || isMenuPresented {
                     HStack(spacing: 0) {
-                        Menu {
-                            menuItems
-                        } label: {
-                            RowAccessoryIcon("ellipsis")
-                        }
-                        .menuStyle(.button)
-                        .buttonStyle(.plain)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
+                        RowActionsButton(actions: actions, isPresented: $isMenuPresented)
                         Button {
                             model.newThread(in: project)
                         } label: {
@@ -200,17 +193,20 @@ private struct ProjectRow: View {
                 }
             }
         )
-        .contextMenu { menuItems }
+        .contextMenu { RowActionMenuButtons(actions: actions) }
     }
 
-    @ViewBuilder
-    private var menuItems: some View {
-        Button("New thread") { model.newThread(in: project) }
-        Button("New thread in worktree") { model.newThread(in: project, workspace: .worktree) }
-        Divider()
-        Button("Reveal in Finder") { Workspace.revealInFinder(project.path) }
-        Divider()
-        Button("Remove project", role: .destructive) { model.removeProject(project) }
+    private var actions: [RowAction] {
+        [
+            RowAction(title: "New thread", symbol: "square.and.pencil") { model.newThread(in: project) },
+            RowAction(title: "New thread in worktree", symbol: "square.stack.3d.up") {
+                model.newThread(in: project, workspace: .worktree)
+            },
+            RowAction(title: "Reveal in Finder", symbol: "folder", startsGroup: true) { Workspace.revealInFinder(project.path) },
+            RowAction(title: "Remove project", symbol: "trash", isDestructive: true, startsGroup: true) {
+                model.removeProject(project)
+            },
+        ]
     }
 }
 
@@ -219,6 +215,8 @@ private struct ThreadRow: View {
     let thread: ChatThread
     let onRename: () -> Void
     let onDelete: () -> Void
+
+    @State private var isMenuPresented = false
 
     var body: some View {
         SidebarRow(
@@ -229,16 +227,8 @@ private struct ThreadRow: View {
             action: { model.selectedThreadID = thread.id },
             icon: { ThreadBadge(thread: thread) },
             accessory: { hovering in
-                if hovering {
-                    Menu {
-                        menuItems
-                    } label: {
-                        RowAccessoryIcon("ellipsis")
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.plain)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
+                if hovering || isMenuPresented {
+                    RowActionsButton(actions: actions, isPresented: $isMenuPresented)
                 } else {
                     Text(verbatim: RelativeTime.short(thread.updatedAt))
                         .font(.system(size: 11).monospacedDigit())
@@ -247,21 +237,22 @@ private struct ThreadRow: View {
                 }
             }
         )
-        .contextMenu { menuItems }
+        .contextMenu { RowActionMenuButtons(actions: actions) }
     }
 
-    @ViewBuilder
-    private var menuItems: some View {
-        Button("Rename") { onRename() }
-        Button(thread.isPinned ? "Unpin" : "Pin") {
-            model.updateThread(thread.id) { $0.isPinned.toggle() }
-        }
+    private var actions: [RowAction] {
+        var items = [
+            RowAction(title: "Rename", symbol: "pencil") { onRename() },
+            RowAction(title: thread.isPinned ? "Unpin" : "Pin", symbol: thread.isPinned ? "pin.slash" : "pin") {
+                model.updateThread(thread.id) { $0.isPinned.toggle() }
+            },
+        ]
         if let path = thread.worktreePath {
-            Button("Reveal worktree in Finder") { Workspace.revealInFinder(path) }
+            items.append(RowAction(title: "Reveal worktree in Finder", symbol: "folder") { Workspace.revealInFinder(path) })
         }
-        Divider()
-        Button("Archive") { model.archive(thread.id) }
-        Button("Delete…", role: .destructive) { onDelete() }
+        items.append(RowAction(title: "Archive", symbol: "archivebox", startsGroup: true) { model.archive(thread.id) })
+        items.append(RowAction(title: "Delete…", symbol: "trash", isDestructive: true) { onDelete() })
+        return items
     }
 }
 

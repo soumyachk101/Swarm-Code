@@ -19,8 +19,7 @@ struct ChatView: View {
                 ThreadTimeline(
                     runtime: runtime,
                     scrollChrome: scrollChrome,
-                    title: title,
-                    subtitle: subtitle(project: project, thread: thread)
+                    projectName: project?.name
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     ComposerArea(runtime: runtime)
@@ -69,14 +68,6 @@ struct ChatView: View {
 
     private nonisolated static func measureWidth(_ proxy: GeometryProxy) -> CGFloat {
         proxy.size.width
-    }
-
-    private func subtitle(project: Project?, thread: ChatThread?) -> String {
-        var parts: [String] = []
-        if let project { parts.append(project.name) }
-        if let branch = git.status?.branch { parts.append(branch) }
-        if let thread { parts.append(thread.provider.displayName) }
-        return parts.joined(separator: " · ")
     }
 }
 
@@ -181,27 +172,23 @@ private struct BranchMenu: View {
             title: git.activity ?? git.status?.branch ?? "Detached",
             help: "Branch"
         ) {
-            Section("Switch branch") {
-                ForEach(git.branches.prefix(25)) { branch in
-                    Button {
-                        switchBranch(branch.name)
-                    } label: {
-                        if branch.isCurrent {
-                            Label(branch.name, systemImage: "checkmark")
-                        } else {
-                            Text(branch.name)
-                        }
-                    }
-                    .disabled(branch.isCurrent || runtime.isRunning)
+            PopoverSectionHeader("Switch branch")
+            ForEach(git.branches.prefix(25)) { branch in
+                PopoverItem(
+                    branch.name,
+                    isChecked: branch.isCurrent,
+                    isEnabled: !branch.isCurrent && !runtime.isRunning
+                ) {
+                    switchBranch(branch.name)
                 }
             }
-            Button("New branch…") {
+            PopoverDivider()
+            PopoverItem("New branch…", symbol: "plus") {
                 branchName = ""
                 isNamingBranch = true
             }
             if runtime.thread?.worktreePath == nil, runtime.turns.isEmpty {
-                Divider()
-                Button("Use a new worktree for this thread") {
+                PopoverItem("Use a new worktree for this thread", symbol: "square.stack.3d.up") {
                     Task { await model.createWorktree(for: runtime.threadID) }
                 }
             }
@@ -241,20 +228,17 @@ private struct OpenInMenu: View {
 
     var body: some View {
         ChromeMenuButton(symbol: "arrow.up.forward.app", help: "Open in another app") {
-            Button("Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: directory)) }
+            PopoverSectionHeader("Open in")
+            PopoverItem("Finder", image: NSWorkspace.shared.icon(forFile: "/System/Library/CoreServices/Finder.app")) {
+                NSWorkspace.shared.open(URL(fileURLWithPath: directory))
+            }
             ForEach(Workspace.installedEditors) { editor in
-                Button {
+                PopoverItem(editor.name, symbol: "chevron.left.forwardslash.chevron.right", image: Workspace.icon(for: editor)) {
                     Workspace.open(directory, with: editor)
-                } label: {
-                    if let icon = Workspace.icon(for: editor) {
-                        Label { Text(editor.name) } icon: { Image(nsImage: icon) }
-                    } else {
-                        Text(editor.name)
-                    }
                 }
             }
-            Divider()
-            Button("Copy path") {
+            PopoverDivider()
+            PopoverItem("Copy path", symbol: "doc.on.doc") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(directory, forType: .string)
             }
@@ -272,16 +256,19 @@ private struct ScriptsMenu: View {
 
     var body: some View {
         ChromeMenuButton(symbol: "play", help: "Run a project script") {
-            ForEach(project.scripts) { script in
-                Button {
-                    model.terminals.run(script, threadID: runtime.threadID, directory: directory)
-                    runtime.isTerminalVisible = true
-                } label: {
-                    Label(script.name, systemImage: script.symbol)
+            if !project.scripts.isEmpty {
+                PopoverSectionHeader("Scripts")
+                ForEach(project.scripts) { script in
+                    PopoverItem(script.name, symbol: script.symbol) {
+                        model.terminals.run(script, threadID: runtime.threadID, directory: directory)
+                        runtime.isTerminalVisible = true
+                    }
                 }
+                PopoverDivider()
             }
-            if !project.scripts.isEmpty { Divider() }
-            Button(project.scripts.isEmpty ? "Add a script…" : "Edit scripts…") { isEditing = true }
+            PopoverItem(project.scripts.isEmpty ? "Add a script…" : "Edit scripts…", symbol: project.scripts.isEmpty ? "plus" : "pencil") {
+                isEditing = true
+            }
         }
         .sheet(isPresented: $isEditing) {
             ScriptsEditor(projectID: project.id)
@@ -300,15 +287,14 @@ private struct GitActionsMenu: View {
     var body: some View {
         let changed = git.status?.changedFiles ?? 0
         ChromeMenuButton(symbol: "arrow.triangle.pull", help: changed == 0 ? "Commit, push and open pull requests" : "\(changed) changed files") {
-            Text(changed == 1 ? "1 changed file" : "\(changed) changed files")
-            Divider()
-            Button("Commit…") { isCommitting = true }
-                .disabled(changed == 0)
-            Button("Push") { push() }
-            Button("Create pull request") { openPullRequest() }
+            PopoverNote(changed == 1 ? "1 changed file" : "\(changed) changed files")
+            PopoverDivider()
+            PopoverItem("Commit…", symbol: "checkmark.circle", isEnabled: changed > 0) { isCommitting = true }
+            PopoverItem("Push", symbol: "arrow.up.circle") { push() }
+            PopoverItem("Create pull request", symbol: "arrow.triangle.pull") { openPullRequest() }
             if let url = git.remoteURL {
-                Divider()
-                Button("Open repository") { NSWorkspace.shared.open(url) }
+                PopoverDivider()
+                PopoverItem("Open repository", symbol: "safari") { NSWorkspace.shared.open(url) }
             }
         }
         .sheet(isPresented: $isCommitting) {
