@@ -624,8 +624,8 @@ struct GlassPickerButton<Value: Hashable>: View {
     }
 }
 
-/// A native Liquid Glass search control for a pane's chrome row: a round glass button that morphs
-/// into a glass search field, and back when the field is empty and loses focus.
+/// A Liquid Glass search control for a pane's chrome row. It is one glass capsule whose width grows
+/// from a round button into a field, so the glass itself animates open and closed.
 struct ChromeSearchField: View {
     static let expandedWidth: CGFloat = 188
 
@@ -634,57 +634,40 @@ struct ChromeSearchField: View {
 
     @State private var isExpanded = false
     @FocusState private var isFocused: Bool
-    @Namespace private var glass
 
-    private static var morph: Animation { .bouncy(duration: 0.38, extraBounce: 0.04) }
+    private static var morph: Animation { .spring(response: 0.36, dampingFraction: 0.82) }
+
+    private var isOpen: Bool {
+        isExpanded || !query.isEmpty
+    }
 
     var body: some View {
-        GlassEffectContainer(spacing: 8) {
-            if isExpanded || !query.isEmpty {
-                field
-                    .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
-                    .glassEffectID("search", in: glass)
-            } else {
-                button
-                    .glassEffect(.regular.interactive(), in: Circle())
-                    .glassEffectID("search", in: glass)
+        HStack(spacing: 2) {
+            Button {
+                if isOpen {
+                    isFocused = true
+                } else {
+                    open()
+                }
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(isOpen ? Chrome.secondaryText : Chrome.primaryText)
+                    .frame(width: Chrome.capsuleHeight, height: Chrome.capsuleHeight)
+                    .contentShape(Circle())
             }
-        }
-        .fixedSize()
-        .onChange(of: isFocused) { _, focused in
-            guard !focused, query.isEmpty else { return }
-            withAnimation(Self.morph) { isExpanded = false }
-        }
-        .onExitCommand { collapse() }
-    }
+            .buttonStyle(.plain)
+            .help(prompt)
+            .accessibilityLabel(Text(verbatim: prompt))
 
-    private var button: some View {
-        Button {
-            withAnimation(Self.morph) { isExpanded = true }
-        } label: {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Chrome.primaryText)
-                .frame(width: Chrome.capsuleHeight, height: Chrome.capsuleHeight)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .help(prompt)
-        .accessibilityLabel(Text(verbatim: prompt))
-    }
-
-    private var field: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Chrome.secondaryText)
-                .accessibilityHidden(true)
             TextField(prompt, text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Chrome.primaryText)
                 .focused($isFocused)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .opacity(isOpen ? 1 : 0)
+                .allowsHitTesting(isOpen)
+
             if !query.isEmpty {
                 Button {
                     query = ""
@@ -695,43 +678,56 @@ struct ChromeSearchField: View {
                         .foregroundStyle(Chrome.secondaryText)
                 }
                 .buttonStyle(.plain)
-                .transition(.opacity.combined(with: .scale(scale: 0.6)))
+                .padding(.trailing, 10)
+                .transition(.opacity)
                 .accessibilityLabel(Text("Clear search"))
             }
         }
-        .padding(.leading, Chrome.capsuleHorizontalPadding)
-        .padding(.trailing, 10)
-        .frame(width: Self.expandedWidth, height: Chrome.capsuleHeight)
+        .frame(width: isOpen ? Self.expandedWidth : Chrome.capsuleHeight, height: Chrome.capsuleHeight, alignment: .leading)
+        .clipShape(Capsule(style: .continuous))
+        .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
+        .fixedSize()
         .animation(.easeOut(duration: 0.15), value: query.isEmpty)
-        .task {
-            // Focus once the field exists, so typing starts the moment the glass has opened.
-            try? await Task.sleep(for: .milliseconds(40))
-            isFocused = true
+        .onChange(of: isFocused) { _, focused in
+            guard !focused, query.isEmpty, isExpanded else { return }
+            withAnimation(Self.morph) { isExpanded = false }
+        }
+        .onExitCommand {
+            query = ""
+            isFocused = false
+            withAnimation(Self.morph) { isExpanded = false }
         }
     }
 
-    private func collapse() {
-        query = ""
-        isFocused = false
-        withAnimation(Self.morph) { isExpanded = false }
+    private func open() {
+        withAnimation(Self.morph) { isExpanded = true }
+        // Focus once the field has room, so typing starts as the glass opens.
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            isFocused = true
+        }
     }
 }
 
-/// Search results arriving and leaving: a short fade with a light blur and a hint of scale.
+/// How a search result settles in: a fade with a light blur and a short rise.
 struct SearchResultTransition: ViewModifier {
     let isVisible: Bool
 
     func body(content: Content) -> some View {
         content
             .opacity(isVisible ? 1 : 0)
-            .blur(radius: isVisible ? 0 : 6)
-            .scaleEffect(isVisible ? 1 : 0.985, anchor: .top)
+            .blur(radius: isVisible ? 0 : 4)
+            .offset(y: isVisible ? 0 : 6)
     }
 }
 
 extension AnyTransition {
+    /// Arriving results settle in; leaving results only fade, quickly, so narrowing a search never drags.
     static var searchResult: AnyTransition {
-        .modifier(active: SearchResultTransition(isVisible: false), identity: SearchResultTransition(isVisible: true))
+        .asymmetric(
+            insertion: .modifier(active: SearchResultTransition(isVisible: false), identity: SearchResultTransition(isVisible: true)),
+            removal: .opacity.animation(.easeOut(duration: 0.12))
+        )
     }
 }
 

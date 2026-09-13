@@ -5,18 +5,22 @@ struct ModelsSettingsPage: View {
     @Environment(AppModel.self) private var model
     var query = ""
 
+    /// The query the page is showing. It follows `query` a beat after typing stops, so the list
+    /// animates once per settled search instead of once per keystroke.
+    @State private var appliedQuery = ""
+
     var body: some View {
         let settings = model.settings
         let registry = model.providers
         let pins = settings.modelList
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = appliedQuery
         let visiblePins = Array(pins.enumerated()).filter { item in
             Self.matches(registry.model(item.element.modelID, for: item.element.provider), id: item.element.modelID, provider: item.element.provider, query: trimmed)
         }
         let providers = registry.availableProviders.filter { provider in
             trimmed.isEmpty || registry.models(for: provider).contains { Self.matches($0, id: $0.id, provider: provider, query: trimmed) }
         }
-        LazyVStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+        VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
             if trimmed.isEmpty || !visiblePins.isEmpty {
                 ChromeSection(title: "Your models") {
                     ChromeCard {
@@ -44,6 +48,7 @@ struct ModelsSettingsPage: View {
                             .padding(.horizontal, 4)
                     }
                 }
+                .transition(.searchResult)
             }
 
             ForEach(providers) { provider in
@@ -59,6 +64,17 @@ struct ModelsSettingsPage: View {
                     .transition(.searchResult)
             }
         }
+        .task(id: query) { await apply(query) }
+    }
+
+    private func apply(_ text: String) async {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != appliedQuery else { return }
+        if !trimmed.isEmpty {
+            try? await Task.sleep(for: .milliseconds(110))
+            guard !Task.isCancelled else { return }
+        }
+        withAnimation(.snappy(duration: 0.26)) { appliedQuery = trimmed }
     }
 
     /// Whether a model matches the search by name, description or provider.
@@ -217,9 +233,10 @@ private struct ProviderModelsSection: View {
                     }
                 } else {
                     ForEach(Array(options.enumerated()), id: \.element.id) { index, option in
-                        if index > 0 { ChromeRowDivider() }
                         let pin = ModelPin(provider: provider, modelID: option.id)
                         let isAdded = settings.isInModelList(pin)
+                        VStack(spacing: 0) {
+                        if index > 0 { ChromeRowDivider() }
                         ChromeRow(title: option.shortName, detail: option.detail) {
                             HStack(spacing: 10) {
                                 if option.supportsFast {
@@ -243,6 +260,8 @@ private struct ProviderModelsSection: View {
                                 .help(isAdded ? "Remove from the picker" : (isFull ? "The picker holds up to \(AppSettings.modelListLimit) models" : "Add to the picker"))
                             }
                         }
+                        }
+                        .transition(.searchResult)
                     }
                 }
             }
