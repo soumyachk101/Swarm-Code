@@ -182,7 +182,9 @@ struct SettingsView: View {
         switch page {
         case .general: GeneralSettingsPage()
         case .providers: ProvidersSettingsPage()
-        case .models: ModelsSettingsPage(query: modelSearch)
+        case .models:
+            ModelsSettingsPage(query: modelSearch)
+                .animation(.smooth(duration: 0.28), value: modelSearch)
         case .sourceControl: SourceControlSettingsPage()
         case .shortcuts: ShortcutsSettingsPage()
         case .archive: ArchiveSettingsPage()

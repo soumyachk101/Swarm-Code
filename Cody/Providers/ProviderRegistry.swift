@@ -137,16 +137,21 @@ final class ProviderRegistry {
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
     }
 
-    /// Reads the provider's plan limits, at most once a minute unless forced.
-    func refreshPlanLimits(_ provider: ProviderKind, force: Bool = false) async {
+    /// Reads the provider's plan limits, at most once a minute after a successful read unless forced.
+    /// The read runs on its own task, so closing the popover that asked for it cannot cancel it.
+    func refreshPlanLimits(_ provider: ProviderKind, force: Bool = false) {
         guard PlanLimitsReader.exposesLimits(provider), !loadingLimits.contains(provider),
               let executable = executable(for: provider) else { return }
         if !force, let fetched = limitsFetchedAt[provider], Date.now.timeIntervalSince(fetched) < 60 { return }
         loadingLimits.insert(provider)
-        defer { loadingLimits.remove(provider) }
-        let limits = await PlanLimitsReader.read(provider, executable: executable, environment: environment(for: provider))
-        limitsFetchedAt[provider] = .now
-        if let limits { planLimits[provider] = limits }
+        let environment = environment(for: provider)
+        Task {
+            let limits = await PlanLimitsReader.read(provider, executable: executable, environment: environment)
+            loadingLimits.remove(provider)
+            guard let limits else { return }
+            planLimits[provider] = limits
+            limitsFetchedAt[provider] = .now
+        }
     }
 
     func updateCatalog(_ list: [ModelOption], for provider: ProviderKind) {

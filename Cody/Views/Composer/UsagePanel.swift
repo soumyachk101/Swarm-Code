@@ -55,7 +55,7 @@ struct UsagePanel: View {
         .padding(16)
         .frame(width: 360)
         .animation(.easeOut(duration: 0.15), value: registry.planLimits[provider])
-        .task { await registry.refreshPlanLimits(provider) }
+        .onAppear { registry.refreshPlanLimits(provider) }
     }
 
     static func tokens(_ count: Int) -> String {

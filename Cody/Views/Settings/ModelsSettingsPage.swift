@@ -29,8 +29,11 @@ struct ModelsSettingsPage: View {
                             }
                         } else {
                             ForEach(Array(visiblePins.enumerated()), id: \.element.element) { position, item in
-                                if position > 0 { ChromeRowDivider() }
-                                PinnedModelRow(pin: item.element, index: item.offset, count: pins.count)
+                                VStack(spacing: 0) {
+                                    if position > 0 { ChromeRowDivider() }
+                                    PinnedModelRow(pin: item.element, index: item.offset, count: pins.count)
+                                }
+                                .transition(.searchResult)
                             }
                         }
                     }
@@ -45,6 +48,7 @@ struct ModelsSettingsPage: View {
 
             ForEach(providers) { provider in
                 ProviderModelsSection(provider: provider, query: trimmed)
+                    .transition(.searchResult)
             }
 
             if !trimmed.isEmpty, visiblePins.isEmpty, providers.isEmpty {
@@ -52,6 +56,7 @@ struct ModelsSettingsPage: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Chrome.secondaryText)
                     .padding(.horizontal, 4)
+                    .transition(.searchResult)
             }
         }
     }
