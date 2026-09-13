@@ -199,6 +199,43 @@ final class CodexSession: ProviderSession {
         return models
     }
 
+    /// The account's rate-limit windows, such as the 5-hour and weekly limits, or a monthly one on some plans.
+    static func readPlanLimits(executable: URL, environment: [String: String]) async throws -> PlanLimits? {
+        let connection = try await connect(
+            executable: executable,
+            directory: FileManager.default.temporaryDirectory,
+            environment: environment,
+            configure: { _ in }
+        )
+        defer { connection.close() }
+        let result = try await connection.request("account/rateLimits/read", ["excludeResetCreditDetails": true])
+        var snapshots: [JSONValue] = []
+        if let byID = result["rateLimitsByLimitId"]?.object, !byID.isEmpty {
+            snapshots = byID.keys.sorted().compactMap { byID[$0] }
+        } else if let snapshot = result["rateLimits"], !snapshot.isNull {
+            snapshots = [snapshot]
+        }
+        var plan: String?
+        var windows: [PlanLimits.Window] = []
+        for snapshot in snapshots {
+            plan = plan ?? snapshot["planType"]?.string
+            let name = snapshots.count > 1 ? snapshot["limitName"]?.string : nil
+            for key in ["primary", "secondary"] {
+                guard let window = snapshot[key], let percent = window["usedPercent"]?.double else { continue }
+                var title = PlanLimitsReader.windowTitle(minutes: window["windowDurationMins"]?.int)
+                if let name { title += " · \(name)" }
+                windows.append(PlanLimits.Window(
+                    id: "\(snapshot["limitId"]?.string ?? "codex")-\(key)",
+                    title: title,
+                    percent: percent,
+                    resetsAt: window["resetsAt"]?.double.map { Date(timeIntervalSince1970: $0) }
+                ))
+            }
+        }
+        guard !windows.isEmpty else { return nil }
+        return PlanLimits(planName: PlanLimitsReader.planName(plan), windows: windows)
+    }
+
     /// The tier Codex offers for faster responses on a model, if any.
     private static func fastTier(in tiers: [JSONValue]) -> String? {
         tiers.lazy.compactMap { tier -> String? in

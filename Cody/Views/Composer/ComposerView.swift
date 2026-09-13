@@ -59,7 +59,7 @@ struct ComposerView: View {
                     PlanToggle(thread: thread)
                     PermissionMenu(thread: thread)
                     Spacer(minLength: 8)
-                    ContextMeter(usage: runtime.usage)
+                    ContextMeter(usage: runtime.usage, provider: thread.provider)
                     Button {
                         chooseFiles()
                     } label: {
@@ -300,22 +300,37 @@ private struct PermissionMenu: View {
     }
 }
 
+/// The context ring. Clicking it opens the context window and the plan's usage limits.
 private struct ContextMeter: View {
     let usage: ContextUsage?
+    let provider: ProviderKind
+
+    @State private var isPresented = false
 
     var body: some View {
-        if let usage, let fraction = usage.fraction {
-            ZStack {
-                Circle()
-                    .stroke(.quaternary, lineWidth: 2.5)
-                Circle()
-                    .trim(from: 0, to: fraction)
-                    .stroke(fraction > 0.85 ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
+        let fraction = usage?.fraction
+        if fraction != nil || PlanLimitsReader.exposesLimits(provider) {
+            Button {
+                isPresented.toggle()
+            } label: {
+                ZStack {
+                    Circle()
+                        .stroke(.quaternary, lineWidth: 2.5)
+                    Circle()
+                        .trim(from: 0, to: fraction ?? 0)
+                        .stroke((fraction ?? 0) > 0.85 ? AnyShapeStyle(.orange) : AnyShapeStyle(.tint), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                }
+                .frame(width: 15, height: 15)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 5)
+                .contentShape(.rect)
             }
-            .frame(width: 15, height: 15)
-            .padding(.horizontal, 6)
-            .help("\(Int(fraction * 100))% of the context window used")
+            .buttonStyle(.plain)
+            .help(fraction.map { "\(Int($0 * 100))% of the context window used" } ?? "Usage limits")
+            .popover(isPresented: $isPresented, arrowEdge: .top) {
+                UsagePanel(usage: usage, provider: provider)
+            }
         }
     }
 }

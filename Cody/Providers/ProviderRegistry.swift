@@ -35,6 +35,9 @@ final class ProviderRegistry {
 
     @ObservationIgnored private let settings: AppSettings
     @ObservationIgnored private let cacheKey = "providerModelCatalogs"
+    private(set) var planLimits: [ProviderKind: PlanLimits] = [:]
+    private(set) var loadingLimits: Set<ProviderKind> = []
+    @ObservationIgnored private var limitsFetchedAt: [ProviderKind: Date] = [:]
 
     private static let claudeEfforts = ["low", "medium", "high", "xhigh", "max"]
     private static let claudeSeed = [
@@ -132,6 +135,18 @@ final class ProviderRegistry {
         case .claude: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
+    }
+
+    /// Reads the provider's plan limits, at most once a minute unless forced.
+    func refreshPlanLimits(_ provider: ProviderKind, force: Bool = false) async {
+        guard PlanLimitsReader.exposesLimits(provider), !loadingLimits.contains(provider),
+              let executable = executable(for: provider) else { return }
+        if !force, let fetched = limitsFetchedAt[provider], Date.now.timeIntervalSince(fetched) < 60 { return }
+        loadingLimits.insert(provider)
+        defer { loadingLimits.remove(provider) }
+        let limits = await PlanLimitsReader.read(provider, executable: executable, environment: environment(for: provider))
+        limitsFetchedAt[provider] = .now
+        if let limits { planLimits[provider] = limits }
     }
 
     func updateCatalog(_ list: [ModelOption], for provider: ProviderKind) {
