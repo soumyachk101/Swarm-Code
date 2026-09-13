@@ -214,6 +214,16 @@ struct DiffLinesView: View {
     let file: DiffFile
     var showsLineNumbers = true
 
+    @State private var showsAll = false
+
+    /// Large files render collapsed: materializing thousands of rows at once is what
+    /// makes opening a diff feel laggy. The full diff is one instant tap away.
+    private static let collapsedLineLimit = 200
+
+    private var totalLines: Int {
+        file.hunks.reduce(0) { $0 + $1.lines.count }
+    }
+
     /// One visual row group: a hunk header, a joined tinted block, or plain lines.
     /// Tinted runs merge across hunk boundaries (edits often arrive as many
     /// single-line hunks), so only the block's top and bottom lines get corners.
@@ -235,14 +245,15 @@ struct DiffLinesView: View {
     private var sections: [Section] {
         var sections: [Section] = []
         var pending: [DiffLine] = []
-        let flush = {
+        var remaining = showsAll ? Int.max : Self.collapsedLineLimit
+        func flush() {
             if !pending.isEmpty {
                 sections.append(.tinted(pending))
                 pending = []
             }
         }
         for (hunkIndex, hunk) in file.hunks.enumerated() {
-            guard !hunk.lines.isEmpty else { continue }
+            guard !hunk.lines.isEmpty, remaining > 0 else { continue }
             let runs = lineBlocks(hunk.lines)
             // Continuing means the previous hunk ended mid-run; anything else
             // flushes and starts fresh below a new header.
@@ -254,11 +265,16 @@ struct DiffLinesView: View {
                 }
             }
             for run in runs {
+                guard remaining > 0 else { break }
                 if run.isTinted {
-                    pending += run.lines
+                    let take = Array(run.lines.prefix(remaining))
+                    remaining -= take.count
+                    pending += take
                 } else {
                     flush()
-                    sections.append(.plain(run.lines))
+                    let take = Array(run.lines.prefix(remaining))
+                    remaining -= take.count
+                    sections.append(.plain(take))
                 }
             }
         }
@@ -293,6 +309,22 @@ struct DiffLinesView: View {
                         DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
                     }
                 }
+            }
+            if !showsAll, totalLines > Self.collapsedLineLimit {
+                Button {
+                    showsAll.toggle()
+                } label: {
+                    Text("Show all \(totalLines) lines")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(.quaternary.opacity(0.5), in: Capsule(style: .continuous))
+                        .contentShape(.capsule)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             }
         }
         .font(.system(size: 11.5, design: .monospaced))

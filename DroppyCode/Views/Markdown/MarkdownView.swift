@@ -1,11 +1,17 @@
 import AppKit
 import SwiftUI
 
-struct MarkdownView: View {
+struct MarkdownView: View, Equatable {
     let text: String
 
+    /// Equal text renders equally, so finished replies are skipped entirely while a
+    /// new reply streams or the timeline rebuilds around them.
+    nonisolated static func == (lhs: MarkdownView, rhs: MarkdownView) -> Bool {
+        lhs.text == rhs.text
+    }
+
     var body: some View {
-        let blocks = MarkdownParser.parse(text)
+        let blocks = Self.blocks(for: text)
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 MarkdownBlockView(block: block)
@@ -14,6 +20,20 @@ struct MarkdownView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Parsed blocks by source. Every timeline rebuild re-renders visible rows, but a
+    /// finished message parses to the same blocks, so each distinct text parses once.
+    @MainActor private static var blockCache: [String: [MarkdownBlock]] = [:]
+    private static let blockCacheLimit = 200
+
+    @MainActor
+    static func blocks(for text: String) -> [MarkdownBlock] {
+        if let cached = blockCache[text] { return cached }
+        let parsed = MarkdownParser.parse(text)
+        if blockCache.count >= blockCacheLimit { blockCache.removeAll(keepingCapacity: true) }
+        blockCache[text] = parsed
+        return parsed
     }
 }
 
@@ -134,8 +154,16 @@ struct CodeBlock: View {
 
     @State private var isHovering = false
     @State private var didCopy = false
+    @State private var showsAll = false
+
+    /// Long dumps render collapsed: materializing thousands of lines at once is what
+    /// makes expanding feel laggy. The full text is one instant tap away.
+    private static let collapsedLineLimit = 120
 
     var body: some View {
+        let lines = code.components(separatedBy: "\n")
+        let truncated = !showsAll && lines.count > Self.collapsedLineLimit
+        let visible = truncated ? lines.prefix(Self.collapsedLineLimit).joined(separator: "\n") : code
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(language ?? "code")
@@ -149,13 +177,23 @@ struct CodeBlock: View {
             .padding(.trailing, 6)
             .padding(.top, 6)
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(code)
+                Text(visible)
                     .font(.system(.callout, design: .monospaced))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 12)
                     .padding(.top, 4)
+            }
+            if lines.count > Self.collapsedLineLimit {
+                Button(showsAll ? "Show less" : "Show all \(lines.count) lines") {
+                    showsAll.toggle()
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
             }
         }
         .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 12))
@@ -167,26 +205,43 @@ struct TableBlock: View {
     let header: [String]
     let rows: [[String]]
 
+    @State private var showsAll = false
+
+    private static let collapsedRowLimit = 30
+
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
-                GridRow {
-                    ForEach(header.indices, id: \.self) { column in
-                        Text(InlineText.attributed(header[column]))
-                            .fontWeight(.semibold)
-                    }
-                }
-                ForEach(rows.indices, id: \.self) { row in
+        let visible = showsAll ? rows : Array(rows.prefix(Self.collapsedRowLimit))
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                     GridRow {
                         ForEach(header.indices, id: \.self) { column in
-                            Text(InlineText.attributed(column < rows[row].count ? rows[row][column] : ""))
-                                .foregroundStyle(.primary.opacity(0.9))
+                            Text(InlineText.attributed(header[column]))
+                                .fontWeight(.semibold)
+                        }
+                    }
+                    ForEach(visible.indices, id: \.self) { row in
+                        GridRow {
+                            ForEach(header.indices, id: \.self) { column in
+                                Text(InlineText.attributed(column < visible[row].count ? visible[row][column] : ""))
+                                    .foregroundStyle(.primary.opacity(0.9))
+                            }
                         }
                     }
                 }
+                .textSelection(.enabled)
+                .padding(12)
             }
-            .textSelection(.enabled)
-            .padding(12)
+            if !showsAll, rows.count > Self.collapsedRowLimit {
+                Button("Show all \(rows.count) rows") {
+                    showsAll.toggle()
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
+            }
         }
         .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 12))
     }
