@@ -86,12 +86,23 @@ struct UserMessageRow: View {
 struct AttachmentStrip: View {
     let attachments: [Attachment]
 
+    /// One popover owned by the strip, keyed by the tapped attachment. Each
+    /// thumbnail previously owned its own `.popover(isPresented:)`, and with
+    /// several sibling Bool popovers in one strip SwiftUI resolves
+    /// presentation to the last one, so only the latest photo opened.
+    @State private var previewAttachment: Attachment?
+
     var body: some View {
         HStack(spacing: 6) {
             ForEach(attachments) { attachment in
-                AttachmentThumbnail(attachment: attachment)
-                    .help(attachment.name)
+                AttachmentThumbnail(attachment: attachment) {
+                    previewAttachment = attachment
+                }
+                .help(attachment.name)
             }
+        }
+        .popover(item: $previewAttachment, arrowEdge: .bottom) { attachment in
+            AttachmentLargePreview(attachment: attachment)
         }
     }
 }
@@ -99,13 +110,13 @@ struct AttachmentStrip: View {
 struct AttachmentThumbnail: View {
     let attachment: Attachment
     var size: CGFloat = 56
+    var onTap: () -> Void = {}
 
     @State private var image: CGImage?
-    @State private var showsPreview = false
 
     var body: some View {
         Button {
-            showsPreview.toggle()
+            onTap()
         } label: {
             if attachment.isImage {
                 ZStack {
@@ -137,9 +148,6 @@ struct AttachmentThumbnail: View {
             }
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $showsPreview, arrowEdge: .bottom) {
-            AttachmentLargePreview(attachment: attachment)
-        }
         .task(id: attachment.path) {
             guard attachment.isImage else { return }
             let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size)
