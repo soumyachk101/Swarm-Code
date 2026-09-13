@@ -7,6 +7,7 @@ struct ChatView: View {
 
     @State private var git = GitStatusModel()
     @State private var scrollChrome = ChromeScrollModel()
+    @State private var scrollState = TimelineScrollState()
     @State private var paneWidth: CGFloat = 1_000
 
     var body: some View {
@@ -19,10 +20,25 @@ struct ChatView: View {
                 ThreadTimeline(
                     runtime: runtime,
                     scrollChrome: scrollChrome,
+                    scrollState: scrollState,
                     projectName: project?.name
                 )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     ComposerArea(runtime: runtime)
+                        .overlay(alignment: .top) {
+                            if scrollState.showsJumpButton {
+                                ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
+                                    scrollState.jumpToLatest()
+                                }
+                                .alignmentGuide(.top) { $0[.bottom] + 10 }
+                                .transition(
+                                    .asymmetric(
+                                        insertion: .scale(scale: 0.6).combined(with: .opacity).combined(with: .offset(y: 10)),
+                                        removal: .scale(scale: 0.85).combined(with: .opacity).combined(with: .offset(y: 6))
+                                    )
+                                )
+                            }
+                        }
                 }
                 .overlay(alignment: .top) {
                     PaneTopVeil(model: scrollChrome)

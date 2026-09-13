@@ -93,14 +93,14 @@ private struct ModelEffortPanel: View {
                     } onBack: {
                         showsModels = false
                     }
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+                    .transition(.opacity)
                 } else {
                     slider(for: thread)
-                        .transition(.opacity.combined(with: .move(edge: .leading)))
+                        .transition(.opacity)
                 }
             }
             .frame(width: 330)
-            .animation(.spring(response: 0.34, dampingFraction: 0.88), value: showsModels)
+            .animation(.easeOut(duration: 0.12), value: showsModels)
         }
     }
 
@@ -171,15 +171,11 @@ private struct ModelList: View {
     let onChoose: (ModelCatalog.Entry) -> Void
     let onBack: () -> Void
 
-    @State private var contentHeight: CGFloat = 0
-
-    private nonisolated static func height(_ proxy: GeometryProxy) -> CGFloat {
-        proxy.size.height
-    }
-
     var body: some View {
         let entries = ModelCatalog.entries(model, including: thread)
         let showsProviders = Set(entries.map(\.provider)).count > 1
+        // Fixed row heights let the popover size itself in one pass instead of measuring and resizing.
+        let rowHeight: CGFloat = showsProviders || (hasHistory && entries.contains { $0.provider != thread.provider }) ? 46 : 34
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Button(action: onBack) {
@@ -201,13 +197,14 @@ private struct ModelList: View {
             .padding(.bottom, 4)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
+                LazyVStack(alignment: .leading, spacing: 1) {
                     ForEach(entries) { entry in
                         let locked = hasHistory && entry.provider != thread.provider
                         ModelListRow(
                             entry: entry,
                             detail: locked ? "New chats only" : (showsProviders ? entry.provider.displayName : nil),
                             showsIcon: showsProviders,
+                            rowHeight: rowHeight,
                             isSelected: entry.provider == thread.provider && entry.option.id == thread.model,
                             isEnabled: !locked
                         ) {
@@ -221,10 +218,9 @@ private struct ModelList: View {
                             .padding(10)
                     }
                 }
-                .onGeometryChange(for: CGFloat.self, of: Self.height) { contentHeight = $0 }
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(height: min(contentHeight > 0 ? contentHeight : CGFloat(max(entries.count, 1)) * (showsProviders ? 50 : 36), 440))
+            .frame(height: min(CGFloat(max(entries.count, 1)) * (rowHeight + 1), 440))
         }
         .padding(6)
     }
@@ -234,6 +230,7 @@ private struct ModelListRow: View {
     let entry: ModelCatalog.Entry
     let detail: String?
     let showsIcon: Bool
+    let rowHeight: CGFloat
     let isSelected: Bool
     let isEnabled: Bool
     let action: () -> Void
@@ -270,7 +267,7 @@ private struct ModelListRow: View {
                     .opacity(isSelected ? 1 : 0)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, detail == nil ? 8 : 6)
+            .frame(height: rowHeight)
             .background {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(isHovering && isEnabled ? Chrome.overlay(0.1) : Color.clear)

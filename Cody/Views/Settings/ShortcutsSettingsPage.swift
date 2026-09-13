@@ -5,7 +5,7 @@ import SwiftUI
 /// a section header with its tile, one card of rows, and one recorder per row.
 struct ShortcutsSettingsPage: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+        LazyVStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
             ForEach(AppShortcut.Section.allCases) { section in
                 ShortcutSectionCard(section: section)
             }

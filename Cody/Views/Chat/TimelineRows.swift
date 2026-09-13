@@ -107,18 +107,43 @@ struct AttachmentThumbnail: View {
 
 struct AssistantMessageRow: View {
     let entry: TimelineEntry
+    let runtime: ThreadRuntime
     @State private var isHovering = false
 
     var body: some View {
         if case .assistant(let message) = entry.item.content {
+            let summary = turnSummary
             VStack(alignment: .leading, spacing: 2) {
                 MarkdownView(text: message.text)
-                CopyButton(text: message.text)
-                    .opacity(isHovering && !message.isStreaming ? 1 : 0)
-                    .offset(x: -4)
+                HStack(spacing: 8) {
+                    CopyButton(text: message.text)
+                    if let summary {
+                        Text(TurnEndRow.label(for: summary))
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .opacity(isHovering && !message.isStreaming ? 1 : 0)
+                .offset(x: -4)
             }
-            .onHover { isHovering = $0 }
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+            }
         }
+    }
+
+    /// The turn's summary, on the hover line of the turn's last reply only.
+    private var turnSummary: TurnSummary? {
+        guard let turnID = entry.turnID else { return nil }
+        let lastReply = runtime.entries.last { candidate in
+            guard candidate.turnID == turnID, case .assistant = candidate.kind else { return false }
+            return true
+        }
+        guard lastReply?.id == entry.id else { return nil }
+        for candidate in runtime.entries.reversed() {
+            if case .turnEnd(let summary) = candidate.item.content, summary.turnID == turnID { return summary }
+        }
+        return nil
     }
 }
 
@@ -487,11 +512,14 @@ struct TurnEndRow: View {
     let runtime: ThreadRuntime
 
     var body: some View {
-        if case .turnEnd(let summary) = entry.item.content {
+        if case .turnEnd(let summary) = entry.item.content, summary.filesChanged > 0 || !hasReply(summary) {
             HStack(spacing: 10) {
-                Text(Self.label(for: summary))
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                // A turn that replied shows its duration on the reply's hover line instead.
+                if !hasReply(summary) {
+                    Text(Self.label(for: summary))
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
                 if summary.filesChanged > 0 {
                     Button {
                         runtime.diffSelection = summary.turnID
@@ -512,7 +540,14 @@ struct TurnEndRow: View {
         }
     }
 
-    private static func label(for summary: TurnSummary) -> String {
+    private func hasReply(_ summary: TurnSummary) -> Bool {
+        runtime.entries.contains { candidate in
+            guard candidate.turnID == summary.turnID, case .assistant = candidate.kind else { return false }
+            return true
+        }
+    }
+
+    static func label(for summary: TurnSummary) -> String {
         let duration = RelativeTime.duration(summary.duration)
         return switch summary.status {
         case .completed, .running: "Worked for \(duration)"

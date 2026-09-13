@@ -8,7 +8,7 @@ struct ModelsSettingsPage: View {
         let settings = model.settings
         let registry = model.providers
         let pins = settings.modelList
-        VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+        LazyVStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
             ChromeSection(title: "Your models") {
                 ChromeCard {
                     if pins.isEmpty {

@@ -284,7 +284,7 @@ private struct ProvidersSettingsPage: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+        LazyVStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
             ForEach(ProviderKind.allCases) { provider in
                 ProviderSettingsSection(provider: provider)
             }

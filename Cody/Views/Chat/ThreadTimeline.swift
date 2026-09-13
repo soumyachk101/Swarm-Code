@@ -4,11 +4,11 @@ struct ThreadTimeline: View {
     @Environment(AppModel.self) private var model
     let runtime: ThreadRuntime
     let scrollChrome: ChromeScrollModel
+    let scrollState: TimelineScrollState
     let projectName: String?
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isPinnedToBottom = true
-    @State private var showsJumpButton = false
     @State private var bottomInset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
 
@@ -16,7 +16,10 @@ struct ThreadTimeline: View {
         let groups = TimelineGroup.build(runtime.entries, showReasoning: model.settings.showReasoning)
         if groups.isEmpty && !runtime.isRunning {
             NewThreadPrompt(projectName: projectName)
-                .onAppear { scrollChrome.update(travel: 0) }
+                .onAppear {
+                    scrollChrome.update(travel: 0)
+                    scrollState.showsJumpButton = false
+                }
         } else {
             timeline(groups)
         }
@@ -34,9 +37,19 @@ struct ThreadTimeline: View {
                         WorkingIndicator(startedAt: runtime.turnStartedAt ?? .now)
                     }
                 }
+                // The end of the conversation. While it is on screen the reader is at the latest message.
+                Color.clear
+                    .frame(height: 1)
+                    .onScrollVisibilityChange(threshold: 0.01) { isVisible in
+                        guard scrollState.showsJumpButton == isVisible else { return }
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) {
+                            scrollState.showsJumpButton = !isVisible
+                        }
+                    }
             }
-            .frame(maxWidth: 780, alignment: .leading)
-            .padding(.horizontal, 28)
+            // The same column as the composer, so messages line up with its edges.
+            .frame(maxWidth: 820, alignment: .leading)
+            .padding(.horizontal, 20)
             .padding(.top, Chrome.contentTopInset)
             .padding(.bottom, 18)
             // A short conversation still fills the pane, with its messages resting at the bottom.
@@ -54,30 +67,12 @@ struct ThreadTimeline: View {
             } else {
                 isPinnedToBottom = new.distanceFromBottom < 56
             }
-            // Only offered once there is real content above the fold and the reader has left the bottom.
-            let showsJump = new.distanceFromBottom > Self.jumpThreshold
-            if showsJump != showsJumpButton {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.78)) { showsJumpButton = showsJump }
-            }
         }
-        .overlay(alignment: .bottom) {
-            if showsJumpButton {
-                ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
-                    isPinnedToBottom = true
-                    withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
-                }
-                .padding(.bottom, bottomInset + 12)
-                .transition(
-                    .asymmetric(
-                        insertion: .scale(scale: 0.6).combined(with: .opacity).combined(with: .offset(y: 10)),
-                        removal: .scale(scale: 0.85).combined(with: .opacity).combined(with: .offset(y: 6))
-                    )
-                )
-            }
+        .onChange(of: scrollState.jumpRequest) {
+            isPinnedToBottom = true
+            withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
         }
     }
-
-    private static let jumpThreshold: CGFloat = 80
 
     private nonisolated static func visibleHeight(_ proxy: GeometryProxy) -> CGFloat {
         max(0, proxy.size.height - proxy.safeAreaInsets.top - proxy.safeAreaInsets.bottom)
@@ -153,7 +148,7 @@ private struct TimelineGroupView: View {
         case .single(let entry):
             switch entry.kind {
             case .user: UserMessageRow(entry: entry, runtime: runtime)
-            case .assistant: AssistantMessageRow(entry: entry)
+            case .assistant: AssistantMessageRow(entry: entry, runtime: runtime)
             case .reasoning: ReasoningRow(entry: entry)
             case .tool: WorkGroup(entries: [entry])
             case .plan: PlanCard(entry: entry, runtime: runtime)
@@ -188,5 +183,17 @@ private struct WorkingIndicator: View {
                 now = .now
             }
         }
+    }
+}
+
+/// Whether the reader has scrolled away from the latest message, shared with the composer that shows the jump button.
+@MainActor
+@Observable
+final class TimelineScrollState {
+    var showsJumpButton = false
+    private(set) var jumpRequest = 0
+
+    func jumpToLatest() {
+        jumpRequest += 1
     }
 }

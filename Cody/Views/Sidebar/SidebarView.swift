@@ -31,7 +31,7 @@ struct SidebarView: View {
             .padding(.top, 14)
 
             ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 1) {
+                LazyVStack(alignment: .leading, spacing: 1) {
                     if query.isEmpty {
                         projectList
                     } else {
