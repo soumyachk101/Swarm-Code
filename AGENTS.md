@@ -12,3 +12,8 @@
 - Cleanup only when the task is done/merged:
   `git worktree remove --force ~/.droppy-code/worktrees/agent-<slug>` + `git worktree prune`.
 - Never delete Jordy's main checkout, never touch another agent's worktree.
+
+## Merging (always via glab)
+
+- When Jordy says "merge", always merge via `glab`: push the branch, `glab mr create`, `glab mr merge`, then sync the checkout.
+- Never merge locally into `main` and never push straight to `main`.
