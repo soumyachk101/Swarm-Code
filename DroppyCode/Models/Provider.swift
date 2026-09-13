@@ -8,6 +8,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case grok
     case deepseek
     case meta
+    case devin
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: "Grok"
         case .deepseek: "DeepSeek"
         case .meta: "Meta"
+        case .devin: "Devin"
         }
     }
 
@@ -32,6 +34,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: "grok"
         case .deepseek: ""
         case .meta: ""
+        case .devin: "devin"
         }
     }
 
@@ -46,6 +49,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: "grok login"
         case .deepseek: "DEEPSEEK_API_KEY=sk-..."
         case .meta: "MODEL_API_KEY=..."
+        case .devin: "devin auth login"
         }
     }
 
@@ -58,6 +62,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: URL(string: "https://x.ai/cli")!
         case .deepseek: URL(string: "https://platform.deepseek.com/api_keys")!
         case .meta: URL(string: "https://dev.meta.ai/")!
+        case .devin: URL(string: "https://cli.devin.ai")!
         }
     }
 
@@ -96,7 +101,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var supportsImages: Bool { self != .grok }
 
-    var usesACP: Bool { self == .cursor || self == .opencode || self == .grok }
+    var usesACP: Bool { self == .cursor || self == .opencode || self == .grok || self == .devin }
 }
 
 enum RuntimeMode: String, Codable, CaseIterable, Identifiable, Sendable {

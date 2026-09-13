@@ -5,8 +5,6 @@ struct UsagePanel: View {
     @Environment(AppModel.self) private var model
     let usage: ContextUsage?
     let provider: ProviderKind
-    let rate: Double?
-    let live: Bool
 
     var body: some View {
         let registry = model.providers
@@ -27,22 +25,8 @@ struct UsagePanel: View {
                     .padding(.top, 10)
             }
 
-            if let rate {
-                if showsContext {
-                    Divider().padding(.vertical, 14)
-                }
-                HStack {
-                    Text(live ? "Tokens per second · live" : "Tokens per second · last turn")
-                        .foregroundStyle(Chrome.secondaryText)
-                    Spacer(minLength: 12)
-                    Text(verbatim: "\(Int(rate)) tok/s")
-                        .foregroundStyle(Chrome.secondaryText)
-                        .monospacedDigit()
-                }
-                .font(.system(size: 13))
-            }
             if showsLimits {
-                if showsContext || rate != nil {
+                if showsContext {
                     Divider().padding(.vertical, 14)
                 }
                 let limits = registry.planLimits[provider]

@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The queued steering prompts as a tab rising from the top of the chat box. The composer draws
 /// over its lower edge, so it reads as part of the box, exactly like the changes tab. Each row
@@ -10,8 +11,12 @@ struct FollowUpQueueTab: View {
 
     let runtime: ThreadRuntime
 
-    @State private var editingPrompt: FollowUpPrompt?
-    @State private var preview = AttachmentPreviewCoordinator()
+    /// Whether the queued rows are folded away under the title.
+    @State private var isCollapsed = false
+
+    /// The prompt being dragged, and each row's height for above/below detection.
+    @State private var draggingID: UUID?
+    @State private var rowHeights: [UUID: CGFloat] = [:]
 
     var body: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12, style: .continuous)
@@ -24,53 +29,74 @@ struct FollowUpQueueTab: View {
                     .foregroundStyle(Chrome.primaryText.opacity(0.9))
                 Text(verbatim: "queued")
                     .foregroundStyle(Chrome.secondaryText)
+                Spacer(minLength: 8)
+                Button {
+                    withAnimation(Chrome.panelSlide) { isCollapsed.toggle() }
+                } label: {
+                    Image(systemName: "chevron.up")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .frame(width: 22, height: 22)
+                        .contentShape(.rect)
+                        .rotationEffect(.degrees(isCollapsed ? 180 : 0))
+                }
+                .buttonStyle(.plain)
+                .help(isCollapsed ? "Expand queued follow-ups" : "Collapse queued follow-ups")
+                .accessibilityLabel(Text(isCollapsed ? "Expand queued follow-ups" : "Collapse queued follow-ups"))
             }
             .font(.system(size: 12, weight: .medium).monospacedDigit())
             .accessibilityLabel(Text(verbatim: runtime.followUps.count == 1 ? "1 queued follow-up" : "\(runtime.followUps.count) queued follow-ups"))
 
-            Divider().opacity(0.5)
+            if !isCollapsed {
+                Divider().opacity(0.5)
 
-            VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(runtime.followUps.enumerated()), id: \.element.id) { index, prompt in
                     FollowUpRow(
                         position: index + 1,
                         prompt: prompt,
-                        isFirst: index == 0,
-                        isLast: index == runtime.followUps.count - 1,
                         runtime: runtime,
-                        preview: preview,
-                        onEdit: { editingPrompt = prompt }
+                        dragging: $draggingID,
+                        rowHeight: rowHeights[prompt.id] ?? 44,
+                        reportHeight: { rowHeights[prompt.id] = $0 },
+                        onHoverMove: { dragged, neighbor, placeAfter in
+                            withAnimation(Chrome.panelSlide) {
+                                runtime.moveFollowUp(dragged, to: neighbor, placeAfter: placeAfter)
+                            }
+                        },
+                        onDropEnd: { draggingID = nil }
                     )
                     if prompt.id != runtime.followUps.last?.id {
                         Divider().opacity(0.35)
                     }
                 }
+                }
+                .transition(.opacity)
             }
         }
         .padding(.horizontal, 12)
         .padding(.top, 7)
         .padding(.bottom, 7 + Self.overlap)
         .frame(maxWidth: 560)
-        .background { shape.fill(Chrome.overlay(0.07)) }
+        .glassEffect(.regular, in: shape)
         .contentShape(shape)
-        .onChange(of: runtime.followUps) {
-            preview.retire(except: Set(runtime.followUps.flatMap(\.attachments).map(\.id)))
-        }
-        .onDisappear { preview.close() }
-        .sheet(item: $editingPrompt) { prompt in
-            FollowUpEditSheet(prompt: prompt, runtime: runtime)
-        }
     }
 }
 
 private struct FollowUpRow: View {
     let position: Int
     let prompt: FollowUpPrompt
-    let isFirst: Bool
-    let isLast: Bool
     let runtime: ThreadRuntime
-    let preview: AttachmentPreviewCoordinator
-    let onEdit: () -> Void
+    @Binding var dragging: UUID?
+    let rowHeight: CGFloat
+    let reportHeight: (CGFloat) -> Void
+    let onHoverMove: (UUID, UUID, Bool) -> Void
+    let onDropEnd: () -> Void
+
+    /// One preview panel for this row's thumbnails, so every photo opens.
+    @State private var preview = AttachmentPreviewCoordinator()
+    /// The editor popover for this row, anchored to its pencil button.
+    @State private var editor = FollowUpEditCoordinator()
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -80,6 +106,27 @@ private struct FollowUpRow: View {
                 .frame(width: 14, alignment: .trailing)
                 .padding(.top, 1)
                 .accessibilityHidden(true)
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Chrome.secondaryText.opacity(0.7))
+                .frame(width: 18, height: 22)
+                .contentShape(.rect)
+                .onDrag {
+                    dragging = prompt.id
+                    return NSItemProvider(object: prompt.id.uuidString as NSString)
+                }
+                .accessibilityLabel(Text("Drag to reorder"))
+            if !prompt.attachments.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(prompt.attachments) { attachment in
+                        AttachmentThumbnail(attachment: attachment, size: 28, preview: preview)
+                    }
+                }
+                .background {
+                    AttachmentAnchorCapture { preview.setAnchor($0) }
+                }
+                .onDisappear { preview.close() }
+            }
             VStack(alignment: .leading, spacing: 4) {
                 if prompt.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text(verbatim: attachmentOnlyLabel)
@@ -95,31 +142,39 @@ private struct FollowUpRow: View {
                         .truncationMode(.tail)
                         .textSelection(.enabled)
                 }
-                if !prompt.attachments.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(prompt.attachments) { attachment in
-                            AttachmentThumbnail(attachment: attachment, size: 28, preview: preview)
-                        }
-                    }
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 4)
             HStack(spacing: 0) {
-                QueueIconButton(symbol: "chevron.up", help: "Move earlier", isEnabled: !isFirst) {
-                    runtime.moveFollowUp(prompt.id, earlier: true)
-                }
-                QueueIconButton(symbol: "chevron.down", help: "Move later", isEnabled: !isLast) {
-                    runtime.moveFollowUp(prompt.id, earlier: false)
-                }
                 QueueIconButton(symbol: "pencil", help: "Edit follow-up") {
-                    onEdit()
+                    editor.show(prompt: prompt, runtime: runtime)
+                }
+                .background {
+                    AttachmentAnchorCapture { editor.setAnchor($0) }
                 }
                 QueueIconButton(symbol: "trash", help: "Delete follow-up") {
                     runtime.removeFollowUp(prompt.id)
                 }
             }
             .fixedSize()
+        }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { reportHeight($0) }
+        .onDrop(
+            of: [.plainText],
+            delegate: FollowUpDropDelegate(
+                promptID: prompt.id,
+                rowHeight: rowHeight,
+                dragging: $dragging,
+                onHoverMove: onHoverMove,
+                onEnd: onDropEnd
+            )
+        )
+        .onChange(of: prompt.attachments) {
+            preview.retire(except: Set(prompt.attachments.map(\.id)))
+        }
+        .onDisappear {
+            preview.close()
+            editor.close()
         }
     }
 
@@ -131,6 +186,33 @@ private struct FollowUpRow: View {
         if files == 1 { parts.append("1 file") } else if files > 1 { parts.append("\(files) files") }
         guard !parts.isEmpty else { return "Empty follow-up" }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// Reorders queued follow-ups by dragging their grip. The upper half of a row
+/// drops above it, the lower half below; hovering moves the prompt live, so
+/// the list reshuffles smoothly under the dragged row instead of jumping on drop.
+private struct FollowUpDropDelegate: DropDelegate {
+    let promptID: UUID
+    let rowHeight: CGFloat
+    @Binding var dragging: UUID?
+    let onHoverMove: (UUID, UUID, Bool) -> Void
+    let onEnd: () -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        guard let dragging else { return false }
+        return dragging != promptID
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        guard let dragging, dragging != promptID else { return nil }
+        onHoverMove(dragging, promptID, info.location.y > rowHeight / 2)
+        return DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        onEnd()
+        return true
     }
 }
 
@@ -155,19 +237,74 @@ private struct QueueIconButton: View {
     }
 }
 
+/// The follow-up editor as an anchored popover instead of a modal sheet, so
+/// editing never takes over the window. Application-defined: it stays open
+/// through file picks and outside clicks (no lost edits) and closes on Save,
+/// Cancel or Escape, or when its row goes away.
+@MainActor
+final class FollowUpEditCoordinator: NSObject {
+    private let popover = NSPopover()
+    private var anchor: WeakView?
+    private var keyMonitor: Any?
+
+    override init() {
+        super.init()
+        popover.behavior = .applicationDefined
+        popover.animates = true
+    }
+
+    /// The pencil button's own view. Captured from the button's background, so
+    /// it is always the live view.
+    func setAnchor(_ view: NSView) {
+        anchor = WeakView(view)
+    }
+
+    func show(prompt: FollowUpPrompt, runtime: ThreadRuntime) {
+        guard let anchor = anchor?.value, anchor.window != nil else { return }
+        popover.contentViewController = NSHostingController(rootView: FollowUpEditor(
+            prompt: prompt,
+            runtime: runtime,
+            onDone: { [weak self] in self?.close() }
+        ))
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+        startKeyMonitor()
+    }
+
+    func close() {
+        stopKeyMonitor()
+        if popover.isShown { popover.performClose(nil) }
+    }
+
+    private func startKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event } // Escape
+            self?.close()
+            return nil
+        }
+    }
+
+    private func stopKeyMonitor() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        self.keyMonitor = nil
+    }
+}
+
 /// Edits one queued follow-up, text and attachments included.
-private struct FollowUpEditSheet: View {
-    @Environment(\.dismiss) private var dismiss
+private struct FollowUpEditor: View {
     let prompt: FollowUpPrompt
     let runtime: ThreadRuntime
+    let onDone: () -> Void
 
     @State private var text: String
     @State private var attachments: [Attachment]
     @State private var preview = AttachmentPreviewCoordinator()
+    @FocusState private var editorFocused: Bool
 
-    init(prompt: FollowUpPrompt, runtime: ThreadRuntime) {
+    init(prompt: FollowUpPrompt, runtime: ThreadRuntime, onDone: @escaping () -> Void) {
         self.prompt = prompt
         self.runtime = runtime
+        self.onDone = onDone
         _text = State(initialValue: prompt.text)
         _attachments = State(initialValue: prompt.attachments)
     }
@@ -181,6 +318,7 @@ private struct FollowUpEditSheet: View {
                     .font(.system(size: 13))
                     .scrollContentBackground(.hidden)
                     .padding(8)
+                    .focused($editorFocused)
                 if text.isEmpty {
                     Text("Steer the agent…")
                         .foregroundStyle(Chrome.secondaryText)
@@ -193,12 +331,12 @@ private struct FollowUpEditSheet: View {
             .background(Chrome.overlay(0.05), in: .rect(cornerRadius: 12, style: .continuous))
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    // Same dead-space reservation as the composer strip: the delete badge
-                    // overhangs top-trailing, and without it only the last photo stays deletable.
-                    HStack(spacing: 2) {
+                    // The delete badge sits fully inside the thumbnail's top-trailing
+                    // corner: nothing overhangs into the next cell, so no later
+                    // sibling can cover it and every photo stays deletable.
+                    HStack(spacing: 8) {
                         ForEach(attachments) { attachment in
                             AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
-                                .padding(.trailing, 14)
                                 .overlay(alignment: .topTrailing) {
                                     Button {
                                         attachments.removeAll { $0.id == attachment.id }
@@ -206,15 +344,19 @@ private struct FollowUpEditSheet: View {
                                         Image(systemName: "xmark.circle.fill")
                                             .symbolRenderingMode(.palette)
                                             .foregroundStyle(.white, .black.opacity(0.6))
+                                            .padding(4)
                                     }
                                     .buttonStyle(.plain)
-                                    .offset(x: 6, y: -6)
+                                    .padding(.top, 2)
+                                    .padding(.trailing, 2)
                                     .accessibilityLabel(Text("Remove \(attachment.name)"))
                                 }
                         }
                     }
                     .padding(.top, 6)
-                    .padding(.trailing, 6)
+                }
+                .background {
+                    AttachmentAnchorCapture { preview.setAnchor($0) }
                 }
             }
             Button {
@@ -226,11 +368,11 @@ private struct FollowUpEditSheet: View {
             .disabled(attachments.count >= 8)
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
+                Button("Cancel", role: .cancel) { onDone() }
                     .buttonStyle(.glass)
                 Button("Save") {
                     runtime.updateFollowUp(prompt.id, text: text, attachments: attachments)
-                    dismiss()
+                    onDone()
                 }
                 .buttonStyle(.glassProminent)
                 .disabled(isEmpty)
@@ -238,6 +380,7 @@ private struct FollowUpEditSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .onAppear { editorFocused = true }
         .onChange(of: attachments) {
             preview.retire(except: Set(attachments.map(\.id)))
         }

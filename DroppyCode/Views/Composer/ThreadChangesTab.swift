@@ -1,16 +1,15 @@
+import AppKit
 import SwiftUI
 
 /// The thread's changes as a small tab rising from the top of the chat box. The composer draws
-/// over its lower edge, so it reads as part of the box. Clicking it opens the changes panel.
+/// over its lower edge, so it reads as part of the box. Clicking it opens the changes popover.
 struct ThreadChangesTab: View {
     static let overlap: CGFloat = 14
 
     let stats: ThreadRuntime.ChangeStats
-    /// Whether the changes panel is open. The tab stays lit while it is, like ChromeIconButton.
-    let isActive: Bool
+    /// Receives the tab's own view, so the popover can anchor to it.
+    let anchor: (NSView) -> Void
     let action: () -> Void
-
-    @State private var isHovering = false
 
     var body: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12, style: .continuous)
@@ -30,23 +29,14 @@ struct ThreadChangesTab: View {
             .padding(.horizontal, 12)
             .padding(.top, 7)
             .padding(.bottom, 7 + Self.overlap)
-            .background {
-                // The highlight covers hovering and the open panel together on purpose: opening
-                // the panel slides the tab out from under the cursor, and the hover exit firing
-                // mid-glide must not restyle the fill in a later transaction — that snaps the tab
-                // to its landing spot instead of gliding. With the panel counted as lit, the exit
-                // changes nothing and the glide survives; opening from the top-right button lights
-                // the tab inside the panel-slide transaction itself, so it fades in smoothly.
-                shape.fill(Chrome.overlay(isHovering || isActive ? 0.1 : 0.07))
-                    .animation(Chrome.hover, value: isHovering)
-            }
             .contentShape(shape)
         }
         .buttonStyle(.plain)
-        .fixedSize()
-        .onHover { hovering in
-            if hovering != isHovering { isHovering = hovering }
+        .glassEffect(.regular.interactive(), in: shape)
+        .background {
+            AttachmentAnchorCapture(onResolve: anchor)
         }
+        .fixedSize()
         .help("Show this thread's changes")
         .accessibilityLabel(Text(verbatim: "\(stats.files) files changed, \(stats.additions) added, \(stats.deletions) removed"))
     }
