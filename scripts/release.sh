@@ -84,7 +84,11 @@ details=$(codesign -dv --verbose=4 "$APP" 2>&1)
 grep -q "Authority=Developer ID Application" <<< "$details"
 grep -q "flags=.*runtime" <<< "$details"
 grep -q "Timestamp=" <<< "$details"
-lipo -archs "$APP/Contents/MacOS/$APP_NAME"
+archs=$(lipo -archs "$APP/Contents/MacOS/$APP_NAME")
+if [ "$archs" != "arm64" ]; then
+  echo "Expected an Apple silicon binary, got: $archs"
+  exit 1
+fi
 
 step "Notarizing the app"
 ditto -c -k --keepParent "$APP" "$BUILD/T3Code.zip"

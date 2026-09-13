@@ -28,7 +28,7 @@ Remote access, the mobile apps, T3 Connect, cloud sync, telemetry and the web cl
 
 ## Requirements
 
-- macOS 26 or later
+- A Mac with Apple silicon running macOS 26 or later
 - At least one provider installed and signed in, for example `codex login` or `claude auth login`
 - Git, plus `gh` or `glab` for pull requests
 
@@ -44,7 +44,7 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 
 ## Release
 
-`scripts/release.sh` archives a universal build, signs it with Developer ID, notarizes and staples both the app and a disk image, and checks Gatekeeper. The disk image lands in `build/`.
+`scripts/release.sh` archives an Apple silicon build, signs it with Developer ID, notarizes and staples both the app and a disk image, and checks Gatekeeper. The disk image lands in `build/`.
 
 ## Layout
 
