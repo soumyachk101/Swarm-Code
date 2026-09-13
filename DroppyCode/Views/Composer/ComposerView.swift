@@ -52,6 +52,19 @@ struct ComposerView: View {
     @State private var showingRecents = false
     @State private var fileIndex = FileIndex()
 
+    private static let minComposerHeight: CGFloat = 20
+    private static let maxComposerLines = 5
+    private static var maxComposerHeight: CGFloat {
+        let font = NSFont.systemFont(ofSize: 14)
+        let line = ceil(font.ascender - font.descender + font.leading)
+        // Matches ComposerTextView's textContainerInset.height * 2.
+        return line * CGFloat(maxComposerLines) + 4
+    }
+
+    private var composerHeight: CGFloat {
+        min(max(textHeight, Self.minComposerHeight), Self.maxComposerHeight)
+    }
+
     var body: some View {
         let thread = model.thread(runtime.threadID)
         VStack(alignment: .leading, spacing: 8) {
@@ -73,7 +86,8 @@ struct ComposerView: View {
                     if !controller.isClickInsideSuggestions() { suggestions = SuggestionState() }
                 }
             )
-            .frame(height: min(max(textHeight, 20), 220))
+            .frame(height: composerHeight)
+            .animation(.easeOut(duration: 0.18), value: composerHeight)
 
             if let thread {
                 HStack(spacing: 2) {
