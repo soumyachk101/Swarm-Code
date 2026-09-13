@@ -66,7 +66,12 @@ struct ComposerView: View {
                 onKey: handleKey,
                 onFiles: attach(urls:),
                 onImage: attach(imageData:),
-                onCursorChange: cursorMoved(to:)
+                onCursorChange: cursorMoved(to:),
+                onBlur: {
+                    // Clicking a row focuses the popover; only dismiss when
+                    // focus truly left both the text and the suggestions.
+                    if !controller.isClickInsideSuggestions() { suggestions = SuggestionState() }
+                }
             )
             .frame(height: min(max(textHeight, 20), 220))
 
@@ -107,25 +112,15 @@ struct ComposerView: View {
         .padding(.top, 12)
         .padding(.bottom, 9)
         .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-        .popover(
-            isPresented: Binding(
-                get: { suggestions.isVisible },
-                set: { if !$0 { suggestions = SuggestionState() } }
-            ),
-            arrowEdge: .top
-        ) {
-            PopoverMenu {
-                PopoverSectionHeader(suggestions.kind == .command ? "Commands" : "Files")
-                ForEach(Array(suggestions.items.enumerated()), id: \.element.id) { index, item in
-                    SuggestionPopoverRow(
-                        item: item,
-                        isSelected: index == suggestions.selected,
-                        select: { suggestions.selected = index },
-                        pick: { pick(item) }
-                    )
-                }
+        .onChange(of: suggestions) { _, new in
+            if new.isVisible {
+                controller.showSuggestions(AnyView(suggestionMenu()), itemCount: new.items.count)
+            } else {
+                controller.hideSuggestions()
             }
         }
+        .onDisappear { controller.hideSuggestions() }
+        .onChange(of: runtime.threadID) { _, _ in controller.hideSuggestions() }
         .task(id: workingDirectory(for: thread)) {
             if let directory = workingDirectory(for: thread) { fileIndex.prepare(directory) }
         }
@@ -134,6 +129,22 @@ struct ComposerView: View {
     private func workingDirectory(for thread: ChatThread?) -> String? {
         guard let thread, let project = model.project(thread.projectID) else { return nil }
         return thread.worktreePath ?? project.path
+    }
+
+    /// The slash/@ list hosted in a caret-anchored NSPopover (see ComposerController).
+    @ViewBuilder
+    private func suggestionMenu() -> some View {
+        PopoverMenu {
+            PopoverSectionHeader(suggestions.kind == .command ? "Commands" : "Files")
+            ForEach(Array(suggestions.items.enumerated()), id: \.element.id) { index, item in
+                SuggestionPopoverRow(
+                    item: item,
+                    isSelected: index == suggestions.selected,
+                    select: { suggestions.selected = index },
+                    pick: { pick(item) }
+                )
+            }
+        }
     }
 
     private func placeholder(for thread: ChatThread?) -> String {

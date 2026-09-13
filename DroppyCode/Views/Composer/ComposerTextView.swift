@@ -13,6 +13,8 @@ enum ComposerKey {
 @MainActor
 final class ComposerController {
     fileprivate weak var textView: ComposerNSTextView?
+    private var suggestionPopover: NSPopover?
+    private var suggestionHost: NSHostingController<AnyView>?
 
     var cursorLocation: Int {
         textView?.selectedRange().location ?? 0
@@ -30,6 +32,69 @@ final class ComposerController {
         textView.didChangeText()
         textView.setSelectedRange(NSRange(location: range.location + (replacement as NSString).length, length: 0))
     }
+
+    /// Shows the slash/@ suggestions directly above the caret. A SwiftUI
+    /// `.popover` anchors to the whole composer bubble, so it lands centered
+    /// (or flipped to the side) instead of where the user is typing.
+    func showSuggestions(_ content: AnyView, itemCount: Int) {
+        let popover: NSPopover
+        if let existing = suggestionPopover {
+            popover = existing
+        } else {
+            popover = NSPopover()
+            popover.behavior = .applicationDefined
+            popover.animates = true
+            suggestionPopover = popover
+        }
+        if let host = suggestionHost {
+            host.rootView = content
+        } else {
+            let host = NSHostingController(rootView: content)
+            suggestionHost = host
+            popover.contentViewController = host
+        }
+        guard let textView = textView, textView.window != nil else { return }
+        // Fixed width matching the old menu; height fits the rows so the
+        // ScrollView inside never needs to scroll for the capped item count.
+        let height = min(340, 44 + CGFloat(max(itemCount, 1)) * 26)
+        popover.contentSize = NSSize(width: 340, height: height)
+        popover.show(relativeTo: caretRect(in: textView), of: textView, preferredEdge: .maxY)
+        // The popover must never steal typing focus.
+        textView.window?.makeFirstResponder(textView)
+    }
+
+    func hideSuggestions() {
+        suggestionPopover?.performClose(nil)
+    }
+
+    var isShowingSuggestions: Bool {
+        suggestionPopover?.isShown == true
+    }
+
+    /// True when the current click landed inside the suggestions popover,
+    /// so losing text focus to pick a row must not dismiss the list first.
+    func isClickInsideSuggestions() -> Bool {
+        guard let popover = suggestionPopover, popover.isShown,
+              let window = suggestionHost?.view.window else { return false }
+        return window.frame.contains(NSEvent.mouseLocation)
+    }
+
+    private func caretRect(in textView: NSTextView) -> NSRect {
+        let selected = textView.selectedRange()
+        let screenRect = textView.firstRect(forCharacterRange: selected, actualRange: nil)
+        if let window = textView.window, screenRect.width >= 0, screenRect.height > 0 {
+            let windowRect = window.convertFromScreen(screenRect)
+            var rect = textView.convert(windowRect, from: nil)
+            if rect.width < 1 { rect.size.width = 1 }
+            if rect.height < 4 { rect.size.height = 18 }
+            return rect
+        }
+        // Fallback: leading edge of the visible text.
+        var rect = textView.visibleRect
+        rect.origin.x += 4
+        rect.size = NSSize(width: 1, height: 18)
+        return rect
+    }
 }
 
 final class ComposerNSTextView: NSTextView {
@@ -39,11 +104,18 @@ final class ComposerNSTextView: NSTextView {
     var onFiles: (([URL]) -> Void)?
     var onImage: ((Data) -> Void)?
     var onWidthChange: (() -> Void)?
+    var onResign: (() -> Void)?
 
     override func setFrameSize(_ newSize: NSSize) {
         let widthChanged = abs(newSize.width - frame.width) > 0.5
         super.setFrameSize(newSize)
         if widthChanged { onWidthChange?() }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
+        if ok { onResign?() }
+        return ok
     }
 
     private static let imageTypes: [NSPasteboard.PasteboardType] = [.png, .tiff, NSPasteboard.PasteboardType("public.jpeg"), NSPasteboard.PasteboardType("public.heic")]
@@ -136,6 +208,7 @@ struct ComposerTextView: NSViewRepresentable {
     var onFiles: ([URL]) -> Void
     var onImage: (Data) -> Void
     var onCursorChange: (Int) -> Void
+    var onBlur: () -> Void = {}
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -182,6 +255,9 @@ struct ComposerTextView: NSViewRepresentable {
         textView.onWidthChange = { [weak coordinator] in
             Task { @MainActor in coordinator?.updateHeight() }
         }
+        textView.onResign = { [weak coordinator] in
+            Task { @MainActor in coordinator?.parent.onBlur() }
+        }
         Task { @MainActor in
             textView.window?.makeFirstResponder(textView)
             coordinator.updateHeight()
@@ -194,6 +270,9 @@ struct ComposerTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? ComposerNSTextView else { return }
         textView.onFiles = onFiles
         textView.onImage = onImage
+        textView.onResign = { [weak coordinator = context.coordinator] in
+            Task { @MainActor in coordinator?.parent.onBlur() }
+        }
         if textView.placeholder != placeholder { textView.placeholder = placeholder }
         if !textView.hasMarkedText(), textView.string != text {
             textView.string = text
