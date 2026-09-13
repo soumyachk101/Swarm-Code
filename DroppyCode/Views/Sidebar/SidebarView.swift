@@ -348,7 +348,7 @@ private struct ThreadRow: View {
     let onDelete: () -> Void
 
     @State private var isMenuPresented = false
-    @State private var windowFrame: CGRect = .zero
+    @State private var windowFrame = FrameHolder()
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -379,7 +379,7 @@ private struct ThreadRow: View {
                 }
             }
         )
-        .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame = $0 }
+        .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame.frame = $0 }
         .contextMenu { RowActionMenuButtons(actions: actions) }
     }
 
@@ -388,7 +388,7 @@ private struct ThreadRow: View {
     }
 
     private func archiveWithGenie() {
-        GenieAnimator.shared.launch(title: thread.title, subtitle: nil, frame: windowFrame, colorScheme: colorScheme)
+        GenieAnimator.shared.launch(title: thread.title, subtitle: nil, frame: windowFrame.frame, colorScheme: colorScheme)
         withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
     }
 
@@ -542,7 +542,7 @@ private struct ActivityThreadRow: View {
 
     @State private var isHovering = false
     @State private var isMenuPresented = false
-    @State private var windowFrame: CGRect = .zero
+    @State private var windowFrame = FrameHolder()
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -600,7 +600,7 @@ private struct ActivityThreadRow: View {
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
-        .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame = $0 }
+        .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame.frame = $0 }
         .contextMenu { RowActionMenuButtons(actions: actions) }
         .animation(Chrome.hover, value: isSelected)
     }
@@ -610,7 +610,7 @@ private struct ActivityThreadRow: View {
     }
 
     private func archiveWithGenie() {
-        GenieAnimator.shared.launch(title: thread.title, subtitle: projectName, frame: windowFrame, colorScheme: colorScheme)
+        GenieAnimator.shared.launch(title: thread.title, subtitle: projectName, frame: windowFrame.frame, colorScheme: colorScheme)
         withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
     }
 }
@@ -634,4 +634,10 @@ private struct ActivityStatus: View {
                 .padding(.trailing, 4)
         }
     }
+}
+
+/// A row's latest frame, kept out of SwiftUI's observation: scrolling updates it on every frame,
+/// and only an archive tap ever reads it.
+private final class FrameHolder {
+    var frame: CGRect = .zero
 }

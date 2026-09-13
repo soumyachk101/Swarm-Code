@@ -140,8 +140,8 @@ struct AssistantMessageRow: View {
             return true
         }
         guard lastReply?.id == entry.id else { return nil }
-        for candidate in runtime.entries.reversed() {
-            if case .turnEnd(let summary) = candidate.item.content, summary.turnID == turnID { return summary }
+        for candidate in runtime.entries.reversed() where candidate.kind == .turnEnd && candidate.turnID == turnID {
+            if case .turnEnd(let summary) = candidate.item.content { return summary }
         }
         return nil
     }

@@ -71,7 +71,7 @@ struct ModelsSettingsPage: View {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed != appliedQuery else { return }
         if !trimmed.isEmpty {
-            try? await Task.sleep(for: .milliseconds(110))
+            try? await Task.sleep(for: .milliseconds(60))
             guard !Task.isCancelled else { return }
         }
         withAnimation(.softAppear) { appliedQuery = trimmed }

@@ -98,8 +98,11 @@ struct ThreadTimeline: View {
     /// The running turn's thinking, for the working indicator to reveal.
     private var currentThinking: [String] {
         guard let turnID = runtime.entries.last.flatMap(\.turnID) else { return [] }
+        // Kind and turn are fixed at creation; checking them first keeps the timeline from
+        // observing, and re-rendering on, every streaming entry of the turn.
         return runtime.entries.compactMap { entry in
-            guard entry.turnID == turnID, case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { return nil }
+            guard entry.kind == .reasoning, entry.turnID == turnID,
+                  case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { return nil }
             return block.text
         }
     }

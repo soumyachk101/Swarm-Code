@@ -9,6 +9,7 @@ struct MarkdownView: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 MarkdownBlockView(block: block)
+                    .equatable()
                     .transition(.softAppear)
             }
         }
@@ -18,8 +19,13 @@ struct MarkdownView: View {
     }
 }
 
-struct MarkdownBlockView: View {
+struct MarkdownBlockView: View, Equatable {
     let block: MarkdownBlock
+
+    /// Blocks compare by content, so a finished block is skipped while the reply keeps streaming.
+    nonisolated static func == (lhs: MarkdownBlockView, rhs: MarkdownBlockView) -> Bool {
+        lhs.block == rhs.block
+    }
 
     var body: some View {
         switch block {
@@ -105,12 +111,22 @@ struct InlineText: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Parsed inline Markdown by source. A streaming reply re-renders many times while most of its
+    /// paragraphs never change, so each distinct string is parsed once.
+    @MainActor private static var cache: [String: AttributedString] = [:]
+    private static let cacheLimit = 600
+
+    @MainActor
     static func attributed(_ source: String) -> AttributedString {
+        if let cached = cache[source] { return cached }
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
-        return (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
+        let parsed = (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
+        if cache.count >= cacheLimit { cache.removeAll(keepingCapacity: true) }
+        cache[source] = parsed
+        return parsed
     }
 }
 
