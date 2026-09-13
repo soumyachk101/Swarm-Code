@@ -435,11 +435,17 @@ private struct SendButton: View {
 private struct DraftAttachments: View {
     @Binding var attachments: [Attachment]
 
+    /// Same shape as the chat strip: one popover keyed by the tapped
+    /// attachment, so every draft photo previews, not just the latest.
+    @State private var previewAttachment: Attachment?
+
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 ForEach(attachments) { attachment in
-                    AttachmentThumbnail(attachment: attachment, size: 48)
+                    AttachmentThumbnail(attachment: attachment, size: 48) {
+                        previewAttachment = attachment
+                    }
                         .overlay(alignment: .topTrailing) {
                             Button {
                                 attachments.removeAll { $0.id == attachment.id }
@@ -455,6 +461,9 @@ private struct DraftAttachments: View {
             }
             .padding(.top, 6)
             .padding(.trailing, 6)
+        }
+        .popover(item: $previewAttachment, arrowEdge: .bottom) { attachment in
+            AttachmentLargePreview(attachment: attachment)
         }
     }
 }
