@@ -115,36 +115,180 @@ struct MarkdownBlockView: View, Equatable {
     }
 }
 
+/// Pretty linktitels + favicons voor chat-markdown.
+///
+/// Kale URL's (`https://…`) kwamen volledig in beeld. Afspraak: toon de titel
+/// (expliciete `[titel](url)` of host+pad zonder scheme) met de favicon ervoor.
+enum RichLink {
+    @MainActor private static var prettyCache: [String: AttributedString] = [:]
+    private static let prettyCacheLimit = 600
+
+    @MainActor
+    static func prettyAttributed(_ source: String) -> AttributedString {
+        if let hit = prettyCache[source] { return hit }
+        let base = baseAttributed(source)
+        var result = AttributedString()
+        for run in base.runs {
+            let slice = AttributedString(base[run.range])
+            if let url = run.link {
+                let display = String(slice.characters)
+                if isBareDisplay(display, url: url) {
+                    var replacement = AttributedString(prettyTitle(for: url))
+                    replacement.link = url
+                    if let intent = run.inlinePresentationIntent {
+                        replacement.inlinePresentationIntent = intent
+                    }
+                    result.append(replacement)
+                } else {
+                    result.append(slice)
+                }
+            } else {
+                result.append(slice)
+            }
+        }
+        if prettyCache.count >= prettyCacheLimit { prettyCache.removeAll(keepingCapacity: true) }
+        prettyCache[source] = result
+        return result
+    }
+
+    @MainActor
+    static func linkHosts(for source: String) -> [String] {
+        let pretty = prettyAttributed(source)
+        var hosts: [String] = []
+        var seen = Set<String>()
+        for run in pretty.runs {
+            if let host = run.link?.host?.lowercased(), !host.isEmpty, seen.insert(host).inserted {
+                hosts.append(host)
+            }
+        }
+        return hosts
+    }
+
+    static func prettyTitle(for url: URL) -> String {
+        guard var host = url.host?.lowercased(), !host.isEmpty else {
+            return url.absoluteString
+        }
+        if host.hasPrefix("www.") { host.removeFirst(4) }
+        var path = url.path.removingPercentEncoding ?? url.path
+        if path == "/" { path = "" }
+        if path.hasSuffix("/"), path.count > 1 { path.removeLast() }
+        var title = host + path
+        if title.count > 64 {
+            title = String(title.prefix(32)) + "…" + String(title.suffix(27))
+        }
+        return title
+    }
+
+    static func isBareDisplay(_ display: String, url: URL) -> Bool {
+        var d = display.trimmingCharacters(in: .whitespacesAndNewlines)
+        if d.hasPrefix("<"), d.hasSuffix(">"), d.count >= 2 {
+            d = String(d.dropFirst().dropLast())
+        }
+        while let last = d.last, ".,;:!?)]}>".contains(last) { d.removeLast() }
+        if d == url.absoluteString { return true }
+        if (d.hasPrefix("http://") || d.hasPrefix("https://")) && !d.contains(" ") && !d.contains("\n") {
+            return true
+        }
+        return false
+    }
+
+    private static func baseAttributed(_ source: String) -> AttributedString {
+        let options = AttributedString.MarkdownParsingOptions(
+            interpretedSyntax: .inlineOnlyPreservingWhitespace,
+            failurePolicy: .returnPartiallyParsedIfPossible
+        )
+        return (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
+    }
+}
+
+@MainActor
+enum FaviconCache {
+    private static var memory: [String: NSImage] = [:]
+
+    static func cached(host: String) -> NSImage? {
+        memory[host.lowercased()]
+    }
+
+    static func image(for host: String) async -> NSImage? {
+        let key = host.lowercased()
+        if let hit = memory[key] { return hit }
+        guard let url = URL(string: "https://www.google.com/s2/favicons?domain=\(key)&sz=64") else { return nil }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let raw = NSImage(data: data) else { return nil }
+            let resized = resizedIcon(raw)
+            memory[key] = resized
+            if memory.count > 300 { memory.removeAll(keepingCapacity: true) }
+            return resized
+        } catch {
+            return nil
+        }
+    }
+
+    private static func resizedIcon(_ image: NSImage) -> NSImage {
+        let size = NSSize(width: 14, height: 14)
+        let out = NSImage(size: size)
+        out.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(origin: .zero, size: size),
+                   from: NSRect(origin: .zero, size: image.size),
+                   operation: .copy, fraction: 1)
+        out.unlockFocus()
+        return out
+    }
+}
+
+@MainActor
+enum RichInlineBuilder {
+    static func text(for source: String) -> Text {
+        let pretty = RichLink.prettyAttributed(source)
+        var out = Text("")
+        for run in pretty.runs {
+            let slice = Text(AttributedString(pretty[run.range]))
+            if let host = run.link?.host?.lowercased(), !host.isEmpty {
+                let icon: Text
+                if let cached = FaviconCache.cached(host: host) {
+                    icon = Text(Image(nsImage: cached))
+                } else {
+                    icon = Text(Image(systemName: "globe"))
+                }
+                out = Text("\(out)\(icon) \(slice)")
+            } else {
+                out = Text("\(out)\(slice)")
+            }
+        }
+        return out
+    }
+}
+
 struct InlineText: View {
     let source: String
+    @State private var faviconRevision = 0
 
     init(_ source: String) {
         self.source = source
     }
 
     var body: some View {
-        Text(Self.attributed(source))
+        // faviconRevision gelezen zodat geladen favicons de Text opnieuw opbouwen.
+        let _ = faviconRevision
+        RichInlineBuilder.text(for: source)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .task(id: source) {
+                let hosts = await MainActor.run { RichLink.linkHosts(for: source) }
+                var changed = false
+                for host in hosts where FaviconCache.cached(host: host) == nil {
+                    if await FaviconCache.image(for: host) != nil { changed = true }
+                }
+                if changed { await MainActor.run { faviconRevision += 1 } }
+            }
     }
-
-    /// Parsed inline Markdown by source. A streaming reply re-renders many times while most of its
-    /// paragraphs never change, so each distinct string is parsed once.
-    @MainActor private static var cache: [String: AttributedString] = [:]
-    private static let cacheLimit = 600
 
     @MainActor
     static func attributed(_ source: String) -> AttributedString {
-        if let cached = cache[source] { return cached }
-        let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace,
-            failurePolicy: .returnPartiallyParsedIfPossible
-        )
-        let parsed = (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
-        if cache.count >= cacheLimit { cache.removeAll(keepingCapacity: true) }
-        cache[source] = parsed
-        return parsed
+        RichLink.prettyAttributed(source)
     }
 }
 
