@@ -624,6 +624,100 @@ struct GlassPickerButton<Value: Hashable>: View {
     }
 }
 
+/// A glass search capsule for a pane's chrome row: a magnifier that opens into a field, like Droppy's Store search.
+struct ChromeSearchField: View {
+    static let collapsedWidth: CGFloat = 36
+    static let expandedWidth: CGFloat = 188
+
+    @Binding var query: String
+    var prompt = "Search"
+
+    @State private var isExpanded = false
+    @FocusState private var isFocused: Bool
+
+    private var isOpen: Bool {
+        isExpanded || isFocused || !query.isEmpty
+    }
+
+    var body: some View {
+        Group {
+            if isOpen {
+                expanded
+                    .transition(.opacity)
+            } else {
+                collapsed
+                    .transition(.opacity)
+            }
+        }
+        .frame(width: isOpen ? Self.expandedWidth : Self.collapsedWidth, alignment: .leading)
+        .frame(height: Chrome.capsuleContentHeight)
+        .padding(.vertical, Chrome.capsuleVerticalPadding)
+        .clipped()
+        .contentShape(Capsule(style: .continuous))
+        .chromeGlassCapsule()
+        .fixedSize()
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isOpen)
+        .onChange(of: isFocused) { _, focused in
+            if focused {
+                isExpanded = true
+            } else if query.isEmpty {
+                isExpanded = false
+            }
+        }
+        .onExitCommand {
+            query = ""
+            isFocused = false
+            isExpanded = false
+        }
+    }
+
+    private var collapsed: some View {
+        Button {
+            isExpanded = true
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Chrome.primaryText)
+                .padding(.leading, Chrome.capsuleHorizontalPadding)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(prompt)
+        .accessibilityLabel(Text(verbatim: prompt))
+    }
+
+    private var expanded: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Chrome.secondaryText)
+                .accessibilityHidden(true)
+            TextField(prompt, text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Chrome.primaryText)
+                .focused($isFocused)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                    isFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Clear search"))
+            }
+        }
+        .padding(.leading, Chrome.capsuleHorizontalPadding)
+        .padding(.trailing, 10)
+        .task { isFocused = true }
+    }
+}
+
 // MARK: - Cards
 
 struct ChromeCard<Content: View>: View {

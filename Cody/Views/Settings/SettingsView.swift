@@ -65,6 +65,7 @@ struct SettingsView: View {
     @State private var page: SettingsPage = .general
     @State private var search = ""
     @State private var scrollChrome = ChromeScrollModel()
+    @State private var modelSearch = ""
 
     private var visiblePages: [SettingsPage] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -138,8 +139,8 @@ struct SettingsView: View {
                 pageContent
             }
             .padding(.horizontal, Chrome.contentHorizontalPadding + 8)
-            // Settings pages carry no chrome row, so content starts just below the sheet edge.
-            .padding(.top, 22)
+            // Pages without chrome controls start just below the sheet edge; the others clear their capsules.
+            .padding(.top, pageHasChromeControls ? Chrome.chromeTopPadding + Chrome.capsuleHeight + 16 : 22)
             .padding(.bottom, 24)
         }
         .scrollIndicators(.never)
@@ -156,6 +157,9 @@ struct SettingsView: View {
                 if page == .providers {
                     ProvidersRefreshButton()
                 }
+                if page == .models {
+                    ChromeSearchField(query: $modelSearch, prompt: "Search models")
+                }
             }
             .frame(minHeight: Chrome.capsuleHeight)
             .padding(.horizontal, Chrome.chromeHorizontalPadding)
@@ -163,7 +167,14 @@ struct SettingsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .detailSheet()
-        .onChange(of: page) { scrollChrome.update(travel: 0) }
+        .onChange(of: page) {
+            scrollChrome.update(travel: 0)
+            modelSearch = ""
+        }
+    }
+
+    private var pageHasChromeControls: Bool {
+        page == .providers || page == .models
     }
 
     @ViewBuilder
@@ -171,7 +182,7 @@ struct SettingsView: View {
         switch page {
         case .general: GeneralSettingsPage()
         case .providers: ProvidersSettingsPage()
-        case .models: ModelsSettingsPage()
+        case .models: ModelsSettingsPage(query: modelSearch)
         case .sourceControl: SourceControlSettingsPage()
         case .shortcuts: ShortcutsSettingsPage()
         case .archive: ArchiveSettingsPage()

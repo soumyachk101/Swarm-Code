@@ -3,38 +3,64 @@ import SwiftUI
 /// Chooses the models the composer's picker offers, and each one's effort and fast mode for new chats.
 struct ModelsSettingsPage: View {
     @Environment(AppModel.self) private var model
+    var query = ""
 
     var body: some View {
         let settings = model.settings
         let registry = model.providers
         let pins = settings.modelList
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let visiblePins = Array(pins.enumerated()).filter { item in
+            Self.matches(registry.model(item.element.modelID, for: item.element.provider), id: item.element.modelID, provider: item.element.provider, query: trimmed)
+        }
+        let providers = registry.availableProviders.filter { provider in
+            trimmed.isEmpty || registry.models(for: provider).contains { Self.matches($0, id: $0.id, provider: provider, query: trimmed) }
+        }
         LazyVStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
-            ChromeSection(title: "Your models") {
-                ChromeCard {
-                    if pins.isEmpty {
-                        ChromeRow(
-                            title: "No models chosen yet",
-                            detail: "Until you add some below, the picker shows every model from your providers."
-                        ) {
-                            EmptyView()
-                        }
-                    } else {
-                        ForEach(Array(pins.enumerated()), id: \.element) { index, pin in
-                            if index > 0 { ChromeRowDivider() }
-                            PinnedModelRow(pin: pin, index: index, count: pins.count)
+            if trimmed.isEmpty || !visiblePins.isEmpty {
+                ChromeSection(title: "Your models") {
+                    ChromeCard {
+                        if pins.isEmpty {
+                            ChromeRow(
+                                title: "No models chosen yet",
+                                detail: "Until you add some below, the picker shows every model from your providers."
+                            ) {
+                                EmptyView()
+                            }
+                        } else {
+                            ForEach(Array(visiblePins.enumerated()), id: \.element.element) { position, item in
+                                if position > 0 { ChromeRowDivider() }
+                                PinnedModelRow(pin: item.element, index: item.offset, count: pins.count)
+                            }
                         }
                     }
+                    if trimmed.isEmpty {
+                        Text("\(pins.count) of \(AppSettings.modelListLimit). Click a model to set its reasoning effort and fast mode for every new chat.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .padding(.horizontal, 4)
+                    }
                 }
-                Text("\(pins.count) of \(AppSettings.modelListLimit). Click a model to set its reasoning effort and fast mode for every new chat.")
-                    .font(.system(size: 11))
+            }
+
+            ForEach(providers) { provider in
+                ProviderModelsSection(provider: provider, query: trimmed)
+            }
+
+            if !trimmed.isEmpty, visiblePins.isEmpty, providers.isEmpty {
+                Text(verbatim: "No models match “\(trimmed)”.")
+                    .font(.system(size: 13))
                     .foregroundStyle(Chrome.secondaryText)
                     .padding(.horizontal, 4)
             }
-
-            ForEach(registry.availableProviders) { provider in
-                ProviderModelsSection(provider: provider)
-            }
         }
+    }
+
+    /// Whether a model matches the search by name, description or provider.
+    static func matches(_ option: ModelOption?, id: String, provider: ProviderKind, query: String) -> Bool {
+        guard !query.isEmpty else { return true }
+        let fields = [option?.shortName, option?.name, option?.detail, id, provider.displayName]
+        return fields.contains { $0?.localizedCaseInsensitiveContains(query) == true }
     }
 }
 
@@ -157,11 +183,14 @@ private struct RowControl: View {
 private struct ProviderModelsSection: View {
     @Environment(AppModel.self) private var model
     let provider: ProviderKind
+    var query = ""
 
     var body: some View {
         let settings = model.settings
         let registry = model.providers
-        let options = registry.models(for: provider)
+        let options = registry.models(for: provider).filter {
+            ModelsSettingsPage.matches($0, id: $0.id, provider: provider, query: query)
+        }
         let isFull = settings.modelList.count >= AppSettings.modelListLimit
         VStack(alignment: .leading, spacing: Chrome.sectionHeaderSpacing) {
             HStack(spacing: 8) {
