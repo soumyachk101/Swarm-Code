@@ -11,6 +11,7 @@ struct FollowUpQueueTab: View {
     let runtime: ThreadRuntime
 
     @State private var editingPrompt: FollowUpPrompt?
+    @State private var preview = AttachmentPreviewCoordinator()
 
     var body: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12, style: .continuous)
@@ -37,6 +38,7 @@ struct FollowUpQueueTab: View {
                         isFirst: index == 0,
                         isLast: index == runtime.followUps.count - 1,
                         runtime: runtime,
+                        preview: preview,
                         onEdit: { editingPrompt = prompt }
                     )
                     if prompt.id != runtime.followUps.last?.id {
@@ -51,6 +53,10 @@ struct FollowUpQueueTab: View {
         .frame(maxWidth: 560)
         .background { shape.fill(Chrome.overlay(0.07)) }
         .contentShape(shape)
+        .onChange(of: runtime.followUps) {
+            preview.retire(except: Set(runtime.followUps.flatMap(\.attachments).map(\.id)))
+        }
+        .onDisappear { preview.close() }
         .sheet(item: $editingPrompt) { prompt in
             FollowUpEditSheet(prompt: prompt, runtime: runtime)
         }
@@ -63,6 +69,7 @@ private struct FollowUpRow: View {
     let isFirst: Bool
     let isLast: Bool
     let runtime: ThreadRuntime
+    let preview: AttachmentPreviewCoordinator
     let onEdit: () -> Void
 
     var body: some View {
@@ -91,7 +98,7 @@ private struct FollowUpRow: View {
                 if !prompt.attachments.isEmpty {
                     HStack(spacing: 4) {
                         ForEach(prompt.attachments) { attachment in
-                            AttachmentThumbnail(attachment: attachment, size: 28)
+                            AttachmentThumbnail(attachment: attachment, size: 28, preview: preview)
                         }
                     }
                 }
@@ -156,6 +163,7 @@ private struct FollowUpEditSheet: View {
 
     @State private var text: String
     @State private var attachments: [Attachment]
+    @State private var preview = AttachmentPreviewCoordinator()
 
     init(prompt: FollowUpPrompt, runtime: ThreadRuntime) {
         self.prompt = prompt
@@ -185,9 +193,12 @@ private struct FollowUpEditSheet: View {
             .background(Chrome.overlay(0.05), in: .rect(cornerRadius: 12, style: .continuous))
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
+                    // Same dead-space reservation as the composer strip: the delete badge
+                    // overhangs top-trailing, and without it only the last photo stays deletable.
+                    HStack(spacing: 2) {
                         ForEach(attachments) { attachment in
-                            AttachmentThumbnail(attachment: attachment, size: 48)
+                            AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
+                                .padding(.trailing, 14)
                                 .overlay(alignment: .topTrailing) {
                                     Button {
                                         attachments.removeAll { $0.id == attachment.id }
@@ -227,6 +238,10 @@ private struct FollowUpEditSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .onChange(of: attachments) {
+            preview.retire(except: Set(attachments.map(\.id)))
+        }
+        .onDisappear { preview.close() }
     }
 
     private var isEmpty: Bool {

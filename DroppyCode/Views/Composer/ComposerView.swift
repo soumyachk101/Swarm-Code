@@ -467,17 +467,21 @@ private struct SendButton: View {
 private struct DraftAttachments: View {
     @Binding var attachments: [Attachment]
 
-    /// Same shape as the chat strip: one popover keyed by the tapped
-    /// attachment, so every draft photo previews, not just the latest.
-    @State private var previewAttachment: Attachment?
+    /// Same shape as the chat strip: one preview panel anchored to the tapped
+    /// thumbnail, so every draft photo opens in a single tap.
+    @State private var preview = AttachmentPreviewCoordinator()
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            // The delete badge hangs over the thumbnail's top-trailing corner into the
+            // gap on its right. Without reserved dead space there the next thumbnail
+            // (a later sibling, so frontmost) covers the badge and eats its taps, leaving
+            // only the last photo deletable. The per-cell trailing padding keeps the exact
+            // same pitch with the badge always on tappable space.
+            HStack(spacing: 2) {
                 ForEach(attachments) { attachment in
-                    AttachmentThumbnail(attachment: attachment, size: 48) {
-                        previewAttachment = attachment
-                    }
+                    AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
+                        .padding(.trailing, 14)
                         .overlay(alignment: .topTrailing) {
                             Button {
                                 attachments.removeAll { $0.id == attachment.id }
@@ -494,9 +498,10 @@ private struct DraftAttachments: View {
             .padding(.top, 6)
             .padding(.trailing, 6)
         }
-        .popover(item: $previewAttachment, arrowEdge: .bottom) { attachment in
-            AttachmentLargePreview(attachment: attachment)
+        .onChange(of: attachments) {
+            preview.retire(except: Set(attachments.map(\.id)))
         }
+        .onDisappear { preview.close() }
     }
 }
 

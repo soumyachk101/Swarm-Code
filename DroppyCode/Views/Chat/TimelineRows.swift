@@ -86,37 +86,31 @@ struct UserMessageRow: View {
 struct AttachmentStrip: View {
     let attachments: [Attachment]
 
-    /// One popover owned by the strip, keyed by the tapped attachment. Each
-    /// thumbnail previously owned its own `.popover(isPresented:)`, and with
-    /// several sibling Bool popovers in one strip SwiftUI resolves
-    /// presentation to the last one, so only the latest photo opened.
-    @State private var previewAttachment: Attachment?
+    /// One preview panel for the strip, anchored to the tapped thumbnail, so
+    /// every photo opens in a single tap no matter how many are attached.
+    @State private var preview = AttachmentPreviewCoordinator()
 
     var body: some View {
         HStack(spacing: 6) {
             ForEach(attachments) { attachment in
-                AttachmentThumbnail(attachment: attachment) {
-                    previewAttachment = attachment
-                }
-                .help(attachment.name)
+                AttachmentThumbnail(attachment: attachment, preview: preview)
+                    .help(attachment.name)
             }
         }
-        .popover(item: $previewAttachment, arrowEdge: .bottom) { attachment in
-            AttachmentLargePreview(attachment: attachment)
-        }
+        .onDisappear { preview.close() }
     }
 }
 
 struct AttachmentThumbnail: View {
     let attachment: Attachment
     var size: CGFloat = 56
-    var onTap: () -> Void = {}
+    let preview: AttachmentPreviewCoordinator
 
     @State private var image: CGImage?
 
     var body: some View {
         Button {
-            onTap()
+            preview.toggle(attachment)
         } label: {
             if attachment.isImage {
                 ZStack {
@@ -148,6 +142,10 @@ struct AttachmentThumbnail: View {
             }
         }
         .buttonStyle(.plain)
+        .background {
+            AttachmentAnchorCapture { preview.register($0, for: attachment.id) }
+        }
+        .onDisappear { preview.unregister(attachment.id) }
         .task(id: attachment.path) {
             guard attachment.isImage else { return }
             let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size)
