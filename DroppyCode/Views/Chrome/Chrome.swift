@@ -627,49 +627,68 @@ struct GlassPickerButton<Value: Hashable>: View {
     }
 }
 
-/// A Liquid Glass search field for a pane's chrome row, always open at full width.
+/// The system search field in a pane's chrome row: AppKit's own `NSSearchField`, with its native
+/// bezel, caret, clear button and Escape behavior, and nothing drawn over it.
 struct ChromeSearchField: View {
-    static let width: CGFloat = 188
+    static let width: CGFloat = 220
 
     @Binding var query: String
     var prompt = "Search"
 
-    @FocusState private var isFocused: Bool
-
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Chrome.secondaryText)
-                .accessibilityHidden(true)
-            TextField(prompt, text: $query)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Chrome.primaryText)
-                .focused($isFocused)
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                    isFocused = true
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(Chrome.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text("Clear search"))
-            }
+        NativeSearchField(text: $query, prompt: prompt)
+            .frame(width: Self.width)
+            .fixedSize()
+    }
+}
+
+private struct NativeSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let prompt: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField()
+        field.placeholderString = prompt
+        field.controlSize = .large
+        field.sendsSearchStringImmediately = true
+        field.sendsWholeSearchString = false
+        field.delegate = context.coordinator
+        field.setAccessibilityLabel(prompt)
+        return field
+    }
+
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        context.coordinator.text = $text
+        if field.stringValue != text {
+            field.stringValue = text
         }
-        .padding(.leading, Chrome.capsuleHorizontalPadding)
-        .padding(.trailing, 10)
-        .frame(width: Self.width, height: Chrome.capsuleHeight)
-        .contentShape(Capsule(style: .continuous))
-        .glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
-        .fixedSize()
-        .onTapGesture { isFocused = true }
-        .onExitCommand {
-            query = ""
-            isFocused = false
+        if field.placeholderString != prompt {
+            field.placeholderString = prompt
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSSearchField, field.stringValue != text.wrappedValue else { return }
+            text.wrappedValue = field.stringValue
+        }
+
+        /// The clear button and Escape end searching without typing, so they report here.
+        func searchFieldDidEndSearching(_ sender: NSSearchField) {
+            if !text.wrappedValue.isEmpty {
+                text.wrappedValue = ""
+            }
         }
     }
 }
