@@ -9,6 +9,8 @@ struct ThreadTimeline: View {
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isPinnedToBottom = true
+    /// True while the reader drags or flicks the timeline, as opposed to it following new text.
+    @State private var isUserScrolling = false
     @State private var bottomInset: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
 
@@ -35,7 +37,11 @@ struct ThreadTimeline: View {
                             .transition(.softAppear)
                     }
                     if runtime.isRunning {
-                        WorkingIndicator(startedAt: runtime.turnStartedAt ?? .now, seed: WorkingWords.seed(runtime.threadID.uuidString))
+                        WorkingIndicator(
+                            startedAt: runtime.turnStartedAt ?? .now,
+                            seed: WorkingWords.seed(runtime.threadID.uuidString),
+                            thinkingSteps: model.settings.showReasoning ? currentThinking : []
+                        )
                             .transition(.softAppear)
                     }
                 }
@@ -64,18 +70,37 @@ struct ThreadTimeline: View {
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
+        .onScrollPhaseChange { _, phase in
+            isUserScrolling = phase == .interacting || phase == .decelerating
+        }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             bottomInset = new.bottomInset
             scrollChrome.update(travel: new.travel)
-            if new.contentHeight != old.contentHeight {
-                if isPinnedToBottom { position.scrollTo(edge: .bottom) }
-            } else {
-                isPinnedToBottom = new.distanceFromBottom < 56
+            if isUserScrolling {
+                // Only the reader's own scrolling decides whether the timeline follows new text.
+                isPinnedToBottom = new.distanceFromBottom < 48
+            } else if new.contentHeight > old.contentHeight, isPinnedToBottom {
+                withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
             }
+        }
+        .onChange(of: runtime.isRunning) { _, running in
+            // Sending a message always brings the reader back to the conversation's end.
+            guard running else { return }
+            isPinnedToBottom = true
+            withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
         }
         .onChange(of: scrollState.jumpRequest) {
             isPinnedToBottom = true
             withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
+        }
+    }
+
+    /// The running turn's thinking, for the working indicator to reveal.
+    private var currentThinking: [String] {
+        guard let turnID = runtime.entries.last.flatMap(\.turnID) else { return [] }
+        return runtime.entries.compactMap { entry in
+            guard entry.turnID == turnID, case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { return nil }
+            return block.text
         }
     }
 
@@ -132,7 +157,8 @@ enum TimelineGroup: Identifiable {
             case .tool:
                 if let last = work.last, last.turnID != entry.turnID { flushWork() }
                 work.append(entry)
-            case .reasoning where !showReasoning:
+            case .reasoning:
+                // Thinking lives behind the working indicator's chevron, never as a row of its own.
                 continue
             default:
                 flushWork()
@@ -154,7 +180,7 @@ private struct TimelineGroupView: View {
             switch entry.kind {
             case .user: UserMessageRow(entry: entry, runtime: runtime)
             case .assistant: AssistantMessageRow(entry: entry, runtime: runtime)
-            case .reasoning: ReasoningRow(entry: entry)
+            case .reasoning: EmptyView()
             case .tool: WorkGroup(entries: [entry])
             case .plan: PlanCard(entry: entry, runtime: runtime)
             case .todos: TodoListRow(entry: entry)
@@ -171,22 +197,57 @@ private struct TimelineGroupView: View {
 private struct WorkingIndicator: View {
     let startedAt: Date
     let seed: UInt64
+    /// The running turn's thinking. When there is any, a chevron opens it beneath the indicator.
+    let thinkingSteps: [String]
     @State private var now = Date.now
+    @State private var showsThinking = false
 
     var body: some View {
         let elapsed = now.timeIntervalSince(startedAt)
         let word = WorkingWords.word(seed: seed, elapsedSeconds: Int64(max(0, elapsed)))
-        HStack(spacing: 10) {
-            WorkingSpinner(cellSize: 3.5)
-            Text(verbatim: "\(word)…")
+        let canExpand = !thinkingSteps.isEmpty
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                guard canExpand else { return }
+                withAnimation(.snappy(duration: 0.24)) { showsThinking.toggle() }
+            } label: {
+                HStack(spacing: 10) {
+                    WorkingSpinner(cellSize: 3.5)
+                    Text(verbatim: "\(word)…")
+                        .foregroundStyle(.secondary)
+                        .id(word)
+                        .transition(.opacity.combined(with: .offset(y: 3)))
+                    Text(RelativeTime.duration(elapsed))
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                    if canExpand {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(showsThinking ? 90 : 0))
+                            .transition(.opacity)
+                    }
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help(canExpand ? (showsThinking ? "Hide thinking" : "Show thinking") : "")
+            .accessibilityHint(canExpand ? Text("Shows the agent's thinking") : Text(""))
+
+            if showsThinking, canExpand {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
+                        MarkdownView(text: step)
+                    }
+                }
+                .font(.callout)
                 .foregroundStyle(.secondary)
-                .id(word)
-                .transition(.opacity.combined(with: .offset(y: 3)))
-            Text(RelativeTime.duration(elapsed))
-                .monospacedDigit()
-                .foregroundStyle(.tertiary)
+                .padding(.leading, 23)
+                .transition(.softAppear)
+            }
         }
         .animation(.smooth(duration: 0.35), value: word)
+        .animation(.smooth(duration: 0.2), value: canExpand)
         .font(.callout)
         .task {
             while !Task.isCancelled {

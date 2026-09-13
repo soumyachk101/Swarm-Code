@@ -147,48 +147,6 @@ struct AssistantMessageRow: View {
     }
 }
 
-struct ReasoningRow: View {
-    let entry: TimelineEntry
-    @State private var isExpanded = false
-
-    var body: some View {
-        if case .reasoning(let block) = entry.item.content {
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    withAnimation(.snappy(duration: 0.22)) { isExpanded.toggle() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkle")
-                            .symbolEffect(.pulse, options: .repeating, isActive: block.isStreaming)
-                        Text(Self.title(for: block))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                if isExpanded {
-                    MarkdownView(text: block.text)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 20)
-                }
-            }
-        }
-    }
-
-    private static func title(for block: ReasoningBlock) -> String {
-        if let match = block.text.firstMatch(of: #/\*\*(.+?)\*\*/#) {
-            return String(match.output.1)
-        }
-        return block.isStreaming ? "Thinking" : "Thought"
-    }
-}
-
 struct WorkGroup: View {
     let entries: [TimelineEntry]
     @State private var showsAll = false
