@@ -377,7 +377,7 @@ private struct DiffLineRow: View {
 
     private var markerColor: Color {
         switch line.kind {
-        case .addition: .blue // TEMP-DIAG: proves which build is on screen; revert next
+        case .addition: .green
         case .deletion: .red
         default: .secondary
         }
