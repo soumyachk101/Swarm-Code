@@ -138,7 +138,8 @@ struct SettingsView: View {
                 pageContent
             }
             .padding(.horizontal, Chrome.contentHorizontalPadding + 8)
-            .padding(.top, Chrome.contentTopInset)
+            // Settings pages carry no chrome row, so content starts just below the sheet edge.
+            .padding(.top, 22)
             .padding(.bottom, 24)
         }
         .scrollIndicators(.never)
