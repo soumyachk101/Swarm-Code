@@ -6,6 +6,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case cursor
     case opencode
     case grok
+    case deepseek
 
     var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .cursor: "Cursor"
         case .opencode: "OpenCode"
         case .grok: "Grok"
+        case .deepseek: "DeepSeek"
         }
     }
 
@@ -26,6 +28,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .cursor: "cursor-agent"
         case .opencode: "opencode"
         case .grok: "grok"
+        case .deepseek: ""
         }
     }
 
@@ -38,6 +41,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .cursor: "cursor-agent login"
         case .opencode: "opencode auth login"
         case .grok: "grok login"
+        case .deepseek: "DEEPSEEK_API_KEY=sk-..."
         }
     }
 
@@ -48,8 +52,12 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .cursor: URL(string: "https://cursor.com/cli")!
         case .opencode: URL(string: "https://opencode.ai")!
         case .grok: URL(string: "https://x.ai/cli")!
+        case .deepseek: URL(string: "https://platform.deepseek.com/api_keys")!
         }
     }
+
+    /// API-key providers talk to their cloud API directly instead of a local CLI.
+    var isAPIKeyBased: Bool { self == .deepseek }
 
     /// Whether the provider can drop later turns from its own conversation.
     var supportsRewind: Bool { self == .codex || self == .claude }

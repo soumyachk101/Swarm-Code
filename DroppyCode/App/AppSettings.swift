@@ -79,6 +79,7 @@ final class AppSettings {
         static let modelList = "modelList"
         static let modelPreferences = "modelPreferences"
         static let recentDownloadsPicker = "recentDownloadsPicker"
+        static let deepseekAPIKey = "deepseekAPIKey"
     }
 
     static let modelListLimit = 15
@@ -133,6 +134,20 @@ final class AppSettings {
     /// The attach button offers recent downloads first instead of opening Finder straight away.
     var recentDownloadsPicker: Bool {
         didSet { defaults.set(recentDownloadsPicker, forKey: Key.recentDownloadsPicker) }
+    }
+
+    /// DeepSeek talks to its cloud API directly, so it needs an API key instead of a CLI login.
+    /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
+    var deepseekAPIKeyInput: String {
+        get { DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "") }
+        set {
+            DeepSeekKeychain.setAPIKey(newValue)
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                defaults.removeObject(forKey: Key.deepseekAPIKey)
+            } else {
+                defaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Key.deepseekAPIKey)
+            }
+        }
     }
 
     private(set) var binaryPaths: [String: String] {
@@ -251,5 +266,18 @@ final class AppSettings {
     func remember(model: String?, effort: String?, for provider: ProviderKind) {
         lastModels[provider.rawValue] = model
         lastEfforts[provider.rawValue] = effort
+    }
+
+    /// The API key Droppy Code sends to DeepSeek: the value from Settings,
+    /// falling back to `DEEPSEEK_API_KEY` from the login environment.
+    func apiKey(for provider: ProviderKind) -> String {
+        guard provider == .deepseek else { return "" }
+        let stored = deepseekAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !stored.isEmpty { return stored }
+        return (LoginEnvironment.current["DEEPSEEK_API_KEY"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func hasAPIKey(for provider: ProviderKind) -> Bool {
+        !apiKey(for: provider).isEmpty
     }
 }

@@ -42,6 +42,7 @@ final class ClaudeSession: ProviderSession {
     private var workingDirectory: String { configuration.workingDirectory.path }
 
     func start() async throws -> String {
+        guard let executable = configuration.executable else { throw ProviderError.notInstalled(configuration.provider) }
         let id = configuration.resumeID ?? UUID().uuidString.lowercased()
         var arguments = [
             "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
@@ -60,7 +61,7 @@ final class ClaudeSession: ProviderSession {
         }
 
         let process = StdioProcess(
-            executable: configuration.executable,
+            executable: executable,
             arguments: arguments,
             directory: configuration.workingDirectory,
             environment: configuration.environment

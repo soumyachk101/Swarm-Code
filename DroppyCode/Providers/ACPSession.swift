@@ -64,8 +64,9 @@ final class ACPSession: ProviderSession {
     }
 
     func start() async throws -> String {
+        guard let executable = configuration.executable else { throw ProviderError.notInstalled(configuration.provider) }
         let process = StdioProcess(
-            executable: configuration.executable,
+            executable: executable,
             arguments: launchArguments,
             directory: configuration.workingDirectory,
             environment: configuration.environment
