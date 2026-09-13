@@ -67,13 +67,8 @@ struct AttachmentStrip: View {
     var body: some View {
         HStack(spacing: 6) {
             ForEach(attachments) { attachment in
-                Button {
-                    NSWorkspace.shared.open(attachment.url)
-                } label: {
-                    AttachmentThumbnail(attachment: attachment)
-                }
-                .buttonStyle(.plain)
-                .help(attachment.name)
+                AttachmentThumbnail(attachment: attachment)
+                    .help(attachment.name)
             }
         }
     }
@@ -84,36 +79,46 @@ struct AttachmentThumbnail: View {
     var size: CGFloat = 56
 
     @State private var image: CGImage?
+    @State private var showsPreview = false
 
     var body: some View {
-        if attachment.isImage {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(.quaternary.opacity(0.6))
-                if let image {
-                    Image(decorative: image, scale: 2)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .transition(.opacity)
+        Button {
+            showsPreview.toggle()
+        } label: {
+            if attachment.isImage {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(.quaternary.opacity(0.6))
+                    if let image {
+                        Image(decorative: image, scale: 2)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .transition(.opacity)
+                    }
                 }
+                .frame(width: size, height: size)
+                .clipShape(.rect(cornerRadius: 12, style: .continuous))
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "doc")
+                    Text(attachment.name)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .font(.caption)
+                .padding(.horizontal, 10)
+                .frame(height: size * 0.6)
+                .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 10, style: .continuous))
             }
-            .frame(width: size, height: size)
-            .clipShape(.rect(cornerRadius: 12, style: .continuous))
-            .task(id: attachment.path) {
-                let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size)
-                withAnimation(.easeOut(duration: 0.15)) { image = thumbnail?.image }
-            }
-        } else {
-            HStack(spacing: 6) {
-                Image(systemName: "doc")
-                Text(attachment.name)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
-            .font(.caption)
-            .padding(.horizontal, 10)
-            .frame(height: size * 0.6)
-            .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $showsPreview, arrowEdge: .bottom) {
+            AttachmentLargePreview(attachment: attachment)
+        }
+        .task(id: attachment.path) {
+            guard attachment.isImage else { return }
+            let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size)
+            withAnimation(.easeOut(duration: 0.15)) { image = thumbnail?.image }
         }
     }
 }
@@ -162,6 +167,7 @@ struct AssistantMessageRow: View {
 
 struct WorkGroup: View {
     let entries: [TimelineEntry]
+    var workingDirectory: String?
     @State private var showsAll = false
 
     var body: some View {
@@ -181,7 +187,7 @@ struct WorkGroup: View {
                 .buttonStyle(.plain)
             }
             ForEach(entries.suffix(entries.count - hidden)) { entry in
-                ToolRow(entry: entry)
+                ToolRow(entry: entry, workingDirectory: workingDirectory)
             }
         }
         .padding(.vertical, 3)
@@ -191,6 +197,7 @@ struct WorkGroup: View {
 
 struct ToolRow: View {
     let entry: TimelineEntry
+    var workingDirectory: String?
     @State private var isExpanded = false
 
     var body: some View {
@@ -236,7 +243,7 @@ struct ToolRow: View {
                 }
                 .buttonStyle(.plain)
                 if isExpanded {
-                    ToolDetailView(call: call)
+                    ToolDetailView(call: call, workingDirectory: workingDirectory)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 10)
                 }
@@ -272,9 +279,13 @@ private struct ToolStatusIcon: View {
 
 private struct ToolDetailView: View {
     let call: ToolCall
+    var workingDirectory: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if let imagePath = PreviewImages.resolveToolImagePath(for: call, workingDirectory: workingDirectory) {
+                ToolImagePreview(path: imagePath)
+            }
             if let detail = call.detail, !detail.isEmpty {
                 Text(detail)
                     .font(.system(.caption, design: .monospaced))

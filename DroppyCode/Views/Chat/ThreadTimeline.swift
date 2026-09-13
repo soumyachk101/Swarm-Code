@@ -156,6 +156,7 @@ enum TimelineGroup: Identifiable {
 }
 
 private struct TimelineGroupView: View {
+    @Environment(AppModel.self) private var model
     let group: TimelineGroup
     let runtime: ThreadRuntime
 
@@ -166,15 +167,21 @@ private struct TimelineGroupView: View {
             case .user: UserMessageRow(entry: entry, runtime: runtime)
             case .assistant: AssistantMessageRow(entry: entry, runtime: runtime)
             case .reasoning: EmptyView()
-            case .tool: WorkGroup(entries: [entry])
+            case .tool: WorkGroup(entries: [entry], workingDirectory: workingDirectory)
             case .plan: PlanCard(entry: entry, runtime: runtime)
             case .todos: TodoListRow(entry: entry)
             case .notice: NoticeRow(entry: entry)
             case .turnEnd: TurnEndRow(entry: entry, runtime: runtime)
             }
         case .work(_, let entries):
-            WorkGroup(entries: entries)
+            WorkGroup(entries: entries, workingDirectory: workingDirectory)
         }
+    }
+
+    private var workingDirectory: String? {
+        guard let thread = model.thread(runtime.threadID) else { return nil }
+        if let worktree = thread.worktreePath { return worktree }
+        return model.project(thread.projectID)?.path
     }
 }
 
