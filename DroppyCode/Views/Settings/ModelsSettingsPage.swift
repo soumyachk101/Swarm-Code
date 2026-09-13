@@ -110,6 +110,7 @@ private struct PinnedModelRow: View {
             .popover(isPresented: $isPresented, arrowEdge: .trailing) {
                 EffortSliderCard(
                     modelName: option?.shortName ?? pin.modelID,
+                    provider: pin.provider,
                     efforts: option?.efforts ?? [],
                     defaultEffort: option?.defaultEffort,
                     supportsFast: option?.supportsFast ?? false,
