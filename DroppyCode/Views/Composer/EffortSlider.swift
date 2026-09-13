@@ -114,6 +114,7 @@ private struct ModelEffortPanel: View {
         let option = model.providers.model(thread.model, for: thread.provider)
         return EffortSliderCard(
             modelName: option?.shortName ?? thread.model ?? thread.provider.displayName,
+            provider: thread.provider,
             efforts: option?.efforts ?? [],
             defaultEffort: option?.defaultEffort,
             supportsFast: option?.supportsFast ?? false,
@@ -294,6 +295,7 @@ private struct ModelListRow: View {
 /// Fast mode, the effort title and model name, reset, and the effort slider.
 struct EffortSliderCard: View {
     let modelName: String
+    let provider: ProviderKind?
     let efforts: [String]
     let defaultEffort: String?
     let supportsFast: Bool
@@ -360,10 +362,15 @@ struct EffortSliderCard: View {
                     }
                     .help(onTitleTap == nil ? "" : "Choose a model")
 
-                    Text(verbatim: modelName)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Chrome.primaryText.opacity(0.7))
-                        .lineLimit(1)
+                    HStack(spacing: 5) {
+                        if let provider {
+                            ProviderIcon(provider: provider, size: 12)
+                        }
+                        Text(verbatim: modelName)
+                            .font(.system(size: 13))
+                            .foregroundStyle(Chrome.primaryText.opacity(0.7))
+                            .lineLimit(1)
+                    }
                 }
                 .padding(.horizontal, 44)
             }
