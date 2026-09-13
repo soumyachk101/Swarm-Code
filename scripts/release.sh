@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds, signs, notarizes and packages T3 Code as a disk image.
+# Builds, signs, notarizes and packages Cody as a disk image.
 #
 #   scripts/release.sh
 #
@@ -11,12 +11,12 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 TEAM_ID="NARHG44L48"
 NOTARY_PROFILE="${NOTARY_PROFILE:-Droppy-Notarize}"
-APP_NAME="T3 Code"
+APP_NAME="Cody"
 BUILD="$ROOT/build"
-ARCHIVE="$BUILD/T3Code.xcarchive"
+ARCHIVE="$BUILD/Cody.xcarchive"
 EXPORT="$BUILD/export"
 VERSION=$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -1)
-DMG="$BUILD/T3Code-$VERSION.dmg"
+DMG="$BUILD/Cody-$VERSION.dmg"
 
 step() { printf '\n==> %s\n' "$1"; }
 
@@ -40,8 +40,8 @@ step "Archiving $APP_NAME $VERSION"
 rm -rf "$BUILD"
 mkdir -p "$BUILD"
 if ! xcodebuild archive \
-  -project T3Code.xcodeproj \
-  -scheme T3Code \
+  -project Cody.xcodeproj \
+  -scheme Cody \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -archivePath "$ARCHIVE" \
@@ -91,8 +91,8 @@ if [ "$archs" != "arm64" ]; then
 fi
 
 step "Notarizing the app"
-ditto -c -k --keepParent "$APP" "$BUILD/T3Code.zip"
-notarize "$BUILD/T3Code.zip"
+ditto -c -k --keepParent "$APP" "$BUILD/Cody.zip"
+notarize "$BUILD/Cody.zip"
 xcrun stapler staple "$APP"
 
 step "Building the disk image"

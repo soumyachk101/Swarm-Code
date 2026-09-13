@@ -1,6 +1,6 @@
-# T3 Code for Mac
+# Cody
 
-A native macOS rewrite of [T3 Code](https://github.com/pingdotgg/t3code), the minimal GUI for coding agents. Written entirely in Swift and SwiftUI with Liquid Glass, for macOS 26 and later.
+A native macOS app for your coding agents. Written entirely in Swift and SwiftUI with Liquid Glass, for Macs with Apple silicon on macOS 26 and later.
 
 It drives the coding agents you already have installed and signed in, on your own subscriptions:
 
@@ -14,17 +14,17 @@ It drives the coding agents you already have installed and signed in, on your ow
 
 ## What it does
 
-- Projects and threads in a glass sidebar, with pinning, archiving and search.
+- Projects and threads in a glass sidebar with search, pinning, archiving and drag to resize.
 - Streaming conversations with reasoning, tool calls, plans, to-do lists and errors.
 - Approvals and questions from the agent, answered inline.
 - Plan mode, model and reasoning selection, and four permission modes per thread.
 - A diff for every turn, captured as hidden git checkpoints, with revert.
-- An embedded terminal per thread, plus project scripts from `t3.json`.
+- An embedded terminal per thread, plus project scripts from `cody.json`.
 - New threads in their own git worktree.
 - Commit, push and pull requests, with generated commit messages and thread titles.
 - A command palette, keyboard shortcuts and notifications when work finishes.
 
-Remote access, the mobile apps, T3 Connect, cloud sync, telemetry and the web client are left out on purpose.
+Remote access, mobile apps, cloud sync, telemetry and a web client are left out on purpose.
 
 ## Requirements
 
@@ -37,7 +37,7 @@ Remote access, the mobile apps, T3 Connect, cloud sync, telemetry and the web cl
 ```bash
 brew install xcodegen
 xcodegen generate
-open T3Code.xcodeproj
+open Cody.xcodeproj
 ```
 
 SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks once to trust its build plugin.
@@ -50,13 +50,13 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 
 | Folder | Contents |
 | --- | --- |
-| `T3Code/App` | App entry, commands, settings and the project library |
-| `T3Code/Providers` | Codex, Claude and ACP adapters behind one event model |
-| `T3Code/Runtime` | Per-thread state, streaming, checkpoints and rewind |
-| `T3Code/Git` | Git, worktrees, checkpoints and diff parsing |
-| `T3Code/Views` | Sidebar, timeline, composer, changes, terminal, palette and settings |
-| `T3Code/Support` | Process I/O, JSON-RPC and the login shell environment |
+| `Cody/App` | App entry, commands, settings and the project library |
+| `Cody/Providers` | Codex, Claude and ACP adapters behind one event model |
+| `Cody/Runtime` | Per-thread state, streaming, checkpoints and rewind |
+| `Cody/Git` | Git, worktrees, checkpoints and diff parsing |
+| `Cody/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
+| `Cody/Support` | Process I/O, JSON-RPC and the login shell environment |
 
 ## License
 
-MIT, like the original T3 Code. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
