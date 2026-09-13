@@ -225,7 +225,7 @@ enum MarkdownParser {
 
     private static func fenceMarker(_ trimmed: String) -> String? {
         for marker in ["```", "~~~"] where trimmed.hasPrefix(marker) {
-            let fenceCharacter = marker.first!
+            guard let fenceCharacter = marker.first else { continue }
             return String(trimmed.prefix(while: { $0 == fenceCharacter }))
         }
         return nil

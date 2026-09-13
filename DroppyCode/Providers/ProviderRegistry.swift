@@ -81,7 +81,16 @@ final class ProviderRegistry {
         return environment
     }
 
+    @ObservationIgnored private var lastFullRefresh: Date?
+
+    /// Refreshes every provider unless that already happened within the last minute.
+    func refreshAllIfStale() async {
+        if let lastFullRefresh, Date.now.timeIntervalSince(lastFullRefresh) < 60 { return }
+        await refreshAll()
+    }
+
     func refreshAll() async {
+        lastFullRefresh = .now
         await withTaskGroup(of: Void.self) { group in
             for provider in ProviderKind.allCases {
                 group.addTask { await self.refresh(provider) }

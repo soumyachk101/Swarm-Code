@@ -49,6 +49,8 @@ if ! xcodebuild archive \
   -derivedDataPath "$BUILD/DerivedData" \
   -skipPackagePluginValidation \
   -skipMacroValidation \
+  ARCHS=arm64 \
+  EXCLUDED_ARCHS=x86_64 \
   ONLY_ACTIVE_ARCH=NO > "$BUILD/archive.log" 2>&1; then
   grep -E "error:" "$BUILD/archive.log" | head -40 || tail -40 "$BUILD/archive.log"
   exit 1

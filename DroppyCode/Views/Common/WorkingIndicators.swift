@@ -37,7 +37,7 @@ struct WorkingSpinner: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
             grid(time: timeline.date.timeIntervalSinceReferenceDate / GradientSpin.period)
         }
         .accessibilityHidden(true)
@@ -72,7 +72,7 @@ struct MiniSpinner: View {
     ]
 
     var body: some View {
-        TimelineView(.animation(paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
             grid(time: timeline.date.timeIntervalSinceReferenceDate / GradientSpin.period)
         }
         .accessibilityLabel(Text("Working"))

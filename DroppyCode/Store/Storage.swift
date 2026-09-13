@@ -86,6 +86,15 @@ enum MimeType {
 actor DiskWriter {
     static let shared = DiskWriter()
 
+    /// Encodes off the main actor, so saving a long thread never stalls the interface.
+    func encodeAndWrite<Value: Encodable & Sendable>(_ value: Value, to url: URL) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.sortedKeys]
+        guard let data = try? encoder.encode(value) else { return }
+        write(data, to: url)
+    }
+
     func write(_ data: Data, to url: URL) {
         do {
             try data.write(to: url, options: .atomic)

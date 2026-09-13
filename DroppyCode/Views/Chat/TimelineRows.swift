@@ -83,13 +83,26 @@ struct AttachmentThumbnail: View {
     let attachment: Attachment
     var size: CGFloat = 56
 
+    @State private var image: CGImage?
+
     var body: some View {
-        if attachment.isImage, let image = NSImage(contentsOfFile: attachment.path) {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-                .frame(width: size, height: size)
-                .clipShape(.rect(cornerRadius: 12, style: .continuous))
+        if attachment.isImage {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.quaternary.opacity(0.6))
+                if let image {
+                    Image(decorative: image, scale: 2)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .transition(.opacity)
+                }
+            }
+            .frame(width: size, height: size)
+            .clipShape(.rect(cornerRadius: 12, style: .continuous))
+            .task(id: attachment.path) {
+                let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size)
+                withAnimation(.easeOut(duration: 0.15)) { image = thumbnail?.image }
+            }
         } else {
             HStack(spacing: 6) {
                 Image(systemName: "doc")

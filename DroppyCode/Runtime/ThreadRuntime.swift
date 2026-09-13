@@ -762,8 +762,7 @@ final class ThreadRuntime {
         document.items = entries.map(\.item)
         document.turns = turns
         document.usage = usage
-        guard let data = try? JSONEncoder.storage.encode(document) else { return }
         let url = Storage.threadURL(threadID)
-        Task { await DiskWriter.shared.write(data, to: url) }
+        Task { await DiskWriter.shared.encodeAndWrite(document, to: url) }
     }
 }

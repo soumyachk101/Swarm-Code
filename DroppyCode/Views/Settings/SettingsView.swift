@@ -276,7 +276,7 @@ private struct ProvidersSettingsPage: View {
                 ProviderSettingsSection(provider: provider)
             }
         }
-        .task { await model.providers.refreshAll() }
+        .task { await model.providers.refreshAllIfStale() }
     }
 }
 

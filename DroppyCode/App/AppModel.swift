@@ -22,12 +22,14 @@ final class AppModel {
     var selectedThreadID: UUID? {
         didSet {
             if let selectedThreadID { markRead(selectedThreadID) }
+            if oldValue != selectedThreadID { scheduleIdleSessionStop(leaving: oldValue) }
         }
     }
     var isCommandPalettePresented = false
     var alert: AppAlert?
 
     @ObservationIgnored private var runtimes: [UUID: ThreadRuntime] = [:]
+    @ObservationIgnored private var idleSessionStops: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var didRequestNotifications = false
 
@@ -119,6 +121,27 @@ final class AppModel {
 
     func existingRuntime(for id: UUID) -> ThreadRuntime? {
         runtimes[id]
+    }
+
+    /// A thread left alone for ten minutes gives its agent process back. Its history stays in memory
+    /// and the provider session id stays on the thread, so opening it again resumes the conversation.
+    private func scheduleIdleSessionStop(leaving id: UUID?) {
+        if let selectedThreadID {
+            idleSessionStops.removeValue(forKey: selectedThreadID)?.cancel()
+        }
+        guard let id, runtimes[id] != nil else { return }
+        idleSessionStops[id]?.cancel()
+        idleSessionStops[id] = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(600))
+                guard !Task.isCancelled, let self, self.selectedThreadID != id, let runtime = self.runtimes[id] else { return }
+                // A turn still working keeps its session; check again after the next interval.
+                guard !runtime.isRunning else { continue }
+                runtime.stopSession()
+                self.idleSessionStops[id] = nil
+                return
+            }
+        }
     }
 
     var workingDirectory: String? {
@@ -405,8 +428,8 @@ final class AppModel {
         var library = Library()
         library.projects = projects
         library.threads = threads
-        guard let data = try? JSONEncoder.storage.encode(library) else { return }
-        Task { await DiskWriter.shared.write(data, to: Storage.libraryURL) }
+        let url = Storage.libraryURL
+        Task { await DiskWriter.shared.encodeAndWrite(library, to: url) }
     }
 
     /// Writes everything synchronously, for use while the app terminates.
