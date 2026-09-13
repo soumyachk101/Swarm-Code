@@ -368,11 +368,14 @@ struct PaneTopVeil: View {
         let isDark = colorScheme == .dark
         let scrim = isDark ? 0.42 + 0.28 * progress : 0.48 + 0.30 * progress
         ZStack {
-            Rectangle()
-                .fill(.clear)
-                .glassEffect(.regular, in: Rectangle())
-            Rectangle()
-                .fill((isDark ? Color.black : Color.white).opacity(scrim))
+            // Only once content has scrolled under the chrome; at rest there is nothing to sample.
+            if progress > 0 {
+                Rectangle()
+                    .fill(.clear)
+                    .glassEffect(.regular, in: Rectangle())
+                Rectangle()
+                    .fill((isDark ? Color.black : Color.white).opacity(scrim))
+            }
         }
         .opacity(0.08 + 0.92 * progress)
         .mask(
@@ -707,12 +710,16 @@ struct ChromeCard<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // Rows are built as they scroll into view, and the card is a filled shape rather than a
+        // clip, so a long page costs neither every row up front nor a mask per card while scrolling.
+        LazyVStack(alignment: .leading, spacing: 0) {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Chrome.overlay(0.03))
-        .clipShape(RoundedRectangle(cornerRadius: Chrome.cardCornerRadius, style: .continuous))
+        .background(
+            RoundedRectangle(cornerRadius: Chrome.cardCornerRadius, style: .continuous)
+                .fill(Chrome.overlay(0.03))
+        )
     }
 }
 

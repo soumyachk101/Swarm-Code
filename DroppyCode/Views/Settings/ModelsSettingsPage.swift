@@ -20,7 +20,7 @@ struct ModelsSettingsPage: View {
         let providers = registry.availableProviders.filter { provider in
             trimmed.isEmpty || registry.models(for: provider).contains { Self.matches($0, id: $0.id, provider: provider, query: trimmed) }
         }
-        VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+        LazyVStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
             if trimmed.isEmpty || !visiblePins.isEmpty {
                 ChromeSection(title: "Your models") {
                     ChromeCard {

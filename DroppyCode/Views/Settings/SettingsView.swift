@@ -505,7 +505,6 @@ private struct MadeByDroppyRow: View {
             .padding(.leading, 16)
             .padding(.trailing, Chrome.rowControlTrailingPadding + 4)
             .padding(.vertical, 12)
-            .background(isHovering ? Chrome.overlay(0.04) : Color.clear)
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
