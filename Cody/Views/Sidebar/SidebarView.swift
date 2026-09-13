@@ -492,10 +492,10 @@ private struct ActivityViewToggle: View {
                 .foregroundStyle(isOn ? Chrome.accent : Chrome.secondaryText)
                 .frame(width: 30, height: 30)
                 .background {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    Circle()
                         .fill(isOn ? Chrome.accent.opacity(0.16) : (isHovering ? Chrome.overlay(0.08) : Color.clear))
                 }
-                .contentShape(.rect)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
