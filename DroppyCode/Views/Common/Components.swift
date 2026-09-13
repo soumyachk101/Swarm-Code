@@ -118,8 +118,10 @@ enum Workspace {
         Editor(name: "iTerm", bundleID: "com.googlecode.iterm2"),
     ]
 
-    static var installedEditors: [Editor] {
-        editors.filter { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil }
+    /// Looked up once per launch: the chat's controls build this list on every render, and each
+    /// entry is a Launch Services query.
+    static let installedEditors: [Editor] = editors.filter {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0.bundleID) != nil
     }
 
     static func open(_ path: String, with editor: Editor) {

@@ -264,28 +264,27 @@ private struct ProvidersRefreshButton: View {
 
     var body: some View {
         ChromeCapsule {
-            ChromeIconButton(symbol: "arrow.clockwise", help: "Check providers again") {
-                Task {
-                    await model.providers.refreshAll()
-                    await model.providers.loadCatalog(.codex, force: true)
-                    await model.providers.loadCatalog(.deepseek, force: true)
-                    await model.providers.loadCatalog(.meta, force: true)
-                }
+            ChromeIconButton(
+                symbol: "arrow.clockwise",
+                isEnabled: !model.providers.isRefreshing,
+                help: model.providers.isRefreshing ? "Checking providers…" : "Check providers again"
+            ) {
+                Task { await model.providers.refreshEverything() }
             }
         }
     }
 }
 
+/// Shows what launch (or the refresh button) last found. Opening or scrolling the page checks nothing.
 private struct ProvidersSettingsPage: View {
-    @Environment(AppModel.self) private var model
-
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+        // Eager on purpose: a handful of sections, and lazy ones were rebuilt while scrolling,
+        // which reset their fields and re-ran every check they started on appear.
+        VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
             ForEach(ProviderKind.allCases) { provider in
                 ProviderSettingsSection(provider: provider)
             }
         }
-        .task { await model.providers.refreshAllIfStale() }
     }
 }
 
@@ -296,6 +295,7 @@ private struct ProviderSettingsSection: View {
     @State private var binaryPath = ""
     @State private var apiKey = ""
     @State private var showsAPIKey = false
+    @State private var keyCheck: Task<Void, Never>?
 
     var body: some View {
         let status = model.providers.status(provider)
@@ -387,26 +387,24 @@ private struct ProviderSettingsSection: View {
             if provider.isAPIKeyBased { apiKey = model.settings.apiKeyInput(for: provider) }
         }
         .onChange(of: binaryPath) { _, value in
+            guard value != model.settings.binaryPath(for: provider) else { return }
             model.settings.setBinaryPath(value, for: provider)
         }
         .onChange(of: apiKey) { _, value in
-            guard provider.isAPIKeyBased else { return }
+            // Only an edit counts: loading the stored key into the field must not save or check it.
+            guard provider.isAPIKeyBased, value != model.settings.apiKeyInput(for: provider) else { return }
             model.settings.setAPIKeyInput(value, for: provider)
+            keyCheck?.cancel()
+            keyCheck = Task {
+                try? await Task.sleep(for: .milliseconds(600))
+                guard !Task.isCancelled else { return }
+                await model.providers.refresh(provider)
+                await model.providers.loadCatalog(provider, force: true)
+            }
         }
-        .onChange(of: model.settings.deepseekAPIKeyInput) { _, value in
-            guard provider == .deepseek, value != apiKey else { return }
+        .onChange(of: model.settings.apiKeyInput(for: provider)) { _, value in
+            guard provider.isAPIKeyBased, value != apiKey else { return }
             apiKey = value
-        }
-        .onChange(of: model.settings.metaAPIKeyInput) { _, value in
-            guard provider == .meta, value != apiKey else { return }
-            apiKey = value
-        }
-        .task(id: apiKey) {
-            guard provider.isAPIKeyBased else { return }
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-            await model.providers.refresh(provider)
-            await model.providers.loadCatalog(provider)
         }
     }
 }

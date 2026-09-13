@@ -87,8 +87,11 @@ struct ChatView: View {
         .onGeometryChange(for: CGFloat.self, of: Self.measureWidth) { paneWidth = $0 }
         .animation(Chrome.panelSlide, value: runtime.isTerminalVisible)
         .animation(Chrome.panelSlide, value: runtime.isDiffVisible)
-        .task(id: "\(directory)-\(runtime.diffRevision)") {
-            await git.refresh(directory)
+        .task(id: directory) {
+            await git.refresh(directory, force: false)
+        }
+        .onChange(of: runtime.diffRevision) {
+            Task { await git.refresh(directory) }
         }
     }
 
@@ -174,18 +177,44 @@ final class GitStatusModel {
     private(set) var remoteURL: URL?
     private(set) var activity: String?
 
-    func refresh(_ directory: String) async {
-        let git = Git(directory)
-        isRepository = await git.isRepository()
-        guard isRepository else {
-            status = nil
-            branches = []
-            remoteURL = nil
-            return
+    private struct Snapshot {
+        var isRepository = false
+        var status: GitStatus?
+        var branches: [GitBranch] = []
+        var remoteURL: URL?
+        var fetchedAt = Date.now
+    }
+
+    /// The last read per directory, shared by every chat. Switching threads shows the branch at
+    /// once and only runs git again when the read is stale, a turn changed files, or forced.
+    private static var snapshots: [String: Snapshot] = [:]
+    private static let freshness: TimeInterval = 30
+
+    func refresh(_ directory: String, force: Bool = true) async {
+        if let cached = Self.snapshots[directory] {
+            apply(cached)
+            if !force, Date.now.timeIntervalSince(cached.fetchedAt) < Self.freshness { return }
         }
-        status = await git.status()
-        branches = await git.branches()
-        remoteURL = await git.remoteWebURL()
+        let git = Git(directory)
+        var snapshot = Snapshot(isRepository: await git.isRepository())
+        if snapshot.isRepository {
+            async let status = git.status()
+            async let branches = git.branches()
+            async let remoteURL = git.remoteWebURL()
+            snapshot.status = await status
+            snapshot.branches = await branches
+            snapshot.remoteURL = await remoteURL
+        }
+        snapshot.fetchedAt = .now
+        Self.snapshots[directory] = snapshot
+        apply(snapshot)
+    }
+
+    private func apply(_ snapshot: Snapshot) {
+        isRepository = snapshot.isRepository
+        status = snapshot.status
+        branches = snapshot.branches
+        remoteURL = snapshot.remoteURL
     }
 
     func perform(_ activity: String, _ work: () async throws -> Void) async -> Error? {

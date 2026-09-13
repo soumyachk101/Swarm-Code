@@ -474,33 +474,78 @@ final class ThreadRuntime {
     /// The files this thread's agent changed across every turn, or nil when it changed none.
     private(set) var changeStats: ChangeStats?
 
+    @ObservationIgnored private var changeStatsRevision: Int?
+
+    /// Runs once per diff revision: showing the thread again (switching threads, reopening the
+    /// window) reuses what the last run found instead of running git and the parser again.
     func refreshChangeStats() async {
-        guard let app, let thread = app.thread(threadID), let project = app.project(thread.projectID) else { return }
+        let revision = diffRevision
+        guard changeStatsRevision != revision else { return }
+        guard let app, let thread = app.thread(threadID), app.project(thread.projectID) != nil else { return }
         let touched = Set(turns.flatMap { $0.touchedPaths ?? [] })
         guard !touched.isEmpty else {
             if changeStats != nil { changeStats = nil }
+            changeStatsRevision = revision
             return
         }
-        let git = Git(thread.worktreePath ?? project.path)
-        let captured = turns.filter { $0.baseCheckpoint != nil && $0.endCheckpoint != nil }
-        var patch = ""
-        if let first = captured.first?.baseCheckpoint, let last = captured.last?.endCheckpoint {
-            patch = (try? await git.diff(from: first, to: last)) ?? ""
-        } else {
-            patch = turns.compactMap(\.providerDiff).joined(separator: "\n")
-        }
-        let files = await Self.touchedFiles(in: patch, touched: touched)
+        let files = await parsedDiff(selection: nil).filter { TouchedPaths.matches($0, touched: touched) }
+        guard revision == diffRevision else { return }
         let stats = files.isEmpty ? nil : ChangeStats(
             files: files.count,
             additions: files.reduce(0) { $0 + $1.additions },
             deletions: files.reduce(0) { $0 + $1.deletions }
         )
         if stats != changeStats { changeStats = stats }
+        changeStatsRevision = revision
+    }
+
+    /// Parsed patches by diff revision and turn selection, shared by the changes tab and the
+    /// diff panel. Opening the panel, resizing it between docked and floating, or coming back
+    /// to a thread reuses the parse; only a new revision runs git again. Concurrent callers
+    /// share one run.
+    @ObservationIgnored private var diffCache: [String: Task<[DiffFile], Never>] = [:]
+
+    private func diffCacheKey(_ selection: UUID?) -> String {
+        "\(diffRevision)-\(selection?.uuidString ?? "all")"
+    }
+
+    func hasCachedDiff(selection: UUID?) -> Bool {
+        diffCache[diffCacheKey(selection)] != nil
+    }
+
+    func parsedDiff(selection: UUID?) async -> [DiffFile] {
+        let key = diffCacheKey(selection)
+        if let task = diffCache[key] { return await task.value }
+        guard let app, let thread = app.thread(threadID), let project = app.project(thread.projectID) else { return [] }
+        let git = Git(thread.worktreePath ?? project.path)
+        let turns = turns
+        let revisionPrefix = "\(diffRevision)-"
+        diffCache = diffCache.filter { $0.key.hasPrefix(revisionPrefix) }
+        let task = Task { () -> [DiffFile] in
+            var patch = ""
+            if let selection, let turn = turns.first(where: { $0.id == selection }) {
+                if let base = turn.baseCheckpoint, let end = turn.endCheckpoint {
+                    patch = (try? await git.diff(from: base, to: end)) ?? ""
+                } else {
+                    patch = turn.providerDiff ?? ""
+                }
+            } else {
+                let captured = turns.filter { $0.baseCheckpoint != nil && $0.endCheckpoint != nil }
+                if let first = captured.first?.baseCheckpoint, let last = captured.last?.endCheckpoint {
+                    patch = (try? await git.diff(from: first, to: last)) ?? ""
+                } else {
+                    patch = turns.compactMap(\.providerDiff).joined(separator: "\n")
+                }
+            }
+            return await Self.parseDiff(patch)
+        }
+        diffCache[key] = task
+        return await task.value
     }
 
     @concurrent
-    private nonisolated static func touchedFiles(in patch: String, touched: Set<String>) async -> [DiffFile] {
-        DiffParser.parse(patch).filter { TouchedPaths.matches($0, touched: touched) }
+    private nonisolated static func parseDiff(_ patch: String) async -> [DiffFile] {
+        DiffParser.parse(patch)
     }
 
     func stopSession() {

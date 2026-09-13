@@ -98,8 +98,11 @@ struct DiffInspector: View {
             // Let the panel slide in first. Kicking off git + parse + a big view build
             // in the same transaction as the spring is what made opening feel laggy:
             // the empty panel glides in cheaply, content fills in right after.
-            try? await Task.sleep(for: .milliseconds(180))
-            guard !Task.isCancelled else { return }
+            // A diff the runtime already parsed skips the wait and fills in at once.
+            if !runtime.hasCachedDiff(selection: runtime.diffSelection) {
+                try? await Task.sleep(for: .milliseconds(180))
+                guard !Task.isCancelled else { return }
+            }
             await load()
         }
         .confirmationDialog("Revert this turn?", isPresented: $isConfirmingRevert) {
@@ -118,31 +121,17 @@ struct DiffInspector: View {
     }
 
     private func load() async {
-        guard let thread = model.thread(runtime.threadID), let project = model.project(thread.projectID) else { return }
-        let git = Git(thread.worktreePath ?? project.path)
-        let selectedTurns = runtime.diffSelection.map { selection in runtime.turns.filter { $0.id == selection } } ?? runtime.turns
+        let selection = runtime.diffSelection
+        let selectedTurns = selection.map { selection in runtime.turns.filter { $0.id == selection } } ?? runtime.turns
         let touched = Set(selectedTurns.flatMap { $0.touchedPaths ?? [] })
         // Turns recorded before edited files were tracked have none, and show everything as before.
         let filtersToThread = selectedTurns.contains { $0.touchedPaths != nil }
         isLoading = true
         defer { isLoading = false }
-        let turns = runtime.turns
-        var patch = ""
-        if let selection = runtime.diffSelection, let turn = turns.first(where: { $0.id == selection }) {
-            if let base = turn.baseCheckpoint, let end = turn.endCheckpoint {
-                patch = (try? await git.diff(from: base, to: end)) ?? ""
-            } else {
-                patch = turn.providerDiff ?? ""
-            }
-        } else {
-            let captured = turns.filter { $0.baseCheckpoint != nil && $0.endCheckpoint != nil }
-            if let first = captured.first?.baseCheckpoint, let last = captured.last?.endCheckpoint {
-                patch = (try? await git.diff(from: first, to: last)) ?? ""
-            } else {
-                patch = turns.compactMap(\.providerDiff).joined(separator: "\n")
-            }
-        }
-        files = await Self.parse(patch, touched: filtersToThread ? touched : nil)
+        let parsed = await runtime.parsedDiff(selection: selection)
+        guard !Task.isCancelled else { return }
+        let filtered = filtersToThread ? parsed.filter { TouchedPaths.matches($0, touched: touched) } : parsed
+        files = Array(filtered.prefix(120))
         // Opening with every file expanded materializes thousands of rows in the same
         // transaction as the slide, which is the visible hitch. Keep the first file open
         // and collapse the rest when there are many; one tap expands any of them.
@@ -151,21 +140,6 @@ struct DiffInspector: View {
         } else {
             collapsed = collapsed.intersection(files.map(\.id))
         }
-    }
-
-    @concurrent
-    private nonisolated static func parse(_ patch: String, touched: Set<String>?) async -> [DiffFile] {
-        // Bound parse + view work: a huge refactor can otherwise produce a megabyte patch
-        // whose every line becomes a DiffLine + row in the same frame as the open animation.
-        let bounded = patch.count > 1_000_000 ? String(patch.prefix(1_000_000)) : patch
-        let files = DiffParser.parse(bounded)
-        let filtered: [DiffFile]
-        if let touched {
-            filtered = files.filter { TouchedPaths.matches($0, touched: touched) }
-        } else {
-            filtered = files
-        }
-        return Array(filtered.prefix(120))
     }
 }
 

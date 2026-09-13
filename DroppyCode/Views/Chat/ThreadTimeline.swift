@@ -36,12 +36,13 @@ struct ThreadTimeline: View {
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
         let visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
-        let minimapEntries = TimelineMinimap.entries(for: blocks)
+        // One tick per block, so the rail's size and selection come from block ids alone; the
+        // column reads the text itself, which keeps streaming out of this body.
         return HStack(spacing: 0) {
-            if minimapEntries.count > 1 {
-                TimelineMinimapRail(
-                    entries: minimapEntries,
-                    selectedID: activeMinimapID(entries: minimapEntries),
+            if blocks.count > 1 {
+                TimelineMinimapColumn(
+                    blocks: blocks,
+                    selectedID: activeMinimapID(blocks: blocks),
                     onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
                 )
                 .frame(width: 30)
@@ -53,9 +54,9 @@ struct ThreadTimeline: View {
     /// The block the reader is on: the view at the bottom-anchored scroll
     /// position when it matches a block, else the latest block while pinned
     /// to the bottom, else nothing.
-    private func activeMinimapID(entries: [TimelineMinimapEntry]) -> String? {
-        if let id = position.viewID as? String, entries.contains(where: { $0.id == id }) { return id }
-        if isPinnedToBottom { return entries.last?.id }
+    private func activeMinimapID(blocks: [DisplayBlock]) -> String? {
+        if let id = position.viewID as? String, blocks.contains(where: { $0.id == id }) { return id }
+        if isPinnedToBottom { return blocks.last?.id }
         return nil
     }
 
@@ -217,13 +218,11 @@ enum TimelineGroup: Identifiable {
 
     @MainActor
     static func build(_ entries: [TimelineEntry], showReasoning: Bool) -> [TimelineGroup] {
-        // Positions of assistant entries carrying reply text. A work run sitting
-        // before one of these has been moved on from, so it starts collapsed.
+        // Positions of replies. A work run sitting before one has been moved on from, so it
+        // starts collapsed. Kind only, never the text: reading streaming content here made the
+        // whole timeline regroup on every token. A reply row is created by its first delta.
         var replyIndices: [Int] = []
-        for (index, entry) in entries.enumerated() {
-            guard entry.kind == .assistant,
-                  case .assistant(let message) = entry.item.content,
-                  !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+        for (index, entry) in entries.enumerated() where entry.kind == .assistant {
             replyIndices.append(index)
         }
         var groups: [TimelineGroup] = []
@@ -509,10 +508,14 @@ private struct WorkingIndicatorSlot: View {
     /// any content is read.
     private var thinking: [String] {
         guard let turnID = runtime.entries.last.flatMap(\.turnID) else { return [] }
-        return runtime.entries.compactMap { entry in
-            guard entry.kind == .reasoning, entry.turnID == turnID,
-                  case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { return nil }
-            return block.text
+        // Walks back from the end and stops at the previous turn, so streamed thinking never rescans the thread.
+        var steps: [String] = []
+        for entry in runtime.entries.reversed() {
+            guard let entryTurn = entry.turnID else { continue }
+            guard entryTurn == turnID else { break }
+            guard entry.kind == .reasoning, case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { continue }
+            steps.append(block.text)
         }
+        return steps.reversed()
     }
 }

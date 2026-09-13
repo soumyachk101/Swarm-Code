@@ -54,8 +54,9 @@ final class ProviderRegistry {
     static let metaSeed = ["muse-spark-1.3", "muse-spark-1.3-contributor", "muse-spark-1.2", "muse-spark-1.2-contributor", "muse-spark-1.1"]
         .compactMap(MetaAPI.option(for:))
 
-    /// API providers fetch their live catalog once per launch, even though the seed means the list is never empty.
-    @ObservationIgnored private var liveFetchedCatalogs: Set<ProviderKind> = []
+    /// Every provider tries its live catalog at most once per launch unless forced, success or not,
+    /// so views that ask on appear never re-spawn a CLI or re-hit an API while scrolling.
+    @ObservationIgnored private var attemptedCatalogs: Set<ProviderKind> = []
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -95,16 +96,23 @@ final class ProviderRegistry {
         return environment
     }
 
-    @ObservationIgnored private var lastFullRefresh: Date?
+    private(set) var isRefreshing = false
 
-    /// Refreshes every provider unless that already happened within the last minute.
-    func refreshAllIfStale() async {
-        if let lastFullRefresh, Date.now.timeIntervalSince(lastFullRefresh) < 60 { return }
+    /// The Providers page's refresh button: checks every provider again and reloads the live catalogs.
+    /// Nothing on that page checks on its own, so this is the only way it hits the CLIs and APIs.
+    func refreshEverything() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
         await refreshAll()
+        await withTaskGroup(of: Void.self) { group in
+            for provider in [ProviderKind.codex, .deepseek, .meta] where status(provider).isInstalled {
+                group.addTask { await self.loadCatalog(provider, force: true) }
+            }
+        }
     }
 
     func refreshAll() async {
-        lastFullRefresh = .now
         await withTaskGroup(of: Void.self) { group in
             for provider in ProviderKind.allCases {
                 group.addTask { await self.refresh(provider) }
@@ -177,12 +185,13 @@ final class ProviderRegistry {
 
     func loadCatalog(_ provider: ProviderKind, force: Bool = false) async {
         guard provider != .claude, !loadingCatalogs.contains(provider) else { return }
+        guard force || !attemptedCatalogs.contains(provider) else { return }
         if provider.isAPIKeyBased {
-            guard force || !liveFetchedCatalogs.contains(provider) else { return }
             await loadAPICatalog(provider, force: force)
             return
         }
         guard force || models(for: provider).isEmpty, let executable = executable(for: provider) else { return }
+        attemptedCatalogs.insert(provider)
         loadingCatalogs.insert(provider)
         defer { loadingCatalogs.remove(provider) }
         let environment = environment(for: provider)
@@ -207,15 +216,13 @@ final class ProviderRegistry {
         defer { loadingCatalogs.remove(provider) }
         let apiKey = settings.apiKey(for: provider)
         guard !apiKey.isEmpty else { return }
+        attemptedCatalogs.insert(provider)
         let list: [ModelOption]? = switch provider {
         case .deepseek: try? await DeepSeekAPI.listModels(apiKey: apiKey)
         case .meta: try? await MetaAPI.listModels(apiKey: apiKey)
         default: nil
         }
-        if let list, !list.isEmpty {
-            liveFetchedCatalogs.insert(provider)
-            updateCatalog(list, for: provider)
-        }
+        if let list, !list.isEmpty { updateCatalog(list, for: provider) }
     }
 
     /// Reads the provider's plan limits, at most once a minute after a successful read unless forced.
