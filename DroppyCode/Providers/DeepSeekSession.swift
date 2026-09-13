@@ -155,6 +155,8 @@ final class DeepSeekSession: ProviderSession {
         let system = messages.first
         let tail = Array(messages.suffix(10))
         messages = (system.map { [$0] } ?? []) + tail
+        // Slicing can orphan tool messages from their tool_calls.
+        sanitizeHistory()
         onEvent?(.notice(Notice(level: .info, message: "Context compacted.")))
     }
 
@@ -171,6 +173,9 @@ final class DeepSeekSession: ProviderSession {
     // MARK: - Chat round
 
     private func streamOneRound(model: String, effort: String?) async throws -> StreamRound {
+        // History trims slice blindly and interrupted turns leave calls
+        // unanswered; either poisons every later request, so repair first.
+        sanitizeHistory()
         let payload = requestPayload(model: model, effort: effort)
         let task = Task<StreamRound, Error> { try await self.performStream(payload: payload) }
         roundTask = task
@@ -690,6 +695,70 @@ final class DeepSeekSession: ProviderSession {
         let system = messages.first
         let tail = Array(messages.suffix(50))
         messages = (system.map { [$0] } ?? []) + tail
+    }
+
+    /// Repairs tool-call chains after trimming, compaction or interruption.
+    /// DeepSeek rejects any history where a `tool` message has no preceding
+    /// `assistant` message with a matching `tool_calls` id (and vice versa).
+    /// Once such an orphan exists, every later request fails identically, so
+    /// no retry can heal it — this drops orphaned tool messages and strips
+    /// tool calls that lost their answers, keeping the history sendable.
+    private func sanitizeHistory() {
+        var clean: [JSONValue] = []
+        clean.reserveCapacity(messages.count)
+        // Assistant messages in `clean` still awaiting tool answers.
+        var open: [(index: Int, ids: Set<String>)] = []
+
+        func closeOpen() {
+            // Calls that can never be answered now must go. Applied
+            // last-index-first so removals never shift pending indices.
+            for entry in open.sorted(by: { $0.index > $1.index }) {
+                guard case .object(var values) = clean[entry.index],
+                      let calls = values["tool_calls"]?.array else { continue }
+                let kept = calls.filter { call in
+                    guard let id = call["id"]?.string, !id.isEmpty else { return false }
+                    return !entry.ids.contains(id)
+                }
+                if kept.isEmpty {
+                    values.removeValue(forKey: "tool_calls")
+                    let content = (values["content"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if content.isEmpty {
+                        clean.remove(at: entry.index)
+                    } else {
+                        clean[entry.index] = .object(values)
+                    }
+                } else {
+                    values["tool_calls"] = .array(kept)
+                    clean[entry.index] = .object(values)
+                }
+            }
+            open.removeAll()
+        }
+
+        for message in messages {
+            let role = message["role"]?.string ?? ""
+            if role == "tool" {
+                let id = message["tool_call_id"]?.string ?? ""
+                if let slot = open.firstIndex(where: { $0.ids.contains(id) }) {
+                    clean.append(message)
+                    open[slot].ids.remove(id)
+                    if open[slot].ids.isEmpty { open.remove(at: slot) }
+                }
+                // else: orphaned by a trim/compact cut — drop it.
+                continue
+            }
+            if role == "assistant", let calls = message["tool_calls"]?.array, !calls.isEmpty {
+                closeOpen()
+                clean.append(message)
+                let ids = Set(calls.compactMap { $0["id"]?.string }.filter { !$0.isEmpty })
+                if !ids.isEmpty { open.append((clean.count - 1, ids)) }
+                continue
+            }
+            closeOpen()
+            clean.append(message)
+        }
+        closeOpen()
+        messages = clean
     }
 
     private func summary(_ text: String, limit: Int) -> String {
