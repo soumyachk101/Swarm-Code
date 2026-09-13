@@ -5,10 +5,13 @@ struct UsagePanel: View {
     @Environment(AppModel.self) private var model
     let usage: ContextUsage?
     let provider: ProviderKind
+    let rate: Double?
+    let live: Bool
 
     var body: some View {
         let registry = model.providers
         let showsLimits = PlanLimitsReader.exposesLimits(provider)
+        let showsContext = usage?.fraction != nil && usage?.windowTokens != nil
         VStack(alignment: .leading, spacing: 0) {
             if let usage, let fraction = usage.fraction, let window = usage.windowTokens {
                 HStack {
@@ -22,12 +25,26 @@ struct UsagePanel: View {
                 .font(.system(size: 13))
                 UsageBar(fraction: fraction, tint: Chrome.accent)
                     .padding(.top, 10)
-                if showsLimits {
-                    Divider().padding(.vertical, 14)
-                }
             }
 
+            if let rate {
+                if showsContext {
+                    Divider().padding(.vertical, 14)
+                }
+                HStack {
+                    Text(live ? "Tokens per second · live" : "Tokens per second · last turn")
+                        .foregroundStyle(Chrome.secondaryText)
+                    Spacer(minLength: 12)
+                    Text(verbatim: "\(Int(rate)) tok/s")
+                        .foregroundStyle(Chrome.secondaryText)
+                        .monospacedDigit()
+                }
+                .font(.system(size: 13))
+            }
             if showsLimits {
+                if showsContext || rate != nil {
+                    Divider().padding(.vertical, 14)
+                }
                 let limits = registry.planLimits[provider]
                 let isLoading = registry.loadingLimits.contains(provider)
                 HStack(spacing: 8) {

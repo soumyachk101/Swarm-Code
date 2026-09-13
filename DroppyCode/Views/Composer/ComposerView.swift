@@ -70,7 +70,12 @@ struct ComposerView: View {
                     PlanToggle(thread: thread)
                     PermissionMenu(thread: thread)
                     Spacer(minLength: 8)
-                    ContextMeter(usage: runtime.usage, provider: thread.provider)
+                    ContextMeter(
+                        usage: runtime.usage,
+                        provider: thread.provider,
+                        rate: runtime.isRunning ? runtime.tokenRate : runtime.lastTokenRate,
+                        live: runtime.isRunning && runtime.tokenRate != nil
+                    )
                     Button {
                         chooseFiles()
                     } label: {
@@ -329,6 +334,8 @@ private struct PermissionMenu: View {
 private struct ContextMeter: View {
     let usage: ContextUsage?
     let provider: ProviderKind
+    let rate: Double?
+    let live: Bool
 
     @State private var isPresented = false
 
@@ -354,7 +361,7 @@ private struct ContextMeter: View {
             .buttonStyle(.plain)
             .help(fraction.map { "\(Int($0 * 100))% of the context window used" } ?? "Usage limits")
             .popover(isPresented: $isPresented, arrowEdge: .top) {
-                UsagePanel(usage: usage, provider: provider)
+                UsagePanel(usage: usage, provider: provider, rate: rate, live: live)
             }
         }
     }

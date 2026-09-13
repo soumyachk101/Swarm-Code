@@ -63,6 +63,10 @@ final class ThreadRuntime {
     private(set) var turns: [TurnRecord] = []
     private(set) var usage: ContextUsage?
     private(set) var phase: RuntimePhase = .idle
+    /// Live generation speed in tokens/sec while streaming, and the previous
+    /// turn's average once idle. Estimated from streamed output characters.
+    private(set) var tokenRate: Double?
+    private(set) var lastTokenRate: Double?
     private(set) var approvals: [ApprovalRequest] = []
     private(set) var questions: [QuestionRequest] = []
     private(set) var turnStartedAt: Date?
@@ -83,6 +87,10 @@ final class ThreadRuntime {
     @ObservationIgnored private var currentTurnID: UUID?
     @ObservationIgnored private var resumeAnchor: String?
     @ObservationIgnored private var interruptWatchdog: Task<Void, Never>?
+    /// Trailing (date, cumulative output chars) samples for the tok/s estimate.
+    @ObservationIgnored private var outputSamples: [(Date, Int)] = []
+    @ObservationIgnored private var outputChars = 0
+    @ObservationIgnored private var lastRatePublishedAt: Date?
 
     private struct SessionSignature: Equatable {
         var provider: ProviderKind
@@ -463,6 +471,10 @@ final class ThreadRuntime {
             app?.updateThread(threadID) { $0.providerSessionID = sessionID }
         case .turnStarted(let providerTurnID):
             phase = .running
+            outputSamples = []
+            outputChars = 0
+            tokenRate = nil
+            lastRatePublishedAt = nil
             if let currentTurnID, let providerTurnID {
                 updateTurn(currentTurnID) { $0.providerTurnID = providerTurnID }
             }
@@ -603,6 +615,14 @@ final class ThreadRuntime {
             deletions: files.reduce(0) { $0 + $1.deletions }
         )
         append(TimelineItem(turnID: turnID, content: .turnEnd(summary)))
+        if let first = outputSamples.first, let last = outputSamples.last {
+            let span = last.0.timeIntervalSince(first.0)
+            if span >= 0.5, last.1 > first.1 {
+                lastTokenRate = (Double(last.1 - first.1) / span / 4).rounded()
+            }
+        }
+        outputSamples = []
+        tokenRate = nil
         phase = .idle
         turnStartedAt = nil
         diffRevision += 1
@@ -654,6 +674,13 @@ final class ThreadRuntime {
             }
         }
         guard !text.isEmpty else { return }
+        // Tool outputs are environment data, not generated tokens, so they
+        // stay out of the tok/s estimate.
+        if kind == .message || kind == .reasoning || kind == .plan {
+            outputChars += text.count
+            outputSamples.append((.now, outputChars))
+            if outputSamples.count > 40 { outputSamples.removeFirst(outputSamples.count - 40) }
+        }
         pendingDeltas[id, default: PendingDelta(kind: kind, text: "")].text += text
         guard flushTask == nil else { return }
         flushTask = Task { [weak self] in
@@ -662,9 +689,30 @@ final class ThreadRuntime {
         }
     }
 
+    /// Windowed generation speed over the trailing output samples. Published at
+    /// most ~4x/sec and only on whole-number changes, so the meter never
+    /// costs renders while streaming.
+    private func refreshTokenRate() {
+        let now = Date.now
+        outputSamples.removeAll { now.timeIntervalSince($0.0) > 6 }
+        guard outputSamples.count >= 2,
+              let first = outputSamples.first, let last = outputSamples.last else {
+            if tokenRate != nil { tokenRate = nil }
+            return
+        }
+        let span = last.0.timeIntervalSince(first.0)
+        guard span >= 0.5, last.1 > first.1 else { return }
+        let rounded = (Double(last.1 - first.1) / span / 4).rounded()
+        guard tokenRate != rounded,
+              lastRatePublishedAt == nil || now.timeIntervalSince(lastRatePublishedAt!) >= 0.25 else { return }
+        lastRatePublishedAt = now
+        tokenRate = rounded
+    }
+
     private func flushDeltas() {
         flushTask?.cancel()
         flushTask = nil
+        refreshTokenRate()
         guard !pendingDeltas.isEmpty else { return }
         let deltas = pendingDeltas
         pendingDeltas.removeAll()
