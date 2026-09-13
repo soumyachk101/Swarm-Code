@@ -262,7 +262,7 @@ final class DeepSeekSession: ProviderSession {
             if let u = json["usage"], !u.isNull {
                 let total = u["total_tokens"]?.int ?? 0
                 if total > 0 {
-                    usage = ContextUsage(usedTokens: total, windowTokens: 131_072)
+                    usage = ContextUsage(usedTokens: total, windowTokens: DeepSeekAPI.contextWindow)
                 }
             }
             guard let choice = json["choices"]?.array?.first else { continue }
@@ -334,7 +334,7 @@ final class DeepSeekSession: ProviderSession {
             return "The conversation no longer fits DeepSeek's context window. Start a new thread or compact first."
         }
         if lower.contains("model") && lower.contains("not exist") {
-            return "DeepSeek no longer offers that model. Pick V4 Pro or V4 Flash in the model picker."
+            return "DeepSeek no longer offers that model. Pick V4 Pro or V4.1 Flash in the model picker."
         }
         return message.isEmpty ? "DeepSeek stopped before finishing." : message
     }

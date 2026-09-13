@@ -38,27 +38,31 @@ enum DeepSeekAPI {
 
     static let deepseekEfforts = ["low", "high", "max"]
 
+    /// Both current models have a 1M-token context (api-docs.deepseek.com, Models & Pricing).
+    static let contextWindow = 1_048_576
+
+    /// Per api-docs.deepseek.com (2026-09-10): `deepseek-flash` is DeepSeek-V4.1-Flash and
+    /// `deepseek-v4-pro` is V4-Pro-0813. `deepseek-v4-flash` and `deepseek-v4-flash-vision-exp`
+    /// are retired names temporarily routed to V4.1 Flash; `deepseek-chat` and
+    /// `deepseek-reasoner` were discontinued on 2026-07-24. None of those are offered.
     static func option(for id: String) -> ModelOption? {
         switch id {
         case "deepseek-v4-pro":
             return ModelOption(id: id, name: "V4 Pro", detail: "Best reasoning and coding quality", efforts: deepseekEfforts, defaultEffort: "high", isDefault: true)
-        case "deepseek-flash", "deepseek-v4-flash":
-            return ModelOption(id: id, name: "V4 Flash", detail: "Fast everyday chat and edits", efforts: deepseekEfforts, defaultEffort: "high")
-        case "deepseek-v4-flash-vision-exp":
-            return ModelOption(id: id, name: "V4 Flash Vision", detail: "Experimental, reads attached images", efforts: deepseekEfforts, defaultEffort: "high")
-        case "deepseek-chat":
-            return ModelOption(id: id, name: "Chat (legacy)", detail: "Legacy alias for V4 Flash", efforts: deepseekEfforts, defaultEffort: "high")
-        case "deepseek-reasoner":
-            return ModelOption(id: id, name: "Reasoner (legacy)", detail: "Legacy alias for V4 Flash thinking", efforts: deepseekEfforts, defaultEffort: "high")
+        case "deepseek-flash":
+            return ModelOption(id: id, name: "V4.1 Flash", detail: "Newest, fast, reads images", efforts: deepseekEfforts, defaultEffort: "high")
+        case "deepseek-v4-flash", "deepseek-v4-flash-vision-exp", "deepseek-chat", "deepseek-reasoner":
+            return nil
         default:
             // Any other id the API ships (including future ones) still shows up
-            // instead of vanishing. The models endpoint already scopes to DeepSeek,
-            // so no name check is needed — "deepseek-flash" would have failed one.
+            // instead of vanishing. The models endpoint already scopes to DeepSeek.
             return ModelOption(id: id, name: id, efforts: deepseekEfforts, defaultEffort: "high")
         }
     }
 
+    /// Only Flash accepts images; V4 Pro returns an error for them. The retired Flash
+    /// names route to V4.1 Flash, so threads saved on them keep their images.
     static func isVisionModel(_ id: String?) -> Bool {
-        (id ?? "").localizedCaseInsensitiveContains("vision")
+        ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"].contains(id ?? "")
     }
 }
