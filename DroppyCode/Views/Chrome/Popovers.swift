@@ -4,6 +4,9 @@ import SwiftUI
 /// The native popover every chrome and composer button opens, in place of a pull-down menu.
 struct PopoverMenu<Content: View>: View {
     var maxHeight: CGFloat = 460
+    /// Forces the popover open at this height. Needed because a ScrollView inside
+    /// a popover otherwise collapses to a few rows and maxHeight never engages.
+    var idealHeight: CGFloat?
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -16,7 +19,7 @@ struct PopoverMenu<Content: View>: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .scrollIndicators(.automatic)
-        .frame(maxHeight: maxHeight)
+        .frame(idealHeight: idealHeight, maxHeight: maxHeight)
     }
 }
 

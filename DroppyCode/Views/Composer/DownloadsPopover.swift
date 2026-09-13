@@ -96,9 +96,9 @@ struct DownloadsPopover: View {
     @State private var downloads = RecentDownloads()
 
     var body: some View {
-        // Hoog genoeg voor alle 15 recente downloads zonder scrollen; met minder
-        // items krimpt de popover gewoon mee.
-        PopoverMenu(maxHeight: 700) {
+        // Hoog genoeg voor alle 15 recente downloads: zonder idealHeight klapt de
+        // ScrollView in tot een paar rijen en wordt maxHeight nooit bereikt.
+        PopoverMenu(maxHeight: 700, idealHeight: 670) {
             PopoverSectionHeader("Recent downloads")
             if !downloads.isLoaded {
                 HStack {
