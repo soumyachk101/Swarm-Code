@@ -110,10 +110,9 @@ struct ThreadTimeline: View {
                     }
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 12)
-                    .padding(.bottom, 4)
+                    .padding(.top, TimelineMetrics.rowSpacing)
                 }
-                LazyVStack(alignment: .leading, spacing: 16) {
+                LazyVStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(visible) { block in
                         DisplayBlockView(block: block, runtime: runtime, meta: meta)
                             .id(block.id)
@@ -405,13 +404,14 @@ private struct WorkingIndicator: View {
         let elapsed = now.timeIntervalSince(startedAt)
         let word = WorkingWords.word(seed: seed, elapsedSeconds: Int64(max(0, elapsed)))
         let canExpand = !thinkingSteps.isEmpty
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             Button {
                 guard canExpand else { return }
                 withAnimation(.snappy(duration: 0.24)) { showsThinking.toggle() }
             } label: {
-                HStack(spacing: 10) {
+                HStack(spacing: TimelineMetrics.iconSpacing) {
                     WorkingSpinner(cellSize: 3.5)
+                        .frame(width: TimelineMetrics.iconWidth)
                     Text(verbatim: "\(word)…")
                         .foregroundStyle(.secondary)
                         .id(word)
@@ -434,7 +434,7 @@ private struct WorkingIndicator: View {
             .accessibilityHint(canExpand ? Text("Shows the agent's thinking") : Text(""))
 
             if showsThinking, canExpand {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
                         MarkdownView(text: step).equatable()
                     }
@@ -443,7 +443,7 @@ private struct WorkingIndicator: View {
                 .foregroundStyle(.secondary)
                 .environment(\.markdownPointSize, 12)
                 .environment(\.markdownDimmed, true)
-                .padding(.leading, 23)
+                .padding(.leading, TimelineMetrics.iconWidth + TimelineMetrics.iconSpacing)
                 .transition(.softAppear)
             }
         }
@@ -474,8 +474,9 @@ final class TimelineScrollState {
 /// Where the working indicator sits while a turn runs. The moment the reply it is waiting on
 /// arrives, the indicator steps aside and the reply takes its line, so the answer begins exactly
 /// where the indicator was instead of pushing it down. It comes back below when the agent moves on
-/// to another step. Only the newest entry's kind is read here, which never changes while text
-/// streams, plus the turn's thinking.
+/// to another step. Indicator and reply are both one row tall — replies keep their hover line
+/// inside the gap below them, never in their height — so the handover moves nothing. Only the
+/// newest entry's kind is read here, which never changes while text streams, plus the turn's thinking.
 private struct WorkingIndicatorSlot: View {
     let runtime: ThreadRuntime
     let showsThinking: Bool
@@ -484,18 +485,11 @@ private struct WorkingIndicatorSlot: View {
         let replyTookOver = runtime.entries.last?.kind == .assistant
         ZStack(alignment: .topLeading) {
             if !replyTookOver {
-                VStack(alignment: .leading, spacing: 2) {
-                    WorkingIndicator(
-                        startedAt: runtime.turnStartedAt ?? .now,
-                        seed: WorkingWords.seed(runtime.threadID.uuidString),
-                        thinkingSteps: showsThinking ? thinking : []
-                    )
-                    // The room a reply keeps under its text for the copy line, so the reply's first
-                    // line appears exactly where the indicator's text was.
-                    Color.clear
-                        .frame(height: 22)
-                        .accessibilityHidden(true)
-                }
+                WorkingIndicator(
+                    startedAt: runtime.turnStartedAt ?? .now,
+                    seed: WorkingWords.seed(runtime.threadID.uuidString),
+                    thinkingSteps: showsThinking ? thinking : []
+                )
                 .transition(.asymmetric(
                     insertion: .softAppear,
                     removal: .opacity.animation(.easeOut(duration: 0.1))
