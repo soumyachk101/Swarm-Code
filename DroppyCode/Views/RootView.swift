@@ -41,6 +41,8 @@ struct RootView: View {
         .background { WindowChromeConfigurator(sidebarVisible: sidebar.isVisible) }
         .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
         .ignoresSafeArea()
+        .coordinateSpace(.named(GenieAnimator.coordinateSpace))
+        .overlay { GenieLayer() }
         .overlay {
             if model.isCommandPalettePresented {
                 CommandPalette()

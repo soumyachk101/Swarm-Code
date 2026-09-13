@@ -348,6 +348,8 @@ private struct ThreadRow: View {
     let onDelete: () -> Void
 
     @State private var isMenuPresented = false
+    @State private var windowFrame: CGRect = .zero
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         SidebarRow(
@@ -361,7 +363,7 @@ private struct ThreadRow: View {
                 if hovering || isMenuPresented {
                     HStack(spacing: 0) {
                         Button {
-                            withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
+                            archiveWithGenie()
                         } label: {
                             RowAccessoryIcon("archivebox")
                         }
@@ -377,7 +379,17 @@ private struct ThreadRow: View {
                 }
             }
         )
+        .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame = $0 }
         .contextMenu { RowActionMenuButtons(actions: actions) }
+    }
+
+    private nonisolated static func windowFrame(_ proxy: GeometryProxy) -> CGRect {
+        proxy.frame(in: .named(GenieAnimator.coordinateSpace))
+    }
+
+    private func archiveWithGenie() {
+        GenieAnimator.shared.launch(title: thread.title, subtitle: nil, frame: windowFrame, colorScheme: colorScheme)
+        withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
     }
 
     private var actions: [RowAction] {
@@ -530,6 +542,8 @@ private struct ActivityThreadRow: View {
 
     @State private var isHovering = false
     @State private var isMenuPresented = false
+    @State private var windowFrame: CGRect = .zero
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let isSelected = model.selectedThreadID == thread.id
@@ -569,7 +583,7 @@ private struct ActivityThreadRow: View {
                 if showsActions {
                     HStack(spacing: 0) {
                         Button {
-                            withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
+                            archiveWithGenie()
                         } label: {
                             RowAccessoryIcon("archivebox")
                         }
@@ -586,8 +600,18 @@ private struct ActivityThreadRow: View {
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
+        .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame = $0 }
         .contextMenu { RowActionMenuButtons(actions: actions) }
         .animation(Chrome.hover, value: isSelected)
+    }
+
+    private nonisolated static func windowFrame(_ proxy: GeometryProxy) -> CGRect {
+        proxy.frame(in: .named(GenieAnimator.coordinateSpace))
+    }
+
+    private func archiveWithGenie() {
+        GenieAnimator.shared.launch(title: thread.title, subtitle: projectName, frame: windowFrame, colorScheme: colorScheme)
+        withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
     }
 }
 
