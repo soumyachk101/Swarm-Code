@@ -5,22 +5,20 @@ struct ModelsSettingsPage: View {
     @Environment(AppModel.self) private var model
     var query = ""
 
-    /// The query the page is showing. It follows `query` a beat after typing stops, so the list
-    /// animates once per settled search instead of once per keystroke.
-    @State private var appliedQuery = ""
-
     var body: some View {
         let settings = model.settings
         let registry = model.providers
         let pins = settings.modelList
-        let trimmed = appliedQuery
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let visiblePins = Array(pins.enumerated()).filter { item in
             Self.matches(registry.model(item.element.modelID, for: item.element.provider), id: item.element.modelID, provider: item.element.provider, query: trimmed)
         }
         let providers = registry.availableProviders.filter { provider in
             trimmed.isEmpty || registry.models(for: provider).contains { Self.matches($0, id: $0.id, provider: provider, query: trimmed) }
         }
-        LazyVStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+        // Filtering is instant with no transitions: animating dozens of rows with blur on every
+        // keystroke (and all of them again when clearing) is what made entries overlap and jump.
+        VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
             if trimmed.isEmpty || !visiblePins.isEmpty {
                 ChromeSection(title: "Your models") {
                     ChromeCard {
@@ -37,7 +35,6 @@ struct ModelsSettingsPage: View {
                                     if position > 0 { ChromeRowDivider() }
                                     PinnedModelRow(pin: item.element, index: item.offset, count: pins.count)
                                 }
-                                .transition(.searchResult)
                             }
                         }
                     }
@@ -48,12 +45,10 @@ struct ModelsSettingsPage: View {
                             .padding(.horizontal, 4)
                     }
                 }
-                .transition(.searchResult)
             }
 
             ForEach(providers) { provider in
                 ProviderModelsSection(provider: provider, query: trimmed)
-                    .transition(.searchResult)
             }
 
             if !trimmed.isEmpty, visiblePins.isEmpty, providers.isEmpty {
@@ -61,20 +56,8 @@ struct ModelsSettingsPage: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Chrome.secondaryText)
                     .padding(.horizontal, 4)
-                    .transition(.searchResult)
             }
         }
-        .task(id: query) { await apply(query) }
-    }
-
-    private func apply(_ text: String) async {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed != appliedQuery else { return }
-        if !trimmed.isEmpty {
-            try? await Task.sleep(for: .milliseconds(60))
-            guard !Task.isCancelled else { return }
-        }
-        withAnimation(.softAppear) { appliedQuery = trimmed }
     }
 
     /// Whether a model matches the search by name, description or provider.
@@ -261,7 +244,6 @@ private struct ProviderModelsSection: View {
                             }
                         }
                         }
-                        .transition(.searchResult)
                     }
                 }
             }
