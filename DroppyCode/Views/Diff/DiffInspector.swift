@@ -214,30 +214,80 @@ struct DiffLinesView: View {
     let file: DiffFile
     var showsLineNumbers = true
 
+    /// One visual row group: a hunk header, a joined tinted block, or plain lines.
+    /// Tinted runs merge across hunk boundaries (edits often arrive as many
+    /// single-line hunks), so only the block's top and bottom lines get corners.
+    /// A header that would land inside a merged run is redundant, so it is dropped.
+    private enum Section: Identifiable {
+        case header(String, Int)
+        case tinted([DiffLine])
+        case plain([DiffLine])
+
+        var id: String {
+            switch self {
+            case .header(let text, let index): "h\(index)-\(text)"
+            case .tinted(let lines): "t\(lines.first?.id ?? 0)"
+            case .plain(let lines): "p\(lines.first?.id ?? 0)"
+            }
+        }
+    }
+
+    private var sections: [Section] {
+        var sections: [Section] = []
+        var pending: [DiffLine] = []
+        let flush = {
+            if !pending.isEmpty {
+                sections.append(.tinted(pending))
+                pending = []
+            }
+        }
+        for (hunkIndex, hunk) in file.hunks.enumerated() {
+            guard !hunk.lines.isEmpty else { continue }
+            let runs = lineBlocks(hunk.lines)
+            // Continuing means the previous hunk ended mid-run; anything else
+            // flushes and starts fresh below a new header.
+            let continues = (runs.first?.isTinted == true) && !pending.isEmpty
+            if !continues {
+                flush()
+                if showsLineNumbers {
+                    sections.append(.header(hunk.header, hunkIndex))
+                }
+            }
+            for run in runs {
+                if run.isTinted {
+                    pending += run.lines
+                } else {
+                    flush()
+                    sections.append(.plain(run.lines))
+                }
+            }
+        }
+        flush()
+        return sections
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(file.hunks) { hunk in
-                if showsLineNumbers {
-                    Text(hunk.header)
+            ForEach(sections) { section in
+                switch section {
+                case .header(let text, _):
+                    Text(text)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.accentColor.opacity(0.06))
-                }
-                ForEach(lineBlocks(hunk.lines)) { block in
-                    if block.isTinted {
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(block.lines) { line in
-                                DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
-                            }
-                        }
-                        .clipShape(.rect(cornerRadius: 8, style: .continuous))
-                    } else {
-                        ForEach(block.lines) { line in
+                case .tinted(let lines):
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(lines) { line in
                             DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
                         }
+                    }
+                    .clipShape(.rect(cornerRadius: 8, style: .continuous))
+                case .plain(let lines):
+                    ForEach(lines) { line in
+                        DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
                     }
                 }
             }
