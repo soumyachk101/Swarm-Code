@@ -66,11 +66,11 @@ enum MetaAPI {
         case "muse-spark-1.3":
             return ModelOption(id: id, name: "Spark 1.3", detail: "Latest Muse Spark · best agentic coding · 1M context", efforts: efforts, defaultEffort: "high", isDefault: true)
         case "muse-spark-1.3-contributor":
-            return ModelOption(id: id, name: "Spark 1.3 Contributor", detail: "Same 1.3 checkpoint · discounted contributor tier", efforts: efforts, defaultEffort: "high")
+            return ModelOption(id: id, name: "Spark 1.3 Contributor", detail: "Cheaper 1.3 · Meta may train on your chats · no max effort", efforts: efforts, defaultEffort: "high")
         case "muse-spark-1.2":
             return ModelOption(id: id, name: "Spark 1.2", detail: "Previous checkpoint · Standard tier · 1M context", efforts: efforts, defaultEffort: "high")
         case "muse-spark-1.2-contributor":
-            return ModelOption(id: id, name: "Spark 1.2 Contributor", detail: "1.2 checkpoint · discounted contributor tier", efforts: efforts, defaultEffort: "high")
+            return ModelOption(id: id, name: "Spark 1.2 Contributor", detail: "Cheaper 1.2 · Meta may train on your chats", efforts: efforts, defaultEffort: "high")
         case "muse-spark-1.1":
             return ModelOption(id: id, name: "Spark 1.1", detail: "Original checkpoint · Standard tier · 1M context", efforts: efforts, defaultEffort: "high")
         default:
