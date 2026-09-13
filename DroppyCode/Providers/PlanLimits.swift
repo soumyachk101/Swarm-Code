@@ -15,7 +15,7 @@ struct PlanLimits: Sendable, Equatable {
 
 @MainActor
 enum PlanLimitsReader {
-    /// Only Codex and Claude report plan limits. Cursor, OpenCode, Grok and DeepSeek expose none.
+    /// Only Codex and Claude report plan limits. Cursor, OpenCode, Grok, DeepSeek and Meta expose none.
     static func exposesLimits(_ provider: ProviderKind) -> Bool {
         provider == .codex || provider == .claude
     }
@@ -24,7 +24,7 @@ enum PlanLimitsReader {
         switch provider {
         case .codex: try? await CodexSession.readPlanLimits(executable: executable, environment: environment)
         case .claude: await readClaude(executable: executable, environment: environment)
-        case .cursor, .opencode, .grok, .deepseek: nil
+        case .cursor, .opencode, .grok, .deepseek, .meta: nil
         }
     }
 

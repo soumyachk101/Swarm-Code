@@ -11,7 +11,7 @@ struct ProviderStatus: Equatable, Sendable {
     var version: String?
     var auth: Auth = .unknown
     var isChecking = false
-    /// Native API providers (DeepSeek) have no CLI; they are installed once an API key exists.
+    /// Native API providers (DeepSeek, Meta) have no CLI; they are installed once an API key exists.
     var apiKeyConfigured = false
 
     var isInstalled: Bool { executable != nil || apiKeyConfigured }
@@ -55,6 +55,15 @@ final class ProviderRegistry {
         ModelOption(id: "deepseek-flash", name: "V4 Flash", detail: "Fast everyday chat and edits", efforts: deepseekEfforts, defaultEffort: "high"),
     ]
 
+    static let metaEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
+    static let metaSeed = [
+        ModelOption(id: "muse-spark-1.3", name: "Spark 1.3", detail: "Latest Muse Spark · best agentic coding · 1M context", efforts: metaEfforts, defaultEffort: "high", isDefault: true),
+        ModelOption(id: "muse-spark-1.3-contributor", name: "Spark 1.3 Contributor", detail: "Same 1.3 checkpoint · discounted contributor tier", efforts: metaEfforts, defaultEffort: "high"),
+        ModelOption(id: "muse-spark-1.2", name: "Spark 1.2", detail: "Previous checkpoint · Standard tier · 1M context", efforts: metaEfforts, defaultEffort: "high"),
+        ModelOption(id: "muse-spark-1.2-contributor", name: "Spark 1.2 Contributor", detail: "1.2 checkpoint · discounted contributor tier", efforts: metaEfforts, defaultEffort: "high"),
+        ModelOption(id: "muse-spark-1.1", name: "Spark 1.1", detail: "Original checkpoint · Standard tier · 1M context", efforts: metaEfforts, defaultEffort: "high"),
+    ]
+
     init(settings: AppSettings) {
         self.settings = settings
         if let data = UserDefaults.standard.data(forKey: cacheKey),
@@ -65,6 +74,7 @@ final class ProviderRegistry {
         }
         if catalogs[.claude]?.isEmpty ?? true { catalogs[.claude] = Self.claudeSeed }
         if catalogs[.deepseek]?.isEmpty ?? true { catalogs[.deepseek] = Self.deepseekSeed }
+        if catalogs[.meta]?.isEmpty ?? true { catalogs[.meta] = Self.metaSeed }
     }
 
     var availableProviders: [ProviderKind] {
@@ -141,6 +151,13 @@ final class ProviderRegistry {
                 auth: valid ? .signedIn(nil) : .signedOut,
                 apiKeyConfigured: true
             )
+        } else if provider == .meta {
+            let valid = await MetaAPI.validate(apiKey: apiKey)
+            statuses[provider] = ProviderStatus(
+                version: "API",
+                auth: valid ? .signedIn(nil) : .signedOut,
+                apiKeyConfigured: true
+            )
         } else {
             statuses[provider] = ProviderStatus(auth: .signedIn(nil), apiKeyConfigured: true)
         }
@@ -179,20 +196,30 @@ final class ProviderRegistry {
         let list: [ModelOption]? = switch provider {
         case .codex: try? await CodexSession.listModels(executable: executable, environment: environment)
         case .cursor, .opencode, .grok: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
-        case .claude, .deepseek: nil
+        case .claude, .deepseek, .meta: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
     }
 
     private func loadAPICatalog(_ provider: ProviderKind, force: Bool) async {
-        guard provider == .deepseek else { return }
-        // The seed keeps DeepSeek usable offline; a live fetch only refines it.
-        if models(for: provider).isEmpty { updateCatalog(Self.deepseekSeed, for: provider) }
+        // The seed keeps API providers usable offline; a live fetch only refines it.
+        let seed: [ModelOption]? = switch provider {
+        case .deepseek: Self.deepseekSeed
+        case .meta: Self.metaSeed
+        default: nil
+        }
+        guard let seed else { return }
+        if models(for: provider).isEmpty { updateCatalog(seed, for: provider) }
         loadingCatalogs.insert(provider)
         defer { loadingCatalogs.remove(provider) }
         let apiKey = settings.apiKey(for: provider)
         guard !apiKey.isEmpty else { return }
-        if let list = try? await DeepSeekAPI.listModels(apiKey: apiKey), !list.isEmpty {
+        let list: [ModelOption]? = switch provider {
+        case .deepseek: try? await DeepSeekAPI.listModels(apiKey: apiKey)
+        case .meta: try? await MetaAPI.listModels(apiKey: apiKey)
+        default: nil
+        }
+        if let list, !list.isEmpty {
             updateCatalog(list, for: provider)
         }
     }
@@ -258,7 +285,7 @@ final class ProviderRegistry {
             let text = TextCleanup.stripANSI(result.output + result.errorOutput)
             if let match = text.firstMatch(of: #/Logged in as (\S+)/#) { return .signedIn(String(match.output.1)) }
             return text.localizedCaseInsensitiveContains("not logged in") ? .signedOut : .unknown
-        case .opencode, .grok, .deepseek:
+        case .opencode, .grok, .deepseek, .meta:
             return .unknown
         }
     }

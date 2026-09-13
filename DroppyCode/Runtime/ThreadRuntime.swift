@@ -181,7 +181,7 @@ final class ThreadRuntime {
         case "/plan":
             app?.updateThread(threadID) { $0.interactionMode = $0.interactionMode == .plan ? .build : .plan }
             return true
-        case "/compact" where thread?.provider == .codex || thread?.provider == .deepseek:
+        case "/compact" where thread?.provider == .codex || thread?.provider == .deepseek || thread?.provider == .meta:
             compact()
             return true
         default:
@@ -292,7 +292,11 @@ final class ThreadRuntime {
                     interactionMode: thread.interactionMode,
                     apiKey: app.settings.apiKey(for: thread.provider)
                 )
-                let created: any ProviderSession = DeepSeekSession(configuration: configuration)
+                let created: any ProviderSession = switch thread.provider {
+                case .deepseek: DeepSeekSession(configuration: configuration)
+                case .meta: MetaSession(configuration: configuration)
+                default: DeepSeekSession(configuration: configuration)
+                }
                 created.onEvent = { [weak self] event in self?.handle(event) }
                 return created
             }
@@ -335,6 +339,7 @@ final class ThreadRuntime {
             case .claude: ClaudeSession(configuration: configuration)
             case .cursor, .opencode, .grok: ACPSession(configuration: configuration)
             case .deepseek: DeepSeekSession(configuration: configuration)
+            case .meta: MetaSession(configuration: configuration)
             }
             created.onEvent = { [weak self] event in self?.handle(event) }
             return created
