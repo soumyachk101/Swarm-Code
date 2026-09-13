@@ -44,6 +44,7 @@ struct ComposerView: View {
     @State private var controller = ComposerController()
     @State private var suggestions = SuggestionState()
     @State private var historyIndex: Int?
+    @State private var showingRecents = false
     @State private var fileIndex = FileIndex()
 
     var body: some View {
@@ -77,12 +78,22 @@ struct ComposerView: View {
                         live: runtime.isRunning && runtime.tokenRate != nil
                     )
                     Button {
-                        chooseFiles()
+                        if model.settings.recentDownloadsPicker {
+                            showingRecents.toggle()
+                        } else {
+                            chooseFiles()
+                        }
                     } label: {
                         Image(systemName: "paperclip")
                     }
-                    .buttonStyle(.chip)
+                    .buttonStyle(.chip(active: showingRecents))
                     .help("Attach files")
+                    .popover(isPresented: $showingRecents, arrowEdge: .top) {
+                        DownloadsPopover(
+                            pick: { showingRecents = false; attach(urls: [$0]) },
+                            chooseOther: { showingRecents = false; chooseFiles() }
+                        )
+                    }
                     SendButton(runtime: runtime) { send() }
                 }
             }
