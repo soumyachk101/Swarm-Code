@@ -107,14 +107,6 @@ struct ComposerView: View {
 
             if let thread {
                 HStack(spacing: 2) {
-                    ModelEffortButton(thread: thread, hasHistory: !runtime.turns.isEmpty)
-                    PlanToggle(thread: thread)
-                    PermissionMenu(thread: thread)
-                    Spacer(minLength: 8)
-                    ContextMeter(
-                        usage: runtime.usage,
-                        provider: thread.provider
-                    )
                     Button {
                         if model.settings.recentDownloadsPicker {
                             showingRecents.toggle()
@@ -132,6 +124,14 @@ struct ComposerView: View {
                             chooseOther: { showingRecents = false; chooseFiles() }
                         )
                     }
+                    ModelEffortButton(thread: thread, hasHistory: !runtime.turns.isEmpty)
+                    PlanToggle(thread: thread)
+                    PermissionMenu(thread: thread)
+                    Spacer(minLength: 8)
+                    ContextMeter(
+                        usage: runtime.usage,
+                        provider: thread.provider
+                    )
                     SendButton(runtime: runtime) { send() }
                 }
             }
