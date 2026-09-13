@@ -59,6 +59,7 @@ struct ModelEffortButton: View {
                         .foregroundStyle(Chrome.primaryText)
                     if let current, !current.efforts.isEmpty {
                         Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
+                            .foregroundStyle(Chrome.primaryText.opacity(0.72))
                     }
                 }
                 Image(systemName: "chevron.down")
@@ -304,6 +305,10 @@ struct EffortSliderCard: View {
         return efforts.firstIndex(of: "medium") ?? 0
     }
 
+    private var isMaxEffort: Bool {
+        efforts.count > 1 && resolvedIndex == efforts.count - 1
+    }
+
     private var title: String {
         guard !efforts.isEmpty else { return "Standard" }
         return ModelOption.effortTitle(efforts[resolvedIndex])
@@ -333,7 +338,8 @@ struct EffortSliderCard: View {
                                     .foregroundStyle(Chrome.secondaryText)
                             }
                         }
-                        .foregroundStyle(Chrome.accent)
+                        .foregroundStyle(isMaxEffort ? EffortPalette.supercharged : EffortPalette.title)
+                        .animation(.smooth(duration: 0.3), value: isMaxEffort)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
                         .background {
@@ -351,7 +357,7 @@ struct EffortSliderCard: View {
 
                     Text(verbatim: modelName)
                         .font(.system(size: 13))
-                        .foregroundStyle(Chrome.secondaryText)
+                        .foregroundStyle(Chrome.primaryText.opacity(0.7))
                         .lineLimit(1)
                 }
                 .padding(.horizontal, 44)
@@ -450,13 +456,22 @@ struct EffortSlider: View {
             let step = count > 1 ? (width - inset * 2) / CGFloat(count - 1) : 0
             let restingX = inset + CGFloat(index) * step
             let x = min(max(dragX ?? restingX, inset), width - inset)
+            let isSupercharged = count > 1 && index == count - 1
 
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
                     .fill(Chrome.overlay(0.1))
                 Capsule(style: .continuous)
-                    .fill(Chrome.accent)
+                    .fill(isSupercharged ? EffortPalette.superchargedFill : Chrome.accent)
                     .frame(width: x + inset)
+                    .overlay(alignment: .leading) {
+                        if isSupercharged {
+                            SuperchargedTail()
+                                .frame(width: x + inset, height: Self.trackHeight)
+                                .clipShape(Capsule(style: .continuous))
+                                .transition(.opacity)
+                        }
+                    }
                 ForEach(0..<count, id: \.self) { stop in
                     let stopX = inset + CGFloat(stop) * step
                     Circle()
@@ -466,13 +481,14 @@ struct EffortSlider: View {
                 }
                 Circle()
                     .fill(Color.white)
-                    .shadow(color: .black.opacity(0.28), radius: 4, y: 1)
+                    .shadow(color: isSupercharged ? EffortPalette.superchargedFill.opacity(0.6) : .black.opacity(0.28), radius: isSupercharged ? 8 : 4, y: 1)
                     .frame(width: Self.thumbSize, height: Self.thumbSize)
                     .scaleEffect(dragX == nil ? 1 : 1.06)
                     .position(x: x, y: Self.trackHeight / 2)
             }
             .frame(height: Self.trackHeight)
             .frame(maxHeight: .infinity)
+            .animation(.smooth(duration: 0.3), value: isSupercharged)
             .contentShape(.rect)
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -509,5 +525,61 @@ struct EffortSlider: View {
     private func nearestStop(to x: CGFloat, inset: CGFloat, step: CGFloat) -> Int {
         guard count > 1, step > 0 else { return 0 }
         return min(count - 1, max(0, Int(((x - inset) / step).rounded())))
+    }
+}
+
+enum EffortPalette {
+    /// The accent lifted a little, so the effort name reads clearly on glass.
+    static var title: Color { Chrome.accent.mix(with: .white, by: 0.22) }
+    static let supercharged = Color(red: 0.74, green: 0.55, blue: 1.0)
+    static let superchargedFill = Color(red: 0.55, green: 0.34, blue: 0.97)
+}
+
+/// The maximum effort's tail: faint dots flowing toward the knob, and now and then a thin bolt
+/// crackling along it. One small Canvas at 30fps, drawn only while the slider sits at the maximum.
+private struct SuperchargedTail: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var startedAt = Date.now
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
+            let time = timeline.date.timeIntervalSince(startedAt)
+            Canvas { context, size in
+                let spacing: CGFloat = 8
+                let drift = CGFloat((time * 22).truncatingRemainder(dividingBy: Double(spacing)))
+                for (row, y) in [size.height * 0.34, size.height * 0.66].enumerated() {
+                    var x = -spacing + drift + (row == 1 ? spacing / 2 : 0)
+                    var column = 0
+                    while x < size.width {
+                        let pulse = 0.5 + 0.5 * sin(time * 3 + Double(column) * 0.7 + Double(row))
+                        context.fill(
+                            Path(ellipseIn: CGRect(x: x - 1.1, y: y - 1.1, width: 2.2, height: 2.2)),
+                            with: .color(.white.opacity(0.16 + 0.24 * pulse))
+                        )
+                        x += spacing
+                        column += 1
+                    }
+                }
+
+                let cycle = 1.7
+                let local = time.truncatingRemainder(dividingBy: cycle)
+                guard local < 0.22, size.width > 48 else { return }
+                let strike = (time / cycle).rounded(.down)
+                let seed = sin(strike * 12.9898) * 43758.5453
+                let startX = size.width * (0.15 + 0.6 * (seed - seed.rounded(.down)))
+                var bolt = Path()
+                bolt.move(to: CGPoint(x: startX, y: size.height * 0.2))
+                bolt.addLine(to: CGPoint(x: startX + 5, y: size.height * 0.48))
+                bolt.addLine(to: CGPoint(x: startX + 1, y: size.height * 0.52))
+                bolt.addLine(to: CGPoint(x: startX + 7, y: size.height * 0.82))
+                context.stroke(
+                    bolt,
+                    with: .color(.white.opacity(0.55 * (1 - local / 0.22))),
+                    style: StrokeStyle(lineWidth: 1.3, lineCap: .round, lineJoin: .round)
+                )
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }

@@ -37,12 +37,7 @@ struct ThreadTimeline: View {
                             .transition(.softAppear)
                     }
                     if runtime.isRunning {
-                        WorkingIndicator(
-                            startedAt: runtime.turnStartedAt ?? .now,
-                            seed: WorkingWords.seed(runtime.threadID.uuidString),
-                            thinkingSteps: model.settings.showReasoning ? currentThinking : []
-                        )
-                            .transition(.softAppear)
+                        WorkingIndicatorSlot(runtime: runtime, showsThinking: model.settings.showReasoning)
                     }
                 }
                 .animation(.softAppear, value: groups.count)
@@ -96,17 +91,6 @@ struct ThreadTimeline: View {
     }
 
     /// The running turn's thinking, for the working indicator to reveal.
-    private var currentThinking: [String] {
-        guard let turnID = runtime.entries.last.flatMap(\.turnID) else { return [] }
-        // Kind and turn are fixed at creation; checking them first keeps the timeline from
-        // observing, and re-rendering on, every streaming entry of the turn.
-        return runtime.entries.compactMap { entry in
-            guard entry.kind == .reasoning, entry.turnID == turnID,
-                  case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { return nil }
-            return block.text
-        }
-    }
-
     private nonisolated static func visibleHeight(_ proxy: GeometryProxy) -> CGFloat {
         max(0, proxy.size.height - proxy.safeAreaInsets.top - proxy.safeAreaInsets.bottom)
     }
@@ -270,5 +254,44 @@ final class TimelineScrollState {
 
     func jumpToLatest() {
         jumpRequest += 1
+    }
+}
+
+/// Where the working indicator sits while a turn runs. The moment the reply it is waiting on
+/// arrives, the indicator steps aside and the reply takes its line, so the answer begins exactly
+/// where the indicator was instead of pushing it down. It comes back below when the agent moves on
+/// to another step. Only the newest entry's kind is read here, which never changes while text
+/// streams, plus the turn's thinking.
+private struct WorkingIndicatorSlot: View {
+    let runtime: ThreadRuntime
+    let showsThinking: Bool
+
+    var body: some View {
+        let replyTookOver = runtime.entries.last?.kind == .assistant
+        ZStack(alignment: .topLeading) {
+            if !replyTookOver {
+                WorkingIndicator(
+                    startedAt: runtime.turnStartedAt ?? .now,
+                    seed: WorkingWords.seed(runtime.threadID.uuidString),
+                    thinkingSteps: showsThinking ? thinking : []
+                )
+                .transition(.asymmetric(
+                    insertion: .softAppear,
+                    removal: .opacity.animation(.easeOut(duration: 0.1))
+                ))
+            }
+        }
+        .animation(.softAppear, value: replyTookOver)
+    }
+
+    /// The running turn's thinking. Kind and turn are fixed at creation, so they are checked before
+    /// any content is read.
+    private var thinking: [String] {
+        guard let turnID = runtime.entries.last.flatMap(\.turnID) else { return [] }
+        return runtime.entries.compactMap { entry in
+            guard entry.kind == .reasoning, entry.turnID == turnID,
+                  case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { return nil }
+            return block.text
+        }
     }
 }
