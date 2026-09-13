@@ -30,6 +30,20 @@ struct UserMessage: Codable, Hashable, Sendable {
     var attachments: [Attachment] = []
 }
 
+/// One queued follow-up prompt. Sent as a direct user chat message once the
+/// running turn finishes, so the user can steer the chat while it works and
+/// stack several follow-ups that run one after another.
+struct FollowUpPrompt: Codable, Hashable, Identifiable, Sendable {
+    var id = UUID()
+    var text: String
+    var attachments: [Attachment] = []
+    var createdAt = Date.now
+
+    var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+    }
+}
+
 struct Attachment: Codable, Hashable, Identifiable, Sendable {
     var id = UUID()
     var name: String
@@ -193,6 +207,7 @@ struct ThreadDocument: Codable, Sendable {
     var items: [TimelineItem] = []
     var turns: [TurnRecord] = []
     var usage: ContextUsage?
+    var followUps: [FollowUpPrompt] = []
 
     init(threadID: UUID) {
         self.threadID = threadID
@@ -204,5 +219,6 @@ struct ThreadDocument: Codable, Sendable {
         items = container.value(.items, default: [Lenient<TimelineItem>]()).compactMap(\.value)
         turns = container.value(.turns, default: [Lenient<TurnRecord>]()).compactMap(\.value)
         usage = container.value(.usage, default: nil)
+        followUps = container.value(.followUps, default: [Lenient<FollowUpPrompt>]()).compactMap(\.value)
     }
 }
