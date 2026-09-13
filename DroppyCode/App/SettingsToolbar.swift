@@ -81,9 +81,13 @@ final class SettingsToolbar: NSObject, NSToolbarDelegate, NSSearchFieldDelegate 
     ) -> NSToolbarItem? {
         guard itemIdentifier == Self.searchIdentifier else { return nil }
         let item = NSSearchToolbarItem(itemIdentifier: itemIdentifier)
-        item.preferredWidthForSearchField = 240
+        // The search item stretches to fill the toolbar, so without a cap it
+        // balloons across the title bar. Pin the field to the preferred width.
+        let width: CGFloat = 240
+        item.preferredWidthForSearchField = width
         item.resignsFirstResponderWithCancel = true
         let field = item.searchField
+        field.widthAnchor.constraint(lessThanOrEqualToConstant: width).isActive = true
         field.sendsSearchStringImmediately = true
         field.sendsWholeSearchString = false
         field.placeholderString = search.prompt
