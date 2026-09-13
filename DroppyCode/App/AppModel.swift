@@ -23,6 +23,9 @@ final class AppModel {
         didSet {
             if let selectedThreadID { markRead(selectedThreadID) }
             if oldValue != selectedThreadID { scheduleIdleSessionStop(leaving: oldValue) }
+            if let selectedThreadID, let thread = thread(selectedThreadID) {
+                rememberLastProject(thread.projectID)
+            }
         }
     }
     var isCommandPalettePresented = false
@@ -43,6 +46,9 @@ final class AppModel {
         threads = library.threads
         for index in threads.indices where threads[index].lastStatus == .running {
             threads[index].lastStatus = .interrupted
+        }
+        if let lastID = settings.lastProjectID, project(lastID) == nil {
+            settings.lastProjectID = nil
         }
     }
 
@@ -75,7 +81,18 @@ final class AppModel {
     }
 
     var currentProject: Project? {
-        selectedThread.flatMap { project($0.projectID) } ?? projects.first
+        if let selectedThread, let current = project(selectedThread.projectID) { return current }
+        if let lastID = settings.lastProjectID, let last = project(lastID) { return last }
+        // No selection (for example after relaunch): stay in the folder you last worked in
+        // instead of jumping back to the first project ever added.
+        if let recent = threads.filter({ !$0.isArchived }).max(by: { $0.updatedAt < $1.updatedAt }),
+           let recentProject = project(recent.projectID) { return recentProject }
+        return projects.first
+    }
+
+    private func rememberLastProject(_ id: UUID) {
+        guard project(id) != nil else { return }
+        if settings.lastProjectID != id { settings.lastProjectID = id }
     }
 
     func threads(in project: Project) -> [ChatThread] {
@@ -212,6 +229,7 @@ final class AppModel {
         }
         threads.removeAll { $0.projectID == project.id }
         projects.removeAll { $0.id == project.id }
+        if settings.lastProjectID == project.id { settings.lastProjectID = nil }
         if selectedThread == nil { selectedThreadID = nil }
         scheduleSave()
     }
@@ -243,6 +261,7 @@ final class AppModel {
         )
         threads.append(thread)
         updateProject(project.id) { $0.isExpanded = true }
+        rememberLastProject(project.id)
         selectedThreadID = thread.id
         scheduleSave()
         if (workspace ?? settings.defaultWorkspaceMode) == .worktree {

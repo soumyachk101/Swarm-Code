@@ -79,6 +79,7 @@ final class AppSettings {
         static let modelList = "modelList"
         static let modelPreferences = "modelPreferences"
         static let recentDownloadsPicker = "recentDownloadsPicker"
+        static let lastProjectID = "lastProjectID"
         static let deepseekAPIKey = "deepseekAPIKey"
         static let metaAPIKey = "metaAPIKey"
     }
@@ -135,6 +136,18 @@ final class AppSettings {
     /// The attach button offers recent downloads first instead of opening Finder straight away.
     var recentDownloadsPicker: Bool {
         didSet { defaults.set(recentDownloadsPicker, forKey: Key.recentDownloadsPicker) }
+    }
+
+    /// The folder a new thread opens in when no thread is selected. Updated whenever a thread
+    /// is selected or created, so ⌘N stays in the last folder you used.
+    var lastProjectID: UUID? {
+        didSet {
+            if let lastProjectID {
+                defaults.set(lastProjectID.uuidString, forKey: Key.lastProjectID)
+            } else {
+                defaults.removeObject(forKey: Key.lastProjectID)
+            }
+        }
     }
 
     /// DeepSeek talks to its cloud API directly, so it needs an API key instead of a CLI login.
@@ -206,6 +219,11 @@ final class AppSettings {
         commitInstructions = defaults.string(forKey: Key.commitInstructions) ?? ""
         terminalHeight = defaults.object(forKey: Key.terminalHeight) as? Double ?? 260
         recentDownloadsPicker = defaults.object(forKey: Key.recentDownloadsPicker) as? Bool ?? true
+        if let stored = defaults.string(forKey: Key.lastProjectID) {
+            lastProjectID = UUID(uuidString: stored)
+        } else {
+            lastProjectID = nil
+        }
         deepseekAPIKeyInput = DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "")
         metaAPIKeyInput = MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "")
         binaryPaths = defaults.dictionary(forKey: Key.binaryPaths) as? [String: String] ?? [:]
