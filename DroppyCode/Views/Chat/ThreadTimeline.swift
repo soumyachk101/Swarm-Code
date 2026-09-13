@@ -15,6 +15,9 @@ struct ThreadTimeline: View {
     /// Lazy-loading window: only the newest groups are materialized, so opening a long
     /// thread and scrolling through it stays instant no matter how much history it holds.
     @State private var visibleCount = TimelineWindow.initial
+    /// Ids of the blocks currently on screen, so the rail can light the block the reader is
+    /// on. Rows write here only when they cross the viewport's edges, never per scroll frame.
+    @State private var onScreenBlockIDs: Set<String> = []
 
     var body: some View {
         let entries = runtime.entries
@@ -46,17 +49,20 @@ struct ThreadTimeline: View {
                     onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
                 )
                 .frame(width: 30)
+                // The hover card reaches over the conversation instead of being painted under it.
+                .zIndex(1)
             }
             timelineScroll(visible: visible, hidden: hidden, meta: meta)
         }
     }
 
-    /// The block the reader is on: the view at the bottom-anchored scroll
-    /// position when it matches a block, else the latest block while pinned
-    /// to the bottom, else nothing.
+    /// The block the reader is on: the newest one while the timeline is pinned to the bottom,
+    /// otherwise the topmost block still on screen. Rows announce themselves through
+    /// `onScreenBlockIDs`, so this follows the conversation as it is scrolled.
     private func activeMinimapID(blocks: [DisplayBlock]) -> String? {
-        if let id = position.viewID as? String, blocks.contains(where: { $0.id == id }) { return id }
         if isPinnedToBottom { return blocks.last?.id }
+        if let id = blocks.first(where: { onScreenBlockIDs.contains($0.id) })?.id { return id }
+        if let id = position.viewID as? String, blocks.contains(where: { $0.id == id }) { return id }
         return nil
     }
 
@@ -116,6 +122,13 @@ struct ThreadTimeline: View {
                     ForEach(visible) { block in
                         DisplayBlockView(block: block, runtime: runtime, meta: meta)
                             .id(block.id)
+                            .onScrollVisibilityChange(threshold: 0.05) { isVisible in
+                                if isVisible {
+                                    onScreenBlockIDs.insert(block.id)
+                                } else {
+                                    onScreenBlockIDs.remove(block.id)
+                                }
+                            }
                             .transition(.softAppear)
                     }
                     if runtime.isRunning {
@@ -170,8 +183,10 @@ struct ThreadTimeline: View {
             withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
         }
         .onChange(of: runtime.threadID) {
-            // A new thread starts with a fresh window on its newest messages.
+            // A new thread starts with a fresh window on its newest messages, and no
+            // block from the old one is on screen any more.
             visibleCount = TimelineWindow.initial
+            onScreenBlockIDs.removeAll()
         }
     }
 

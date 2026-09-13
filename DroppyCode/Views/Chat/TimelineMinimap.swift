@@ -208,19 +208,23 @@ struct TimelineMinimapRail: View {
                     .allowsHitTesting(false)
 
                 if let hovered = hoveredEntry {
-                    previewBubble(for: hovered, metrics: metrics, railHeight: proxy.size.height)
+                    previewCard(for: hovered, metrics: metrics, railHeight: proxy.size.height)
                         .allowsHitTesting(false)
                         .transition(.opacity.combined(with: .offset(x: reduceMotion ? 0 : -6)))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .onHover { hovering in
-                if hovering {
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
                     if !ownsCursorPush {
                         NSCursor.pointingHand.push()
                         ownsCursorPush = true
                     }
-                } else {
+                    // Hovering alone previews the tick under the pointer; only a press jumps.
+                    let id = metrics.entryID(at: location.y, entries: entries)
+                    if hoveredID != id { hoveredID = id }
+                case .ended:
                     releaseCursor()
                     hoveredID = nil
                 }
@@ -257,8 +261,12 @@ struct TimelineMinimapRail: View {
         let isSelected = entry.id == selectedID
         let isHovered = entry.id == hoveredID
         RoundedRectangle(cornerRadius: 1, style: .continuous)
-            .fill(.primary.opacity(isHovered ? 0.95 : (isSelected ? 0.8 : baseOpacity)))
-            .frame(width: tickWidth(for: entry, isHovered: isHovered, isSelected: isSelected), height: 2)
+            // The block the reader is on burns in the accent — the same "this is the live one"
+            // the effort track and an active chip use. Hover previews in plain ink.
+            .fill(isSelected && !isHovered
+                ? AnyShapeStyle(Chrome.accent)
+                : AnyShapeStyle(.primary.opacity(isHovered ? 0.95 : baseOpacity)))
+            .frame(width: tickWidth(for: entry, isHovered: isHovered, isSelected: isSelected), height: MinimapRailMetrics.tickHeight)
             .padding(.leading, 8)
             .accessibilityElement()
             .accessibilityLabel(entry.title)
@@ -279,29 +287,32 @@ struct TimelineMinimapRail: View {
         return entries.first { $0.id == hoveredID }
     }
 
+    /// The card that follows the pointer: the same Liquid Glass surface, corner radius and type
+    /// scale as the app's other floating cards, so the rail reads as part of Droppy Code.
     @ViewBuilder
-    private func previewBubble(
+    private func previewCard(
         for entry: TimelineMinimapEntry,
         metrics: MinimapRailMetrics,
         railHeight: CGFloat
     ) -> some View {
         let tickCenterY = metrics.centerY(for: indexOf(entry))
-        // Estimated half height keeps the bubble inside the rail without a
-        // measurement loop (measuring would re-lay-out on every hover
-        // change). Covers a one-line title plus three snippet lines.
-        let clampedY = min(max(tickCenterY, 56), max(56, railHeight - 56))
+        // Estimated half height keeps the card inside the chat area without a measurement
+        // loop (measuring would re-lay-out on every hover change).
+        let half = estimatedCardHeight(entry) / 2
+        let top = half + 2
+        let bottom = max(top, railHeight - half - 2)
         HStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(entry.title)
-                    .font(.system(size: 12.5, weight: .semibold))
-                    .foregroundStyle(.primary.opacity(0.95))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Chrome.primaryText)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .contentTransition(.opacity)
                 if !entry.snippet.isEmpty {
                     Text(entry.snippet)
                         .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Chrome.secondaryText)
                         .lineLimit(3)
                         .truncationMode(.tail)
                         .multilineTextAlignment(.leading)
@@ -310,19 +321,26 @@ struct TimelineMinimapRail: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .frame(width: 300, alignment: .leading)
-            .background(.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.quaternary, lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+            .frame(width: Self.cardWidth, alignment: .leading)
+            .glassEffect(.regular, in: .rect(cornerRadius: Chrome.cardCornerRadius, style: .continuous))
             Spacer(minLength: 0)
         }
         .padding(.leading, 34)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .offset(y: clampedY - railHeight / 2)
+        .offset(y: min(max(tickCenterY, top), bottom) - railHeight / 2)
     }
+
+    /// A one-line title plus up to three snippet lines, wrapped at the card's width.
+    private func estimatedCardHeight(_ entry: TimelineMinimapEntry) -> CGFloat {
+        let title: CGFloat = 17
+        let padding: CGFloat = 20
+        guard !entry.snippet.isEmpty else { return title + padding }
+        let glyphsPerLine = max(1, (Int(Self.cardWidth) - 24) / 7)
+        let lines = min(3, max(1, (entry.snippet.count + glyphsPerLine - 1) / glyphsPerLine))
+        return title + 3 + CGFloat(lines) * 15 + padding
+    }
+
+    private static let cardWidth: CGFloat = 300
 
     private func indexOf(_ entry: TimelineMinimapEntry) -> Int {
         entries.firstIndex(of: entry) ?? 0
@@ -348,39 +366,45 @@ struct TimelineMinimapRail: View {
     }
 }
 
-/// Pure rail geometry, shared by the gesture and the bubble so Y always maps
-/// to the same entry. Ticks center vertically; pitch only shrinks when the
-/// thread holds more blocks than the rail fits.
+/// Pure rail geometry, shared by the gesture and the card so Y always maps
+/// to the same entry. The rail's height is already the chat area — the
+/// composer sits outside the timeline's frame — so ticks centre on it, and
+/// only tighten when a thread holds more blocks than it can show without
+/// touching.
 private struct MinimapRailMetrics {
+    static let tickHeight: CGFloat = 2
+    private static let roomySpacing: CGFloat = 8
+    private static let tightestSpacing: CGFloat = 2
+
     let spacing: CGFloat
+    /// Distance from the rail's top to the first tick.
     let topInset: CGFloat
 
     init(height: CGFloat, count: Int) {
         guard count > 0, height > 0 else {
-            spacing = 8
+            spacing = Self.roomySpacing
             topInset = 0
             return
         }
-        let needed = CGFloat(count) * 2 + CGFloat(count - 1) * 8
-        if needed <= height {
-            spacing = 8
-            topInset = (height - needed) / 2
-        } else {
-            let squeezed = max(4, (height - CGFloat(count) * 2) / CGFloat(max(1, count - 1)))
-            spacing = min(8, squeezed)
-            topInset = 0
-        }
+        let ticks = CGFloat(count) * Self.tickHeight
+        let gaps = CGFloat(max(0, count - 1))
+        spacing = ticks + gaps * Self.roomySpacing <= height
+            ? Self.roomySpacing
+            : max(Self.tightestSpacing, (height - ticks) / max(1, gaps))
+        // Always centred: a thread with more ticks than the rail can hold evenly spills
+        // the same amount above and below instead of stacking up against the top.
+        topInset = (height - (ticks + gaps * spacing)) / 2
     }
 
-    private var pitch: CGFloat { 2 + spacing }
+    private var pitch: CGFloat { Self.tickHeight + spacing }
 
     func centerY(for index: Int) -> CGFloat {
-        topInset + CGFloat(index) * pitch + 1
+        topInset + CGFloat(index) * pitch + Self.tickHeight / 2
     }
 
     func entryID(at y: CGFloat, entries: [TimelineMinimapEntry]) -> String? {
         guard !entries.isEmpty else { return nil }
-        let raw = (y - topInset - 1 + pitch / 2) / pitch
+        let raw = (y - topInset - Self.tickHeight / 2 + pitch / 2) / pitch
         let clamped = min(max(Int(raw.rounded(.down)), 0), entries.count - 1)
         return entries[clamped].id
     }
