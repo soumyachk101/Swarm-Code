@@ -49,20 +49,13 @@ final class ProviderRegistry {
         ModelOption(id: "haiku", name: "Haiku"),
     ]
 
-    static let deepseekEfforts = ["low", "high", "max"]
-    static let deepseekSeed = [
-        ModelOption(id: "deepseek-v4-pro", name: "V4 Pro", detail: "Best reasoning and coding quality", efforts: deepseekEfforts, defaultEffort: "high", isDefault: true),
-        ModelOption(id: "deepseek-flash", name: "V4 Flash", detail: "Fast everyday chat and edits", efforts: deepseekEfforts, defaultEffort: "high"),
-    ]
+    // Seeds come from the same tables the live fetch uses, so the two can never disagree.
+    static let deepseekSeed = ["deepseek-v4-pro", "deepseek-flash"].compactMap(DeepSeekAPI.option(for:))
+    static let metaSeed = ["muse-spark-1.3", "muse-spark-1.3-contributor", "muse-spark-1.2", "muse-spark-1.2-contributor", "muse-spark-1.1"]
+        .compactMap(MetaAPI.option(for:))
 
-    static let metaEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
-    static let metaSeed = [
-        ModelOption(id: "muse-spark-1.3", name: "Spark 1.3", detail: "Latest Muse Spark · best agentic coding · 1M context", efforts: metaEfforts, defaultEffort: "high", isDefault: true),
-        ModelOption(id: "muse-spark-1.3-contributor", name: "Spark 1.3 Contributor", detail: "Same 1.3 checkpoint · discounted contributor tier", efforts: metaEfforts, defaultEffort: "high"),
-        ModelOption(id: "muse-spark-1.2", name: "Spark 1.2", detail: "Previous checkpoint · Standard tier · 1M context", efforts: metaEfforts, defaultEffort: "high"),
-        ModelOption(id: "muse-spark-1.2-contributor", name: "Spark 1.2 Contributor", detail: "1.2 checkpoint · discounted contributor tier", efforts: metaEfforts, defaultEffort: "high"),
-        ModelOption(id: "muse-spark-1.1", name: "Spark 1.1", detail: "Original checkpoint · Standard tier · 1M context", efforts: metaEfforts, defaultEffort: "high"),
-    ]
+    /// API providers fetch their live catalog once per launch, even though the seed means the list is never empty.
+    @ObservationIgnored private var liveFetchedCatalogs: Set<ProviderKind> = []
 
     init(settings: AppSettings) {
         self.settings = settings
@@ -183,13 +176,13 @@ final class ProviderRegistry {
     }
 
     func loadCatalog(_ provider: ProviderKind, force: Bool = false) async {
-        guard provider != .claude else { return }
-        guard force || models(for: provider).isEmpty, !loadingCatalogs.contains(provider) else { return }
+        guard provider != .claude, !loadingCatalogs.contains(provider) else { return }
         if provider.isAPIKeyBased {
+            guard force || !liveFetchedCatalogs.contains(provider) else { return }
             await loadAPICatalog(provider, force: force)
             return
         }
-        guard let executable = executable(for: provider) else { return }
+        guard force || models(for: provider).isEmpty, let executable = executable(for: provider) else { return }
         loadingCatalogs.insert(provider)
         defer { loadingCatalogs.remove(provider) }
         let environment = environment(for: provider)
@@ -220,6 +213,7 @@ final class ProviderRegistry {
         default: nil
         }
         if let list, !list.isEmpty {
+            liveFetchedCatalogs.insert(provider)
             updateCatalog(list, for: provider)
         }
     }

@@ -58,7 +58,8 @@ final class DeepSeekSession: ProviderSession {
         if messages.isEmpty {
             messages = [["role": "system", "content": .string(systemPrompt())]]
         }
-        onEvent?(.models(ProviderRegistry.deepseekSeed, current: currentModel))
+        // No `.models` event: the registry owns the live catalog, and a seed
+        // sent here overwrote it every time a chat started.
         return id
     }
 
@@ -91,10 +92,16 @@ final class DeepSeekSession: ProviderSession {
                     throw ProviderError.failed(friendlyError(error, statusCode: round.statusCode))
                 }
                 if !round.content.isEmpty { finalText = round.content }
-                if round.toolCalls.isEmpty { break }
+                if round.toolCalls.isEmpty {
+                    // Keep the reply in history, or the next turn forgets it.
+                    if !round.content.isEmpty {
+                        messages.append(["role": "assistant", "content": .string(round.content), "reasoning_content": .string(round.reasoning)])
+                    }
+                    break
+                }
                 // Record the assistant turn with its tool calls so the next
                 // request keeps the OpenAI tool-call chain intact.
-                messages.append(assistantMessage(content: round.content, toolCalls: round.toolCalls))
+                messages.append(assistantMessage(content: round.content, reasoning: round.reasoning, toolCalls: round.toolCalls))
                 var shouldContinue = true
                 for tool in round.toolCalls {
                     if interrupted { shouldContinue = false; break }
@@ -681,11 +688,14 @@ final class DeepSeekSession: ProviderSession {
         return .array(parts)
     }
 
-    private func assistantMessage(content: String, toolCalls: [PendingToolCall]) -> JSONValue {
+    /// Thinking mode rejects the follow-up request with "The `reasoning_content`
+    /// in the thinking mode must be passed back to the API" unless every
+    /// tool-call message carries it (an empty string is accepted).
+    private func assistantMessage(content: String, reasoning: String, toolCalls: [PendingToolCall]) -> JSONValue {
         let calls: [JSONValue] = toolCalls.map { tool in
             ["id": .string(tool.id), "type": "function", "function": ["name": .string(tool.name), "arguments": .string(tool.arguments)]]
         }
-        return ["role": "assistant", "content": .string(content), "tool_calls": .array(calls)]
+        return ["role": "assistant", "content": .string(content), "reasoning_content": .string(reasoning), "tool_calls": .array(calls)]
     }
 
     private func trimHistory() {

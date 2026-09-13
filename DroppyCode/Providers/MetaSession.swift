@@ -65,7 +65,8 @@ final class MetaSession: ProviderSession {
         if messages.isEmpty {
             messages = [["role": "system", "content": .string(systemPrompt())]]
         }
-        onEvent?(.models(ProviderRegistry.metaSeed, current: currentModel))
+        // No `.models` event: the registry owns the live catalog, and a seed
+        // sent here overwrote it every time a chat started.
         return id
     }
 
@@ -98,7 +99,13 @@ final class MetaSession: ProviderSession {
                     throw ProviderError.failed(friendlyError(error, statusCode: round.statusCode))
                 }
                 if !round.content.isEmpty { finalText = round.content }
-                if round.toolCalls.isEmpty { break }
+                if round.toolCalls.isEmpty {
+                    // Keep the reply in history, or the next turn forgets it.
+                    if !round.content.isEmpty {
+                        messages.append(["role": "assistant", "content": .string(round.content)])
+                    }
+                    break
+                }
                 // Record the assistant turn with its tool calls so the next
                 // request keeps the OpenAI tool-call chain intact.
                 messages.append(assistantMessage(content: round.content, toolCalls: round.toolCalls))
@@ -211,10 +218,9 @@ final class MetaSession: ProviderSession {
         switch effort {
         case "minimal", "low", "medium", "high", "xhigh": return effort
         case "max":
-            // "max" extended reasoning only exists on Muse Spark 1.3.
-            // Older checkpoints accept up to "xhigh".
-            if let model, !model.contains("1.3") { return "xhigh" }
-            return "max"
+            // Only muse-spark-1.3 itself accepts "max"; a thread saved at max
+            // that moves to any other model must not send it.
+            return MetaAPI.efforts(for: model ?? "muse-spark-1.3").contains("max") ? "max" : "xhigh"
         case "extra-high": return "xhigh"
         default: return nil
         }

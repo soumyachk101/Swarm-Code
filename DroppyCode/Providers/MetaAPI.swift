@@ -50,33 +50,41 @@ enum MetaAPI {
         }
     }
 
-    static let metaEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
+    /// Probed live 2026-09-13: only `muse-spark-1.3` accepts "max". Every other
+    /// checkpoint, including `muse-spark-1.3-contributor`, rejects it with a bare
+    /// "The request contains invalid parameters" 400.
+    static let maxEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
+    static let standardEfforts = ["minimal", "low", "medium", "high", "xhigh"]
+
+    static func efforts(for id: String) -> [String] {
+        id == "muse-spark-1.3" ? maxEfforts : standardEfforts
+    }
 
     static func option(for id: String) -> ModelOption? {
+        let efforts = efforts(for: id)
         switch id {
         case "muse-spark-1.3":
-            return ModelOption(id: id, name: "Spark 1.3", detail: "Latest Muse Spark · best agentic coding · 1M context", efforts: metaEfforts, defaultEffort: "high", isDefault: true)
+            return ModelOption(id: id, name: "Spark 1.3", detail: "Latest Muse Spark · best agentic coding · 1M context", efforts: efforts, defaultEffort: "high", isDefault: true)
         case "muse-spark-1.3-contributor":
-            return ModelOption(id: id, name: "Spark 1.3 Contributor", detail: "Same 1.3 checkpoint · discounted contributor tier", efforts: metaEfforts, defaultEffort: "high")
+            return ModelOption(id: id, name: "Spark 1.3 Contributor", detail: "Same 1.3 checkpoint · discounted contributor tier", efforts: efforts, defaultEffort: "high")
         case "muse-spark-1.2":
-            return ModelOption(id: id, name: "Spark 1.2", detail: "Previous checkpoint · Standard tier · 1M context", efforts: metaEfforts, defaultEffort: "high")
+            return ModelOption(id: id, name: "Spark 1.2", detail: "Previous checkpoint · Standard tier · 1M context", efforts: efforts, defaultEffort: "high")
         case "muse-spark-1.2-contributor":
-            return ModelOption(id: id, name: "Spark 1.2 Contributor", detail: "1.2 checkpoint · discounted contributor tier", efforts: metaEfforts, defaultEffort: "high")
+            return ModelOption(id: id, name: "Spark 1.2 Contributor", detail: "1.2 checkpoint · discounted contributor tier", efforts: efforts, defaultEffort: "high")
         case "muse-spark-1.1":
-            return ModelOption(id: id, name: "Spark 1.1", detail: "Original checkpoint · Standard tier · 1M context", efforts: metaEfforts, defaultEffort: "high")
+            return ModelOption(id: id, name: "Spark 1.1", detail: "Original checkpoint · Standard tier · 1M context", efforts: efforts, defaultEffort: "high")
         default:
-            // Any other id the API ships (including future Muse Spark checkpoints)
-            // still shows up instead of vanishing. The models endpoint already
-            // scopes to Meta, so no name check is needed.
-            // Only accept plausible Muse Spark ids to avoid surfacing unrelated entries.
-            guard id.lowercased().hasPrefix("muse-spark") || id.lowercased().hasPrefix("muse-") else { return nil }
-            return ModelOption(id: id, name: id, efforts: metaEfforts, defaultEffort: "high")
+            // Future Muse Spark checkpoints still show up. The endpoint also lists
+            // non-chat models (muse-image-1.0, muse-voice-transcribe-1.0) that
+            // fail on chat/completions, so only Spark ids are accepted.
+            guard id.lowercased().hasPrefix("muse-spark") else { return nil }
+            return ModelOption(id: id, name: id, efforts: efforts, defaultEffort: "high")
         }
     }
 
     /// All Muse Spark models are multimodal (text, image, video, audio, PDF in).
     static func isVisionModel(_ id: String?) -> Bool {
         guard let id, !id.isEmpty else { return true }
-        return id.lowercased().contains("muse-spark") || id.lowercased().contains("muse")
+        return id.lowercased().hasPrefix("muse-spark")
     }
 }
