@@ -74,7 +74,7 @@ struct ModelsSettingsPage: View {
             try? await Task.sleep(for: .milliseconds(110))
             guard !Task.isCancelled else { return }
         }
-        withAnimation(.snappy(duration: 0.26)) { appliedQuery = trimmed }
+        withAnimation(.softAppear) { appliedQuery = trimmed }
     }
 
     /// Whether a model matches the search by name, description or provider.

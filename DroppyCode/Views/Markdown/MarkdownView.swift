@@ -9,8 +9,11 @@ struct MarkdownView: View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 MarkdownBlockView(block: block)
+                    .transition(.softAppear)
             }
         }
+        // Only a new block animates; text growing inside a block is not interpolated.
+        .animation(.softAppear, value: blocks.count)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

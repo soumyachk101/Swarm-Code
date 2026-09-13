@@ -32,11 +32,15 @@ struct ThreadTimeline: View {
                 LazyVStack(alignment: .leading, spacing: 16) {
                     ForEach(groups) { group in
                         TimelineGroupView(group: group, runtime: runtime)
+                            .transition(.softAppear)
                     }
                     if runtime.isRunning {
                         WorkingIndicator(startedAt: runtime.turnStartedAt ?? .now, seed: WorkingWords.seed(runtime.threadID.uuidString))
+                            .transition(.softAppear)
                     }
                 }
+                .animation(.softAppear, value: groups.count)
+                .animation(.softAppear, value: runtime.isRunning)
                 // The end of the conversation. While it is on screen the reader is at the latest message.
                 Color.clear
                     .frame(height: 1)
@@ -55,6 +59,7 @@ struct ThreadTimeline: View {
             // A short conversation still fills the pane, with its messages resting at the bottom.
             .frame(maxWidth: .infinity, minHeight: viewportHeight, alignment: .top)
         }
+        .id(runtime.threadID)
         .scrollIndicators(.never)
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
