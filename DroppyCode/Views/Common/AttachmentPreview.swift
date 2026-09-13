@@ -75,9 +75,10 @@ struct AttachmentLargePreview: View {
                 .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 10, style: .continuous))
             } else {
                 HStack(spacing: 10) {
-                    Image(systemName: "doc")
-                        .font(.system(size: 28))
-                        .foregroundStyle(.secondary)
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: attachment.path))
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 32, height: 32)
                     Text(attachment.name)
                         .font(.callout)
                         .lineLimit(2)

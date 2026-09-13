@@ -100,7 +100,10 @@ struct AttachmentThumbnail: View {
                 .clipShape(.rect(cornerRadius: 12, style: .continuous))
             } else {
                 HStack(spacing: 6) {
-                    Image(systemName: "doc")
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: attachment.path))
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 16, height: 16)
                     Text(attachment.name)
                         .lineLimit(1)
                         .truncationMode(.middle)
