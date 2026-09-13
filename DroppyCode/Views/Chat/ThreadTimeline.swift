@@ -41,7 +41,10 @@ struct ThreadTimeline: View {
         let visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
         // One tick per block, so the rail's size and selection come from block ids alone; the
         // column reads the text itself, which keeps streaming out of this body.
-        return HStack(spacing: 0) {
+        // The rail floats over the timeline's leading gutter instead of taking layout
+        // space, so the conversation stays centered exactly like the composer.
+        return ZStack(alignment: .leading) {
+            timelineScroll(visible: visible, hidden: hidden, meta: meta)
             if blocks.count > 1 {
                 TimelineMinimapColumn(
                     blocks: blocks,
@@ -49,10 +52,9 @@ struct ThreadTimeline: View {
                     onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
                 )
                 .frame(width: 30)
+                .frame(maxHeight: .infinity)
                 // The hover card reaches over the conversation instead of being painted under it.
-                .zIndex(1)
             }
-            timelineScroll(visible: visible, hidden: hidden, meta: meta)
         }
     }
 
