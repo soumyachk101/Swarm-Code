@@ -29,7 +29,25 @@ final class WindowManager {
     func showSettings() {
         let window = settingsWindow ?? makeSettingsWindow()
         settingsWindow = window
+        centerOverMainWindow(window)
         present(window)
+    }
+
+    /// Opens a window centered over the main window, kept on the screen the main window is on.
+    private func centerOverMainWindow(_ window: NSWindow) {
+        guard let main = mainWindow, main.isVisible, !main.isMiniaturized else {
+            window.center()
+            return
+        }
+        let parent = main.frame
+        var frame = window.frame
+        frame.origin.x = (parent.midX - frame.width / 2).rounded()
+        frame.origin.y = (parent.midY - frame.height / 2).rounded()
+        if let visible = (main.screen ?? NSScreen.main)?.visibleFrame {
+            frame.origin.x = min(max(frame.origin.x, visible.minX), visible.maxX - frame.width)
+            frame.origin.y = min(max(frame.origin.y, visible.minY), visible.maxY - frame.height)
+        }
+        window.setFrame(frame, display: false)
     }
 
     private func present(_ window: NSWindow) {
