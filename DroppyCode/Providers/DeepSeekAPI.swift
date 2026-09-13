@@ -42,7 +42,7 @@ enum DeepSeekAPI {
         switch id {
         case "deepseek-v4-pro":
             return ModelOption(id: id, name: "V4 Pro", detail: "Best reasoning and coding quality", efforts: deepseekEfforts, defaultEffort: "high", isDefault: true)
-        case "deepseek-v4-flash":
+        case "deepseek-flash", "deepseek-v4-flash":
             return ModelOption(id: id, name: "V4 Flash", detail: "Fast everyday chat and edits", efforts: deepseekEfforts, defaultEffort: "high")
         case "deepseek-v4-flash-vision-exp":
             return ModelOption(id: id, name: "V4 Flash Vision", detail: "Experimental, reads attached images", efforts: deepseekEfforts, defaultEffort: "high")
@@ -51,8 +51,9 @@ enum DeepSeekAPI {
         case "deepseek-reasoner":
             return ModelOption(id: id, name: "Reasoner (legacy)", detail: "Legacy alias for V4 Flash thinking", efforts: deepseekEfforts, defaultEffort: "high")
         default:
-            // Future model ids still show up instead of vanishing.
-            guard id.lowercased().contains("deepseek") else { return nil }
+            // Any other id the API ships (including future ones) still shows up
+            // instead of vanishing. The models endpoint already scopes to DeepSeek,
+            // so no name check is needed — "deepseek-flash" would have failed one.
             return ModelOption(id: id, name: id, efforts: deepseekEfforts, defaultEffort: "high")
         }
     }

@@ -52,8 +52,7 @@ final class ProviderRegistry {
     static let deepseekEfforts = ["low", "high", "max"]
     static let deepseekSeed = [
         ModelOption(id: "deepseek-v4-pro", name: "V4 Pro", detail: "Best reasoning and coding quality", efforts: deepseekEfforts, defaultEffort: "high", isDefault: true),
-        ModelOption(id: "deepseek-v4-flash", name: "V4 Flash", detail: "Fast everyday chat and edits", efforts: deepseekEfforts, defaultEffort: "high"),
-        ModelOption(id: "deepseek-v4-flash-vision-exp", name: "V4 Flash Vision", detail: "Experimental, reads attached images", efforts: deepseekEfforts, defaultEffort: "high"),
+        ModelOption(id: "deepseek-flash", name: "V4 Flash", detail: "Fast everyday chat and edits", efforts: deepseekEfforts, defaultEffort: "high"),
     ]
 
     init(settings: AppSettings) {
