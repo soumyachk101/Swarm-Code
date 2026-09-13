@@ -279,20 +279,32 @@ enum FaviconCache {
         memory[host.lowercased()]
     }
 
+    /// Hosts with no icon are remembered too, and concurrent asks share one request: a streaming
+    /// reply restarts its row's task on every token, and scrolling re-runs it on every appear.
+    private static var failed: Set<String> = []
+    private static var inFlight: [String: Task<NSImage?, Never>] = [:]
+
     static func image(for host: String) async -> NSImage? {
         let key = host.lowercased()
         if let hit = memory[key] { return hit }
+        guard !failed.contains(key) else { return nil }
+        if let task = inFlight[key] { return await task.value }
         guard let url = URL(string: "https://www.google.com/s2/favicons?domain=\(key)&sz=64") else { return nil }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            guard let raw = NSImage(data: data) else { return nil }
-            let resized = resizedIcon(raw)
-            memory[key] = resized
-            if memory.count > 300 { memory.removeAll(keepingCapacity: true) }
-            return resized
-        } catch {
-            return nil
+        let task = Task { () -> NSImage? in
+            guard let (data, _) = try? await URLSession.shared.data(from: url),
+                  let raw = NSImage(data: data) else { return nil }
+            return resizedIcon(raw)
         }
+        inFlight[key] = task
+        let image = await task.value
+        inFlight[key] = nil
+        if let image {
+            if memory.count >= 300 { memory.removeAll(keepingCapacity: true) }
+            memory[key] = image
+        } else {
+            failed.insert(key)
+        }
+        return image
     }
 
     private static func resizedIcon(_ image: NSImage) -> NSImage {

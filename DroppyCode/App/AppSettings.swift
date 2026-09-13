@@ -139,15 +139,12 @@ final class AppSettings {
 
     /// DeepSeek talks to its cloud API directly, so it needs an API key instead of a CLI login.
     /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
+    /// Read once at launch and cached: a Keychain query on every render made Settings lag.
     var deepseekAPIKeyInput: String {
-        get { DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "") }
-        set {
-            DeepSeekKeychain.setAPIKey(newValue)
-            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                defaults.removeObject(forKey: Key.deepseekAPIKey)
-            } else {
-                defaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Key.deepseekAPIKey)
-            }
+        didSet {
+            guard deepseekAPIKeyInput != oldValue else { return }
+            DeepSeekKeychain.setAPIKey(deepseekAPIKeyInput)
+            storeAPIKeyFallback(deepseekAPIKeyInput, forKey: Key.deepseekAPIKey)
         }
     }
 
@@ -155,14 +152,19 @@ final class AppSettings {
     /// so it needs a MODEL_API_KEY instead of a CLI login.
     /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
     var metaAPIKeyInput: String {
-        get { MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "") }
-        set {
-            MetaKeychain.setAPIKey(newValue)
-            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                defaults.removeObject(forKey: Key.metaAPIKey)
-            } else {
-                defaults.set(newValue.trimmingCharacters(in: .whitespacesAndNewlines), forKey: Key.metaAPIKey)
-            }
+        didSet {
+            guard metaAPIKeyInput != oldValue else { return }
+            MetaKeychain.setAPIKey(metaAPIKeyInput)
+            storeAPIKeyFallback(metaAPIKeyInput, forKey: Key.metaAPIKey)
+        }
+    }
+
+    private func storeAPIKeyFallback(_ value: String, forKey key: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            defaults.removeObject(forKey: key)
+        } else {
+            defaults.set(trimmed, forKey: key)
         }
     }
 
@@ -204,6 +206,8 @@ final class AppSettings {
         commitInstructions = defaults.string(forKey: Key.commitInstructions) ?? ""
         terminalHeight = defaults.object(forKey: Key.terminalHeight) as? Double ?? 260
         recentDownloadsPicker = defaults.object(forKey: Key.recentDownloadsPicker) as? Bool ?? true
+        deepseekAPIKeyInput = DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "")
+        metaAPIKeyInput = MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "")
         binaryPaths = defaults.dictionary(forKey: Key.binaryPaths) as? [String: String] ?? [:]
         disabledProviders = defaults.stringArray(forKey: Key.disabledProviders) ?? []
         lastModels = defaults.dictionary(forKey: Key.models) as? [String: String] ?? [:]

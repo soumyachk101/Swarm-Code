@@ -513,17 +513,37 @@ final class FileIndex {
     @ObservationIgnored private var entries: [Entry] = []
     @ObservationIgnored private var directory: String?
 
+    /// Built indexes per directory, shared by every composer, so switching threads in a project
+    /// never lists and lowercases its files again. A stale index is served and rebuilt behind it.
+    private static var built: [String: (entries: [Entry], builtAt: Date)] = [:]
+    private static var building: Set<String> = []
+    private static let freshness: TimeInterval = 60
+
     func prepare(_ directory: String) {
         guard self.directory != directory else { return }
         self.directory = directory
-        entries = []
+        if let cached = Self.built[directory] {
+            entries = cached.entries
+            guard Date.now.timeIntervalSince(cached.builtAt) > Self.freshness else { return }
+        } else {
+            entries = []
+        }
+        guard !Self.building.contains(directory) else { return }
+        Self.building.insert(directory)
         Task {
-            let paths = await Self.list(directory)
+            let fresh = await Self.build(directory)
+            Self.building.remove(directory)
+            Self.built[directory] = (fresh, .now)
             guard self.directory == directory else { return }
-            entries = paths.map { path in
-                let lowercased = path.lowercased()
-                return Entry(path: path, lowercased: lowercased, name: (lowercased as NSString).lastPathComponent)
-            }
+            entries = fresh
+        }
+    }
+
+    @concurrent
+    private nonisolated static func build(_ directory: String) async -> [Entry] {
+        await list(directory).map { path in
+            let lowercased = path.lowercased()
+            return Entry(path: path, lowercased: lowercased, name: (lowercased as NSString).lastPathComponent)
         }
     }
 

@@ -217,13 +217,11 @@ enum TimelineGroup: Identifiable {
 
     @MainActor
     static func build(_ entries: [TimelineEntry], showReasoning: Bool) -> [TimelineGroup] {
-        // Positions of assistant entries carrying reply text. A work run sitting
-        // before one of these has been moved on from, so it starts collapsed.
+        // Positions of replies. A work run sitting before one has been moved on from, so it
+        // starts collapsed. Kind only, never the text: reading streaming content here made the
+        // whole timeline regroup on every token. A reply row is created by its first delta.
         var replyIndices: [Int] = []
-        for (index, entry) in entries.enumerated() {
-            guard entry.kind == .assistant,
-                  case .assistant(let message) = entry.item.content,
-                  !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+        for (index, entry) in entries.enumerated() where entry.kind == .assistant {
             replyIndices.append(index)
         }
         var groups: [TimelineGroup] = []
@@ -509,10 +507,14 @@ private struct WorkingIndicatorSlot: View {
     /// any content is read.
     private var thinking: [String] {
         guard let turnID = runtime.entries.last.flatMap(\.turnID) else { return [] }
-        return runtime.entries.compactMap { entry in
-            guard entry.kind == .reasoning, entry.turnID == turnID,
-                  case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { return nil }
-            return block.text
+        // Walks back from the end and stops at the previous turn, so streamed thinking never rescans the thread.
+        var steps: [String] = []
+        for entry in runtime.entries.reversed() {
+            guard let entryTurn = entry.turnID else { continue }
+            guard entryTurn == turnID else { break }
+            guard entry.kind == .reasoning, case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { continue }
+            steps.append(block.text)
         }
+        return steps.reversed()
     }
 }
