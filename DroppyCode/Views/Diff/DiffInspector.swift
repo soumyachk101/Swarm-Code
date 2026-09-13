@@ -94,7 +94,14 @@ struct DiffInspector: View {
                 }
             }
         }
-        .task(id: loadKey) { await load() }
+        .task(id: loadKey) {
+            // Let the panel slide in first. Kicking off git + parse + a big view build
+            // in the same transaction as the spring is what made opening feel laggy:
+            // the empty panel glides in cheaply, content fills in right after.
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            await load()
+        }
         .confirmationDialog("Revert this turn?", isPresented: $isConfirmingRevert) {
             Button("Revert files and conversation", role: .destructive) {
                 guard let turnID = runtime.diffSelection else { return }
@@ -136,13 +143,29 @@ struct DiffInspector: View {
             }
         }
         files = await Self.parse(patch, touched: filtersToThread ? touched : nil)
+        // Opening with every file expanded materializes thousands of rows in the same
+        // transaction as the slide, which is the visible hitch. Keep the first file open
+        // and collapse the rest when there are many; one tap expands any of them.
+        if files.count > 6, collapsed.isEmpty {
+            collapsed = Set(files.dropFirst().map(\.id))
+        } else {
+            collapsed = collapsed.intersection(files.map(\.id))
+        }
     }
 
     @concurrent
     private nonisolated static func parse(_ patch: String, touched: Set<String>?) async -> [DiffFile] {
-        let files = DiffParser.parse(patch)
-        guard let touched else { return files }
-        return files.filter { TouchedPaths.matches($0, touched: touched) }
+        // Bound parse + view work: a huge refactor can otherwise produce a megabyte patch
+        // whose every line becomes a DiffLine + row in the same frame as the open animation.
+        let bounded = patch.count > 1_000_000 ? String(patch.prefix(1_000_000)) : patch
+        let files = DiffParser.parse(bounded)
+        let filtered: [DiffFile]
+        if let touched {
+            filtered = files.filter { TouchedPaths.matches($0, touched: touched) }
+        } else {
+            filtered = files
+        }
+        return Array(filtered.prefix(120))
     }
 }
 
@@ -283,7 +306,9 @@ struct DiffLinesView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // Lazy so a 200-line file only materializes the rows actually on screen;
+        // an eager VStack here built every row during the panel-slide animation.
+        LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(sections) { section in
                 switch section {
                 case .header(let text, _):
@@ -295,7 +320,7 @@ struct DiffLinesView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.accentColor.opacity(0.06))
                 case .tinted(let lines):
-                    VStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
                             DiffLineRow(
                                 line: line,

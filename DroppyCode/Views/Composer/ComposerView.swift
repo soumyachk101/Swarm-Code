@@ -16,14 +16,19 @@ struct ComposerArea: View {
                 VStack(alignment: .center, spacing: -ThreadChangesTab.overlap) {
                     if let stats = runtime.changeStats {
                         ThreadChangesTab(stats: stats) {
-                            runtime.diffSelection = nil
-                            runtime.isDiffVisible = true
+                            if runtime.diffSelection != nil { runtime.diffSelection = nil }
+                            // Set last so a redundant write never restarts the diff load
+                            // or steals the panel-slide transaction.
+                            if !runtime.isDiffVisible { runtime.isDiffVisible = true }
                         }
                         .transition(.softAppear)
                     }
                     ComposerView(runtime: runtime)
                 }
-                .animation(.softAppear, value: runtime.changeStats)
+                // NB: no .animation(..., value: changeStats) here on purpose. The tab's
+                // insertion animates via its .softAppear transition, and a container-level
+                // animation would hijack the outer panel-slide transaction, so the tab
+                // would jump instead of gliding along when the diff panel opens.
                 .task(id: runtime.diffRevision) { await runtime.refreshChangeStats() }
             }
         }
