@@ -147,30 +147,45 @@ private struct ScrollMetrics: Equatable {
 
 enum TimelineGroup: Identifiable {
     case single(TimelineEntry)
-    case work(id: String, entries: [TimelineEntry])
+    /// A run of tool entries. `startsCollapsed` is true when reply text follows
+    /// the run, so past work renders as one tappable summary line above the answer.
+    case work(id: String, entries: [TimelineEntry], startsCollapsed: Bool)
 
     var id: String {
         switch self {
         case .single(let entry): entry.id
-        case .work(let id, _): id
+        case .work(let id, _, _): id
         }
     }
 
     @MainActor
     static func build(_ entries: [TimelineEntry], showReasoning: Bool) -> [TimelineGroup] {
+        // Positions of assistant entries carrying reply text. A work run sitting
+        // before one of these has been moved on from, so it starts collapsed.
+        var replyIndices: [Int] = []
+        for (index, entry) in entries.enumerated() {
+            guard entry.kind == .assistant,
+                  case .assistant(let message) = entry.item.content,
+                  !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            replyIndices.append(index)
+        }
         var groups: [TimelineGroup] = []
         var work: [TimelineEntry] = []
+        var workStart = 0
 
         func flushWork() {
             guard let first = work.first else { return }
-            groups.append(.work(id: "work-\(first.id)", entries: work))
+            let workEnd = workStart + work.count - 1
+            let collapsed = replyIndices.contains { $0 > workEnd }
+            groups.append(.work(id: "work-\(first.id)", entries: work, startsCollapsed: collapsed))
             work.removeAll()
         }
 
-        for entry in entries {
+        for (index, entry) in entries.enumerated() {
             switch entry.kind {
             case .tool:
                 if let last = work.last, last.turnID != entry.turnID { flushWork() }
+                if work.isEmpty { workStart = index }
                 work.append(entry)
             case .reasoning:
                 // Thinking lives behind the working indicator's chevron, never as a row of its own.
@@ -302,8 +317,8 @@ struct TimelineGroupView: View {
                     TurnEndRow(summary: summary, hasReply: meta.turnsWithReply.contains(summary.turnID))
                 }
             }
-        case .work(_, let entries):
-            WorkGroup(entries: entries, workingDirectory: workingDirectory)
+        case .work(_, let entries, let startsCollapsed):
+            WorkGroup(entries: entries, workingDirectory: workingDirectory, startsCollapsed: startsCollapsed)
         }
     }
 

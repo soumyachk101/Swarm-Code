@@ -155,33 +155,136 @@ struct AssistantMessageRow: View {
     }
 }
 
+/// Consecutive tool calls, rendered inline with no card: a summary header
+/// ("Edited files, ran commands") whose chevron collapses the rows. A group the
+/// agent has moved on from (reply text follows it) starts collapsed, so past work
+/// reads as one tappable line above the answer; the live group stays expanded.
+/// A lone tool renders as its row alone.
 struct WorkGroup: View {
     let entries: [TimelineEntry]
     var workingDirectory: String?
+    var startsCollapsed = false
+    @State private var isCollapsed: Bool
     @State private var showsAll = false
 
+    init(entries: [TimelineEntry], workingDirectory: String? = nil, startsCollapsed: Bool = false) {
+        self.entries = entries
+        self.workingDirectory = workingDirectory
+        self.startsCollapsed = startsCollapsed
+        _isCollapsed = State(initialValue: startsCollapsed)
+    }
+
     var body: some View {
-        let hidden = showsAll ? 0 : max(0, entries.count - 6)
-        VStack(alignment: .leading, spacing: 0) {
-            if hidden > 0 {
+        if entries.count == 1, let only = entries.first {
+            ToolRow(entry: only, workingDirectory: workingDirectory)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
                 Button {
-                    withAnimation(.snappy) { showsAll = true }
+                    withAnimation(.snappy(duration: 0.2)) { isCollapsed.toggle() }
                 } label: {
-                    Label("\(hidden) earlier steps", systemImage: "ellipsis")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .contentShape(.rect)
+                    HStack(spacing: 6) {
+                        Image(systemName: WorkGroupSummary.symbol(for: entries))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 16)
+                        Text(WorkGroupSummary.text(for: entries))
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isCollapsed ? 0 : 90))
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
+                .help(isCollapsed ? "Show these steps" : "Hide these steps")
+                .accessibilityLabel(Text(isCollapsed ? "Show these steps" : "Hide these steps"))
+                if !isCollapsed {
+                    let hidden = showsAll ? 0 : max(0, entries.count - 6)
+                    if hidden > 0 {
+                        Button {
+                            withAnimation(.snappy) { showsAll = true }
+                        } label: {
+                            Label("\(hidden) earlier steps", systemImage: "ellipsis")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    ForEach(entries.suffix(entries.count - hidden)) { entry in
+                        ToolRow(entry: entry, workingDirectory: workingDirectory)
+                    }
+                }
             }
-            ForEach(entries.suffix(entries.count - hidden)) { entry in
-                ToolRow(entry: entry, workingDirectory: workingDirectory)
+            .onChange(of: startsCollapsed) { _, collapsed in
+                // One-way: arriving reply text collapses the group, but a group
+                // the reader opened never snaps shut on its own.
+                if collapsed { isCollapsed = true }
             }
         }
-        .padding(.vertical, 3)
-        .background(.quaternary.opacity(0.32), in: .rect(cornerRadius: 14, style: .continuous))
+    }
+}
+
+/// The "Edited files, ran commands" line above a tool group, derived from the
+/// calls' kinds rather than their localized titles. First part capitalized, the
+/// rest lowered, in a fixed kind order. A kind with a call still running reads
+/// in the present tense ("Editing files, ran commands").
+///
+/// Main-actor isolated like the entries it reads: `TimelineEntry.item` lives on
+/// the main actor, so this can only run where view bodies run.
+@MainActor
+enum WorkGroupSummary {
+    static func text(for entries: [TimelineEntry]) -> String {
+        var kinds: [ToolCall.Kind] = []
+        for entry in entries {
+            guard case .tool(let call) = entry.item.content, !kinds.contains(call.kind) else { continue }
+            kinds.append(call.kind)
+        }
+        let order: [ToolCall.Kind] = [.edit, .read, .command, .search, .web, .mcp, .agent, .other]
+        var parts: [String] = []
+        for kind in order where kinds.contains(kind) {
+            let running = entries.contains {
+                guard case .tool(let call) = $0.item.content else { return false }
+                return call.kind == kind && call.status == .running
+            }
+            parts.append(label(for: kind, running: running))
+        }
+        if parts.isEmpty { return "Worked" }
+        guard parts.count > 1 else { return parts[0] }
+        let rest = parts.dropFirst().map { part -> String in
+            guard let head = part.first else { return part }
+            return String(head).lowercased() + String(part.dropFirst())
+        }
+        return ([parts[0]] + rest).joined(separator: ", ")
+    }
+
+    static func symbol(for entries: [TimelineEntry]) -> String {
+        let kinds = Set(entries.compactMap { entry -> ToolCall.Kind? in
+            guard case .tool(let call) = entry.item.content else { return nil }
+            return call.kind
+        })
+        let order: [ToolCall.Kind] = [.edit, .read, .command, .search, .web, .mcp, .agent, .other]
+        guard let first = order.first(where: { kinds.contains($0) }) else { return "wrench.and.screwdriver" }
+        return ToolPresentation.symbol(for: first)
+    }
+
+    private static func label(for kind: ToolCall.Kind, running: Bool) -> String {
+        switch kind {
+        case .edit: running ? "Editing files" : "Edited files"
+        case .read: running ? "Reading files" : "Read files"
+        case .command: running ? "Running commands" : "Ran commands"
+        case .search: running ? "Searching" : "Searched"
+        case .web: running ? "Browsing" : "Browsed"
+        case .mcp: running ? "Calling tools" : "Called tools"
+        case .agent: running ? "Delegating tasks" : "Delegated tasks"
+        case .other: running ? "Using tools" : "Used tools"
+        }
     }
 }
 
@@ -638,7 +741,7 @@ struct TurnFinishedBlock: View {
                     .padding(.vertical, 10)
 
                 if isExpanded {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
                     ForEach(detailGroups) { group in
                         switch group {
                         case .single(let entry):
@@ -656,8 +759,8 @@ struct TurnFinishedBlock: View {
                             case .user, .reasoning, .turnEnd:
                                 EmptyView()
                             }
-                        case .work(_, let entries):
-                            WorkGroup(entries: entries, workingDirectory: workingDirectory)
+                        case .work(_, let entries, let startsCollapsed):
+                            WorkGroup(entries: entries, workingDirectory: workingDirectory, startsCollapsed: startsCollapsed)
                         }
                     }
                 }
