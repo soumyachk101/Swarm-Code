@@ -21,42 +21,49 @@ struct DiffInspector: View {
         @Bindable var runtime = runtime
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Picker("Changes", selection: $runtime.diffSelection) {
-                    Text("All changes").tag(UUID?.none)
-                    if !changedTurns.isEmpty { Divider() }
-                    ForEach(changedTurns) { turn in
-                        Text("Turn \(turn.index + 1)").tag(UUID?.some(turn.id))
+                ChromeTextMenu(
+                    symbol: "plusminus",
+                    title: runtime.diffSelection
+                        .flatMap { id in runtime.turns.first { $0.id == id } }
+                        .map { "Turn \($0.index + 1)" } ?? "All changes",
+                    help: "Choose which changes to show"
+                ) {
+                    Picker("Changes", selection: $runtime.diffSelection) {
+                        Text("All changes").tag(UUID?.none)
+                        ForEach(changedTurns) { turn in
+                            Text("Turn \(turn.index + 1)").tag(UUID?.some(turn.id))
+                        }
                     }
+                    .pickerStyle(.inline)
                 }
-                .labelsHidden()
-                .fixedSize()
-                Spacer()
+                Spacer(minLength: 8)
                 if !files.isEmpty {
                     Text(files.count == 1 ? "1 file" : "\(files.count) files")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
                     DiffStatLabel(
                         additions: files.reduce(0) { $0 + $1.additions },
                         deletions: files.reduce(0) { $0 + $1.deletions }
                     )
                 }
-                Menu {
-                    Button("Expand all") { collapsed.removeAll() }
-                    Button("Collapse all") { collapsed = Set(files.map(\.id)) }
-                    if canRevertSelection {
-                        Divider()
-                        Button("Revert this turn…", role: .destructive) { isConfirmingRevert = true }
+                ChromeCapsule {
+                    ChromeMenuButton(symbol: "ellipsis", help: "More") {
+                        Button("Expand all") { collapsed.removeAll() }
+                        Button("Collapse all") { collapsed = Set(files.map(\.id)) }
+                        if canRevertSelection {
+                            Divider()
+                            Button("Revert this turn…", role: .destructive) { isConfirmingRevert = true }
+                        }
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
+                    ChromeDivider()
+                    ChromeIconButton(symbol: "xmark", help: "Hide changes (⌘D)") {
+                        runtime.isDiffVisible = false
+                    }
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, Chrome.chromeHorizontalPadding)
+            .padding(.top, Chrome.chromeTopPadding)
+            .padding(.bottom, 10)
 
             if files.isEmpty {
                 Group {

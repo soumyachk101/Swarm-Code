@@ -2,44 +2,77 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
+
     @State private var search = ""
-    @State private var renamingThreadID: UUID?
-    @State private var threadPendingDeletion: ChatThread?
+    @State private var renaming: ChatThread?
+    @State private var renameText = ""
+    @State private var pendingDeletion: ChatThread?
+
+    private var query: String {
+        search.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     var body: some View {
-        @Bindable var model = model
-        List(selection: $model.selectedThreadID) {
-            ForEach(model.projects) { project in
-                ProjectSection(
-                    project: project,
-                    search: search,
-                    renamingThreadID: $renamingThreadID,
-                    threadPendingDeletion: $threadPendingDeletion
-                )
-            }
-        }
-        .listStyle(.sidebar)
-        .searchable(text: $search, placement: .sidebar, prompt: "Search threads")
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            SidebarFooter()
-        }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    model.newThread()
-                } label: {
-                    Label("New thread", systemImage: "square.and.pencil")
+        VStack(alignment: .leading, spacing: 0) {
+            // Clears the native window buttons that float over the sidebar's top corner.
+            Color.clear
+                .frame(height: Chrome.trafficLightDiameter)
+                .padding(.top, Chrome.trafficLightTop)
+
+            SidebarSearchField(text: $search, prompt: "Search threads") {
+                if let first = searchResults.first?.threads.first {
+                    model.selectedThreadID = first.id
                 }
-                .help("New thread (⌘N)")
             }
+            .padding(.horizontal, Chrome.listInset)
+            .padding(.top, 14)
+
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 1) {
+                    if query.isEmpty {
+                        projectList
+                    } else {
+                        searchList
+                    }
+                }
+                .padding(.horizontal, Chrome.listInset)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+            }
+            .scrollIndicators(.never)
+
+            VStack(alignment: .leading, spacing: 1) {
+                SidebarRow(title: "Add project", action: { model.chooseProjectFolder() }) {
+                    SidebarIconBadge(tint: Chrome.blue) { SidebarSymbol("plus") }
+                }
+                SidebarRow(title: "Settings", action: { openSettings() }) {
+                    SidebarIconBadge(tint: Chrome.gray) { SidebarSymbol("gear", scale: 1.15) }
+                }
+            }
+            .padding(.horizontal, Chrome.listInset)
+            .padding(.bottom, 12)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background { WindowDragArea() }
+        .alert("Rename thread", isPresented: Binding(
+            get: { renaming != nil },
+            set: { if !$0 { renaming = nil } }
+        )) {
+            TextField("Title", text: $renameText)
+            Button("Rename") {
+                if let thread = renaming { model.rename(thread.id, to: renameText) }
+                renaming = nil
+            }
+            Button("Cancel", role: .cancel) { renaming = nil }
         }
         .confirmationDialog(
             "Delete this thread?",
             isPresented: Binding(
-                get: { threadPendingDeletion != nil },
-                set: { if !$0 { threadPendingDeletion = nil } }
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
             ),
-            presenting: threadPendingDeletion
+            presenting: pendingDeletion
         ) { thread in
             Button("Delete thread", role: .destructive) { model.delete(thread.id) }
             if thread.worktreePath != nil {
@@ -49,209 +82,217 @@ struct SidebarView: View {
             Text("“\(thread.title)” and its history will be removed. Files in your project stay as they are.")
         }
     }
-}
 
-private struct ProjectSection: View {
-    @Environment(AppModel.self) private var model
-    let project: Project
-    let search: String
-    @Binding var renamingThreadID: UUID?
-    @Binding var threadPendingDeletion: ChatThread?
-
-    private var threads: [ChatThread] {
-        let all = model.threads(in: project)
-        let query = search.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return all }
-        return all.filter { $0.title.localizedCaseInsensitiveContains(query) }
+    @ViewBuilder
+    private var projectList: some View {
+        ForEach(Array(model.projects.enumerated()), id: \.element.id) { index, project in
+            if index > 0 {
+                Color.clear.frame(height: Chrome.groupGap)
+            }
+            ProjectRow(project: project)
+            if project.isExpanded {
+                ForEach(model.threads(in: project)) { thread in
+                    threadRow(thread)
+                }
+            }
+        }
     }
 
-    var body: some View {
-        let isExpanded = Binding(
-            get: { project.isExpanded || !search.isEmpty },
-            set: { value in model.updateProject(project.id) { $0.isExpanded = value } }
+    @ViewBuilder
+    private var searchList: some View {
+        let results = searchResults
+        if results.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("No results")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Chrome.primaryText.opacity(0.92))
+                Text("Try a thread title or a project name.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 14)
+        } else {
+            ForEach(Array(results.enumerated()), id: \.element.project.id) { index, result in
+                if index > 0 {
+                    Color.clear.frame(height: Chrome.groupGap)
+                }
+                ProjectRow(project: result.project, togglesExpansion: false)
+                ForEach(result.threads) { thread in
+                    threadRow(thread)
+                }
+            }
+        }
+    }
+
+    private func threadRow(_ thread: ChatThread) -> some View {
+        ThreadRow(
+            thread: thread,
+            onRename: {
+                renameText = thread.title
+                renaming = thread
+            },
+            onDelete: {
+                if model.settings.confirmBeforeDeleting {
+                    pendingDeletion = thread
+                } else {
+                    model.delete(thread.id)
+                }
+            }
         )
-        Section(isExpanded: isExpanded) {
-            ForEach(threads) { thread in
-                ThreadRow(thread: thread, isRenaming: renamingThreadID == thread.id) { title in
-                    if let title { model.rename(thread.id, to: title) }
-                    renamingThreadID = nil
-                }
-                .tag(thread.id)
-                .contextMenu {
-                    Button("Rename") { renamingThreadID = thread.id }
-                    Button(thread.isPinned ? "Unpin" : "Pin") {
-                        model.updateThread(thread.id) { $0.isPinned.toggle() }
-                    }
-                    if let path = thread.worktreePath {
-                        Button("Reveal worktree in Finder") { Workspace.revealInFinder(path) }
-                    }
-                    Divider()
-                    Button("Archive") { model.archive(thread.id) }
-                    Button("Delete…", role: .destructive) {
-                        if model.settings.confirmBeforeDeleting {
-                            threadPendingDeletion = thread
-                        } else {
-                            model.delete(thread.id)
-                        }
-                    }
-                }
-            }
-            if threads.isEmpty && search.isEmpty {
-                Button {
-                    model.newThread(in: project)
-                } label: {
-                    Label("New thread", systemImage: "plus")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        } header: {
-            ProjectHeader(project: project)
+    }
+
+    private var searchResults: [(project: Project, threads: [ChatThread])] {
+        model.projects.compactMap { project in
+            let all = model.threads(in: project)
+            let threads = project.name.localizedCaseInsensitiveContains(query)
+                ? all
+                : all.filter { $0.title.localizedCaseInsensitiveContains(query) }
+            return threads.isEmpty ? nil : (project, threads)
         }
     }
 }
 
-private struct ProjectHeader: View {
+private struct ProjectRow: View {
     @Environment(AppModel.self) private var model
     let project: Project
-    @State private var isHovering = false
+    var togglesExpansion = true
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "folder")
-                .foregroundStyle(.secondary)
-            Text(project.name)
-                .lineLimit(1)
-            Spacer(minLength: 4)
-            HStack(spacing: 2) {
-                Menu {
-                    Button("New thread") { model.newThread(in: project) }
-                    Button("New thread in worktree") { model.newThread(in: project, workspace: .worktree) }
-                    Divider()
-                    Button("Reveal in Finder") { Workspace.revealInFinder(project.path) }
-                    Divider()
-                    Button("Remove project", role: .destructive) { model.removeProject(project) }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .frame(width: 18, height: 18)
+        let count = model.threads(in: project).count
+        SidebarRow(
+            title: project.name,
+            accessoryWidth: 40,
+            action: {
+                guard togglesExpansion else { return }
+                withAnimation(Chrome.panelSlide) {
+                    model.updateProject(project.id) { $0.isExpanded.toggle() }
                 }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .menuIndicator(.hidden)
-                .fixedSize()
-
-                Button {
-                    model.newThread(in: project)
-                } label: {
-                    Image(systemName: "plus")
-                        .frame(width: 18, height: 18)
+            },
+            icon: {
+                SidebarIconBadge(tint: Chrome.tileHue(for: project.id)) { SidebarSymbol("folder.fill") }
+            },
+            accessory: { hovering in
+                if hovering {
+                    HStack(spacing: 0) {
+                        Menu {
+                            menuItems
+                        } label: {
+                            RowAccessoryIcon("ellipsis")
+                        }
+                        .menuStyle(.button)
+                        .buttonStyle(.plain)
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        Button {
+                            model.newThread(in: project)
+                        } label: {
+                            RowAccessoryIcon("plus")
+                        }
+                        .buttonStyle(.plain)
+                        .help("New thread in \(project.name)")
+                    }
+                } else if !project.isExpanded, count > 0 {
+                    Text(verbatim: "\(count)")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(Chrome.secondaryText)
+                        .padding(.trailing, 4)
                 }
-                .buttonStyle(.plain)
-                .help("New thread in \(project.name)")
             }
-            .foregroundStyle(.secondary)
-            .opacity(isHovering ? 1 : 0)
-        }
-        .contentShape(.rect)
-        .onHover { isHovering = $0 }
+        )
+        .contextMenu { menuItems }
+    }
+
+    @ViewBuilder
+    private var menuItems: some View {
+        Button("New thread") { model.newThread(in: project) }
+        Button("New thread in worktree") { model.newThread(in: project, workspace: .worktree) }
+        Divider()
+        Button("Reveal in Finder") { Workspace.revealInFinder(project.path) }
+        Divider()
+        Button("Remove project", role: .destructive) { model.removeProject(project) }
     }
 }
 
 private struct ThreadRow: View {
     @Environment(AppModel.self) private var model
     let thread: ChatThread
-    let isRenaming: Bool
-    let onRename: (String?) -> Void
-
-    @State private var draftTitle = ""
-    @FocusState private var isFieldFocused: Bool
+    let onRename: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            ThreadStatusIndicator(thread: thread)
-                .frame(width: 14)
-            if isRenaming {
-                TextField("Title", text: $draftTitle)
-                    .textFieldStyle(.plain)
-                    .focused($isFieldFocused)
-                    .onSubmit { onRename(draftTitle) }
-                    .onExitCommand { onRename(nil) }
-                    .onAppear {
-                        draftTitle = thread.title
-                        isFieldFocused = true
+        SidebarRow(
+            title: thread.title,
+            isSelected: model.selectedThreadID == thread.id,
+            isEmphasized: thread.hasUnread,
+            accessoryWidth: 30,
+            action: { model.selectedThreadID = thread.id },
+            icon: { ThreadBadge(thread: thread) },
+            accessory: { hovering in
+                if hovering {
+                    Menu {
+                        menuItems
+                    } label: {
+                        RowAccessoryIcon("ellipsis")
                     }
-            } else {
-                Text(thread.title)
-                    .lineLimit(1)
-                    .fontWeight(thread.hasUnread ? .semibold : .regular)
+                    .menuStyle(.button)
+                    .buttonStyle(.plain)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                } else {
+                    Text(verbatim: RelativeTime.short(thread.updatedAt))
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(Chrome.secondaryText.opacity(0.8))
+                        .padding(.trailing, 4)
+                }
             }
-            Spacer(minLength: 4)
-            if thread.worktreePath != nil {
-                Image(systemName: "arrow.triangle.branch")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            Text(RelativeTime.short(thread.updatedAt))
-                .font(.caption)
-                .monospacedDigit()
-                .foregroundStyle(.tertiary)
+        )
+        .contextMenu { menuItems }
+    }
+
+    @ViewBuilder
+    private var menuItems: some View {
+        Button("Rename") { onRename() }
+        Button(thread.isPinned ? "Unpin" : "Pin") {
+            model.updateThread(thread.id) { $0.isPinned.toggle() }
         }
+        if let path = thread.worktreePath {
+            Button("Reveal worktree in Finder") { Workspace.revealInFinder(path) }
+        }
+        Divider()
+        Button("Archive") { model.archive(thread.id) }
+        Button("Delete…", role: .destructive) { onDelete() }
     }
 }
 
-private struct ThreadStatusIndicator: View {
+private struct ThreadBadge: View {
     @Environment(AppModel.self) private var model
     let thread: ChatThread
 
     var body: some View {
         let runtime = model.existingRuntime(for: thread.id)
         let needsInput = !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true)
-        Group {
+        let isRunning = runtime?.isRunning == true
+        SidebarIconBadge(tint: needsInput ? Chrome.orange : nil) {
             if needsInput {
-                Image(systemName: "hand.raised.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            } else if runtime?.isRunning == true {
+                SidebarSymbol("hand.raised.fill")
+            } else if isRunning {
                 ProgressView()
                     .controlSize(.mini)
-            } else if thread.hasUnread {
-                Circle()
-                    .fill(thread.lastStatus == .failed ? AnyShapeStyle(.red) : AnyShapeStyle(.tint))
-                    .frame(width: 7, height: 7)
+                    .scaleEffect(0.8)
             } else if thread.isPinned {
-                Image(systemName: "pin.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                SidebarSymbol("pin.fill", scale: 0.9)
             } else {
                 ProviderIcon(provider: thread.provider, size: 11)
-                    .foregroundStyle(.tertiary)
-                    .opacity(0.8)
             }
         }
-    }
-}
-
-private struct SidebarFooter: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button {
-                model.chooseProjectFolder()
-            } label: {
-                Label("Add project", systemImage: "folder.badge.plus")
+        .overlay(alignment: .topTrailing) {
+            if thread.hasUnread, !needsInput, !isRunning {
+                Circle()
+                    .fill(thread.lastStatus == .failed ? Color.red : Chrome.accent)
+                    .frame(width: 7, height: 7)
+                    .offset(x: 2.5, y: -2.5)
             }
-            .buttonStyle(.glass)
-            .help("Add project (⌘O)")
-            Spacer()
-            SettingsLink {
-                Image(systemName: "gearshape")
-            }
-            .buttonStyle(.glass)
-            .help("Settings (⌘,)")
         }
-        .controlSize(.regular)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 }

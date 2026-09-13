@@ -3,6 +3,9 @@ import SwiftUI
 struct ThreadTimeline: View {
     @Environment(AppModel.self) private var model
     let runtime: ThreadRuntime
+    let scrollChrome: ChromeScrollModel
+    let title: String
+    let subtitle: String
 
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isPinnedToBottom = true
@@ -12,27 +15,32 @@ struct ThreadTimeline: View {
     var body: some View {
         let groups = TimelineGroup.build(runtime.entries, showReasoning: model.settings.showReasoning)
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                ForEach(groups) { group in
-                    TimelineGroupView(group: group, runtime: runtime)
-                }
-                if runtime.isRunning {
-                    WorkingIndicator(startedAt: runtime.turnStartedAt ?? .now)
+            VStack(alignment: .leading, spacing: 0) {
+                PaneHero(title: title, subtitle: subtitle)
+                Spacer(minLength: 28)
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    ForEach(groups) { group in
+                        TimelineGroupView(group: group, runtime: runtime)
+                    }
+                    if runtime.isRunning {
+                        WorkingIndicator(startedAt: runtime.turnStartedAt ?? .now)
+                    }
                 }
             }
             .frame(maxWidth: 780, alignment: .leading)
             .padding(.horizontal, 28)
-            .padding(.top, 24)
+            .padding(.top, Chrome.contentTopInset)
             .padding(.bottom, 18)
-            // A short conversation fills the viewport and rests at the bottom, so the empty space is plain content.
-            .frame(maxWidth: .infinity, minHeight: viewportHeight, alignment: .bottom)
+            // A short conversation still fills the pane: the title rests at the top and messages at the bottom.
+            .frame(maxWidth: .infinity, minHeight: viewportHeight, alignment: .top)
         }
+        .scrollIndicators(.never)
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
-        .scrollEdgeEffectStyle(.soft, for: .top)
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             bottomInset = new.bottomInset
+            scrollChrome.update(travel: new.travel)
             if new.contentHeight != old.contentHeight {
                 if isPinnedToBottom { position.scrollTo(edge: .bottom) }
             } else {
@@ -41,17 +49,10 @@ struct ThreadTimeline: View {
         }
         .overlay(alignment: .bottom) {
             if !isPinnedToBottom {
-                Button {
+                ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
                     isPinnedToBottom = true
                     withAnimation(.snappy) { position.scrollTo(edge: .bottom) }
-                } label: {
-                    Image(systemName: "arrow.down")
-                        .font(.system(size: 13, weight: .semibold))
-                        .frame(width: 30, height: 30)
                 }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .help("Jump to latest")
                 .padding(.bottom, bottomInset + 12)
                 .transition(.scale(scale: 0.8).combined(with: .opacity))
             }
@@ -69,10 +70,12 @@ private struct ScrollMetrics: Equatable {
     var contentHeight: CGFloat
     var distanceFromBottom: CGFloat
     var bottomInset: CGFloat
+    var travel: CGFloat
 
     init(geometry: ScrollGeometry) {
         contentHeight = geometry.contentSize.height
         bottomInset = geometry.contentInsets.bottom
+        travel = geometry.contentOffset.y + geometry.contentInsets.top
         let insets = geometry.contentInsets.top + geometry.contentInsets.bottom
         if geometry.contentSize.height + insets <= geometry.containerSize.height + 1 {
             distanceFromBottom = 0

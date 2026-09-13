@@ -19,6 +19,8 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(after: .sidebar) {
+            Button("Toggle sidebar") { model.sidebar.toggle() }
+                .keyboardShortcut("s", modifiers: [.command, .control])
             Button("Command palette") { model.isCommandPalettePresented.toggle() }
                 .keyboardShortcut("k")
             Button("Toggle terminal") { runtime?.isTerminalVisible.toggle() }

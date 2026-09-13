@@ -1,71 +1,288 @@
 import AppKit
 import SwiftUI
 
-struct SettingsView: View {
-    var body: some View {
-        TabView {
-            Tab("General", systemImage: "gearshape") { GeneralSettings() }
-            Tab("Providers", systemImage: "cpu") { ProviderSettings() }
-            Tab("Source control", systemImage: "arrow.triangle.branch") { SourceControlSettings() }
-            Tab("Shortcuts", systemImage: "keyboard") { ShortcutSettings() }
-            Tab("Archive", systemImage: "archivebox") { ArchiveSettings() }
-            Tab("About", systemImage: "info.circle") { AboutSettings() }
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case general
+    case providers
+    case sourceControl
+    case shortcuts
+    case archive
+    case about
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: "General"
+        case .providers: "Providers"
+        case .sourceControl: "Source control"
+        case .shortcuts: "Shortcuts"
+        case .archive: "Archive"
+        case .about: "About"
         }
-        .frame(width: 680, height: 540)
+    }
+
+    var symbol: String {
+        switch self {
+        case .general: "gear"
+        case .providers: "cpu"
+        case .sourceControl: "arrow.triangle.branch"
+        case .shortcuts: "command"
+        case .archive: "archivebox"
+        case .about: "info.circle"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .general: Chrome.gray
+        case .providers: Chrome.blue
+        case .sourceControl: Color(red: 0.345, green: 0.337, blue: 0.839)
+        case .shortcuts: Color(red: 0.32, green: 0.48, blue: 0.93)
+        case .archive: Chrome.orange
+        case .about: Color(red: 0.204, green: 0.780, blue: 0.349)
+        }
+    }
+
+    var keywords: [String] {
+        switch self {
+        case .general: ["permissions", "worktree", "reasoning", "notifications", "theme", "appearance", "dark", "light"]
+        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "binary", "path", "sign in", "login"]
+        case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
+        case .shortcuts: ["keyboard", "keys"]
+        case .archive: ["archived", "restore"]
+        case .about: ["version", "license"]
+        }
     }
 }
 
-private struct GeneralSettings: View {
+struct SettingsView: View {
+    @State private var page: SettingsPage = .general
+    @State private var search = ""
+    @State private var scrollChrome = ChromeScrollModel()
+
+    private var visiblePages: [SettingsPage] {
+        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return SettingsPage.allCases }
+        return SettingsPage.allCases.filter { page in
+            page.title.localizedCaseInsensitiveContains(query)
+                || page.keywords.contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+                .frame(width: 212)
+            detail
+                .padding(.trailing, Chrome.sheetInset)
+                .padding(.vertical, Chrome.sheetInset)
+        }
+        .background { WindowBackdrop() }
+        .background { WindowChromeConfigurator() }
+        .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
+        .ignoresSafeArea()
+        .frame(width: 780, height: 580)
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Color.clear
+                .frame(height: Chrome.trafficLightDiameter)
+                .padding(.top, Chrome.trafficLightTop)
+            SidebarSearchField(text: $search) {
+                if let first = visiblePages.first { page = first }
+            }
+            .padding(.horizontal, Chrome.listInset)
+            .padding(.top, 14)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(visiblePages) { item in
+                        SidebarRow(title: item.title, isSelected: page == item, action: { page = item }) {
+                            SidebarIconBadge(tint: item.tint) {
+                                SidebarSymbol(item.symbol, scale: item == .general ? 1.15 : 1)
+                            }
+                        }
+                    }
+                    if visiblePages.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("No results")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Chrome.primaryText.opacity(0.92))
+                            Text("Try a setting or a provider name.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Chrome.secondaryText)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.top, 14)
+                    }
+                }
+                .padding(.horizontal, Chrome.listInset)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+            }
+            .scrollIndicators(.never)
+        }
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background { WindowDragArea() }
+    }
+
+    private var detail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+                PaneHero(title: page.title)
+                pageContent
+            }
+            .padding(.horizontal, Chrome.contentHorizontalPadding + 8)
+            .padding(.top, Chrome.contentTopInset)
+            .padding(.bottom, 24)
+        }
+        .scrollIndicators(.never)
+        .id(page)
+        .onScrollGeometryChange(for: CGFloat.self, of: Self.travel) { _, travel in
+            scrollChrome.update(travel: travel)
+        }
+        .overlay(alignment: .top) {
+            PaneTopVeil(model: scrollChrome)
+        }
+        .overlay(alignment: .top) {
+            HStack(spacing: 10) {
+                ChromeCompactTitle(title: page.title, model: scrollChrome)
+                if page == .providers {
+                    ProvidersRefreshButton()
+                }
+            }
+            .frame(minHeight: Chrome.capsuleHeight)
+            .padding(.horizontal, Chrome.chromeHorizontalPadding)
+            .padding(.top, Chrome.chromeTopPadding)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .detailSheet()
+        .onChange(of: page) { scrollChrome.update(travel: 0) }
+    }
+
+    @ViewBuilder
+    private var pageContent: some View {
+        switch page {
+        case .general: GeneralSettingsPage()
+        case .providers: ProvidersSettingsPage()
+        case .sourceControl: SourceControlSettingsPage()
+        case .shortcuts: ShortcutsSettingsPage()
+        case .archive: ArchiveSettingsPage()
+        case .about: AboutSettingsPage()
+        }
+    }
+
+    private nonisolated static func travel(_ geometry: ScrollGeometry) -> CGFloat {
+        geometry.contentOffset.y + geometry.contentInsets.top
+    }
+}
+
+private struct SettingsSwitch: View {
+    @Binding var isOn: Bool
+
+    var body: some View {
+        Toggle("", isOn: $isOn)
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+    }
+}
+
+private struct GeneralSettingsPage: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var settings = model.settings
-        Form {
-            Section("New threads") {
-                Picker("Provider", selection: $settings.defaultProvider) {
-                    ForEach(ProviderKind.allCases) { provider in
-                        Text(provider.displayName).tag(provider)
+        ChromeSection(title: "New threads") {
+            ChromeCard {
+                ChromeRow(title: "Provider") {
+                    Picker("Provider", selection: $settings.defaultProvider) {
+                        ForEach(ProviderKind.allCases) { provider in
+                            Text(provider.displayName).tag(provider)
+                        }
                     }
+                    .labelsHidden()
+                    .fixedSize()
                 }
-                Picker("Permissions", selection: $settings.defaultRuntimeMode) {
-                    ForEach(RuntimeMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+                ChromeRowDivider()
+                ChromeRow(title: "Permissions", detail: settings.defaultRuntimeMode.summary) {
+                    Picker("Permissions", selection: $settings.defaultRuntimeMode) {
+                        ForEach(RuntimeMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
                     }
+                    .labelsHidden()
+                    .fixedSize()
                 }
-                Picker("Workspace", selection: $settings.defaultWorkspaceMode) {
-                    ForEach(WorkspaceMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
+                ChromeRowDivider()
+                ChromeRow(title: "Workspace", detail: "Where a new thread makes its changes") {
+                    Picker("Workspace", selection: $settings.defaultWorkspaceMode) {
+                        ForEach(WorkspaceMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
                     }
+                    .labelsHidden()
+                    .fixedSize()
                 }
-            }
-            Section("Conversation") {
-                Toggle("Show reasoning", isOn: $settings.showReasoning)
-                Toggle("Notify when a turn finishes", isOn: $settings.notifyWhenFinished)
-                Toggle("Confirm before deleting threads", isOn: $settings.confirmBeforeDeleting)
-            }
-            Section("Appearance") {
-                Picker("Theme", selection: $settings.appearance) {
-                    ForEach(AppearancePreference.allCases) { appearance in
-                        Text(appearance.title).tag(appearance)
-                    }
-                }
-                .pickerStyle(.segmented)
             }
         }
-        .formStyle(.grouped)
+        ChromeSection(title: "Conversation") {
+            ChromeCard {
+                ChromeRow(title: "Show reasoning") {
+                    SettingsSwitch(isOn: $settings.showReasoning)
+                }
+                ChromeRowDivider()
+                ChromeRow(title: "Notify when a turn finishes") {
+                    SettingsSwitch(isOn: $settings.notifyWhenFinished)
+                }
+                ChromeRowDivider()
+                ChromeRow(title: "Confirm before deleting threads") {
+                    SettingsSwitch(isOn: $settings.confirmBeforeDeleting)
+                }
+            }
+        }
+        ChromeSection(title: "Appearance") {
+            ChromeCard {
+                ChromeRow(title: "Theme") {
+                    Picker("Theme", selection: $settings.appearance) {
+                        ForEach(AppearancePreference.allCases) { appearance in
+                            Text(appearance.title).tag(appearance)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+            }
+        }
     }
 }
 
-private struct ProviderSettings: View {
+private struct ProvidersRefreshButton: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        Form {
+        ChromeCapsule {
+            ChromeIconButton(symbol: "arrow.clockwise", help: "Check providers again") {
+                Task {
+                    await model.providers.refreshAll()
+                    await model.providers.loadCatalog(.codex, force: true)
+                }
+            }
+        }
+    }
+}
+
+private struct ProvidersSettingsPage: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
             ForEach(ProviderKind.allCases) { provider in
                 ProviderSettingsSection(provider: provider)
             }
         }
-        .formStyle(.grouped)
         .task { await model.providers.refreshAll() }
     }
 }
@@ -78,84 +295,118 @@ private struct ProviderSettingsSection: View {
 
     var body: some View {
         let status = model.providers.status(provider)
-        Section {
-            Toggle(isOn: Binding(
-                get: { model.settings.isEnabled(provider) },
-                set: { model.settings.setEnabled($0, for: provider) }
-            )) {
-                HStack(spacing: 10) {
+        ChromeSection(title: provider.displayName) {
+            ChromeCard {
+                HStack(spacing: 12) {
                     ProviderIcon(provider: provider, size: 18)
+                        .foregroundStyle(Chrome.primaryText)
+                        .frame(width: 22)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(provider.displayName)
-                        Text(status.isChecking ? "Checking…" : status.summary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Text(verbatim: status.isChecking ? "Checking…" : status.summary)
+                            .font(.system(size: 13))
+                        if let version = status.version {
+                            Text(verbatim: "Version \(version)")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Chrome.secondaryText)
+                        }
                     }
+                    Spacer()
+                    SettingsSwitch(isOn: Binding(
+                        get: { model.settings.isEnabled(provider) },
+                        set: { model.settings.setEnabled($0, for: provider) }
+                    ))
                 }
-            }
-            TextField("Binary path", text: $binaryPath, prompt: Text(status.executable?.path ?? provider.executableName))
-                .font(.system(.body, design: .monospaced))
-            HStack {
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+                ChromeRowDivider()
+                ChromeRow(title: "Binary path", detail: status.executable?.path) {
+                    TextField("", text: $binaryPath, prompt: Text(provider.executableName))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 12, design: .monospaced))
+                        .frame(width: 200)
+                }
                 if !status.isInstalled {
-                    Link("Install \(provider.displayName)", destination: provider.installURL)
+                    ChromeRowDivider()
+                    ChromeRow(title: "Install", detail: "\(provider.displayName) was not found on your PATH.") {
+                        Link("Get \(provider.displayName)", destination: provider.installURL)
+                            .buttonStyle(.glass)
+                    }
                 } else if status.auth == .signedOut {
-                    CopyCommandButton(command: provider.loginCommand)
-                }
-                Spacer()
-                Button("Refresh") {
-                    Task {
-                        await model.providers.refresh(provider)
-                        await model.providers.loadCatalog(provider, force: true)
+                    ChromeRowDivider()
+                    ChromeRow(title: "Sign in", detail: "Run this command in Terminal.") {
+                        CopyCommandButton(command: provider.loginCommand)
                     }
                 }
             }
         }
         .onAppear { binaryPath = model.settings.binaryPath(for: provider) }
-        .onChange(of: binaryPath) { _, value in model.settings.setBinaryPath(value, for: provider) }
+        .onChange(of: binaryPath) { _, value in
+            model.settings.setBinaryPath(value, for: provider)
+        }
     }
 }
 
-private struct SourceControlSettings: View {
+private struct SourceControlSettingsPage: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var settings = model.settings
-        Form {
-            Section {
-                Picker("Text generation", selection: $settings.textGeneration) {
-                    ForEach(TextGenerationChoice.allCases) { choice in
-                        Text(choice.title).tag(choice)
+        ChromeSection(title: "Text generation") {
+            ChromeCard {
+                ChromeRow(
+                    title: "Thread titles and commit messages",
+                    detail: "Automatic uses the thread's own provider. Claude uses Haiku, Codex your default model."
+                ) {
+                    Picker("Text generation", selection: $settings.textGeneration) {
+                        ForEach(TextGenerationChoice.allCases) { choice in
+                            Text(choice.title).tag(choice)
+                        }
                     }
+                    .labelsHidden()
+                    .fixedSize()
                 }
-            } footer: {
-                Text("Writes thread titles and commit messages. Automatic prefers the thread's own provider. Claude uses Haiku, Codex uses your default Codex model.")
-                    .foregroundStyle(.secondary)
-            }
-            Section("Commit message instructions") {
-                TextEditor(text: $settings.commitInstructions)
-                    .font(.body)
-                    .frame(minHeight: 90)
-            }
-            Section {
-                LabeledContent("Worktrees", value: Storage.worktreesDirectory.path)
-                Button("Reveal worktrees in Finder") {
-                    Workspace.revealInFinder(Storage.worktreesDirectory.path)
-                }
-            } footer: {
-                Text("Pull requests use the GitHub CLI (gh) or GitLab CLI (glab) from your PATH.")
-                    .foregroundStyle(.secondary)
             }
         }
-        .formStyle(.grouped)
+        ChromeSection(title: "Commit message instructions") {
+            ChromeCard {
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $settings.commitInstructions)
+                        .font(.system(size: 13))
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 90)
+                    if settings.commitInstructions.isEmpty {
+                        Text("For example: use conventional commit prefixes")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .padding(.horizontal, 5)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .padding(12)
+            }
+        }
+        ChromeSection(title: "Worktrees and pull requests") {
+            ChromeCard {
+                ChromeRow(title: "Worktrees", detail: Storage.worktreesDirectory.path) {
+                    Button("Reveal") { Workspace.revealInFinder(Storage.worktreesDirectory.path) }
+                        .buttonStyle(.glass)
+                }
+                ChromeRowDivider()
+                ChromeRow(title: "Pull requests", detail: "Opened with the GitHub CLI (gh) or GitLab CLI (glab) from your PATH.") {
+                    EmptyView()
+                }
+            }
+        }
     }
 }
 
-private struct ShortcutSettings: View {
+private struct ShortcutsSettingsPage: View {
     private let shortcuts: [(String, String)] = [
         ("New thread", "⌘N"),
         ("New thread in worktree", "⇧⌘N"),
         ("Add project", "⌘O"),
         ("Command palette", "⌘K"),
+        ("Toggle sidebar", "⌃⌘S"),
         ("Toggle terminal", "⌘J"),
         ("Toggle changes", "⌘D"),
         ("Plan mode", "⇧⌘P"),
@@ -170,69 +421,75 @@ private struct ShortcutSettings: View {
     ]
 
     var body: some View {
-        Form {
-            Section {
-                ForEach(shortcuts, id: \.0) { name, keys in
-                    LabeledContent(name) {
-                        Text(keys)
-                            .font(.callout.monospaced())
-                            .foregroundStyle(.secondary)
-                    }
+        ChromeCard {
+            ForEach(Array(shortcuts.enumerated()), id: \.offset) { index, shortcut in
+                if index > 0 { ChromeRowDivider() }
+                ChromeRow(title: shortcut.0) {
+                    Text(verbatim: shortcut.1)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(Chrome.secondaryText)
                 }
             }
         }
-        .formStyle(.grouped)
     }
 }
 
-private struct ArchiveSettings: View {
+private struct ArchiveSettingsPage: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         let archived = model.archivedThreads
         if archived.isEmpty {
-            ContentUnavailableView("Nothing archived", systemImage: "archivebox", description: Text("Archived threads show up here."))
+            Text("Archived threads show up here.")
+                .font(.system(size: 13))
+                .foregroundStyle(Chrome.secondaryText)
         } else {
-            Form {
-                Section {
-                    ForEach(archived) { thread in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(thread.title)
-                                Text(model.project(thread.projectID)?.name ?? "")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
+            ChromeCard {
+                ForEach(Array(archived.enumerated()), id: \.element.id) { index, thread in
+                    if index > 0 { ChromeRowDivider() }
+                    ChromeRow(title: thread.title, detail: model.project(thread.projectID)?.name) {
+                        HStack(spacing: 8) {
                             Button("Restore") { model.unarchive(thread.id) }
+                                .buttonStyle(.glass)
                             Button("Delete", role: .destructive) { model.delete(thread.id) }
+                                .buttonStyle(.glass)
                         }
+                        .controlSize(.small)
                     }
                 }
             }
-            .formStyle(.grouped)
         }
     }
 }
 
-private struct AboutSettings: View {
+private struct AboutSettingsPage: View {
     var body: some View {
-        VStack(spacing: 12) {
-            Image(nsImage: NSApp.applicationIconImage)
-                .resizable()
-                .frame(width: 84, height: 84)
-            Text("T3 Code")
-                .font(.title2.weight(.semibold))
-            Text("Version \(AppInfo.version) (\(AppInfo.build))")
-                .foregroundStyle(.secondary)
+        ChromeCard {
+            HStack(spacing: 14) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .frame(width: 56, height: 56)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("T3 Code")
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(verbatim: "Version \(AppInfo.version) (\(AppInfo.build))")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+                Spacer()
+            }
+            .padding(16)
+            ChromeRowDivider()
             Text("A native Swift fork of T3 Code by T3 Tools, rebuilt with Liquid Glass for macOS.")
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: 380)
+                .font(.system(size: 13))
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
+            ChromeRowDivider()
             Text("T3 Code and SwiftTerm are MIT licensed.")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 12))
+                .foregroundStyle(Chrome.secondaryText)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 11)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

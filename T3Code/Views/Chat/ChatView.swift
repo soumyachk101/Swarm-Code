@@ -4,59 +4,130 @@ import SwiftUI
 struct ChatView: View {
     @Environment(AppModel.self) private var model
     @Bindable var runtime: ThreadRuntime
+
     @State private var git = GitStatusModel()
+    @State private var scrollChrome = ChromeScrollModel()
+    @State private var paneWidth: CGFloat = 1_000
 
     var body: some View {
         let thread = model.thread(runtime.threadID)
         let project = thread.flatMap { model.project($0.projectID) }
         let directory = thread?.worktreePath ?? project?.path ?? LoginEnvironment.homeDirectory
-        VStack(spacing: 0) {
-            ThreadTimeline(runtime: runtime)
+        let title = thread?.title ?? ""
+        HStack(spacing: Chrome.sheetInset) {
+            VStack(spacing: 0) {
+                ThreadTimeline(
+                    runtime: runtime,
+                    scrollChrome: scrollChrome,
+                    title: title,
+                    subtitle: subtitle(project: project, thread: thread)
+                )
                 .safeAreaInset(edge: .bottom, spacing: 0) {
                     ComposerArea(runtime: runtime)
                 }
-            if runtime.isTerminalVisible {
-                TerminalPanel(runtime: runtime, directory: directory)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                .overlay(alignment: .top) {
+                    PaneTopVeil(model: scrollChrome)
+                }
+                .overlay(alignment: .top) {
+                    ChatChromeRow(
+                        runtime: runtime,
+                        scrollChrome: scrollChrome,
+                        title: title,
+                        project: project,
+                        directory: directory,
+                        git: git
+                    )
+                }
+
+                if runtime.isTerminalVisible {
+                    TerminalPanel(runtime: runtime, directory: directory)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .detailSheet()
+
+            if runtime.isDiffVisible {
+                DiffInspector(runtime: runtime)
+                    .frame(width: diffWidth)
+                    .frame(maxHeight: .infinity)
+                    .detailSheet()
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
-        .animation(.snappy(duration: 0.25), value: runtime.isTerminalVisible)
-        .navigationTitle(thread?.title ?? "")
-        .navigationSubtitle(project?.name ?? "")
-        .toolbar {
-            if git.isRepository {
-                ToolbarItem(placement: .navigation) {
-                    BranchMenu(runtime: runtime, directory: directory, git: git)
-                }
-            }
-            ToolbarItemGroup(placement: .primaryAction) {
-                OpenInMenu(directory: directory)
-                if let project {
-                    ScriptsMenu(project: project, runtime: runtime, directory: directory)
-                }
-                if git.isRepository {
-                    GitActionsMenu(runtime: runtime, directory: directory, git: git)
-                }
-            }
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            ToolbarItemGroup(placement: .primaryAction) {
-                Toggle(isOn: $runtime.isTerminalVisible) {
-                    Label("Terminal", systemImage: "terminal")
-                }
-                .help("Terminal (⌘J)")
-                Toggle(isOn: $runtime.isDiffVisible) {
-                    Label("Changes", systemImage: "plusminus")
-                }
-                .help("Changes (⌘D)")
-            }
-        }
-        .inspector(isPresented: $runtime.isDiffVisible) {
-            DiffInspector(runtime: runtime)
-                .inspectorColumnWidth(min: 380, ideal: 540, max: 960)
-        }
+        .onGeometryChange(for: CGFloat.self, of: Self.measureWidth) { paneWidth = $0 }
+        .animation(Chrome.panelSlide, value: runtime.isTerminalVisible)
+        .animation(Chrome.panelSlide, value: runtime.isDiffVisible)
         .task(id: "\(directory)-\(runtime.diffRevision)") {
             await git.refresh(directory)
         }
+    }
+
+    private var diffWidth: CGFloat {
+        min(560, max(340, (paneWidth - Chrome.sheetInset) * 0.42))
+    }
+
+    private nonisolated static func measureWidth(_ proxy: GeometryProxy) -> CGFloat {
+        proxy.size.width
+    }
+
+    private func subtitle(project: Project?, thread: ChatThread?) -> String {
+        var parts: [String] = []
+        if let project { parts.append(project.name) }
+        if let branch = git.status?.branch { parts.append(branch) }
+        if let thread { parts.append(thread.provider.displayName) }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// The sticky glass controls across the top of the conversation.
+private struct ChatChromeRow: View {
+    @Environment(AppModel.self) private var model
+    let runtime: ThreadRuntime
+    let scrollChrome: ChromeScrollModel
+    let title: String
+    let project: Project?
+    let directory: String
+    let git: GitStatusModel
+
+    var body: some View {
+        let sidebarVisible = model.sidebar.isVisible
+        HStack(alignment: .center, spacing: 10) {
+            ChromeCircleButton(symbol: "square.and.pencil", help: "New thread (⌘N)") {
+                model.newThread(in: project)
+            }
+            if git.isRepository {
+                BranchMenu(runtime: runtime, directory: directory, git: git)
+            }
+            ChromeCompactTitle(title: title, model: scrollChrome)
+            HStack(spacing: 8) {
+                ChromeCapsule {
+                    OpenInMenu(directory: directory)
+                    if let project {
+                        ChromeDivider()
+                        ScriptsMenu(project: project, runtime: runtime, directory: directory)
+                    }
+                    if git.isRepository {
+                        ChromeDivider()
+                        GitActionsMenu(runtime: runtime, directory: directory, git: git)
+                    }
+                }
+                ChromeCapsule {
+                    ChromeIconButton(symbol: "terminal", isActive: runtime.isTerminalVisible, help: "Terminal (⌘J)") {
+                        runtime.isTerminalVisible.toggle()
+                    }
+                    ChromeDivider()
+                    ChromeIconButton(symbol: "plusminus", isActive: runtime.isDiffVisible, help: "Changes (⌘D)") {
+                        runtime.isDiffVisible.toggle()
+                    }
+                }
+            }
+        }
+        // With the sidebar hidden the native window buttons sit over this row, so it steps clear of them.
+        .padding(.leading, sidebarVisible ? 0 : Chrome.trafficLightsWidth + Chrome.trafficLightClearance)
+        .padding(.horizontal, Chrome.chromeHorizontalPadding)
+        .padding(.top, Chrome.chromeTopPadding)
+        .animation(Chrome.panelSlide, value: sidebarVisible)
     }
 }
 
@@ -105,49 +176,47 @@ private struct BranchMenu: View {
     @State private var branchName = ""
 
     var body: some View {
-        if git.isRepository {
-            Menu {
-                Section("Switch branch") {
-                    ForEach(git.branches.prefix(25)) { branch in
-                        Button {
-                            switchBranch(branch.name)
-                        } label: {
-                            if branch.isCurrent {
-                                Label(branch.name, systemImage: "checkmark")
-                            } else {
-                                Text(branch.name)
-                            }
+        ChromeTextMenu(
+            symbol: "arrow.triangle.branch",
+            title: git.activity ?? git.status?.branch ?? "Detached",
+            help: "Branch"
+        ) {
+            Section("Switch branch") {
+                ForEach(git.branches.prefix(25)) { branch in
+                    Button {
+                        switchBranch(branch.name)
+                    } label: {
+                        if branch.isCurrent {
+                            Label(branch.name, systemImage: "checkmark")
+                        } else {
+                            Text(branch.name)
                         }
-                        .disabled(branch.isCurrent || runtime.isRunning)
                     }
+                    .disabled(branch.isCurrent || runtime.isRunning)
                 }
-                Button("New branch…") {
-                    branchName = ""
-                    isNamingBranch = true
-                }
-                if runtime.thread?.worktreePath == nil, runtime.turns.isEmpty {
-                    Divider()
-                    Button("Use a new worktree for this thread") {
-                        Task { await model.createWorktree(for: runtime.threadID) }
-                    }
-                }
-            } label: {
-                Label(git.status?.branch ?? "Detached", systemImage: "arrow.triangle.branch")
-                    .labelStyle(.titleAndIcon)
             }
-            .help("Branch")
-            .alert("New branch", isPresented: $isNamingBranch) {
-                TextField("Branch name", text: $branchName)
-                Button("Create") { createBranch() }
-                Button("Cancel", role: .cancel) {}
+            Button("New branch…") {
+                branchName = ""
+                isNamingBranch = true
             }
+            if runtime.thread?.worktreePath == nil, runtime.turns.isEmpty {
+                Divider()
+                Button("Use a new worktree for this thread") {
+                    Task { await model.createWorktree(for: runtime.threadID) }
+                }
+            }
+        }
+        .alert("New branch", isPresented: $isNamingBranch) {
+            TextField("Branch name", text: $branchName)
+            Button("Create") { createBranch() }
+            Button("Cancel", role: .cancel) {}
         }
     }
 
     private func switchBranch(_ name: String) {
         Task {
             let repository = Git(directory)
-            if let error = await git.perform("Switching branch", { try await repository.switchBranch(name) }) {
+            if let error = await git.perform("Switching", { try await repository.switchBranch(name) }) {
                 model.alert = AppAlert(title: "Could not switch branch", message: error.localizedDescription)
             }
             await git.refresh(directory)
@@ -159,7 +228,7 @@ private struct BranchMenu: View {
         guard !name.isEmpty else { return }
         Task {
             let repository = Git(directory)
-            if let error = await git.perform("Creating branch", { try await repository.createBranch(name) }) {
+            if let error = await git.perform("Creating", { try await repository.createBranch(name) }) {
                 model.alert = AppAlert(title: "Could not create branch", message: error.localizedDescription)
             }
             await git.refresh(directory)
@@ -171,7 +240,7 @@ private struct OpenInMenu: View {
     let directory: String
 
     var body: some View {
-        Menu {
+        ChromeMenuButton(symbol: "arrow.up.forward.app", help: "Open in another app") {
             Button("Finder") { NSWorkspace.shared.open(URL(fileURLWithPath: directory)) }
             ForEach(Workspace.installedEditors) { editor in
                 Button {
@@ -189,10 +258,7 @@ private struct OpenInMenu: View {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(directory, forType: .string)
             }
-        } label: {
-            Label("Open in", systemImage: "arrow.up.forward.app")
         }
-        .help("Open in another app")
     }
 }
 
@@ -205,7 +271,7 @@ private struct ScriptsMenu: View {
     @State private var isEditing = false
 
     var body: some View {
-        Menu {
+        ChromeMenuButton(symbol: "play", help: "Run a project script") {
             ForEach(project.scripts) { script in
                 Button {
                     model.terminals.run(script, threadID: runtime.threadID, directory: directory)
@@ -216,10 +282,7 @@ private struct ScriptsMenu: View {
             }
             if !project.scripts.isEmpty { Divider() }
             Button(project.scripts.isEmpty ? "Add a script…" : "Edit scripts…") { isEditing = true }
-        } label: {
-            Label("Run", systemImage: "play")
         }
-        .help("Project scripts")
         .sheet(isPresented: $isEditing) {
             ScriptsEditor(projectID: project.id)
         }
@@ -235,29 +298,21 @@ private struct GitActionsMenu: View {
     @State private var isCommitting = false
 
     var body: some View {
-        if git.isRepository {
-            Menu {
-                Button("Commit…") { isCommitting = true }
-                    .disabled((git.status?.changedFiles ?? 0) == 0)
-                Button("Push") { push() }
-                Button("Create pull request") { openPullRequest() }
-                if let url = git.remoteURL {
-                    Divider()
-                    Button("Open repository") { NSWorkspace.shared.open(url) }
-                }
-            } label: {
-                if let activity = git.activity {
-                    Label(activity, systemImage: "arrow.triangle.2.circlepath")
-                } else {
-                    let changed = git.status?.changedFiles ?? 0
-                    Label(changed == 0 ? "Git" : "\(changed) changed", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
-                        .labelStyle(.titleAndIcon)
-                }
+        let changed = git.status?.changedFiles ?? 0
+        ChromeMenuButton(symbol: "arrow.triangle.pull", help: changed == 0 ? "Commit, push and open pull requests" : "\(changed) changed files") {
+            Text(changed == 1 ? "1 changed file" : "\(changed) changed files")
+            Divider()
+            Button("Commit…") { isCommitting = true }
+                .disabled(changed == 0)
+            Button("Push") { push() }
+            Button("Create pull request") { openPullRequest() }
+            if let url = git.remoteURL {
+                Divider()
+                Button("Open repository") { NSWorkspace.shared.open(url) }
             }
-            .help("Commit, push and open pull requests")
-            .sheet(isPresented: $isCommitting) {
-                CommitSheet(runtime: runtime, directory: directory, git: git)
-            }
+        }
+        .sheet(isPresented: $isCommitting) {
+            CommitSheet(runtime: runtime, directory: directory, git: git)
         }
     }
 
@@ -312,43 +367,45 @@ private struct CommitSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Commit changes")
-                .font(.title3.weight(.semibold))
+                .font(.system(size: 17, weight: .semibold))
             if !summary.isEmpty {
                 ScrollView {
                     Text(summary)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(.system(size: 11, design: .monospaced))
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .frame(maxHeight: 110)
-                .padding(8)
-                .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 10, style: .continuous))
+                .padding(10)
+                .background(Chrome.overlay(0.05), in: .rect(cornerRadius: 12, style: .continuous))
             }
             ZStack(alignment: .topLeading) {
                 TextEditor(text: $message)
-                    .font(.body)
+                    .font(.system(size: 13))
                     .scrollContentBackground(.hidden)
-                    .padding(6)
+                    .padding(8)
                 if message.isEmpty {
                     Text(isGenerating ? "Writing a message…" : "Commit message")
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 6)
+                        .foregroundStyle(Chrome.secondaryText)
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 8)
                         .allowsHitTesting(false)
                 }
             }
             .frame(minHeight: 130)
-            .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 10, style: .continuous))
+            .background(Chrome.overlay(0.05), in: .rect(cornerRadius: 12, style: .continuous))
             HStack(spacing: 12) {
                 Button {
                     Task { await generate() }
                 } label: {
                     Label("Write for me", systemImage: "sparkles")
                 }
+                .buttonStyle(.glass)
                 .disabled(isGenerating)
                 Toggle("Push after committing", isOn: $pushesAfterCommit)
                     .toggleStyle(.checkbox)
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .buttonStyle(.glass)
                 Button("Commit") { Task { await commit() } }
                     .buttonStyle(.glassProminent)
                     .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCommitting)
@@ -413,27 +470,34 @@ private struct ScriptsEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Project scripts")
-                .font(.title3.weight(.semibold))
+                .font(.system(size: 17, weight: .semibold))
             Text("Scripts run in a terminal at the project root. T3 Code also picks up scripts from t3.json.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            List {
-                ForEach($scripts) { $script in
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            TextField("Name", text: $script.name)
-                            Button(role: .destructive) {
-                                scripts.removeAll { $0.id == script.id }
-                            } label: {
-                                Image(systemName: "trash")
+                .font(.system(size: 12))
+                .foregroundStyle(Chrome.secondaryText)
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach($scripts) { $script in
+                        ChromeCard {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    TextField("Name", text: $script.name)
+                                        .textFieldStyle(.roundedBorder)
+                                    Button(role: .destructive) {
+                                        scripts.removeAll { $0.id == script.id }
+                                    } label: {
+                                        Image(systemName: "trash")
+                                    }
+                                    .buttonStyle(.borderless)
+                                }
+                                TextField("Command", text: $script.command)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(size: 12, design: .monospaced))
+                                Toggle("Run when a worktree is created", isOn: $script.runOnWorktreeCreate)
+                                    .toggleStyle(.checkbox)
                             }
-                            .buttonStyle(.borderless)
+                            .padding(14)
                         }
-                        TextField("Command", text: $script.command)
-                            .font(.system(.body, design: .monospaced))
-                        Toggle("Run when a worktree is created", isOn: $script.runOnWorktreeCreate)
                     }
-                    .padding(.vertical, 4)
                 }
             }
             .frame(minHeight: 220)
@@ -443,8 +507,10 @@ private struct ScriptsEditor: View {
                 } label: {
                     Label("Add script", systemImage: "plus")
                 }
+                .buttonStyle(.glass)
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
+                    .buttonStyle(.glass)
                 Button("Save") {
                     let cleaned = scripts.filter { !$0.command.trimmingCharacters(in: .whitespaces).isEmpty }
                     model.updateProject(projectID) { $0.scripts = cleaned }
@@ -454,7 +520,7 @@ private struct ScriptsEditor: View {
             }
         }
         .padding(20)
-        .frame(width: 580, height: 440)
+        .frame(width: 580, height: 460)
         .onAppear { scripts = model.project(projectID)?.scripts ?? [] }
     }
 }

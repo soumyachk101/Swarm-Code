@@ -15,6 +15,7 @@ final class AppModel {
     let settings: AppSettings
     let providers: ProviderRegistry
     let terminals: TerminalStore
+    let sidebar: SidebarLayout
 
     private(set) var projects: [Project] = []
     private(set) var threads: [ChatThread] = []
@@ -34,6 +35,7 @@ final class AppModel {
         settings = AppSettings()
         providers = ProviderRegistry(settings: settings)
         terminals = TerminalStore()
+        sidebar = SidebarLayout()
         let library = Storage.loadLibrary()
         projects = library.projects
         threads = library.threads

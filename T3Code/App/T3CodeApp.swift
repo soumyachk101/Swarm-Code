@@ -16,20 +16,23 @@ struct T3CodeApp: App {
             RootView()
                 .environment(model)
                 .preferredColorScheme(model.settings.appearance.colorScheme)
-                .frame(minWidth: 820, minHeight: 540)
+                .frame(minWidth: 860, minHeight: 560)
+                .containerBackground(Color.clear, for: .window)
                 .task {
                     delegate.model = model
                     await model.bootstrap()
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 1320, height: 860)
-        .windowToolbarStyle(.unified)
         .commands { AppCommands(model: model) }
 
         Settings {
             SettingsView()
                 .environment(model)
                 .preferredColorScheme(model.settings.appearance.colorScheme)
+                .containerBackground(Color.clear, for: .window)
         }
+        .windowStyle(.hiddenTitleBar)
     }
 }
