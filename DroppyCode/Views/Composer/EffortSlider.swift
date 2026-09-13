@@ -47,6 +47,7 @@ struct ModelEffortButton: View {
             isPresented.toggle()
         } label: {
             HStack(spacing: 5) {
+                ProviderIcon(provider: thread.provider, size: 13)
                 if thread.fastMode, current?.supportsFast == true {
                     Image(systemName: "bolt.fill")
                         .font(.system(size: 10, weight: .semibold))
