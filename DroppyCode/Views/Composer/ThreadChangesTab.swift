@@ -28,13 +28,19 @@ struct ThreadChangesTab: View {
             .padding(.horizontal, 12)
             .padding(.top, 7)
             .padding(.bottom, 7 + Self.overlap)
-            .background(shape.fill(Chrome.overlay(isHovering ? 0.1 : 0.07)))
+            .background {
+                // Scoped to the fill: clicking the tab opens the diff panel and slides the tab out
+                // from under the cursor, and a withAnimation on that hover exit would replace the
+                // panel-slide transaction, so the tab popped left instead of gliding.
+                shape.fill(Chrome.overlay(isHovering ? 0.1 : 0.07))
+                    .animation(Chrome.hover, value: isHovering)
+            }
             .contentShape(shape)
         }
         .buttonStyle(.plain)
         .fixedSize()
         .onHover { hovering in
-            withAnimation(Chrome.hover) { isHovering = hovering }
+            if hovering != isHovering { isHovering = hovering }
         }
         .help("Show this thread's changes")
         .accessibilityLabel(Text(verbatim: "\(stats.files) files changed, \(stats.additions) added, \(stats.deletions) removed"))
