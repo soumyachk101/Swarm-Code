@@ -417,7 +417,28 @@ private struct ArchiveSettingsPage: View {
 }
 
 private struct AboutSettingsPage: View {
+    private static let droppyURL = URL(string: "https://getdroppy.app")!
+
     var body: some View {
+        VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+            appCard
+            ChromeSection(title: "Credits") {
+                ChromeCard {
+                    MadeByDroppyRow(url: Self.droppyURL)
+                    ChromeRowDivider()
+                    ChromeRow(title: "Working indicators", detail: "Ported from Zeron by Wing, MIT License.") {
+                        CreditLink(title: "zeronsh/zeron", url: URL(string: "https://github.com/zeronsh/zeron")!)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "Terminal", detail: "SwiftTerm by Miguel de Icaza, MIT License.") {
+                        CreditLink(title: "SwiftTerm", url: URL(string: "https://github.com/migueldeicaza/SwiftTerm")!)
+                    }
+                }
+            }
+        }
+    }
+
+    private var appCard: some View {
         ChromeCard {
             HStack(spacing: 14) {
                 Image(nsImage: NSApp.applicationIconImage)
@@ -447,5 +468,70 @@ private struct AboutSettingsPage: View {
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
         }
+    }
+}
+
+/// Droppy's logo and name, linking to getdroppy.app, so it is clear the app is made by Droppy.
+private struct MadeByDroppyRow: View {
+    let url: URL
+    @State private var isHovering = false
+
+    var body: some View {
+        Link(destination: url) {
+            HStack(spacing: 12) {
+                Image("droppy-logo")
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 40, height: 40)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Made by Droppy")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Chrome.primaryText)
+                    Text("Droppy Code is a coding app by Droppy for Mac.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+                Spacer(minLength: 12)
+                HStack(spacing: 4) {
+                    Text(verbatim: "getdroppy.app")
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 10, weight: .semibold))
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Chrome.accent)
+                .opacity(isHovering ? 1 : 0.9)
+            }
+            .padding(.leading, 16)
+            .padding(.trailing, Chrome.rowControlTrailingPadding + 4)
+            .padding(.vertical, 12)
+            .background(isHovering ? Chrome.overlay(0.04) : Color.clear)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .help("Open getdroppy.app")
+        .accessibilityLabel(Text("Made by Droppy. Open getdroppy.app"))
+    }
+}
+
+private struct CreditLink: View {
+    let title: String
+    let url: URL
+
+    var body: some View {
+        Link(destination: url) {
+            HStack(spacing: 4) {
+                Text(verbatim: title)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .semibold))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(Chrome.accent)
+        }
+        .buttonStyle(.plain)
+        .help(url.absoluteString)
     }
 }

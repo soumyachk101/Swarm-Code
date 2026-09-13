@@ -2,7 +2,7 @@
 
 # Droppy Code
 
-The coding app by Droppy. A native macOS app for your coding agents. Written entirely in Swift and SwiftUI with Liquid Glass, for Macs with Apple silicon on macOS 26 and later.
+The coding app by [Droppy](https://getdroppy.app). A native macOS app for your coding agents. Written entirely in Swift and SwiftUI with Liquid Glass, for Macs with Apple silicon on macOS 26 and later.
 
 It drives the coding agents you already have installed and signed in, on your own subscriptions:
 
@@ -46,7 +46,7 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 
 ## Release
 
-`scripts/release.sh` archives an Apple silicon build, signs it with Developer ID, notarizes and staples both the app and a disk image, and checks Gatekeeper. The disk image lands in `build/`.
+`scripts/release.sh` archives an Apple silicon build, signs it with Developer ID, notarizes and staples both the app and a disk image, and checks Gatekeeper. The disk image lands in `build.noindex/`, a folder Spotlight skips.
 
 ## Layout
 
@@ -58,6 +58,12 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 | `DroppyCode/Git` | Git, worktrees, checkpoints and diff parsing |
 | `DroppyCode/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
 | `DroppyCode/Support` | Process I/O, JSON-RPC and the login shell environment |
+
+## Made by Droppy
+
+<a href="https://getdroppy.app"><img src="docs/droppy-logo.png" width="64" alt="Droppy logo"></a>
+
+Droppy Code is made by [Droppy](https://getdroppy.app) for Mac. Find Droppy at [getdroppy.app](https://getdroppy.app).
 
 ## Acknowledgements
 
