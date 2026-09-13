@@ -51,6 +51,7 @@ final class ClaudeSession: ProviderSession {
         ]
         if let model = configuration.model, model != "default" { arguments += ["--model", model] }
         if let effort = configuration.effort, !effort.isEmpty { arguments += ["--effort", effort] }
+        if configuration.fastMode { arguments += ["--settings", #"{"fastMode":true}"#] }
         if let resumeID = configuration.resumeID {
             arguments += ["--resume", resumeID]
             if let anchor = configuration.resumeAt { arguments += ["--resume-session-at", anchor] }
@@ -84,7 +85,8 @@ final class ClaudeSession: ProviderSession {
                 name: entry["displayName"]?.string ?? value,
                 detail: entry["description"]?.string,
                 efforts: (entry["supportedEffortLevels"]?.array ?? []).compactMap(\.string),
-                isDefault: value == "default"
+                isDefault: value == "default",
+                fastTier: entry["supportsFastMode"]?.bool == true ? "fast" : nil
             )
         }
         if !models.isEmpty { onEvent?(.models(models, current: configuration.model)) }

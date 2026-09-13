@@ -55,8 +55,7 @@ struct ComposerView: View {
 
             if let thread {
                 HStack(spacing: 2) {
-                    ModelMenu(thread: thread, hasHistory: !runtime.turns.isEmpty)
-                    EffortMenu(thread: thread)
+                    ModelEffortButton(thread: thread, hasHistory: !runtime.turns.isEmpty)
                     PlanToggle(thread: thread)
                     PermissionMenu(thread: thread)
                     Spacer(minLength: 8)
@@ -266,92 +265,6 @@ struct ComposerView: View {
 }
 
 // MARK: - Controls
-
-private struct ModelMenu: View {
-    @Environment(AppModel.self) private var model
-    let thread: ChatThread
-    let hasHistory: Bool
-
-    var body: some View {
-        let registry = model.providers
-        let providers = ProviderKind.allCases.filter {
-            $0 == thread.provider || (model.settings.isEnabled($0) && registry.status($0).isInstalled)
-        }
-        let current = registry.model(thread.model, for: thread.provider)
-        ChipPopoverButton(help: "Model") {
-            HStack(spacing: 6) {
-                ProviderIcon(provider: thread.provider, size: 13)
-                Text(current?.name ?? thread.model ?? thread.provider.displayName)
-            }
-        } content: {
-            ForEach(Array(providers.enumerated()), id: \.element) { index, provider in
-                let locked = hasHistory && provider != thread.provider
-                let options = registry.models(for: provider)
-                if index > 0 { PopoverDivider() }
-                PopoverSectionHeader(locked ? "\(provider.displayName) · new threads only" : provider.displayName)
-                if options.isEmpty {
-                    let isLoading = registry.loadingCatalogs.contains(provider)
-                    PopoverItem(isLoading ? "Loading models…" : "Load models", symbol: "arrow.clockwise", isEnabled: !isLoading) {
-                        Task { await registry.loadCatalog(provider, force: true) }
-                    }
-                } else {
-                    ForEach(options) { option in
-                        PopoverItem(
-                            option.name,
-                            isChecked: thread.provider == provider && thread.model == option.id,
-                            isEnabled: !locked
-                        ) {
-                            choose(option, from: provider)
-                        }
-                    }
-                }
-            }
-        }
-        .task(id: thread.provider) { await registry.loadCatalog(thread.provider) }
-    }
-
-    private func choose(_ option: ModelOption, from provider: ProviderKind) {
-        let switchesProvider = provider != thread.provider
-        model.updateThread(thread.id) { thread in
-            if switchesProvider {
-                thread.provider = provider
-                thread.providerSessionID = nil
-            }
-            thread.model = option.id
-            if let effort = thread.effort, !option.efforts.contains(effort) {
-                thread.effort = option.defaultEffort
-            }
-        }
-        if switchesProvider { model.existingRuntime(for: thread.id)?.stopSession() }
-        model.settings.remember(model: option.id, effort: model.thread(thread.id)?.effort, for: provider)
-        model.settings.defaultProvider = provider
-    }
-}
-
-private struct EffortMenu: View {
-    @Environment(AppModel.self) private var model
-    let thread: ChatThread
-
-    var body: some View {
-        let efforts = model.providers.model(thread.model, for: thread.provider)?.efforts ?? []
-        if !efforts.isEmpty {
-            ChipPopoverButton(help: "Reasoning effort") {
-                Label(thread.effort.map(ModelOption.effortTitle) ?? "Default", systemImage: "gauge.with.dots.needle.50percent")
-            } content: {
-                PopoverSectionHeader("Reasoning")
-                PopoverItem("Default", isChecked: thread.effort == nil) { choose(nil) }
-                ForEach(efforts, id: \.self) { effort in
-                    PopoverItem(ModelOption.effortTitle(effort), isChecked: thread.effort == effort) { choose(effort) }
-                }
-            }
-        }
-    }
-
-    private func choose(_ effort: String?) {
-        model.updateThread(thread.id) { $0.effort = effort }
-        model.settings.remember(model: thread.model, effort: effort, for: thread.provider)
-    }
-}
 
 private struct PlanToggle: View {
     @Environment(AppModel.self) private var model

@@ -121,6 +121,8 @@ struct ModelOption: Codable, Hashable, Identifiable, Sendable {
     var efforts: [String]
     var defaultEffort: String?
     var isDefault: Bool
+    /// The service tier that makes this model fast, when its provider offers one.
+    var fastTier: String?
 
     init(
         id: String,
@@ -128,7 +130,8 @@ struct ModelOption: Codable, Hashable, Identifiable, Sendable {
         detail: String? = nil,
         efforts: [String] = [],
         defaultEffort: String? = nil,
-        isDefault: Bool = false
+        isDefault: Bool = false,
+        fastTier: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -136,11 +139,32 @@ struct ModelOption: Codable, Hashable, Identifiable, Sendable {
         self.efforts = efforts
         self.defaultEffort = defaultEffort
         self.isDefault = isDefault
+        self.fastTier = fastTier
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        detail = try container.decodeIfPresent(String.self, forKey: .detail)
+        efforts = try container.decodeIfPresent([String].self, forKey: .efforts) ?? []
+        defaultEffort = try container.decodeIfPresent(String.self, forKey: .defaultEffort)
+        isDefault = try container.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        fastTier = try container.decodeIfPresent(String.self, forKey: .fastTier)
+    }
+
+    var supportsFast: Bool { fastTier != nil }
+
+    /// The name as the picker shows it, such as "5.6 Terra" for "GPT-5.6-Terra".
+    var shortName: String {
+        var trimmed = name
+        if trimmed.lowercased().hasPrefix("gpt-") { trimmed = String(trimmed.dropFirst(4)) }
+        return trimmed.replacingOccurrences(of: "-", with: " ")
     }
 
     static func effortTitle(_ effort: String) -> String {
         switch effort {
-        case "xhigh", "extra-high": "Extra high"
+        case "xhigh", "extra-high": "Extra High"
         case "": "Default"
         default: effort.prefix(1).uppercased() + effort.dropFirst()
         }

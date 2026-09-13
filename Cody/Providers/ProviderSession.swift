@@ -6,6 +6,8 @@ struct TurnInput: Sendable {
     var images: [Attachment]
     var model: String?
     var effort: String?
+    /// A Codex service tier for this turn: the fast tier, "default", or nil when the model has none.
+    var serviceTier: String? = nil
     var runtimeMode: RuntimeMode
     var interactionMode: InteractionMode
 }
@@ -20,6 +22,7 @@ struct SessionConfiguration: Sendable {
     var resumeAt: String?
     var model: String?
     var effort: String?
+    var fastMode = false
     var runtimeMode: RuntimeMode
     var interactionMode: InteractionMode
 }

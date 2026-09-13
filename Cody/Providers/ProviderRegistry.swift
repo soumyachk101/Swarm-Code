@@ -38,8 +38,8 @@ final class ProviderRegistry {
 
     private static let claudeEfforts = ["low", "medium", "high", "xhigh", "max"]
     private static let claudeSeed = [
-        ModelOption(id: "default", name: "Default", detail: "Claude Code's recommended model", efforts: claudeEfforts, isDefault: true),
-        ModelOption(id: "opus", name: "Opus", efforts: claudeEfforts),
+        ModelOption(id: "default", name: "Default", detail: "Claude Code's recommended model", efforts: claudeEfforts, isDefault: true, fastTier: "fast"),
+        ModelOption(id: "opus", name: "Opus", efforts: claudeEfforts, fastTier: "fast"),
         ModelOption(id: "sonnet", name: "Sonnet", efforts: claudeEfforts),
         ModelOption(id: "haiku", name: "Haiku"),
     ]

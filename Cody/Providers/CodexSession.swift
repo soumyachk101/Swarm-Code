@@ -95,6 +95,7 @@ final class CodexSession: ProviderSession {
         ]
         let effort = input.effort.flatMap { $0.isEmpty ? nil : $0 }
         if let effort { params["effort"] = .string(effort) }
+        if let tier = input.serviceTier { params["serviceTierForTurn"] = .string(tier) }
         if let model = input.model ?? activeModel {
             params["model"] = .string(model)
             params["collaborationMode"] = [
@@ -188,13 +189,23 @@ final class CodexSession: ProviderSession {
                     detail: model["description"]?.string,
                     efforts: (model["supportedReasoningEfforts"]?.array ?? []).compactMap { $0["reasoningEffort"]?.string },
                     defaultEffort: model["defaultReasoningEffort"]?.string,
-                    isDefault: model["isDefault"]?.bool ?? false
+                    isDefault: model["isDefault"]?.bool ?? false,
+                    fastTier: fastTier(in: model["serviceTiers"]?.array ?? [])
                 ))
             }
             cursor = result["nextCursor"] ?? .null
             if cursor.isNull { break }
         }
         return models
+    }
+
+    /// The tier Codex offers for faster responses on a model, if any.
+    private static func fastTier(in tiers: [JSONValue]) -> String? {
+        tiers.lazy.compactMap { tier -> String? in
+            guard let id = tier["id"]?.string else { return nil }
+            let label = "\(id) \(tier["name"]?.string ?? "")".lowercased()
+            return label.contains("fast") || label.contains("priority") ? id : nil
+        }.first
     }
 
     private static func connect(

@@ -4,6 +4,7 @@ import SwiftUI
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general
     case providers
+    case models
     case sourceControl
     case shortcuts
     case archive
@@ -15,6 +16,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .providers: "Providers"
+        case .models: "Models"
         case .sourceControl: "Source control"
         case .shortcuts: "Shortcuts"
         case .archive: "Archive"
@@ -26,6 +28,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gear"
         case .providers: "cpu"
+        case .models: "slider.horizontal.3"
         case .sourceControl: "arrow.triangle.branch"
         case .shortcuts: "command"
         case .archive: "archivebox"
@@ -37,6 +40,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: Chrome.gray
         case .providers: Chrome.blue
+        case .models: Color(red: 0.686, green: 0.322, blue: 0.871)
         case .sourceControl: Color(red: 0.345, green: 0.337, blue: 0.839)
         case .shortcuts: Color(red: 0.32, green: 0.48, blue: 0.93)
         case .archive: Chrome.orange
@@ -47,6 +51,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     var keywords: [String] {
         switch self {
         case .general: ["permissions", "worktree", "reasoning", "notifications", "theme", "appearance", "dark", "light"]
+        case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .providers: ["codex", "claude", "cursor", "opencode", "grok", "binary", "path", "sign in", "login"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
         case .shortcuts: ["keyboard", "keys"]
@@ -165,6 +170,7 @@ struct SettingsView: View {
         switch page {
         case .general: GeneralSettingsPage()
         case .providers: ProvidersSettingsPage()
+        case .models: ModelsSettingsPage()
         case .sourceControl: SourceControlSettingsPage()
         case .shortcuts: ShortcutsSettingsPage()
         case .archive: ArchiveSettingsPage()

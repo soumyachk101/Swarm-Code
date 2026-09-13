@@ -66,6 +66,7 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     var provider: ProviderKind
     var model: String?
     var effort: String?
+    var fastMode: Bool
     var runtimeMode: RuntimeMode
     var interactionMode: InteractionMode
     var worktreePath: String?
@@ -77,7 +78,7 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     var hasCustomTitle: Bool
     var lastStatus: TurnStatus?
 
-    init(projectID: UUID, provider: ProviderKind, model: String?, effort: String?, runtimeMode: RuntimeMode) {
+    init(projectID: UUID, provider: ProviderKind, model: String?, effort: String?, runtimeMode: RuntimeMode, fastMode: Bool = false) {
         id = UUID()
         self.projectID = projectID
         title = Self.untitled
@@ -86,6 +87,7 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         self.provider = provider
         self.model = model
         self.effort = effort
+        self.fastMode = fastMode
         self.runtimeMode = runtimeMode
         interactionMode = .build
         isPinned = false
@@ -104,6 +106,7 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         provider = container.value(.provider, default: .codex)
         model = container.value(.model, default: nil)
         effort = container.value(.effort, default: nil)
+        fastMode = container.value(.fastMode, default: false)
         runtimeMode = container.value(.runtimeMode, default: .fullAccess)
         interactionMode = container.value(.interactionMode, default: .build)
         worktreePath = container.value(.worktreePath, default: nil)

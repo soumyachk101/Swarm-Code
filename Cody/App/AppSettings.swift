@@ -42,6 +42,20 @@ enum TextGenerationChoice: String, CaseIterable, Identifiable {
     }
 }
 
+/// A model the composer's picker offers.
+struct ModelPin: Codable, Hashable, Identifiable, Sendable {
+    var provider: ProviderKind
+    var modelID: String
+
+    var id: String { "\(provider.rawValue)/\(modelID)" }
+}
+
+/// How a model starts in new chats.
+struct ModelPreference: Codable, Hashable, Sendable {
+    var effort: String?
+    var fastMode = false
+}
+
 /// Preferences that belong to this Mac, stored in user defaults.
 @MainActor
 @Observable
@@ -61,7 +75,11 @@ final class AppSettings {
         static let textGeneration = "textGeneration"
         static let commitInstructions = "commitInstructions"
         static let terminalHeight = "terminalHeight"
+        static let modelList = "modelList"
+        static let modelPreferences = "modelPreferences"
     }
+
+    static let modelListLimit = 15
 
     @ObservationIgnored private let defaults = UserDefaults.standard
 
@@ -121,6 +139,14 @@ final class AppSettings {
         didSet { defaults.set(lastEfforts, forKey: Key.efforts) }
     }
 
+    private(set) var modelList: [ModelPin] {
+        didSet { store(modelList, forKey: Key.modelList) }
+    }
+
+    private(set) var modelPreferences: [String: ModelPreference] {
+        didSet { store(modelPreferences, forKey: Key.modelPreferences) }
+    }
+
     init() {
         let defaults = UserDefaults.standard
         defaultProvider = ProviderKind(rawValue: defaults.string(forKey: Key.defaultProvider) ?? "") ?? .codex
@@ -137,6 +163,49 @@ final class AppSettings {
         disabledProviders = defaults.stringArray(forKey: Key.disabledProviders) ?? []
         lastModels = defaults.dictionary(forKey: Key.models) as? [String: String] ?? [:]
         lastEfforts = defaults.dictionary(forKey: Key.efforts) as? [String: String] ?? [:]
+        modelList = Self.load([ModelPin].self, forKey: Key.modelList) ?? []
+        modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
+    }
+
+    // MARK: - Model picker
+
+    func isInModelList(_ pin: ModelPin) -> Bool {
+        modelList.contains(pin)
+    }
+
+    func addToModelList(_ pin: ModelPin) {
+        guard !modelList.contains(pin), modelList.count < Self.modelListLimit else { return }
+        modelList.append(pin)
+    }
+
+    func removeFromModelList(_ pin: ModelPin) {
+        modelList.removeAll { $0 == pin }
+    }
+
+    func moveModel(_ pin: ModelPin, by offset: Int) {
+        guard let index = modelList.firstIndex(of: pin) else { return }
+        let target = min(max(index + offset, 0), modelList.count - 1)
+        guard target != index else { return }
+        modelList.move(fromOffsets: IndexSet(integer: index), toOffset: target > index ? target + 1 : target)
+    }
+
+    func preference(for provider: ProviderKind, model: String?) -> ModelPreference {
+        guard let model else { return ModelPreference() }
+        return modelPreferences[ModelPin(provider: provider, modelID: model).id] ?? ModelPreference()
+    }
+
+    func setPreference(_ preference: ModelPreference, for provider: ProviderKind, model: String) {
+        let key = ModelPin(provider: provider, modelID: model).id
+        modelPreferences[key] = preference == ModelPreference() ? nil : preference
+    }
+
+    private func store<Value: Encodable>(_ value: Value, forKey key: String) {
+        if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: key) }
+    }
+
+    private static func load<Value: Decodable>(_ type: Value.Type, forKey key: String) -> Value? {
+        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(type, from: data)
     }
 
     func binaryPath(for provider: ProviderKind) -> String {

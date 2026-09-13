@@ -89,6 +89,7 @@ final class ThreadRuntime {
         var directory: String
         var launchRuntimeMode: RuntimeMode?
         var launchEffort: String?
+        var launchFast: Bool?
     }
 
     private enum DeltaKind {
@@ -233,6 +234,7 @@ final class ThreadRuntime {
                 images: thread.provider.supportsImages ? attachments.filter(\.isImage) : [],
                 model: thread.model,
                 effort: thread.effort,
+                serviceTier: serviceTier(for: thread),
                 runtimeMode: thread.runtimeMode,
                 interactionMode: thread.interactionMode
             ))
@@ -243,13 +245,21 @@ final class ThreadRuntime {
         }
     }
 
+    /// Codex takes fast mode per turn as a service tier; models without a fast tier send none.
+    private func serviceTier(for thread: ChatThread) -> String? {
+        guard thread.provider == .codex,
+              let tier = app?.providers.model(thread.model, for: thread.provider)?.fastTier else { return nil }
+        return thread.fastMode ? tier : "default"
+    }
+
     private func ensureSession(directory: String) async throws -> any ProviderSession {
         guard let app, let thread = app.thread(threadID) else { throw ProviderError.notRunning }
         let signature = SessionSignature(
             provider: thread.provider,
             directory: directory,
             launchRuntimeMode: thread.provider == .cursor || thread.provider == .grok ? thread.runtimeMode : nil,
-            launchEffort: thread.provider == .claude ? thread.effort : nil
+            launchEffort: thread.provider == .claude ? thread.effort : nil,
+            launchFast: thread.provider == .claude ? thread.fastMode : nil
         )
         if let session, session.isRunning, sessionSignature == signature { return session }
         session?.stop()
@@ -268,6 +278,7 @@ final class ThreadRuntime {
                 resumeAt: resumeID == nil ? nil : resumeAnchor,
                 model: thread.model,
                 effort: thread.effort,
+                fastMode: thread.fastMode,
                 runtimeMode: thread.runtimeMode,
                 interactionMode: thread.interactionMode
             )

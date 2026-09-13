@@ -163,13 +163,16 @@ final class AppModel {
         if !installed.isEmpty, !installed.contains(provider) { provider = installed[0] }
         let carriesModel = current?.provider == provider
         let model = carriesModel ? current?.model : providers.defaultModel(for: provider)?.id
-        let effort = carriesModel ? current?.effort : settings.lastEffort(for: provider)
+        let preference = settings.preference(for: provider, model: model)
+        let effort = carriesModel ? current?.effort : (preference.effort ?? settings.lastEffort(for: provider))
+        let fastMode = carriesModel ? (current?.fastMode ?? false) : preference.fastMode
         let thread = ChatThread(
             projectID: project.id,
             provider: provider,
             model: model,
             effort: effort,
-            runtimeMode: settings.defaultRuntimeMode
+            runtimeMode: settings.defaultRuntimeMode,
+            fastMode: fastMode
         )
         threads.append(thread)
         updateProject(project.id) { $0.isExpanded = true }

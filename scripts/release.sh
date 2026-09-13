@@ -113,4 +113,8 @@ spctl --assess --type execute --ignore-cache --no-cache --verbose "$APP"
 spctl --assess --type open --context context:primary-signature --ignore-cache --no-cache --verbose "$DMG"
 xcrun stapler validate "$DMG"
 
+step "Cleaning up"
+# Only the disk image stays, so Spotlight and Launchpad never list a second copy of the app.
+rm -rf "$ARCHIVE" "$EXPORT" "$STAGING" "$BUILD/Cody.zip"
+
 printf '\nReady: %s\n' "$DMG"
