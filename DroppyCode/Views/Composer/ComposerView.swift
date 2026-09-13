@@ -14,7 +14,12 @@ struct ComposerArea: View {
                     QuestionCard(request: request, runtime: runtime)
                 }
                 VStack(alignment: .center, spacing: -ThreadChangesTab.overlap) {
-                    if let stats = runtime.changeStats {
+                    if !runtime.followUps.isEmpty {
+                        // The queued steering prompts take the tab slot while any are queued:
+                        // the changes tab hides behind them and reappears once the queue empties.
+                        FollowUpQueueTab(runtime: runtime)
+                            .transition(.softAppear)
+                    } else if let stats = runtime.changeStats {
                         ThreadChangesTab(stats: stats) {
                             if runtime.diffSelection != nil { runtime.diffSelection = nil }
                             // Set last so a redundant write never restarts the diff load
@@ -118,6 +123,9 @@ struct ComposerView: View {
                             chooseOther: { showingRecents = false; chooseFiles() }
                         )
                     }
+                    if runtime.isRunning {
+                        QueueButton(runtime: runtime) { send() }
+                    }
                     SendButton(runtime: runtime) { send() }
                 }
             }
@@ -204,10 +212,14 @@ struct ComposerView: View {
     }
 
     private func send() {
-        guard !runtime.isRunning, !runtime.draft.isEmpty else { return }
+        guard !runtime.draft.isEmpty else { return }
         historyIndex = nil
         suggestions = SuggestionState()
-        runtime.send()
+        if runtime.isRunning {
+            runtime.queueDraftAsFollowUp()
+        } else {
+            runtime.send()
+        }
     }
 
     private func recall(older: Bool) -> Bool {
@@ -405,6 +417,26 @@ private struct ContextMeter: View {
                 UsagePanel(usage: usage, provider: provider, rate: rate, live: live)
             }
         }
+    }
+}
+
+private struct QueueButton: View {
+    let runtime: ThreadRuntime
+    let queue: () -> Void
+
+    var body: some View {
+        let isEnabled = !runtime.draft.isEmpty
+        Button(action: queue) {
+            Image(systemName: "plus")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(isEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary), in: .circle)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .padding(.leading, 4)
+        .help("Queue as follow-up (Return)")
     }
 }
 

@@ -71,6 +71,9 @@ final class ThreadRuntime {
     private(set) var questions: [QuestionRequest] = []
     private(set) var turnStartedAt: Date?
     private(set) var diffRevision = 0
+    /// Queued steering prompts. Enqueued while a turn runs, each one is sent as a
+    /// direct user chat message once the running turn finishes, in order.
+    private(set) var followUps: [FollowUpPrompt] = []
 
     var draft = ComposerDraft()
     var isTerminalVisible = false
@@ -118,6 +121,7 @@ final class ThreadRuntime {
         let document = Storage.loadDocument(threadID)
         turns = document.turns
         usage = document.usage
+        followUps = document.followUps.filter { !$0.isEmpty }
         entries = document.items.map(TimelineEntry.init)
         for entry in entries {
             entryIndex[entry.id] = entry
@@ -159,6 +163,74 @@ final class ThreadRuntime {
         }
         draft = ComposerDraft()
         Task { await startTurn(text: text, attachments: attachments) }
+    }
+
+    // MARK: - Follow-up queue
+
+    /// Instantly queues the composer's draft as a follow-up while a turn runs. The prompt,
+    /// pics and other attachments included, is sent as a direct user chat message once the
+    /// running turn finishes. Stacks up: every queued prompt runs in order.
+    func queueDraftAsFollowUp() {
+        guard !draft.isEmpty, phase != .idle else { return }
+        enqueueFollowUp(text: draft.text, attachments: draft.attachments)
+        draft = ComposerDraft()
+    }
+
+    func enqueueFollowUp(text: String, attachments: [Attachment]) {
+        let prompt = FollowUpPrompt(
+            text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+            attachments: attachments
+        )
+        guard !prompt.isEmpty else { return }
+        followUps.append(prompt)
+        scheduleSave()
+    }
+
+    func removeFollowUp(_ id: UUID) {
+        followUps.removeAll { $0.id == id }
+        scheduleSave()
+    }
+
+    func moveFollowUp(_ id: UUID, earlier: Bool) {
+        guard let index = followUps.firstIndex(where: { $0.id == id }) else { return }
+        let target = earlier ? index - 1 : index + 1
+        guard followUps.indices.contains(target) else { return }
+        followUps.swapAt(index, target)
+        scheduleSave()
+    }
+
+    func updateFollowUp(_ id: UUID, text: String, attachments: [Attachment]) {
+        guard let index = followUps.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty, attachments.isEmpty {
+            followUps.remove(at: index)
+        } else {
+            followUps[index].text = text
+            followUps[index].attachments = attachments
+        }
+        scheduleSave()
+    }
+
+    /// Sends the next queued follow-up as a direct user message. Only runs when idle after a
+    /// completed turn: an interrupted turn means the user hit stop, so the queue waits for them.
+    private func drainFollowUps(after status: TurnStatus) {
+        guard status == .completed, phase == .idle, !followUps.isEmpty else { return }
+        var next = followUps.removeFirst()
+        // Skip prompts that emptied while queued (an attachment file deleted on disk still counts,
+        // so only the text+attachment check applies).
+        while next.isEmpty, !followUps.isEmpty {
+            next = followUps.removeFirst()
+        }
+        guard !next.isEmpty else {
+            scheduleSave()
+            return
+        }
+        scheduleSave()
+        if handleLocalCommand(next.text.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            drainFollowUps(after: status)
+            return
+        }
+        Task { await startTurn(text: next.text, attachments: next.attachments) }
     }
 
     func implementPlan(_ entryID: String) {
@@ -719,6 +791,7 @@ final class ThreadRuntime {
         diffRevision += 1
         app?.turnFinished(threadID, status: status)
         scheduleSave()
+        drainFollowUps(after: status)
     }
 
     // MARK: - Timeline mutations
@@ -954,6 +1027,7 @@ final class ThreadRuntime {
         document.items = entries.map(\.item)
         document.turns = turns
         document.usage = usage
+        document.followUps = followUps
         let url = Storage.threadURL(threadID)
         Task { await DiskWriter.shared.encodeAndWrite(document, to: url) }
     }
