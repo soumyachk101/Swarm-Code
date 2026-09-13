@@ -536,3 +536,252 @@ struct TurnEndRow: View {
         }
     }
 }
+
+/// A finished turn, collapsed to nothing more than its header, its final response
+/// and its file summary. The chevron re-opens the turn's full steps.
+struct TurnFinishedBlock: View {
+    @Environment(AppModel.self) private var model
+    let runtime: ThreadRuntime
+    let turnID: UUID
+    let summary: TurnSummary
+    let userEntries: [TimelineEntry]
+    /// Everything in the turn except the user message, the turn-end marker and
+    /// reasoning. Pre-partitioned by the timeline, so rows never scan the thread.
+    let content: [TimelineEntry]
+
+    @State private var isExpanded = false
+    @State private var isConfirmingUndo = false
+
+    private var assistantEntries: [TimelineEntry] {
+        content.filter { $0.kind == .assistant }
+    }
+
+    private var collapsedPlans: [TimelineEntry] {
+        content.filter { $0.kind == .plan }
+    }
+
+    /// Errors and warnings stay visible even when collapsed, so a failed turn
+    /// never hides what went wrong. Plain info notices stay in the expanded view.
+    private var collapsedNotices: [TimelineEntry] {
+        content.filter { entry in
+            guard entry.kind == .notice, case .notice(let notice) = entry.item.content else { return false }
+            return notice.level != .info
+        }
+    }
+
+    struct FileStat: Hashable {
+        var path: String
+        var additions: Int
+        var deletions: Int
+    }
+
+    /// Per-file totals aggregated from this turn's tool edits. The header totals
+    /// come from the turn summary itself, which is measured from the actual diff.
+    private var fileStats: [FileStat] {
+        var totals: [String: FileStat] = [:]
+        for entry in content {
+            guard entry.kind == .tool, case .tool(let call) = entry.item.content else { continue }
+            for edit in call.edits {
+                let path = edit.path
+                guard !path.isEmpty else { continue }
+                var stat = totals[path] ?? FileStat(path: path, additions: 0, deletions: 0)
+                stat.additions += edit.additions
+                stat.deletions += edit.deletions
+                totals[path] = stat
+            }
+        }
+        return totals.values.sorted { $0.path < $1.path }
+    }
+
+    private var detailGroups: [TimelineGroup] {
+        TimelineGroup.build(content, showReasoning: false)
+    }
+
+    private var workingDirectory: String? {
+        guard let thread = model.thread(runtime.threadID) else { return nil }
+        if let worktree = thread.worktreePath { return worktree }
+        return model.project(thread.projectID)?.path
+    }
+
+    private var canUndo: Bool {
+        guard !runtime.isRunning, let thread = runtime.thread else { return false }
+        return thread.provider.supportsRewind && runtime.turns.contains { $0.id == turnID }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(userEntries) { entry in
+                UserMessageRow(entry: entry, runtime: runtime)
+                    .padding(.bottom, 12)
+            }
+            Button {
+                withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(TurnEndRow.label(for: summary))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Hide this turn's steps" : "Show this turn's steps")
+            .accessibilityLabel(Text(isExpanded ? "Hide this turn's steps" : "Show this turn's steps"))
+
+            if showsBody {
+                Divider()
+                    .opacity(0.6)
+                    .padding(.vertical, 10)
+
+                if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(detailGroups) { group in
+                        switch group {
+                        case .single(let entry):
+                            switch entry.kind {
+                            case .assistant:
+                                AssistantMessageRow(entry: entry, summary: nil)
+                            case .tool:
+                                WorkGroup(entries: [entry], workingDirectory: workingDirectory)
+                            case .plan:
+                                PlanCard(entry: entry, runtime: runtime)
+                            case .todos:
+                                TodoListRow(entry: entry)
+                            case .notice:
+                                NoticeRow(entry: entry)
+                            case .user, .reasoning, .turnEnd:
+                                EmptyView()
+                            }
+                        case .work(_, let entries):
+                            WorkGroup(entries: entries, workingDirectory: workingDirectory)
+                        }
+                    }
+                }
+                .padding(.bottom, collapsedHasResponse ? 10 : 0)
+            } else if collapsedHasResponse {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(assistantEntries) { entry in
+                        if case .assistant(let message) = entry.item.content, !message.text.isEmpty {
+                            MarkdownView(text: message.text).equatable()
+                        }
+                    }
+                    ForEach(collapsedPlans) { entry in
+                        PlanCard(entry: entry, runtime: runtime)
+                    }
+                    ForEach(collapsedNotices) { entry in
+                        NoticeRow(entry: entry)
+                    }
+                }
+                .padding(.bottom, 10)
+            }
+
+            if summary.filesChanged > 0 {
+                TurnFileCard(
+                    summary: summary,
+                    files: fileStats,
+                    canUndo: canUndo,
+                    onUndo: { isConfirmingUndo = true },
+                    onReview: {
+                        if runtime.diffSelection != turnID { runtime.diffSelection = turnID }
+                        if !runtime.isDiffVisible { runtime.isDiffVisible = true }
+                    }
+                )
+            }
+            }
+        }
+        .confirmationDialog("Undo this turn?", isPresented: $isConfirmingUndo) {
+            Button("Revert files and conversation", role: .destructive) {
+                Task { await runtime.revert(to: turnID, restoreFiles: true) }
+            }
+        } message: {
+            Text("Files go back to how they were before this turn, and the turn leaves the conversation.")
+        }
+    }
+
+    private var collapsedHasResponse: Bool {
+        assistantEntries.contains {
+            guard case .assistant(let message) = $0.item.content else { return false }
+            return !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        } || !collapsedPlans.isEmpty || !collapsedNotices.isEmpty
+    }
+
+    private var showsBody: Bool {
+        if isExpanded { return !detailGroups.isEmpty || summary.filesChanged > 0 }
+        return collapsedHasResponse || summary.filesChanged > 0
+    }
+}
+
+private struct TurnFileCard: View {
+    let summary: TurnSummary
+    let files: [TurnFinishedBlock.FileStat]
+    let canUndo: Bool
+    let onUndo: () -> Void
+    let onReview: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(.primary.opacity(0.08))
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        Image(systemName: "plus.app")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(summary.filesChanged == 1 ? "Edited 1 file" : "Edited \(summary.filesChanged) files")
+                        .font(.callout.weight(.medium))
+                    DiffStatLabel(additions: summary.additions, deletions: summary.deletions)
+                }
+                Spacer(minLength: 8)
+                if canUndo {
+                    Button(action: onUndo) {
+                        HStack(spacing: 4) {
+                            Text("Undo")
+                            Image(systemName: "arrow.uturn.backward")
+                        }
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Revert this turn's files and conversation")
+                }
+                Button("Review", action: onReview)
+                    .buttonStyle(.glass)
+                    .help("Show this turn's changes")
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            if !files.isEmpty {
+                Divider()
+                    .opacity(0.5)
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(files, id: \.path) { file in
+                        HStack(spacing: 8) {
+                            Text(verbatim: file.path)
+                                .font(.callout)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer(minLength: 8)
+                            DiffStatLabel(additions: file.additions, deletions: file.deletions)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+        .background(.quaternary.opacity(0.32), in: .rect(cornerRadius: 14, style: .continuous))
+    }
+}

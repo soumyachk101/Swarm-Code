@@ -18,23 +18,24 @@ struct ThreadTimeline: View {
 
     var body: some View {
         let entries = runtime.entries
-        let groups = TimelineGroup.build(entries, showReasoning: model.settings.showReasoning)
-        if groups.isEmpty && !runtime.isRunning {
+        let meta = TimelineMeta.build(entries)
+        let blocks = DisplayBlock.build(entries, meta: meta, showReasoning: model.settings.showReasoning)
+        if blocks.isEmpty && !runtime.isRunning {
             NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
                 .onAppear {
                     scrollChrome.update(travel: 0)
                     scrollState.showsJumpButton = false
                 }
         } else {
-            timeline(groups, meta: TimelineMeta.build(entries))
+            timeline(blocks, meta: meta)
         }
     }
 
-    private func timeline(_ groups: [TimelineGroup], meta: TimelineMeta) -> some View {
-        // Only the newest window of groups is rendered. Older history loads on demand,
+    private func timeline(_ blocks: [DisplayBlock], meta: TimelineMeta) -> some View {
+        // Only the newest window of blocks is rendered. Older history loads on demand,
         // so the view count stays bounded even for very long threads.
-        let hidden = max(0, groups.count - visibleCount)
-        let visible = hidden == 0 ? groups : Array(groups.suffix(visibleCount))
+        let hidden = max(0, blocks.count - visibleCount)
+        let visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
@@ -56,8 +57,8 @@ struct ThreadTimeline: View {
                     .padding(.bottom, 4)
                 }
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(visible) { group in
-                        TimelineGroupView(group: group, runtime: runtime, meta: meta)
+                    ForEach(visible) { block in
+                        DisplayBlockView(block: block, runtime: runtime, meta: meta)
                             .transition(.softAppear)
                     }
                     if runtime.isRunning {
@@ -184,6 +185,48 @@ enum TimelineGroup: Identifiable {
     }
 }
 
+/// A finished turn collapses to its final response plus its file summary, so the
+/// chat stays clean. The chevron re-opens the turn's full steps. Running turns
+/// and entries without a turn render as plain groups, exactly as before.
+enum DisplayBlock: Identifiable {
+    case turn(id: String, turnID: UUID, userEntries: [TimelineEntry], content: [TimelineEntry], summary: TurnSummary)
+    case group(TimelineGroup)
+
+    var id: String {
+        switch self {
+        case .turn(let id, _, _, _, _): id
+        case .group(let group): group.id
+        }
+    }
+
+    @MainActor
+    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool) -> [DisplayBlock] {
+        // Partition into contiguous runs sharing one turnID (nil groups together),
+        // so a finished turn becomes one collapsible block.
+        var runs: [(turnID: UUID?, entries: [TimelineEntry])] = []
+        for entry in entries {
+            if runs.last?.turnID == entry.turnID {
+                runs[runs.count - 1].entries.append(entry)
+            } else {
+                runs.append((entry.turnID, [entry]))
+            }
+        }
+        var blocks: [DisplayBlock] = []
+        for run in runs {
+            if let turnID = run.turnID, let summary = meta.summaryByTurn[turnID] {
+                let users = run.entries.filter { $0.kind == .user }
+                let content = run.entries.filter { $0.kind != .user && $0.kind != .turnEnd && $0.kind != .reasoning }
+                blocks.append(.turn(id: "turn-\(turnID.uuidString)", turnID: turnID, userEntries: users, content: content, summary: summary))
+            } else {
+                for group in TimelineGroup.build(run.entries, showReasoning: showReasoning) {
+                    blocks.append(.group(group))
+                }
+            }
+        }
+        return blocks
+    }
+}
+
 /// Lazy-loading window for the timeline: only the newest groups are materialized, so
 /// the number of live views stays bounded even for very long threads.
 enum TimelineWindow {
@@ -222,7 +265,22 @@ struct TimelineMeta {
     }
 }
 
-private struct TimelineGroupView: View {
+private struct DisplayBlockView: View {
+    let block: DisplayBlock
+    let runtime: ThreadRuntime
+    let meta: TimelineMeta
+
+    var body: some View {
+        switch block {
+        case .group(let group):
+            TimelineGroupView(group: group, runtime: runtime, meta: meta)
+        case .turn(_, let turnID, let userEntries, let content, let summary):
+            TurnFinishedBlock(runtime: runtime, turnID: turnID, summary: summary, userEntries: userEntries, content: content)
+        }
+    }
+}
+
+struct TimelineGroupView: View {
     @Environment(AppModel.self) private var model
     let group: TimelineGroup
     let runtime: ThreadRuntime
