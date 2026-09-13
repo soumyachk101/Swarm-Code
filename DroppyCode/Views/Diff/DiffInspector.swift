@@ -280,11 +280,14 @@ struct DiffLinesView: View {
                         .background(Color.accentColor.opacity(0.06))
                 case .tinted(let lines):
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(lines) { line in
-                            DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
+                        ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
+                            DiffLineRow(
+                                line: line,
+                                showsLineNumbers: showsLineNumbers,
+                                rounding: DiffLineRow.blockRounding(index: index, count: lines.count)
+                            )
                         }
                     }
-                    .clipShape(.rect(cornerRadius: 8, style: .continuous))
                 case .plain(let lines):
                     ForEach(lines) { line in
                         DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
@@ -322,6 +325,10 @@ private func lineBlocks(_ lines: [DiffLine]) -> [DiffLineBlock] {
 private struct DiffLineRow: View {
     let line: DiffLine
     let showsLineNumbers: Bool
+    var rounding = UnevenRoundedRectangle(
+        topLeadingRadius: 0, bottomLeadingRadius: 0,
+        bottomTrailingRadius: 0, topTrailingRadius: 0, style: .continuous
+    )
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -342,7 +349,22 @@ private struct DiffLineRow: View {
         }
         .padding(.vertical, 1)
         .padding(.trailing, 8)
-        .background(background)
+        .background(background, in: rounding)
+    }
+
+    /// Positional corners for a row inside its tinted block: only the block's
+    /// top and bottom rows get corners, everything between is straight.
+    static func blockRounding(index: Int, count: Int) -> UnevenRoundedRectangle {
+        let radius: CGFloat = 8
+        let top = index == 0
+        let bottom = index == count - 1
+        return UnevenRoundedRectangle(
+            topLeadingRadius: top ? radius : 0,
+            bottomLeadingRadius: bottom ? radius : 0,
+            bottomTrailingRadius: bottom ? radius : 0,
+            topTrailingRadius: top ? radius : 0,
+            style: .continuous
+        )
     }
 
     private var marker: String {
@@ -355,7 +377,7 @@ private struct DiffLineRow: View {
 
     private var markerColor: Color {
         switch line.kind {
-        case .addition: .green
+        case .addition: .blue // TEMP-DIAG: proves which build is on screen; revert next
         case .deletion: .red
         default: .secondary
         }
