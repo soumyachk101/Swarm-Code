@@ -2,7 +2,7 @@
 
 ## Zeron
 
-Cody's working indicators (`Cody/Views/Common/WorkingIndicators.swift`) are ported from Zeron,
+Droppy Code's working indicators (`DroppyCode/Views/Common/WorkingIndicators.swift`) are ported from Zeron,
 https://github.com/zeronsh/zeron, `apps/ios/Zeron/Views/Loaders.swift` and `apps/ios/Zeron/Theme/Motion.swift`.
 
 MIT License

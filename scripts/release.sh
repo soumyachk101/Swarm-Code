@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds, signs, notarizes and packages Cody as a disk image.
+# Builds, signs, notarizes and packages Droppy Code as a disk image.
 #
 #   scripts/release.sh
 #
@@ -11,12 +11,13 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 TEAM_ID="NARHG44L48"
 NOTARY_PROFILE="${NOTARY_PROFILE:-Droppy-Notarize}"
-APP_NAME="Cody"
-BUILD="$ROOT/build"
-ARCHIVE="$BUILD/Cody.xcarchive"
+APP_NAME="Droppy Code"
+# ".noindex" keeps Spotlight and Launchpad from listing the build copies of the app.
+BUILD="$ROOT/build.noindex"
+ARCHIVE="$BUILD/DroppyCode.xcarchive"
 EXPORT="$BUILD/export"
 VERSION=$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -1)
-DMG="$BUILD/Cody-$VERSION.dmg"
+DMG="$BUILD/Droppy-Code-$VERSION.dmg"
 
 step() { printf '\n==> %s\n' "$1"; }
 
@@ -40,11 +41,12 @@ step "Archiving $APP_NAME $VERSION"
 rm -rf "$BUILD"
 mkdir -p "$BUILD"
 if ! xcodebuild archive \
-  -project Cody.xcodeproj \
-  -scheme Cody \
+  -project DroppyCode.xcodeproj \
+  -scheme DroppyCode \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -archivePath "$ARCHIVE" \
+  -derivedDataPath "$BUILD/DerivedData" \
   -skipPackagePluginValidation \
   -skipMacroValidation \
   ONLY_ACTIVE_ARCH=NO > "$BUILD/archive.log" 2>&1; then
@@ -91,8 +93,8 @@ if [ "$archs" != "arm64" ]; then
 fi
 
 step "Notarizing the app"
-ditto -c -k --keepParent "$APP" "$BUILD/Cody.zip"
-notarize "$BUILD/Cody.zip"
+ditto -c -k --keepParent "$APP" "$BUILD/DroppyCode.zip"
+notarize "$BUILD/DroppyCode.zip"
 xcrun stapler staple "$APP"
 
 step "Building the disk image"
@@ -115,6 +117,6 @@ xcrun stapler validate "$DMG"
 
 step "Cleaning up"
 # Only the disk image stays, so Spotlight and Launchpad never list a second copy of the app.
-rm -rf "$ARCHIVE" "$EXPORT" "$STAGING" "$BUILD/Cody.zip"
+rm -rf "$ARCHIVE" "$EXPORT" "$STAGING" "$BUILD/DroppyCode.zip" "$BUILD/DerivedData"
 
 printf '\nReady: %s\n' "$DMG"

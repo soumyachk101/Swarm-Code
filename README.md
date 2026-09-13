@@ -1,8 +1,8 @@
-<img src="docs/icon.png" width="128" alt="Cody icon">
+<img src="docs/icon.png" width="128" alt="Droppy Code icon">
 
-# Cody
+# Droppy Code
 
-A native macOS app for your coding agents. Written entirely in Swift and SwiftUI with Liquid Glass, for Macs with Apple silicon on macOS 26 and later.
+The coding app by Droppy. A native macOS app for your coding agents. Written entirely in Swift and SwiftUI with Liquid Glass, for Macs with Apple silicon on macOS 26 and later.
 
 It drives the coding agents you already have installed and signed in, on your own subscriptions:
 
@@ -21,7 +21,7 @@ It drives the coding agents you already have installed and signed in, on your ow
 - Approvals and questions from the agent, answered inline.
 - Plan mode, model and reasoning selection, and four permission modes per thread.
 - A diff for every turn, captured as hidden git checkpoints, with revert.
-- An embedded terminal per thread, plus project scripts from `cody.json`.
+- An embedded terminal per thread, plus project scripts from `droppy-code.json`.
 - New threads in their own git worktree.
 - Commit, push and pull requests, with generated commit messages and thread titles.
 - A command palette, keyboard shortcuts and notifications when work finishes.
@@ -39,7 +39,7 @@ Remote access, mobile apps, cloud sync, telemetry and a web client are left out 
 ```bash
 brew install xcodegen
 xcodegen generate
-open Cody.xcodeproj
+open DroppyCode.xcodeproj
 ```
 
 SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks once to trust its build plugin.
@@ -52,12 +52,12 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 
 | Folder | Contents |
 | --- | --- |
-| `Cody/App` | App entry, commands, settings and the project library |
-| `Cody/Providers` | Codex, Claude and ACP adapters behind one event model |
-| `Cody/Runtime` | Per-thread state, streaming, checkpoints and rewind |
-| `Cody/Git` | Git, worktrees, checkpoints and diff parsing |
-| `Cody/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
-| `Cody/Support` | Process I/O, JSON-RPC and the login shell environment |
+| `DroppyCode/App` | App entry, commands, settings and the project library |
+| `DroppyCode/Providers` | Codex, Claude and ACP adapters behind one event model |
+| `DroppyCode/Runtime` | Per-thread state, streaming, checkpoints and rewind |
+| `DroppyCode/Git` | Git, worktrees, checkpoints and diff parsing |
+| `DroppyCode/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
+| `DroppyCode/Support` | Process I/O, JSON-RPC and the login shell environment |
 
 ## Acknowledgements
 

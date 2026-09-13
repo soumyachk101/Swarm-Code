@@ -1,0 +1,570 @@
+import Foundation
+
+/// Drives Agent Client Protocol agents: Cursor, OpenCode and Grok.
+@MainActor
+final class ACPSession: ProviderSession {
+    var onEvent: ((ProviderEvent) -> Void)?
+
+    private let configuration: SessionConfiguration
+    private var connection: JSONRPCConnection?
+    private var sessionID: String?
+    private var authMethods: [String] = []
+    private var canLoadSessions = false
+    private var isReplaying = false
+    private var isStopping = false
+    private var runtimeMode: RuntimeMode
+    private var messageID: String?
+    private var thoughtID: String?
+    private var counter = 0
+    private var pendingPermissions: [String: RPCID] = [:]
+    private var promptActive = false
+    private var cancelRequested = false
+
+    private var models: [ModelOption] = []
+    private var modelConfigID: String?
+    private var modeConfigID: String?
+    private var effortConfigID: String?
+    private var hasModeAPI = false
+    private var planMode: String?
+    private var buildMode: String?
+    private var currentMode: String?
+    private var currentModel: String?
+    private var currentEffort: String?
+
+    init(configuration: SessionConfiguration) {
+        self.configuration = configuration
+        runtimeMode = configuration.runtimeMode
+    }
+
+    var isRunning: Bool {
+        guard let connection else { return false }
+        return !connection.isClosed
+    }
+
+    private var workingDirectory: String { configuration.workingDirectory.path }
+
+    private var launchArguments: [String] {
+        switch configuration.provider {
+        case .cursor:
+            switch configuration.runtimeMode {
+            case .auto: ["--auto-review", "acp"]
+            case .fullAccess: ["--force", "acp"]
+            default: ["acp"]
+            }
+        case .grok:
+            switch configuration.runtimeMode {
+            case .supervised: ["--permission-mode", "default", "agent", "stdio"]
+            case .autoAcceptEdits: ["--permission-mode", "acceptEdits", "agent", "stdio"]
+            case .auto: ["--permission-mode", "auto", "agent", "stdio"]
+            case .fullAccess: ["agent", "--always-approve", "stdio"]
+            }
+        default:
+            ["acp"]
+        }
+    }
+
+    func start() async throws -> String {
+        let process = StdioProcess(
+            executable: configuration.executable,
+            arguments: launchArguments,
+            directory: configuration.workingDirectory,
+            environment: configuration.environment
+        )
+        let connection = JSONRPCConnection(process: process, sendsVersion: true)
+        connection.onNotification = { [weak self] method, params in self?.handleNotification(method, params) }
+        connection.onRequest = { [weak self] id, method, params in self?.handleRequest(id, method, params) }
+        connection.onClose = { [weak self] tail in self?.handleClose(tail) }
+        self.connection = connection
+        try connection.start()
+
+        let initialized = try await connection.request("initialize", [
+            "protocolVersion": 1,
+            "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false], "terminal": false],
+            "clientInfo": ["name": "droppy-code", "title": "Droppy Code", "version": .string(AppInfo.version)],
+        ])
+        canLoadSessions = initialized["agentCapabilities"]?["loadSession"]?.bool ?? false
+        authMethods = (initialized["authMethods"]?.array ?? []).compactMap { $0["id"]?.string }
+        if let state = initialized["_meta"]?["modelState"] { applyModels(state) }
+
+        let session: JSONValue
+        do {
+            session = try await openSession(connection)
+        } catch let error as RPCError where error.message.localizedCaseInsensitiveContains("auth") && !authMethods.isEmpty {
+            _ = try await connection.request("authenticate", ["methodId": .string(authMethods[0])])
+            session = try await openSession(connection)
+        }
+        applySessionState(session)
+        await applySelection(model: configuration.model, effort: configuration.effort, interaction: configuration.interactionMode)
+        guard let sessionID else {
+            throw ProviderError.failed("\(configuration.provider.displayName) did not start a session.")
+        }
+        return sessionID
+    }
+
+    func send(_ input: TurnInput) async throws {
+        guard let connection, !connection.isClosed, let sessionID else { throw ProviderError.notRunning }
+        runtimeMode = input.runtimeMode
+        await applySelection(model: input.model, effort: input.effort, interaction: input.interactionMode)
+        var prompt: [JSONValue] = [["type": "text", "text": .string(input.text)]]
+        for image in input.images where image.isImage {
+            guard let data = try? Data(contentsOf: image.url) else { continue }
+            prompt.append(["type": "image", "mimeType": .string(image.mimeType), "data": .string(data.base64EncodedString())])
+        }
+        messageID = nil
+        thoughtID = nil
+        promptActive = true
+        cancelRequested = false
+        onEvent?(.turnStarted(providerTurnID: nil))
+        Task { [weak self] in
+            do {
+                let result = try await connection.request("session/prompt", [
+                    "sessionId": .string(sessionID),
+                    "prompt": .array(prompt),
+                ])
+                self?.finishPrompt(result["stopReason"]?.string, error: nil)
+            } catch {
+                self?.finishPrompt(nil, error: error)
+            }
+        }
+    }
+
+    func interrupt() async {
+        guard promptActive, let connection, let sessionID else { return }
+        cancelRequested = true
+        for (key, id) in pendingPermissions {
+            connection.respond(to: id, result: ["outcome": ["outcome": "cancelled"]])
+            onEvent?(.requestResolved(id: key))
+        }
+        pendingPermissions.removeAll()
+        connection.notify("session/cancel", ["sessionId": .string(sessionID)])
+    }
+
+    func compact() async throws {
+        throw ProviderError.failed("\(configuration.provider.displayName) compacts its own context.")
+    }
+
+    func resolveApproval(_ requestID: String, optionID: String) {
+        guard let id = pendingPermissions.removeValue(forKey: requestID) else { return }
+        connection?.respond(to: id, result: ["outcome": ["outcome": "selected", "optionId": .string(optionID)]])
+        onEvent?(.requestResolved(id: requestID))
+    }
+
+    func answerQuestion(_ requestID: String, answers: [String: [String]]) {}
+
+    func stop() {
+        isStopping = true
+        connection?.close()
+    }
+
+    // MARK: - Catalog
+
+    static func probeModels(provider: ProviderKind, executable: URL, environment: [String: String]) async throws -> [ModelOption] {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("droppy-code-catalog", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let session = ACPSession(configuration: SessionConfiguration(
+            provider: provider,
+            executable: executable,
+            workingDirectory: directory,
+            environment: environment,
+            runtimeMode: .supervised,
+            interactionMode: .build
+        ))
+        var models: [ModelOption] = []
+        session.onEvent = { event in
+            if case .models(let list, _) = event { models = list }
+        }
+        defer { session.stop() }
+        _ = try await session.start()
+        return models
+    }
+
+    // MARK: - Session state
+
+    private func openSession(_ connection: JSONRPCConnection) async throws -> JSONValue {
+        let base: [String: JSONValue] = ["cwd": .string(workingDirectory), "mcpServers": []]
+        if let resumeID = configuration.resumeID, canLoadSessions {
+            var params = base
+            params["sessionId"] = .string(resumeID)
+            isReplaying = true
+            let result = try? await connection.request("session/load", .object(params))
+            isReplaying = false
+            if let result {
+                sessionID = resumeID
+                return result
+            }
+        }
+        let result = try await connection.request("session/new", .object(base))
+        sessionID = result["sessionId"]?.string
+        return result
+    }
+
+    private func applySessionState(_ state: JSONValue) {
+        if let modes = state["modes"], !modes.isNull {
+            hasModeAPI = true
+            currentMode = modes["currentModeId"]?.string
+            resolveModes((modes["availableModes"]?.array ?? []).compactMap { $0["id"]?.string })
+        }
+        if let modelState = state["models"], !modelState.isNull { applyModels(modelState) }
+        if let options = state["configOptions"]?.array { applyConfigOptions(options) }
+    }
+
+    private func resolveModes(_ ids: [String]) {
+        planMode = ids.first { $0 == "plan" }
+        buildMode = ids.first { ["agent", "build", "code", "default"].contains($0) }
+            ?? ids.first { $0 != "plan" && $0 != "ask" }
+    }
+
+    private func applyModels(_ state: JSONValue) {
+        let current = state["currentModelId"]?.string
+        currentModel = current ?? currentModel
+        let list = (state["availableModels"]?.array ?? []).compactMap { entry -> ModelOption? in
+            guard let id = entry["modelId"]?.string else { return nil }
+            let efforts = entry["_meta"]?["reasoningEfforts"]?.array ?? []
+            return ModelOption(
+                id: id,
+                name: entry["name"]?.string ?? id,
+                detail: entry["description"]?.string,
+                efforts: efforts.compactMap { $0["value"]?.string },
+                defaultEffort: efforts.first { $0["default"]?.bool == true }?["value"]?.string,
+                isDefault: id == current
+            )
+        }
+        guard !list.isEmpty else { return }
+        models = list
+        onEvent?(.models(list, current: currentModel))
+    }
+
+    private func applyConfigOptions(_ options: [JSONValue]) {
+        var efforts: [String] = []
+        for option in options {
+            guard let id = option["id"]?.string else { continue }
+            let values = Self.flatten(option["options"]?.array ?? [])
+            let current = option["currentValue"]?.string
+            switch option["category"]?.string ?? id {
+            case "model":
+                modelConfigID = id
+                currentModel = current ?? currentModel
+                let list = values.compactMap { value -> ModelOption? in
+                    guard let valueID = value["value"]?.string else { return nil }
+                    return ModelOption(id: valueID, name: value["name"]?.string ?? valueID, detail: value["description"]?.string, isDefault: valueID == current)
+                }
+                if !list.isEmpty { models = list }
+            case "mode":
+                modeConfigID = id
+                currentMode = current ?? currentMode
+                resolveModes(values.compactMap { $0["value"]?.string })
+            case "thought_level", "effort":
+                effortConfigID = id
+                currentEffort = current
+                efforts = values.compactMap { $0["value"]?.string }
+            default:
+                break
+            }
+        }
+        if !efforts.isEmpty {
+            models = models.map { model in
+                var model = model
+                model.efforts = efforts
+                return model
+            }
+        }
+        if !models.isEmpty { onEvent?(.models(models, current: currentModel)) }
+    }
+
+    private static func flatten(_ values: [JSONValue]) -> [JSONValue] {
+        values.flatMap { value -> [JSONValue] in
+            if let nested = value["options"]?.array { return nested }
+            return [value]
+        }
+    }
+
+    private func applySelection(model: String?, effort: String?, interaction: InteractionMode) async {
+        guard let connection, let sessionID else { return }
+        if let model, !model.isEmpty, model != currentModel {
+            if let modelConfigID {
+                await setConfigOption(modelConfigID, value: model)
+            } else {
+                _ = try? await connection.request("session/set_model", ["sessionId": .string(sessionID), "modelId": .string(model)])
+            }
+            currentModel = model
+        }
+        if let effort, !effort.isEmpty, let effortConfigID, effort != currentEffort {
+            await setConfigOption(effortConfigID, value: effort)
+            currentEffort = effort
+        }
+        if let mode = interaction == .plan ? planMode : buildMode, mode != currentMode {
+            if let modeConfigID {
+                await setConfigOption(modeConfigID, value: mode)
+            } else if hasModeAPI {
+                _ = try? await connection.request("session/set_mode", ["sessionId": .string(sessionID), "modeId": .string(mode)])
+            }
+            currentMode = mode
+        }
+    }
+
+    private func setConfigOption(_ configID: String, value: String) async {
+        guard let connection, let sessionID else { return }
+        let result = try? await connection.request("session/set_config_option", [
+            "sessionId": .string(sessionID),
+            "configId": .string(configID),
+            "value": .string(value),
+        ])
+        if let options = result?["configOptions"]?.array { applyConfigOptions(options) }
+    }
+
+    // MARK: - Updates
+
+    private func handleNotification(_ method: String, _ params: JSONValue) {
+        guard method == "session/update", !isReplaying, let update = params["update"] else { return }
+        switch update["sessionUpdate"]?.string {
+        case "agent_message_chunk":
+            guard let text = update["content"]?["text"]?.string else { return }
+            thoughtID = nil
+            let id = update["messageId"]?.string.map { "message-\($0)" } ?? messageID ?? nextID("message")
+            messageID = id
+            onEvent?(.messageDelta(id: id, text: text))
+        case "agent_thought_chunk":
+            guard let text = update["content"]?["text"]?.string else { return }
+            let id = thoughtID ?? nextID("thought")
+            thoughtID = id
+            onEvent?(.reasoningDelta(id: id, text: text))
+        case "tool_call":
+            guard let id = update["toolCallId"]?.string else { return }
+            messageID = nil
+            thoughtID = nil
+            onEvent?(.toolStarted(id: id, call: makeToolCall(update)))
+            let initial = makeToolUpdate(update)
+            if initial.output != nil || initial.status != nil { onEvent?(.toolUpdated(id: id, update: initial)) }
+        case "tool_call_update":
+            guard let id = update["toolCallId"]?.string else { return }
+            onEvent?(.toolUpdated(id: id, update: makeToolUpdate(update)))
+        case "plan":
+            let steps = (update["entries"]?.array ?? []).compactMap { entry -> TodoStep? in
+                guard let text = entry["content"]?.string else { return nil }
+                let status: TodoStep.Status = switch entry["status"]?.string {
+                case "completed": .done
+                case "in_progress": .active
+                default: .pending
+                }
+                return TodoStep(text: text, status: status)
+            }
+            onEvent?(.todos(steps))
+        case "available_commands_update":
+            let commands = (update["availableCommands"]?.array ?? []).compactMap { command -> SlashCommand? in
+                guard let name = command["name"]?.string else { return nil }
+                return SlashCommand(name: name, detail: command["description"]?.string ?? "")
+            }
+            onEvent?(.commands(commands))
+        case "current_mode_update":
+            currentMode = update["currentModeId"]?.string
+            if let planMode { onEvent?(.modeChanged(currentMode == planMode ? .plan : .build)) }
+        case "config_option_update":
+            if let options = update["configOptions"]?.array { applyConfigOptions(options) }
+        case "session_info_update":
+            if let title = update["title"]?.string, !title.isEmpty { onEvent?(.title(title)) }
+        case "usage_update":
+            if let used = update["used"]?.int {
+                onEvent?(.usage(ContextUsage(usedTokens: used, windowTokens: update["size"]?.int)))
+            }
+        default:
+            break
+        }
+    }
+
+    private func handleRequest(_ id: RPCID, _ method: String, _ params: JSONValue) {
+        guard method == "session/request_permission" else {
+            connection?.respond(to: id, errorCode: -32601, message: "Method not found")
+            return
+        }
+        let options = params["options"]?.array ?? []
+        let toolCall = params["toolCall"] ?? .null
+        let call = makeToolCall(toolCall)
+        if let optionID = automaticOption(for: call.kind, options: options) {
+            connection?.respond(to: id, result: ["outcome": ["outcome": "selected", "optionId": .string(optionID)]])
+            return
+        }
+        let mapped = options.compactMap { option -> ApprovalRequest.Option? in
+            guard let optionID = option["optionId"]?.string else { return nil }
+            let role: ApprovalRequest.Option.Role = switch option["kind"]?.string {
+            case "allow_always": .approveAlways
+            case "reject_once", "reject_always": .decline
+            default: .approve
+            }
+            return .init(id: optionID, title: option["name"]?.string ?? optionID, role: role)
+        }
+        pendingPermissions[id.key] = id
+        let kind: ApprovalRequest.Kind = switch call.kind {
+        case .command: .command
+        case .edit: .fileChange
+        default: .tool
+        }
+        onEvent?(.approval(ApprovalRequest(
+            id: id.key,
+            kind: kind,
+            title: call.title,
+            detail: call.detail,
+            options: mapped,
+            toolItemID: toolCall["toolCallId"]?.string
+        )))
+    }
+
+    private func automaticOption(for kind: ToolCall.Kind, options: [JSONValue]) -> String? {
+        let automatic = switch runtimeMode {
+        case .fullAccess: true
+        case .autoAcceptEdits: kind == .edit
+        default: false
+        }
+        guard automatic else { return nil }
+        let allowOnce = options.first { $0["kind"]?.string == "allow_once" }
+        let allowAlways = options.first { $0["kind"]?.string == "allow_always" }
+        return (allowOnce ?? allowAlways)?["optionId"]?.string
+    }
+
+    private func finishPrompt(_ stopReason: String?, error: Error?) {
+        guard promptActive else { return }
+        promptActive = false
+        for (key, id) in pendingPermissions {
+            connection?.respond(to: id, result: ["outcome": ["outcome": "cancelled"]])
+            onEvent?(.requestResolved(id: key))
+        }
+        pendingPermissions.removeAll()
+        if cancelRequested || stopReason == "cancelled" {
+            onEvent?(.turnCompleted(status: .interrupted, error: nil))
+        } else if let error {
+            onEvent?(.turnCompleted(status: .failed, error: error.localizedDescription))
+        } else if stopReason == "refusal" {
+            onEvent?(.turnCompleted(status: .failed, error: "The agent declined this request."))
+        } else {
+            onEvent?(.turnCompleted(status: .completed, error: nil))
+        }
+        cancelRequested = false
+    }
+
+    private func handleClose(_ tail: String) {
+        if promptActive {
+            finishPrompt(nil, error: ProviderError.failed(TextCleanup.lastLines(tail) ?? "The agent exited."))
+        }
+        guard !isStopping else { return }
+        onEvent?(.exited(error: TextCleanup.lastLines(tail)))
+    }
+
+    // MARK: - Mapping
+
+    private func nextID(_ prefix: String) -> String {
+        counter += 1
+        return "\(prefix)-\(counter)-\(UUID().uuidString.prefix(8))"
+    }
+
+    private func makeToolCall(_ update: JSONValue) -> ToolCall {
+        let kind = Self.kind(update["kind"]?.string)
+        let raw = update["rawInput"] ?? .null
+        var title = Self.cleanTitle(update["title"]?.string)
+        if kind == .command, let command = raw["command"]?.string { title = command }
+        if title.isEmpty { title = raw["command"]?.string ?? Self.fallbackTitle(kind) }
+        var call = ToolCall(kind: kind, title: title)
+        if kind != .command, let path = update["locations"]?.array?.first?["path"]?.string {
+            let relative = ToolTitles.relativePath(path, to: workingDirectory)
+            if relative != title && relative != workingDirectory { call.detail = relative }
+        }
+        call.edits = diffs(update["content"])
+        if let status = update["status"]?.string { call.status = Self.status(status) }
+        return call
+    }
+
+    private func makeToolUpdate(_ update: JSONValue) -> ToolUpdate {
+        var result = ToolUpdate()
+        let title = Self.cleanTitle(update["title"]?.string)
+        if !title.isEmpty { result.title = title }
+        if let kind = update["kind"]?.string { result.kind = Self.kind(kind) }
+        if let command = update["rawInput"]?["command"]?.string { result.title = command }
+        if let status = update["status"]?.string { result.status = Self.status(status) }
+        let edits = diffs(update["content"])
+        if !edits.isEmpty { result.edits = edits }
+        var output = (update["content"]?.array ?? [])
+            .compactMap { $0["type"]?.string == "content" ? $0["content"]?["text"]?.string : nil }
+            .joined(separator: "\n")
+        if let raw = update["rawOutput"], !raw.isNull {
+            if output.isEmpty {
+                output = [raw["stdout"]?.string, raw["stderr"]?.string, raw["output"]?.string]
+                    .compactMap { $0 }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n")
+            }
+            result.exitCode = raw["exitCode"]?.int ?? raw["metadata"]?["exit"]?.int
+        }
+        if !output.isEmpty, output != "(no output)" { result.output = output }
+        if let exitCode = result.exitCode, exitCode != 0, result.status == .completed { result.status = .failed }
+        return result
+    }
+
+    private func diffs(_ content: JSONValue?) -> [FileEdit] {
+        (content?.array ?? []).compactMap { block -> FileEdit? in
+            guard block["type"]?.string == "diff", let path = block["path"]?.string else { return nil }
+            return FileEdit(
+                path: ToolTitles.relativePath(path, to: workingDirectory),
+                old: block["oldText"]?.string ?? "",
+                new: block["newText"]?.string ?? ""
+            )
+        }
+    }
+
+    private static func cleanTitle(_ title: String?) -> String {
+        (title ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "` \n"))
+    }
+
+    private static func kind(_ raw: String?) -> ToolCall.Kind {
+        switch raw {
+        case "read": .read
+        case "edit", "delete", "move": .edit
+        case "search": .search
+        case "execute": .command
+        case "fetch": .web
+        default: .other
+        }
+    }
+
+    private static func fallbackTitle(_ kind: ToolCall.Kind) -> String {
+        switch kind {
+        case .command: "Run command"
+        case .read: "Read file"
+        case .edit: "Edit file"
+        case .search: "Search"
+        case .web: "Fetch"
+        case .mcp: "Tool"
+        case .agent: "Agent"
+        case .other: "Tool"
+        }
+    }
+
+    private static func status(_ raw: String) -> ToolCall.Status {
+        switch raw {
+        case "completed": .completed
+        case "failed": .failed
+        default: .running
+        }
+    }
+}
+
+extension SessionConfiguration {
+    init(
+        provider: ProviderKind,
+        executable: URL,
+        workingDirectory: URL,
+        environment: [String: String],
+        runtimeMode: RuntimeMode,
+        interactionMode: InteractionMode
+    ) {
+        self.init(
+            provider: provider,
+            executable: executable,
+            workingDirectory: workingDirectory,
+            environment: environment,
+            resumeID: nil,
+            resumeAt: nil,
+            model: nil,
+            effort: nil,
+            runtimeMode: runtimeMode,
+            interactionMode: interactionMode
+        )
+    }
+}
