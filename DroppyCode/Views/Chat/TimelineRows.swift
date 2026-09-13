@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 
+/// The timeline's shared geometry. One vertical rhythm governs every pair of rows —
+/// reply to reply, reply to work line, work line to row — so the distance between
+/// text and the steps never varies. A message's hover controls sit inside that gap
+/// rather than widening it.
+enum TimelineMetrics {
+    /// The gap between any two consecutive rows in the timeline.
+    static let rowSpacing: CGFloat = 20
+    /// The room a message keeps for its hover line (copy, revert). Reserved inside
+    /// the row so showing the controls never moves text, then subtracted from the
+    /// row's own height so they fill the gap below instead of adding to it.
+    static let hoverLineHeight: CGFloat = 22
+    /// The icon column every transcript row starts with. Rows carry no leading inset,
+    /// so the column sits on the reply text's own x and all labels line up after it.
+    static let iconWidth: CGFloat = 16
+    static let iconSpacing: CGFloat = 8
+}
+
 struct UserMessageRow: View {
     let entry: TimelineEntry
     let runtime: ThreadRuntime
@@ -41,6 +58,11 @@ struct UserMessageRow: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 96)
             .onHover { isHovering = $0 }
+            // The room for the hover line lives inside the row but is taken back out
+            // of its height, so the controls show up in the gap to the next row and
+            // that gap stays the same whether or not they are showing. (6 = the
+            // VStack's spacing above them.)
+            .padding(.bottom, -(TimelineMetrics.hoverLineHeight + 6))
             .confirmationDialog("Edit from this message?", isPresented: $isConfirmingRevert) {
                 Button("Revert and keep file changes") { revert(restoreFiles: false) }
                 Button("Revert files too", role: .destructive) { revert(restoreFiles: true) }
@@ -151,6 +173,11 @@ struct AssistantMessageRow: View {
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
             }
+            // Same trade as the user row: the hover line's room stays inside the row
+            // (so hovering it works and text never moves), but not in its height, so
+            // the controls fill the gap below instead of adding to it. (2 = the
+            // VStack's spacing above them.)
+            .padding(.bottom, -(TimelineMetrics.hoverLineHeight + 2))
         }
     }
 }
@@ -178,15 +205,15 @@ struct WorkGroup: View {
         if entries.count == 1, let only = entries.first {
             ToolRow(entry: only, workingDirectory: workingDirectory)
         } else {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 Button {
                     withAnimation(.snappy(duration: 0.2)) { isCollapsed.toggle() }
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: TimelineMetrics.iconSpacing) {
                         Image(systemName: WorkGroupSummary.symbol(for: entries))
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .frame(width: 16)
+                            .frame(width: TimelineMetrics.iconWidth)
                         Text(WorkGroupSummary.text(for: entries))
                             .foregroundStyle(.secondary)
                         Image(systemName: "chevron.right")
@@ -195,8 +222,7 @@ struct WorkGroup: View {
                             .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                     }
                     .font(.callout)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
+                    .padding(.trailing, 12)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
@@ -208,12 +234,17 @@ struct WorkGroup: View {
                         Button {
                             withAnimation(.snappy) { showsAll = true }
                         } label: {
-                            Label("\(hidden) earlier steps", systemImage: "ellipsis")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .contentShape(.rect)
+                            HStack(spacing: TimelineMetrics.iconSpacing) {
+                                Image(systemName: "ellipsis")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: TimelineMetrics.iconWidth)
+                                Text("\(hidden) earlier steps")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.trailing, 12)
+                            .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
                     }
@@ -296,12 +327,12 @@ struct ToolRow: View {
     var body: some View {
         if case .tool(let call) = entry.item.content {
             let hasDetail = !call.output.isEmpty || !call.edits.isEmpty || !(call.detail ?? "").isEmpty
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 Button {
                     guard hasDetail else { return }
                     withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
                 } label: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: TimelineMetrics.iconSpacing) {
                         ToolStatusIcon(call: call)
                         Text(ToolPresentation.verb(for: call))
                             .foregroundStyle(.secondary)
@@ -330,15 +361,13 @@ struct ToolRow: View {
                         }
                     }
                     .font(.callout)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+                    .padding(.trailing, 12)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 if isExpanded {
                     ToolDetailView(call: call, workingDirectory: workingDirectory)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 10)
+                        .padding(.trailing, 12)
                 }
             }
         }
@@ -366,7 +395,7 @@ private struct ToolStatusIcon: View {
             }
         }
         .font(.caption)
-        .frame(width: 16)
+        .frame(width: TimelineMetrics.iconWidth)
     }
 }
 
@@ -382,7 +411,7 @@ private struct ToolDetailView: View {
     private static let outputLineLimit = 30
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             if let imagePath = PreviewImages.resolveToolImagePath(for: call, workingDirectory: workingDirectory) {
                 ToolImagePreview(path: imagePath)
             }
@@ -412,7 +441,7 @@ private struct ToolDetailView: View {
                 let lines = output.components(separatedBy: "\n")
                 let collapsed = !showsFullOutput && lines.count > Self.outputLineLimit
                 let visible = collapsed ? lines.prefix(Self.outputLineLimit).joined(separator: "\n") : output
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     Text(visible)
                         .font(.system(.caption, design: .monospaced))
                         .textSelection(.enabled)
@@ -715,7 +744,7 @@ struct TurnFinishedBlock: View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(userEntries) { entry in
                 UserMessageRow(entry: entry, runtime: runtime)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, TimelineMetrics.rowSpacing)
             }
             Button {
                 withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
@@ -738,10 +767,12 @@ struct TurnFinishedBlock: View {
             if showsBody {
                 Divider()
                     .opacity(0.6)
-                    .padding(.vertical, 10)
+                    // Half a row gap on each side, so the header and the body sit one
+                    // row gap apart with the rule in between.
+                    .padding(.vertical, TimelineMetrics.rowSpacing / 2)
 
                 if isExpanded {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(detailGroups) { group in
                         switch group {
                         case .single(let entry):
@@ -764,9 +795,9 @@ struct TurnFinishedBlock: View {
                         }
                     }
                 }
-                .padding(.bottom, collapsedHasResponse ? 10 : 0)
+                .padding(.bottom, collapsedHasResponse ? TimelineMetrics.rowSpacing : 0)
             } else if collapsedHasResponse {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(assistantEntries) { entry in
                         if case .assistant(let message) = entry.item.content, !message.text.isEmpty {
                             MarkdownView(text: message.text).equatable()
@@ -779,7 +810,7 @@ struct TurnFinishedBlock: View {
                         NoticeRow(entry: entry)
                     }
                 }
-                .padding(.bottom, 10)
+                .padding(.bottom, TimelineMetrics.rowSpacing)
             }
 
             if summary.filesChanged > 0 {
