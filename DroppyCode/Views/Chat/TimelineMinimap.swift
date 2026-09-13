@@ -36,7 +36,7 @@ enum TimelineMinimap {
             )
         case .group(.single(let entry)):
             return singleEntry(entry)
-        case .group(.work(let id, let entries)):
+        case .group(.work(let id, let entries, _)):
             let first = entries.first.flatMap { toolLabel(of: $0) } ?? ""
             let last = entries.last.flatMap { toolLabel(of: $0) } ?? ""
             let snippet = first == last || last.isEmpty ? first : first + " … " + last
@@ -149,6 +149,23 @@ enum TimelineMinimap {
 
     private static func nonEmpty(_ value: String, fallback: String) -> String {
         value.isEmpty ? fallback : value
+    }
+}
+
+/// Builds the outline in its own body. The titles read message text, so building them in the
+/// timeline's body made the whole conversation re-render on every streamed token; here only
+/// the rail does.
+struct TimelineMinimapColumn: View {
+    let blocks: [DisplayBlock]
+    var selectedID: String?
+    var onNavigate: (String, Bool) -> Void
+
+    var body: some View {
+        TimelineMinimapRail(
+            entries: TimelineMinimap.entries(for: blocks),
+            selectedID: selectedID,
+            onNavigate: onNavigate
+        )
     }
 }
 

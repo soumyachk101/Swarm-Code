@@ -36,12 +36,13 @@ struct ThreadTimeline: View {
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
         let visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
-        let minimapEntries = TimelineMinimap.entries(for: blocks)
+        // One tick per block, so the rail's size and selection come from block ids alone; the
+        // column reads the text itself, which keeps streaming out of this body.
         return HStack(spacing: 0) {
-            if minimapEntries.count > 1 {
-                TimelineMinimapRail(
-                    entries: minimapEntries,
-                    selectedID: activeMinimapID(entries: minimapEntries),
+            if blocks.count > 1 {
+                TimelineMinimapColumn(
+                    blocks: blocks,
+                    selectedID: activeMinimapID(blocks: blocks),
                     onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
                 )
                 .frame(width: 30)
@@ -53,9 +54,9 @@ struct ThreadTimeline: View {
     /// The block the reader is on: the view at the bottom-anchored scroll
     /// position when it matches a block, else the latest block while pinned
     /// to the bottom, else nothing.
-    private func activeMinimapID(entries: [TimelineMinimapEntry]) -> String? {
-        if let id = position.viewID as? String, entries.contains(where: { $0.id == id }) { return id }
-        if isPinnedToBottom { return entries.last?.id }
+    private func activeMinimapID(blocks: [DisplayBlock]) -> String? {
+        if let id = position.viewID as? String, blocks.contains(where: { $0.id == id }) { return id }
+        if isPinnedToBottom { return blocks.last?.id }
         return nil
     }
 
