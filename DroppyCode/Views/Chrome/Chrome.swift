@@ -575,6 +575,46 @@ struct SidebarSearchField: View {
     }
 }
 
+/// A glass search capsule for a pane's chrome row. Fixed size so it sits aligned with the
+/// other capsules instead of pushing them or clipping the sheet edge.
+struct ChromeSearchField: View {
+    static let width: CGFloat = 200
+
+    @Binding var query: String
+    var prompt = "Search"
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Chrome.secondaryText)
+                .accessibilityHidden(true)
+            TextField(prompt, text: $query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Chrome.primaryText)
+                .lineLimit(1)
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Clear search"))
+            }
+        }
+        .padding(.horizontal, 10)
+        .frame(width: Self.width, height: Chrome.capsuleContentHeight)
+        .padding(.vertical, Chrome.capsuleVerticalPadding)
+        .chromeGlassCapsule()
+        .fixedSize()
+        .onExitCommand { query = "" }
+    }
+}
+
 /// A glass capsule showing the current choice; clicking it opens the choices in a native popover.
 struct GlassPickerButton<Value: Hashable>: View {
     let options: [(value: Value, title: String)]

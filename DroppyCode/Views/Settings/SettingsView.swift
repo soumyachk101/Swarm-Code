@@ -64,6 +64,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 struct SettingsView: View {
     @State private var page: SettingsPage = .general
     @State private var search = ""
+    @State private var modelSearch = ""
     @State private var scrollChrome = ChromeScrollModel()
 
     private var visiblePages: [SettingsPage] {
@@ -153,6 +154,9 @@ struct SettingsView: View {
         .overlay(alignment: .top) {
             HStack(spacing: 10) {
                 ChromeCompactTitle(title: page.title, model: scrollChrome)
+                if page == .models {
+                    ChromeSearchField(query: $modelSearch, prompt: "Search models")
+                }
                 if page == .providers {
                     ProvidersRefreshButton()
                 }
@@ -165,8 +169,7 @@ struct SettingsView: View {
         .detailSheet()
         .onChange(of: page, initial: true) {
             scrollChrome.update(travel: 0)
-            SettingsSearch.shared.query = ""
-            SettingsSearch.shared.prompt = page == .models ? "Search models" : nil
+            modelSearch = ""
         }
     }
 
@@ -180,7 +183,7 @@ struct SettingsView: View {
         case .general: GeneralSettingsPage()
         case .providers: ProvidersSettingsPage()
         case .models:
-            ModelsSettingsPage(query: SettingsSearch.shared.query)
+            ModelsSettingsPage(query: modelSearch)
         case .sourceControl: SourceControlSettingsPage()
         case .shortcuts: ShortcutsSettingsPage()
         case .archive: ArchiveSettingsPage()
