@@ -187,9 +187,28 @@ struct TimelineMinimapRail: View, Equatable {
         GeometryReader { proxy in
             let metrics = MinimapRailMetrics(centeringHeight: centerHeight, count: entries.count)
             ZStack(alignment: .leading) {
-                // Full-height hit area so a scrub never drops between ticks.
+                // The pointer only counts over the tick stack itself. The rest of the column is
+                // left to whatever else is there: the window buttons sit over its top with the
+                // sidebar hidden, and a full-height area took their hover and their clicks.
+                // Within the stack the area is solid, so a scrub never drops between ticks.
                 Color.clear
-                    .contentShape(.rect)
+                    .contentShape(RailHitArea(rect: metrics.hitRect(count: entries.count, railSize: proxy.size)))
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            if !ownsCursorPush {
+                                NSCursor.pointingHand.push()
+                                ownsCursorPush = true
+                            }
+                            // Hovering alone previews the tick under the pointer; only a press jumps.
+                            let id = metrics.entryID(at: location.y, entries: entries)
+                            if hoveredID != id { hoveredID = id }
+                        case .ended:
+                            releaseCursor()
+                            hoveredID = nil
+                        }
+                    }
+                    .gesture(scrubGesture(metrics: metrics))
 
                 ticks(metrics: metrics)
                     .allowsHitTesting(false)
@@ -201,23 +220,7 @@ struct TimelineMinimapRail: View, Equatable {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let location):
-                    if !ownsCursorPush {
-                        NSCursor.pointingHand.push()
-                        ownsCursorPush = true
-                    }
-                    // Hovering alone previews the tick under the pointer; only a press jumps.
-                    let id = metrics.entryID(at: location.y, entries: entries)
-                    if hoveredID != id { hoveredID = id }
-                case .ended:
-                    releaseCursor()
-                    hoveredID = nil
-                }
-            }
             .onDisappear { releaseCursor() }
-            .gesture(scrubGesture(metrics: metrics))
         }
         .animation(hoverAnimation, value: hoveredID)
         .animation(hoverAnimation, value: isPressing)
@@ -395,5 +398,29 @@ private struct MinimapRailMetrics {
         let raw = (y - topInset - Self.tickHeight / 2 + pitch / 2) / pitch
         let clamped = min(max(Int(raw.rounded(.down)), 0), entries.count - 1)
         return entries[clamped].id
+    }
+
+    /// The chrome row floats over the top of the column; ticks under it are veiled and take no pointer.
+    private static var chromeClearance: CGFloat { Chrome.chromeTopPadding + Chrome.capsuleHeight }
+
+    /// Where the rail takes the pointer: the tick stack, reaching half a pitch past its first
+    /// and last tick (as far as `entryID(at:)` gives them), kept out from under the chrome row
+    /// and inside the rail. The column above and below stays clear for whatever is there.
+    func hitRect(count: Int, railSize: CGSize) -> CGRect {
+        guard count > 0 else { return .zero }
+        let top = max(centerY(for: 0) - pitch / 2, Self.chromeClearance)
+        let bottom = min(centerY(for: count - 1) + pitch / 2, railSize.height)
+        guard bottom > top else { return .zero }
+        return CGRect(x: 0, y: top, width: railSize.width, height: bottom - top)
+    }
+}
+
+/// A fixed rectangle in the rail's own space, for its hit test. The rail fills its column, so
+/// the shape's path is the rect as computed, not stretched to the bounds it is asked about.
+private struct RailHitArea: Shape {
+    let rect: CGRect
+
+    func path(in _: CGRect) -> Path {
+        Path(rect)
     }
 }
