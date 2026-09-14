@@ -15,41 +15,57 @@ struct ComposerArea: View {
     @State private var isWorkingExpanded = false
 
     var body: some View {
-        // The top of the box is the tabs' slot: the queue while any follow-ups are queued,
-        // else the changes. The working line takes it while it is free; while it is not, the
-        // line hangs from the bottom of the box instead, and the box moves up to make room.
-        let topSlotTaken = !runtime.followUps.isEmpty || runtime.changeStats != nil
+        // The top of the box is the tabs' slot: the agent's question while it asks one, else
+        // the queue while any follow-ups are queued, else the changes. The working line takes
+        // it while it is free; while it is not, the line hangs from the bottom of the box
+        // instead, and the box moves up to make room.
+        let question = runtime.questions.first
+        let topSlotTaken = question != nil || !runtime.followUps.isEmpty || runtime.changeStats != nil
         let workingEdge: WorkingTab.Edge? = runtime.isRunning ? (topSlotTaken ? .bottom : .top) : nil
+        let slotHasTab = topSlotTaken || workingEdge == .top
         GlassEffectContainer(spacing: 8) {
             VStack(spacing: 12) {
                 ForEach(runtime.approvals) { request in
                     ApprovalCard(request: request, runtime: runtime)
                 }
-                ForEach(runtime.questions) { request in
-                    QuestionCard(request: request, runtime: runtime)
-                }
                 VStack(alignment: .center, spacing: -ThreadChangesTab.overlap) {
-                    if !runtime.followUps.isEmpty {
-                        // The queued steering prompts take the tab slot while any are queued:
-                        // the changes tab hides behind them and reappears once the queue empties.
-                        FollowUpQueueTab(runtime: runtime)
-                            .transition(.softAppear)
-                    } else if let stats = runtime.changeStats {
-                        ThreadChangesTab(
-                            stats: stats,
-                            anchor: { diffPopover.setAnchor($0) }
-                        ) {
-                            runtime.clearDiffFocus()
-                            runtime.diffAnchor = nil
-                            if runtime.diffSelection != nil { runtime.diffSelection = nil }
-                            // Set last so a redundant write never restarts the diff load
-                            // or steals the presentation.
-                            if !runtime.isDiffVisible { runtime.isDiffVisible = true }
+                    // One slot, its tabs stacked on the box's top edge rather than on each
+                    // other: the tab leaving fades where it stood while the one arriving
+                    // fades in over it, and the slot's height glides from one to the other.
+                    // The slot exists only while a tab does, or the stack's overlap would
+                    // pull an empty slot's box up by that much.
+                    if slotHasTab {
+                        ZStack(alignment: .bottom) {
+                            if let question {
+                                // A question takes the slot from whatever held it and stays until
+                                // it is answered; the answer hands the slot straight back.
+                                QuestionTab(request: question, runtime: runtime)
+                                    .id(question.id)
+                                    .transition(.softAppear)
+                            } else if !runtime.followUps.isEmpty {
+                                // The queued steering prompts take the tab slot while any are queued:
+                                // the changes tab hides behind them and reappears once the queue empties.
+                                FollowUpQueueTab(runtime: runtime)
+                                    .transition(.softAppear)
+                            } else if let stats = runtime.changeStats {
+                                ThreadChangesTab(
+                                    stats: stats,
+                                    anchor: { diffPopover.setAnchor($0) }
+                                ) {
+                                    runtime.clearDiffFocus()
+                                    runtime.diffAnchor = nil
+                                    if runtime.diffSelection != nil { runtime.diffSelection = nil }
+                                    // Set last so a redundant write never restarts the diff load
+                                    // or steals the presentation.
+                                    if !runtime.isDiffVisible { runtime.isDiffVisible = true }
+                                }
+                                .transition(.softAppear)
+                            } else if workingEdge == .top {
+                                WorkingTab(runtime: runtime, edge: .top, workingDirectory: workingDirectory, isExpanded: $isWorkingExpanded)
+                                    .transition(.softAppear)
+                            }
                         }
                         .transition(.softAppear)
-                    } else if workingEdge == .top {
-                        WorkingTab(runtime: runtime, edge: .top, workingDirectory: workingDirectory, isExpanded: $isWorkingExpanded)
-                            .transition(.softAppear)
                     }
                     ComposerView(runtime: runtime, workingDirectory: workingDirectory)
                         // Over both tabs' hidden edges, the one below it included.
@@ -63,7 +79,10 @@ struct ComposerArea: View {
                 // insertion animates via its .softAppear transition, and opening the
                 // popover moves nothing, so there is nothing else to drive. The working
                 // tab is the exception: hanging from the bottom it moves the box itself.
+                // So is a question: it is taller than the tab it replaces and the one
+                // that comes back, so the box and the conversation above it slide to fit.
                 .animation(Chrome.panelSlide, value: workingEdge)
+                .animation(Chrome.panelSlide, value: question?.id)
                 // Every turn's steps start closed, as the working line's always did.
                 .onChange(of: runtime.isRunning) { _, running in
                     if !running { isWorkingExpanded = false }
