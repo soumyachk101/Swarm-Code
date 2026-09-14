@@ -20,6 +20,13 @@ final class DeepSeekSession: ProviderSession {
     private var roundTask: Task<StreamRound, Error>?
     private var pendingApprovals: [String: CheckedContinuation<Bool, Never>] = [:]
 
+    /// Runaway guard only. A turn used to stop after 12 rounds and report
+    /// itself as completed, so any real task ended mid-edit with no reply and
+    /// needed a "continue" every dozen tool calls. Real work runs until the
+    /// model answers without tools or the user hits stop; hitting this many
+    /// rounds means the model is looping, and the turn says so.
+    private static let maxRoundsPerTurn = 200
+
     private struct StreamRound: Sendable {
         var content = ""
         var reasoning = ""
@@ -79,9 +86,10 @@ final class DeepSeekSession: ProviderSession {
 
         var finalText = ""
         var rounds = 0
+        var hitCeiling = false
         do {
-            while rounds < 12 {
-                if interrupted { break }
+            while !interrupted {
+                guard rounds < Self.maxRoundsPerTurn else { hitCeiling = true; break }
                 rounds += 1
                 let round = try await streamOneRound(model: currentModel, effort: input.effort)
                 // A round is one API response, so its total is exactly that
@@ -133,6 +141,12 @@ final class DeepSeekSession: ProviderSession {
 
         if interrupted {
             await finishInterrupted()
+            return
+        }
+        if hitCeiling {
+            // The tool results are in history, so "continue" resumes cleanly.
+            onEvent?(.notice(Notice(level: .warning, message: "DeepSeek paused after \(Self.maxRoundsPerTurn) rounds of tool calls in one turn. Say “continue” to pick up where it left off.")))
+            onEvent?(.turnCompleted(status: .interrupted, error: nil))
             return
         }
         if interactionMode == .plan, !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -707,10 +721,16 @@ final class DeepSeekSession: ProviderSession {
     private func trimHistory() {
         // System prompt plus roughly the last 40 exchanges; each exchange is
         // user + assistant + tool messages, so cap the raw message count.
+        // The running turn is never cut: a blind suffix dropped its user
+        // message once the turn passed 50 messages, leaving the model tool
+        // results with no task, so it stopped and asked what to do.
         guard messages.count > 60 else { return }
         let system = messages.first
-        let tail = Array(messages.suffix(50))
-        messages = (system.map { [$0] } ?? []) + tail
+        let body = messages.dropFirst()
+        let turnStart = body.lastIndex { $0["role"]?.string == "user" } ?? body.endIndex
+        let current = Array(body[turnStart...])
+        let earlier = Array(body[..<turnStart].suffix(max(0, 50 - current.count)))
+        messages = (system.map { [$0] } ?? []) + earlier + current
     }
 
     /// Repairs tool-call chains after trimming, compaction or interruption.
