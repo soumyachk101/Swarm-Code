@@ -23,8 +23,8 @@ enum TimelineMinimap {
     @MainActor
     private static func entry(for block: DisplayBlock) -> TimelineMinimapEntry? {
         switch block {
-        case .turn(let id, _, let userEntries, _, _):
-            guard let message = userEntries.compactMap({ userMessage(of: $0) }).first else { return nil }
+        case .turn(let id, _, let entries, _, _):
+            guard let message = entries.compactMap({ userMessage(of: $0) }).first else { return nil }
             return userEntry(id: id, message: message)
         case .group(.single(let entry), _, _):
             guard case .user(let message) = entry.item.content else { return nil }

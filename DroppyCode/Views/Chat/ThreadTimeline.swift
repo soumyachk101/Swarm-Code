@@ -69,7 +69,7 @@ struct ThreadTimeline: View, Equatable {
     var body: some View {
         let entries = runtime.entries
         let meta = TimelineMeta.build(entries)
-        let blocks = DisplayBlock.build(entries, meta: meta, showReasoning: model.settings.showReasoning)
+        let blocks = DisplayBlock.build(entries, meta: meta, showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning)
         if blocks.isEmpty && !runtime.isRunning {
             NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
                 .onAppear {
@@ -85,22 +85,7 @@ struct ThreadTimeline: View, Equatable {
         // Only the newest window of blocks is rendered. Older history loads on demand,
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
-        var visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
-        // While a turn runs and no reply has started, the working line is the last block, one
-        // row like any other, so it arrives and leaves the way every row does. The moment the
-        // reply it is waiting on arrives, the block goes and the reply takes its line; it comes
-        // back below when the agent moves on to another step. The turn's trailing tool run is
-        // not a block of its own meanwhile: the working line carries it (its summary beside the
-        // spinner, its steps behind the chevron) until a reply follows, when it comes back as a
-        // collapsed group above the answer.
-        if runtime.isRunning, runtime.entries.last?.kind != .assistant {
-            var liveWork: [TimelineEntry] = []
-            if case .group(.work(_, let entries, false), _, _) = visible.last {
-                liveWork = entries
-                visible.removeLast()
-            }
-            visible.append(.working(turnID: runtime.entries.last?.turnID, liveWork: liveWork))
-        }
+        let visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
         // The turns a row may offer to revert. Read here, once, so a turn record changing
         // (checkpoints, diffs, anchors) re-runs this body alone; rows get a plain flag that
         // only changes when their own answer does.
@@ -190,21 +175,23 @@ struct ThreadTimeline: View, Equatable {
         await MarkdownView.warm(texts)
     }
 
-    /// How a row arrives and leaves. It arrives softly, like everything in the app, and
+    /// How a block arrives and leaves. It arrives softly, like everything in the app, and
     /// leaves at once: a row that lingered while it faded kept its height in the lazy
-    /// stack a beat longer, and a turn folding dozens of rows into one block doubled the
-    /// content for that beat, with the viewport anchored somewhere in the phantom half.
-    /// The block a finished turn folds into gets no transition at all: it stands exactly
-    /// where its rows stood, in the same frame, and a fade over a block that can run to
-    /// thousands of points is a whole-layer composite the renderer may draw as nothing.
+    /// stack a beat longer. A finished turn's block gets no transition at all: it comes
+    /// back into the window when older history loads, and a fade over a block that can run
+    /// to thousands of points is a whole-layer composite the renderer may draw as nothing.
+    /// A turn that is only starting is a prompt and the working line: it arrives like a row.
     private static func transition(for block: DisplayBlock) -> AnyTransition {
-        if case .turn = block { return .identity }
-        return .asymmetric(
-            insertion: .modifier(active: SoftAppearModifier(isVisible: false), identity: SoftAppearModifier(isVisible: true))
-                .animation(.softAppear),
-            removal: .identity
-        )
+        if case .turn(_, _, _, .some(_), _) = block { return .identity }
+        return rowTransition
     }
+
+    /// A row's own arrival and departure, inside a turn's block as in the stack.
+    static let rowTransition: AnyTransition = .asymmetric(
+        insertion: .modifier(active: SoftAppearModifier(isVisible: false), identity: SoftAppearModifier(isVisible: true))
+            .animation(.softAppear),
+        removal: .identity
+    )
 
     private func timelineScroll(visible: [DisplayBlock], hidden: Int, rewindable: Set<UUID>) -> some View {
         // The outline the rail resolves against, kept in step with what is laid out. Rows
@@ -280,6 +267,12 @@ struct ThreadTimeline: View, Equatable {
             .padding(.bottom, 18)
             // A short conversation still fills the pane, with its messages resting at the bottom.
             .frame(maxWidth: .infinity, minHeight: viewportHeight, alignment: .top)
+            // Inside the content, so the scroll view hosting it can be found for the nudge
+            // that tells the lazy stack where the viewport is (`refreshViewport`).
+            .background(alignment: .top) {
+                ScrollViewProbe { tracking.probe = $0 }
+                    .frame(width: 0, height: 0)
+            }
         }
         .id(runtime.threadID)
         .scrollIndicators(.never)
@@ -302,23 +295,47 @@ struct ThreadTimeline: View, Equatable {
         }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             scrollChrome.update(travel: new.travel)
-            tracking.noteGeometry(offset: new.offset, distanceFromBottom: new.distanceFromBottom)
+            tracking.noteGeometry(offset: new.offset, distanceFromBottom: new.distanceFromBottom, travel: new.travel)
+            // The timeline's own nudge (`refreshViewport`) moves the offset a point and back:
+            // never the reader scrolling, and never a reason to freeze the rows.
+            let nudging = tracking.isNudging
+            tracking.noteNudgeSeen()
             // Movement with no phase behind it: wheel ticks. Content growing under a
             // resting reader is not scrolling.
-            if new.centerY != old.centerY, new.contentHeight == old.contentHeight, !tracking.isCoasting {
+            if !nudging, new.centerY != old.centerY, new.contentHeight == old.contentHeight, !tracking.isCoasting {
                 noteScrollMovement()
             }
             // The offset moving while nothing else did is the reader scrolling: a drag, a flick,
             // or wheel ticks, which report no phase at all. (A snap to the end below moves it
             // too, and lands pinned, which is right.)
             let scrolled = tracking.isUserScrolling
-                || (new.offset != old.offset && new.contentHeight == old.contentHeight
+                || (!nudging && new.offset != old.offset && new.contentHeight == old.contentHeight
                     && new.containerHeight == old.containerHeight && !tracking.isCoasting)
             let atRest = !tracking.isUserScrolling && !tracking.isCoasting
-            if atRest, new.contentHeight < old.contentHeight - 1 {
-                // The content shrank under the viewport: a turn folded, the working line
-                // went. Whatever the rows report, the layout gets checked a beat from now.
-                tracking.armBlankWatch()
+            if atRest, !scrolled {
+                // The content changed shape under a resting reader and an anchor moved the
+                // offset to follow: a turn folded, rows arrived or left, history landed
+                // above. The lazy stack hears nothing of that and keeps the rows it had built
+                // for where the viewport was. Growth the bottom anchor follows is the one
+                // change that cannot carry the viewport off them, since the row that grew
+                // is the row under it and the offset moves by exactly the growth; anything
+                // else is drift, and drift adds up, since a fold under an animation moves
+                // the viewport a little each frame. Past a fraction of the viewport, the
+                // stack gets told where the viewport is now.
+                let shrink = max(0, old.contentHeight - new.contentHeight)
+                let drift = anchorsBottomOnGrowth
+                    ? abs((new.offset - old.offset) - (new.contentHeight - old.contentHeight))
+                    : abs(new.offset - old.offset)
+                if tracking.noteDrift(shrink + drift, tolerance: Self.jumpTolerance(viewportHeight)) {
+                    tracking.armViewportRefresh()
+                }
+                if shrink > 1 {
+                    // Whatever the rows report, the layout gets checked a beat from now.
+                    tracking.armBlankWatch()
+                }
+            } else if scrolled {
+                // The reader's own scrolling tells the stack where the viewport is.
+                tracking.resetDrift()
             }
             if new.distanceFromBottom < -1, atRest {
                 // Past the end of the conversation, showing nothing: the content shrank under
@@ -372,14 +389,15 @@ struct ThreadTimeline: View, Equatable {
         .onChange(of: runtime.isRunning) { _, running in
             // Sending a message always brings the reader back to the conversation's end.
             guard running else {
-                // The turn's end folds its rows into one block. A reader at the end is put
-                // back on the end once that has laid out, with a real scroll request rather
-                // than the anchor alone, so the stack lays out for where the viewport is.
+                // The turn's end folds its steps into its answer, in the block the turn has
+                // had all along. A reader at the end is put back on the end once that has
+                // laid out, and the stack is told where the viewport is either way.
                 if tracking.isPinnedToBottom {
                     DispatchQueue.main.async {
                         withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
                     }
                 }
+                tracking.armViewportRefresh()
                 tracking.armBlankWatch()
                 Task { await warmMarkdown() }
                 return
@@ -393,6 +411,10 @@ struct ThreadTimeline: View, Equatable {
             } else {
                 withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
             }
+            tracking.armViewportRefresh()
+        }
+        .onChange(of: tracking.refreshRequest) {
+            refreshViewport()
         }
         .onChange(of: scrollState.jumpRequest) {
             tracking.isPinnedToBottom = true
@@ -446,11 +468,11 @@ struct ThreadTimeline: View, Equatable {
     /// app or its window comes back to the front.
     ///
     /// Past the end, or pinned to the end and away from it, the timeline snaps to the end,
-    /// as it does on any measured frame. On the conversation but showing nothing, it does
-    /// what the reader would: scrolls, by a point, so the stack lays out for where the
-    /// viewport really is. Still nothing a beat later, the stack is rebuilt; still nothing,
-    /// the timeline goes to the end and stays pinned there. Rows coming back on screen
-    /// end the sequence wherever it is, and a fourth blank in a row is left alone.
+    /// as it does on any measured frame. On the conversation but showing nothing, the stack
+    /// is told where the viewport is (`refreshViewport`). Still nothing a beat later, the
+    /// stack is rebuilt and told again; still nothing, the timeline goes to the end and
+    /// stays pinned there. Rows coming back on screen end the sequence wherever it is, and
+    /// a fourth blank in a row is left alone.
     private func repairLayout() {
         guard viewportHeight > 0, !tracking.isUserScrolling, !tracking.isCoasting else { return }
         let distance = tracking.distanceFromBottom
@@ -458,23 +480,19 @@ struct ThreadTimeline: View, Equatable {
             withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
             // Rows on screen: the snap was all there was to do.
             guard tracking.showsNothing, tracking.blankRepairs < 3 else { return }
+            tracking.armViewportRefresh()
         } else if tracking.showsNothing {
             switch tracking.blankRepairs {
             case 0:
-                // A scroll to a row the stack must lay out: the message the reader was on,
-                // else the end. A point's nudge, the earlier repair, could leave a stack
-                // that had dropped its heights exactly where it was.
-                if let id = tracking.activeBlockID {
-                    withTransaction(Self.unanimated) { position.scrollTo(id: id, anchor: .top) }
-                } else {
-                    withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
-                }
+                refreshViewport()
             case 1:
                 stackGeneration += 1
+                tracking.armViewportRefresh()
             case 2:
                 tracking.isPinnedToBottom = true
                 anchorsBottomOnGrowth = true
                 withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                tracking.armViewportRefresh()
             default:
                 return
             }
@@ -484,6 +502,41 @@ struct ThreadTimeline: View, Equatable {
         // Blank, and something was just done about it: checked again a beat from now.
         tracking.blankRepairs += 1
         tracking.armBlankWatch()
+    }
+
+    /// Drift smaller than this leaves the viewport over rows the lazy stack already built:
+    /// the working line coming or going, a group collapsing. More can carry it off them.
+    private static func jumpTolerance(_ viewportHeight: CGFloat) -> CGFloat {
+        max(48, viewportHeight / 4)
+    }
+
+    /// Tells the lazy stack where the viewport is. The stack builds rows for the viewport
+    /// the scroll view last reported to it, and an anchor moving the offset under it reports
+    /// nothing: a finished turn folding its steps into its answer, rows arriving or leaving,
+    /// history landing above. The viewport can then sit over space the stack has built
+    /// nothing for, showing nothing, and a request to scroll to where the scroll view
+    /// already is changes nothing. A real scroll does: the scroll view moves a point, the
+    /// stack builds for where it is, and it moves back once that is done. A reader at the end
+    /// is put back on the end after that, since the rows just built may have measured
+    /// differently from what the stack had guessed.
+    private func refreshViewport() {
+        guard viewportHeight > 0, !tracking.isUserScrolling, !tracking.isCoasting, !tracking.isNudging else { return }
+        let pinned = tracking.isPinnedToBottom && tracking.distanceFromBottom <= 1
+        if tracking.beginNudge() {
+            tracking.restoreNudge {
+                if pinned {
+                    withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                }
+            }
+        } else if pinned, tracking.travel > 1 {
+            // No scroll view to move (not in a window yet): the offset itself, a point up,
+            // and the end again once the stack has built for it.
+            let y = tracking.offset
+            withTransaction(Self.unanimated) { position.scrollTo(y: y - 1) }
+            DispatchQueue.main.async {
+                withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+            }
+        }
     }
 
     private nonisolated static func visibleHeight(_ proxy: GeometryProxy) -> CGFloat {
@@ -518,10 +571,11 @@ final class TimelineScrollTracking {
     @ObservationIgnored private var userBlockIDs: Set<String> = []
     /// The blocks currently intersecting the viewport, from their own visibility callbacks.
     @ObservationIgnored private var visibleIDs: Set<String> = []
-    /// The offset and the distance from the end as last measured, for a repair to read
-    /// without waiting for another frame, and when the offset last moved.
+    /// The offset, the distance from the end and the travel from the top as last measured,
+    /// for a repair to read without waiting for another frame, and when the offset last moved.
     @ObservationIgnored private(set) var offset: CGFloat = 0
     @ObservationIgnored private(set) var distanceFromBottom: CGFloat = 0
+    @ObservationIgnored private(set) var travel: CGFloat = 0
     @ObservationIgnored private var lastOffsetChangeAt: CFTimeInterval = 0
     @ObservationIgnored private var phaseWatch: Task<Void, Never>?
     @ObservationIgnored private var blankWatch: Task<Void, Never>?
@@ -530,6 +584,26 @@ final class TimelineScrollTracking {
     @ObservationIgnored var blankRepairs = 0
     /// Bumped when the timeline should look at its own layout (`ThreadTimeline.repairLayout`).
     private(set) var checkRequest = 0
+    /// Bumped when the timeline should tell the lazy stack where the viewport is
+    /// (`ThreadTimeline.refreshViewport`).
+    private(set) var refreshRequest = 0
+    /// A view inside the scroll view's content. The scroll view is found through it when a
+    /// nudge is due, so a thread switch that swaps the scroll view needs no bookkeeping.
+    @ObservationIgnored weak var probe: NSView?
+    /// The nudge under way: 0 at rest, 1 moved a point, 2 the scroll view has reported the
+    /// move (so the stack has built for it), 3 moving back.
+    @ObservationIgnored private var nudgePhase = 0
+    @ObservationIgnored private var nudgeOrigin = NSPoint.zero
+    @ObservationIgnored private var refreshPending = false
+    /// Refreshes come in bursts (one change sets off a few as rows measure); a burst that
+    /// never settles is cut off, so a stack that will not build is left alone.
+    @ObservationIgnored private var refreshesInBurst = 0
+    @ObservationIgnored private var burstStartedAt: CFTimeInterval = 0
+    /// How far the offset and the content have moved under the viewport since the stack
+    /// last built for where it is.
+    @ObservationIgnored private var drift: CGFloat = 0
+
+    var isNudging: Bool { nudgePhase != 0 }
 
     /// Rows to show, and none of them on screen.
     var showsNothing: Bool {
@@ -569,10 +643,11 @@ final class TimelineScrollTracking {
         if activeBlockID != nil { activeBlockID = nil }
     }
 
-    func noteGeometry(offset: CGFloat, distanceFromBottom: CGFloat) {
+    func noteGeometry(offset: CGFloat, distanceFromBottom: CGFloat, travel: CGFloat) {
         if offset != self.offset { lastOffsetChangeAt = CACurrentMediaTime() }
         self.offset = offset
         self.distanceFromBottom = distanceFromBottom
+        self.travel = travel
     }
 
     /// A phase's end is not always delivered: content growing under an animated scroll
@@ -583,6 +658,7 @@ final class TimelineScrollTracking {
     func notePhase(_ phase: ScrollPhase) {
         isUserScrolling = phase == .interacting || phase == .decelerating
         isCoasting = phase == .decelerating || phase == .animating
+        if isUserScrolling { drift = 0 }
         phaseWatch?.cancel()
         phaseWatch = nil
         guard isCoasting else { return }
@@ -613,11 +689,106 @@ final class TimelineScrollTracking {
     }
 
     /// The reader is back in front of the timeline: whatever it did unseen, it checks
-    /// itself now, with a full run of repairs available.
+    /// itself now, with a full run of repairs available, and the stack is told where the
+    /// viewport is whatever the rows report.
     func noteReturnToFront() {
         blankRepairs = 0
         checkRequest += 1
         armBlankWatch()
+        armViewportRefresh()
+    }
+
+    // MARK: Telling the stack where the viewport is
+
+    /// Adds a frame's drift; true once it amounts to more than `tolerance`, which starts
+    /// the count over.
+    func noteDrift(_ amount: CGFloat, tolerance: CGFloat) -> Bool {
+        drift += amount
+        guard drift > tolerance else { return false }
+        drift = 0
+        return true
+    }
+
+    func resetDrift() {
+        drift = 0
+    }
+
+    /// Asks the timeline to tell the lazy stack where the viewport is, a beat from now:
+    /// once for however many asks land in the meantime, after any nudge under way, and
+    /// never more than a handful in a row.
+    func armViewportRefresh() {
+        drift = 0
+        guard !refreshPending else { return }
+        let now = CACurrentMediaTime()
+        if now - burstStartedAt > 2 {
+            burstStartedAt = now
+            refreshesInBurst = 0
+        }
+        guard refreshesInBurst < 8 else { return }
+        refreshesInBurst += 1
+        refreshPending = true
+        Task { @MainActor [weak self] in
+            // A nudge under way finishes first; its own measurements are what this one is for.
+            for _ in 0..<12 {
+                guard let self, isNudging else { break }
+                try? await Task.sleep(for: .milliseconds(17))
+            }
+            guard let self else { return }
+            refreshPending = false
+            refreshRequest += 1
+        }
+    }
+
+    private var scrollView: NSScrollView? {
+        guard let probe, probe.window != nil else { return nil }
+        return probe.enclosingScrollView
+    }
+
+    /// Moves the scroll view a point: up, or down at the very top. The move is the scroll
+    /// view's own, so it reports it to the lazy stack the way it reports the reader's
+    /// scrolling. Returns false when there is no scroll view to move or nowhere to move it.
+    func beginNudge() -> Bool {
+        guard nudgePhase == 0, let scrollView else { return false }
+        let clip = scrollView.contentView
+        let origin = clip.bounds.origin
+        for step: CGFloat in [-1, 1] {
+            let wanted = NSRect(origin: NSPoint(x: origin.x, y: origin.y + step), size: clip.bounds.size)
+            let target = clip.constrainBoundsRect(wanted).origin
+            guard abs(target.y - origin.y) > 0.25 else { continue }
+            nudgeOrigin = origin
+            nudgePhase = 1
+            clip.scroll(to: target)
+            scrollView.reflectScrolledClipView(clip)
+            return true
+        }
+        return false
+    }
+
+    /// The scroll view has reported its geometry since the nudge: the stack has built for it.
+    func noteNudgeSeen() {
+        if nudgePhase == 1 { nudgePhase = 2 }
+    }
+
+    /// Moves back to where the nudge started, once the scroll view has reported the move
+    /// (or after a few beats regardless), then runs `completion` for whatever should follow.
+    func restoreNudge(then completion: @escaping @MainActor () -> Void) {
+        Task { @MainActor [weak self] in
+            for _ in 0..<4 {
+                try? await Task.sleep(for: .milliseconds(17))
+                guard let self, nudgePhase == 1 else { break }
+            }
+            guard let self, nudgePhase == 1 || nudgePhase == 2 else { return }
+            nudgePhase = 3
+            if let scrollView {
+                let clip = scrollView.contentView
+                let wanted = NSRect(origin: nudgeOrigin, size: clip.bounds.size)
+                clip.scroll(to: clip.constrainBoundsRect(wanted).origin)
+                scrollView.reflectScrolledClipView(clip)
+            }
+            completion()
+            try? await Task.sleep(for: .milliseconds(17))
+            nudgePhase = 0
+        }
     }
 
     /// Takes the block in the middle of the on-screen run — a reply filling the viewport is
@@ -628,6 +799,40 @@ final class TimelineScrollTracking {
         let middle = onScreen[onScreen.count / 2].offset
         let resolved = outlineIDs[...middle].last { userBlockIDs.contains($0) }
         if resolved != activeBlockID { activeBlockID = resolved }
+    }
+}
+
+/// A view of no size inside the scroll view's content, through which the scroll view is
+/// found (`TimelineScrollTracking.beginNudge`).
+private struct ScrollViewProbe: NSViewRepresentable {
+    let onResolve: (NSView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        ProbeView(onResolve: onResolve)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? ProbeView)?.onResolve = onResolve
+    }
+
+    private final class ProbeView: NSView {
+        var onResolve: (NSView) -> Void
+
+        init(onResolve: @escaping (NSView) -> Void) {
+            self.onResolve = onResolve
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { nil }
+
+        /// Only a probe: never in the way of a click or a cursor update.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window != nil { onResolve(self) }
+        }
     }
 }
 
@@ -747,20 +952,27 @@ enum TimelineGroup: Identifiable, Equatable {
     }
 }
 
-/// A finished turn collapses to its final response plus its file summary, so the
-/// chat stays clean. The chevron re-opens the turn's full steps. Running turns
-/// and entries without a turn render as plain groups, exactly as before.
+/// A turn is one block of the timeline from the moment it starts. While it runs, the block
+/// shows its prompt, its steps and replies as rows, and the working line; when it ends it
+/// folds to its final response plus its file summary, so the chat stays clean, and the
+/// chevron re-opens the full steps. One block throughout, so rows arriving and leaving
+/// while the turn runs, and the fold at its end, change what the block shows and never
+/// which blocks the lazy stack holds: the stack keeps its place through all of it.
+/// Entries without a turn render as plain groups.
 ///
 /// Equatable, so a rebuilt timeline can tell an unchanged block from a changed one and
 /// skip its row. Entries compare by identity: what a row shows of an entry it observes
 /// itself, so the same entry object always means the same row.
 enum DisplayBlock: Identifiable, Equatable {
-    case turn(id: String, turnID: UUID, userEntries: [TimelineEntry], content: [TimelineEntry], summary: TurnSummary)
+    /// A turn, with its entries in order (thinking and the end marker left out): folded
+    /// once it has a summary, running (or ended without its marker) until then.
+    /// `showsWorking` is the working line at the end of the running turn.
+    case turn(id: String, turnID: UUID, entries: [TimelineEntry], summary: TurnSummary?, showsWorking: Bool)
     /// A plain group, with the facts its row needs from the turn it belongs to: the turn's
     /// summary on the turn's last reply, and whether the turn produced a reply on its end marker.
     case group(TimelineGroup, summary: TurnSummary?, hasReply: Bool)
-    /// The running turn's working line, with the tool run in progress it carries. Never built
-    /// from the entries: the timeline appends it while the turn is waiting on a reply.
+    /// The working line on its own, for a running turn whose latest entries belong to no
+    /// turn. Never built from the entries: the timeline appends it while waiting on a reply.
     case working(turnID: UUID?, liveWork: [TimelineEntry])
 
     var id: String {
@@ -784,16 +996,16 @@ enum DisplayBlock: Identifiable, Equatable {
     /// standalone user message). Only these get rail ticks.
     var hasUserMessage: Bool {
         switch self {
-        case .turn(_, _, let userEntries, _, _): !userEntries.isEmpty
+        case .turn(_, _, let entries, _, _): entries.contains { $0.kind == .user }
         case .group(.single(let entry), _, _): entry.kind == .user
         case .group(.work, _, _), .working: false
         }
     }
 
     @MainActor
-    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool) -> [DisplayBlock] {
+    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool) -> [DisplayBlock] {
         // Partition into contiguous runs sharing one turnID (nil groups together),
-        // so a finished turn becomes one collapsible block.
+        // so every turn becomes one block.
         var runs: [(turnID: UUID?, entries: [TimelineEntry])] = []
         for entry in entries {
             if runs.last?.turnID == entry.turnID {
@@ -802,19 +1014,33 @@ enum DisplayBlock: Identifiable, Equatable {
                 runs.append((entry.turnID, [entry]))
             }
         }
+        // While a turn runs and no reply has started, the working line ends its block. The
+        // moment the reply it is waiting on arrives, the line goes and the reply takes its
+        // place; it comes back below when the agent moves on to another step.
+        let waiting = isRunning && entries.last?.kind != .assistant
         var blocks: [DisplayBlock] = []
-        for run in runs {
-            if let turnID = run.turnID, let summary = meta.summaryByTurn[turnID] {
-                let users = run.entries.filter { $0.kind == .user }
-                let content = run.entries.filter { $0.kind != .user && $0.kind != .turnEnd && $0.kind != .reasoning }
-                blocks.append(.turn(id: "turn-\(turnID.uuidString)", turnID: turnID, userEntries: users, content: content, summary: summary))
+        for (index, run) in runs.enumerated() {
+            if let turnID = run.turnID {
+                // Thinking lives behind the working line's chevron, never as a row of its own.
+                let rows = run.entries.filter { $0.kind != .turnEnd && $0.kind != .reasoning }
+                let summary = meta.summaryByTurn[turnID]
+                let showsWorking = waiting && summary == nil && index == runs.count - 1
+                blocks.append(.turn(id: "turn-\(turnID.uuidString)", turnID: turnID, entries: rows, summary: summary, showsWorking: showsWorking))
             } else {
                 for group in TimelineGroup.build(run.entries, showReasoning: showReasoning) {
                     blocks.append(.group(group, summary: meta.summary(for: group), hasReply: meta.hasReply(for: group)))
                 }
             }
         }
+        if waiting, !(blocks.last?.carriesWorkingLine ?? false) {
+            blocks.append(.working(turnID: entries.last?.turnID, liveWork: []))
+        }
         return blocks
+    }
+
+    private var carriesWorkingLine: Bool {
+        if case .turn(_, _, _, _, true) = self { return true }
+        return false
     }
 }
 
@@ -900,19 +1126,79 @@ private struct DisplayBlockView: View, Equatable {
         switch block {
         case .group(let group, let summary, let hasReply):
             TimelineGroupView(group: group, runtime: runtime, summary: summary, hasReply: hasReply, context: context)
-        case .turn(_, let turnID, let userEntries, let content, let summary):
-            TurnFinishedBlock(
-                runtime: runtime,
-                turnID: turnID,
-                summary: summary,
-                userEntries: userEntries,
-                content: content,
-                workingDirectory: context.workingDirectory,
-                canUndo: context.canRewind
-            )
+        case .turn(_, let turnID, let entries, let summary, let showsWorking):
+            // The fold is a change of what the block shows, in the same frame, with no
+            // transition: a fade over a block that can run to thousands of points is a
+            // whole-layer composite the renderer may draw as nothing.
+            if let summary {
+                TurnFinishedBlock(
+                    runtime: runtime,
+                    turnID: turnID,
+                    summary: summary,
+                    userEntries: entries.filter { $0.kind == .user },
+                    content: entries.filter { $0.kind != .user },
+                    workingDirectory: context.workingDirectory,
+                    canUndo: context.canRewind
+                )
+                .transition(.identity)
+            } else {
+                TurnRunningBlock(runtime: runtime, entries: entries, showsWorking: showsWorking, context: context)
+                    .transition(.identity)
+            }
         case .working(_, let liveWork):
             WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
         }
+    }
+}
+
+/// A turn while it runs (or one that ended without its marker, the app having quit under
+/// it): its prompt, its steps and replies, and anything sent to steer it, as rows of their
+/// own in order, each arriving like a row of the stack, and the working line at the end
+/// while the agent is between replies. The turn's trailing tool run is not a row of its own
+/// meanwhile: the working line carries it (its summary beside the spinner, its steps behind
+/// the chevron) until a reply follows, when it comes back as a collapsed group above the answer.
+private struct TurnRunningBlock: View {
+    let runtime: ThreadRuntime
+    let entries: [TimelineEntry]
+    let showsWorking: Bool
+    let context: RowContext
+
+    var body: some View {
+        var groups = TimelineGroup.build(entries, showReasoning: false)
+        var liveWork: [TimelineEntry] = []
+        if showsWorking, case .work(_, let entries, false)? = groups.last {
+            liveWork = entries
+            groups.removeLast()
+        }
+        return VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+            ForEach(groups) { group in
+                TurnRow(group: group, runtime: runtime, context: context)
+                    .equatable()
+                    .transition(ThreadTimeline.rowTransition)
+            }
+            if showsWorking {
+                WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
+                    .transition(ThreadTimeline.rowTransition)
+            }
+        }
+    }
+}
+
+/// One row of a running turn. Equatable, so a new entry re-renders its own row and none
+/// of the rows above it.
+private struct TurnRow: View, Equatable {
+    let group: TimelineGroup
+    let runtime: ThreadRuntime
+    let context: RowContext
+
+    nonisolated static func == (lhs: TurnRow, rhs: TurnRow) -> Bool {
+        lhs.group == rhs.group && lhs.runtime === rhs.runtime && lhs.context == rhs.context
+    }
+
+    var body: some View {
+        // A running turn has no summary yet and no end marker: nothing for a row to carry
+        // from the turn beyond the group itself.
+        TimelineGroupView(group: group, runtime: runtime, summary: nil, hasReply: false, context: context)
     }
 }
 
