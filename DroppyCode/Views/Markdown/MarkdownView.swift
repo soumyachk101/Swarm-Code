@@ -3,36 +3,58 @@ import SwiftUI
 
 struct MarkdownView: View, Equatable {
     let text: String
+    /// True while the text is still arriving. A streaming message parses through a slot of
+    /// its own instead of the shared cache: it changes on every flush, and each of those
+    /// would otherwise take a cache entry away from a finished message that scrolling back
+    /// through the thread will ask for again.
+    var isStreaming = false
 
     /// Equal text renders equally, so finished replies are skipped entirely while a
     /// new reply streams or the timeline rebuilds around them.
     nonisolated static func == (lhs: MarkdownView, rhs: MarkdownView) -> Bool {
-        lhs.text == rhs.text
+        lhs.text == rhs.text && lhs.isStreaming == rhs.isStreaming
     }
 
     var body: some View {
-        let blocks = Self.blocks(for: text)
+        let blocks = Self.blocks(for: text, streaming: isStreaming)
+        let last = blocks.count - 1
         VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
                 MarkdownBlockView(block: block)
                     .equatable()
+                    // Only the block still being written is streaming; the ones above it are
+                    // settled and cache like any finished text.
+                    .environment(\.markdownStreaming, isStreaming && index == last)
                     .transition(.softAppear)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Parsed blocks by source. Every timeline rebuild re-renders visible rows, but a
-    /// finished message parses to the same blocks, so each distinct text parses once.
-    @MainActor private static var blockCache: [String: [MarkdownBlock]] = [:]
-    private static let blockCacheLimit = 200
+    /// Parsed blocks by source. Rows are rebuilt as they scroll into view, but a finished
+    /// message parses to the same blocks, so each distinct text parses once.
+    @MainActor private static var blockCache = RecentCache<String, [MarkdownBlock]>(limit: 200)
+    /// The one streaming message's latest parse, so re-renders between flushes never parse.
+    @MainActor private static var streamingParse: (text: String, blocks: [MarkdownBlock])?
 
     @MainActor
-    static func blocks(for text: String) -> [MarkdownBlock] {
-        if let cached = blockCache[text] { return cached }
-        let parsed = MarkdownParser.parse(text)
-        if blockCache.count >= blockCacheLimit { blockCache.removeAll(keepingCapacity: true) }
-        blockCache[text] = parsed
+    static func blocks(for text: String, streaming: Bool = false) -> [MarkdownBlock] {
+        if streaming {
+            if let parse = streamingParse, parse.text == text { return parse.blocks }
+            let parsed = MarkdownParser.parse(text)
+            streamingParse = (text, parsed)
+            return parsed
+        }
+        if let cached = blockCache.value(for: text) { return cached }
+        // A message that just finished streaming is already parsed; keep that parse.
+        let parsed: [MarkdownBlock]
+        if let parse = streamingParse, parse.text == text {
+            parsed = parse.blocks
+            streamingParse = nil
+        } else {
+            parsed = MarkdownParser.parse(text)
+        }
+        blockCache.insert(parsed, for: text)
         return parsed
     }
 }
@@ -121,12 +143,32 @@ struct MarkdownBlockView: View, Equatable {
 /// Kale URL's (`https://…`) kwamen volledig in beeld. Afspraak: toon de titel
 /// (expliciete `[titel](url)` of host+pad zonder scheme) met de favicon ervoor.
 enum RichLink {
-    @MainActor private static var prettyCache: [String: AttributedString] = [:]
-    private static let prettyCacheLimit = 600
+    @MainActor private static var prettyCache = RecentCache<String, AttributedString>(limit: 400)
+    /// The paragraph still being streamed, kept apart so its every flush leaves the cache alone.
+    @MainActor private static var streamingPretty: (source: String, value: AttributedString)?
 
     @MainActor
-    static func prettyAttributed(_ source: String) -> AttributedString {
-        if let hit = prettyCache[source] { return hit }
+    static func prettyAttributed(_ source: String, streaming: Bool = false) -> AttributedString {
+        if streaming {
+            if let pretty = streamingPretty, pretty.source == source { return pretty.value }
+            let value = build(source)
+            streamingPretty = (source, value)
+            return value
+        }
+        if let hit = prettyCache.value(for: source) { return hit }
+        let value: AttributedString
+        if let pretty = streamingPretty, pretty.source == source {
+            value = pretty.value
+            streamingPretty = nil
+        } else {
+            value = build(source)
+        }
+        prettyCache.insert(value, for: source)
+        return value
+    }
+
+    @MainActor
+    private static func build(_ source: String) -> AttributedString {
         let base = baseAttributed(source)
         var result = AttributedString()
         for run in base.runs {
@@ -150,14 +192,12 @@ enum RichLink {
             linkSlice.inlinePresentationIntent = intent
             result.append(linkSlice)
         }
-        if prettyCache.count >= prettyCacheLimit { prettyCache.removeAll(keepingCapacity: true) }
-        prettyCache[source] = result
         return result
     }
 
     @MainActor
-    static func linkHosts(for source: String) -> [String] {
-        let pretty = prettyAttributed(source)
+    static func linkHosts(for source: String, streaming: Bool = false) -> [String] {
+        let pretty = prettyAttributed(source, streaming: streaming)
         var hosts: [String] = []
         var seen = Set<String>()
         for run in pretty.runs {
@@ -221,8 +261,8 @@ enum RichLink {
     }
 
     @MainActor
-    static func containsLinks(in source: String) -> Bool {
-        prettyAttributed(source).runs.contains { $0.link != nil }
+    static func containsLinks(in source: String, streaming: Bool = false) -> Bool {
+        prettyAttributed(source, streaming: streaming).runs.contains { $0.link != nil }
     }
 
     static func isBareDisplay(_ display: String, url: URL) -> Bool {
@@ -260,6 +300,11 @@ private struct MarkdownDimmedKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+/// Whether the paragraph's text is still arriving, so its parses bypass the shared caches.
+private struct MarkdownStreamingKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
 extension EnvironmentValues {
     var markdownPointSize: CGFloat {
         get { self[MarkdownPointSizeKey.self] }
@@ -268,6 +313,10 @@ extension EnvironmentValues {
     var markdownDimmed: Bool {
         get { self[MarkdownDimmedKey.self] }
         set { self[MarkdownDimmedKey.self] = newValue }
+    }
+    var markdownStreaming: Bool {
+        get { self[MarkdownStreamingKey.self] }
+        set { self[MarkdownStreamingKey.self] = newValue }
     }
 }
 
@@ -322,8 +371,14 @@ enum FaviconCache {
 
 @MainActor
 enum RichInlineBuilder {
-    static func text(for source: String) -> Text {
-        let pretty = RichLink.prettyAttributed(source)
+    /// Built runs by source. Paragraphs are rebuilt whenever their row scrolls into view,
+    /// and joining the runs is the same work every time, so a settled paragraph keeps its
+    /// text. Only link-free paragraphs come through here, so no favicon can go stale in it.
+    private static var textCache = RecentCache<String, Text>(limit: 400)
+
+    static func text(for source: String, streaming: Bool = false) -> Text {
+        if !streaming, let cached = textCache.value(for: source) { return cached }
+        let pretty = RichLink.prettyAttributed(source, streaming: streaming)
         var out = Text("")
         for run in pretty.runs {
             let slice = Text(AttributedString(pretty[run.range]))
@@ -339,6 +394,7 @@ enum RichInlineBuilder {
                 out = Text("\(out)\(slice)")
             }
         }
+        if !streaming { textCache.insert(out, for: source) }
         return out
     }
 }
@@ -347,6 +403,7 @@ struct InlineText: View {
     let source: String
     @Environment(\.markdownPointSize) private var pointSize
     @Environment(\.markdownDimmed) private var dimmed
+    @Environment(\.markdownStreaming) private var streaming
     @State private var faviconRevision = 0
 
     init(_ source: String) {
@@ -356,12 +413,12 @@ struct InlineText: View {
     var body: some View {
         // faviconRevision read so loaded favicons rebuild the text.
         let _ = faviconRevision
-        if RichLink.containsLinks(in: source) {
-            LinkParagraphView(source: source, pointSize: pointSize, dimmed: dimmed, revision: faviconRevision)
+        if RichLink.containsLinks(in: source, streaming: streaming) {
+            LinkParagraphView(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming, revision: faviconRevision)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .task(id: source) { await fetchFavicons() }
         } else {
-            RichInlineBuilder.text(for: source)
+            RichInlineBuilder.text(for: source, streaming: streaming)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -369,7 +426,8 @@ struct InlineText: View {
     }
 
     private func fetchFavicons() async {
-        let hosts = await MainActor.run { RichLink.linkHosts(for: source) }
+        let streaming = streaming
+        let hosts = await MainActor.run { RichLink.linkHosts(for: source, streaming: streaming) }
         var changed = false
         for host in hosts where FaviconCache.cached(host: host) == nil {
             if await FaviconCache.image(for: host) != nil { changed = true }
@@ -378,8 +436,8 @@ struct InlineText: View {
     }
 
     @MainActor
-    static func attributed(_ source: String) -> AttributedString {
-        RichLink.prettyAttributed(source)
+    static func attributed(_ source: String, streaming: Bool = false) -> AttributedString {
+        RichLink.prettyAttributed(source, streaming: streaming)
     }
 }
 
@@ -396,9 +454,11 @@ struct CodeBlock: View {
     private static let collapsedLineLimit = 120
 
     var body: some View {
-        let lines = code.components(separatedBy: "\n")
-        let truncated = !showsAll && lines.count > Self.collapsedLineLimit
-        let visible = truncated ? lines.prefix(Self.collapsedLineLimit).joined(separator: "\n") : code
+        // A count of newlines, not a split: hovering re-runs this body, and a big dump split
+        // into an array of lines on every hover is what made the copy button feel sticky.
+        let lineCount = 1 + code.utf8.count { $0 == 0x0A }
+        let truncated = !showsAll && lineCount > Self.collapsedLineLimit
+        let visible = truncated ? Self.head(of: code, lines: Self.collapsedLineLimit) : code
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(language ?? "code")
@@ -420,8 +480,8 @@ struct CodeBlock: View {
                     .padding(.bottom, 12)
                     .padding(.top, 4)
             }
-            if lines.count > Self.collapsedLineLimit {
-                Button(showsAll ? "Show less" : "Show all \(lines.count) lines") {
+            if lineCount > Self.collapsedLineLimit {
+                Button(showsAll ? "Show less" : "Show all \(lineCount) lines") {
                     showsAll.toggle()
                 }
                 .buttonStyle(.link)
@@ -433,6 +493,20 @@ struct CodeBlock: View {
         }
         .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 12))
         .onHover { isHovering = $0 }
+    }
+
+    /// The first `lines` lines of `code`, without splitting the rest.
+    private static func head(of code: String, lines: Int) -> String {
+        var remaining = lines
+        var end = code.utf8.startIndex
+        for index in code.utf8.indices where code.utf8[index] == 0x0A {
+            remaining -= 1
+            if remaining == 0 {
+                end = index
+                break
+            }
+        }
+        return remaining == 0 ? String(code[..<end]) : code
     }
 }
 
@@ -448,6 +522,8 @@ struct TableBlock: View {
         let visible = showsAll ? rows : Array(rows.prefix(Self.collapsedRowLimit))
         VStack(alignment: .leading, spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
+                // Cells go through the shared cache even while the table streams: only its
+                // last row changes between flushes, and the rest hit.
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                     GridRow {
                         ForEach(header.indices, id: \.self) { column in

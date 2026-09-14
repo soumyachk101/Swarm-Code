@@ -38,6 +38,15 @@ final class TimelineEntry: Identifiable {
     }
 }
 
+/// Entries compare by identity: a row observes its entry's content itself, so the same
+/// object always means the same row, and a rebuilt timeline can skip the rows whose
+/// entries it already shows.
+extension TimelineEntry: Equatable {
+    nonisolated static func == (lhs: TimelineEntry, rhs: TimelineEntry) -> Bool {
+        lhs === rhs
+    }
+}
+
 struct ComposerDraft: Equatable {
     var text = ""
     var attachments: [Attachment] = []

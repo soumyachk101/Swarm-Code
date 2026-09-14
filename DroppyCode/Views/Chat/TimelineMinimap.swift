@@ -26,24 +26,31 @@ enum TimelineMinimap {
         case .turn(let id, _, let userEntries, _, _):
             guard let message = userEntries.compactMap({ userMessage(of: $0) }).first else { return nil }
             return userEntry(id: id, message: message)
-        case .group(.single(let entry)):
+        case .group(.single(let entry), _, _):
             guard case .user(let message) = entry.item.content else { return nil }
             return userEntry(id: entry.id, message: message)
-        case .group(.work):
+        case .group(.work, _, _):
             return nil
         }
     }
 
+    /// Titles by block id. A sent message never changes, so its title and snippet are cut
+    /// once per thread rather than on every pass over the outline.
+    @MainActor private static var entryCache = RecentCache<String, TimelineMinimapEntry>(limit: 400)
+
     @MainActor
     private static func userEntry(id: String, message: UserMessage) -> TimelineMinimapEntry {
+        if let cached = entryCache.value(for: id) { return cached }
         let title = userTitle(for: message)
         let snippet = preview(message.text)
-        return TimelineMinimapEntry(
+        let entry = TimelineMinimapEntry(
             id: id,
             title: title,
             snippet: snippet.isEmpty || snippet == title ? "" : snippet,
             weight: weight(of: message.text)
         )
+        entryCache.insert(entry, for: id)
+        return entry
     }
 
     private static func userTitle(for message: UserMessage) -> String {
@@ -81,22 +88,71 @@ enum TimelineMinimap {
 
 /// Builds the outline in its own body. The titles read message text, so building them in the
 /// timeline's body made the whole conversation re-render on every streamed token; here only
-/// the rail does.
-struct TimelineMinimapColumn: View {
+/// the rail does. Equal blocks build an equal outline, so a timeline pass that changed no
+/// block skips this entirely.
+struct TimelineMinimapColumn: View, Equatable {
     let blocks: [DisplayBlock]
+    /// Which blocks are on screen and whether the timeline follows new text. Scrolling
+    /// writes here, and only the selection below reads it.
+    let tracking: TimelineScrollTracking
     /// Full chat-column height. Ticks centre in this, not in the timeline, so the
     /// composer and queue tab growing never shifts them.
     var centerHeight: CGFloat
-    var selectedID: String?
     var onNavigate: (String, Bool) -> Void
+
+    nonisolated static func == (lhs: TimelineMinimapColumn, rhs: TimelineMinimapColumn) -> Bool {
+        lhs.blocks == rhs.blocks && lhs.tracking === rhs.tracking && lhs.centerHeight == rhs.centerHeight
+    }
+
+    var body: some View {
+        MinimapSelection(
+            entries: TimelineMinimap.entries(for: blocks),
+            outline: blocks.map { MinimapOutlineBlock(id: $0.id, hasUserMessage: $0.hasUserMessage) },
+            tracking: tracking,
+            centerHeight: centerHeight,
+            onNavigate: onNavigate
+        )
+    }
+}
+
+/// A block's place in the outline: its id and whether it earns a tick.
+private struct MinimapOutlineBlock: Equatable {
+    let id: String
+    let hasUserMessage: Bool
+}
+
+/// Lights the tick for the block the reader is on. This is the only view that observes the
+/// scroll tracking, so every visibility change while scrolling re-runs just this small body.
+private struct MinimapSelection: View {
+    let entries: [TimelineMinimapEntry]
+    let outline: [MinimapOutlineBlock]
+    let tracking: TimelineScrollTracking
+    let centerHeight: CGFloat
+    let onNavigate: (String, Bool) -> Void
 
     var body: some View {
         TimelineMinimapRail(
-            entries: TimelineMinimap.entries(for: blocks),
+            entries: entries,
             centerHeight: centerHeight,
-            selectedID: selectedID,
+            selectedID: activeID,
             onNavigate: onNavigate
         )
+        .equatable()
+    }
+
+    /// The block the reader is on: the newest message while the timeline is pinned to the
+    /// bottom, otherwise the message whose section straddles the viewport's top edge. A
+    /// block on screen whose top edge is not owns that edge — at most one can — so the lit
+    /// tick moves the moment the next message reaches the top, however tall blocks are.
+    private var activeID: String? {
+        if tracking.isPinnedToBottom { return outline.last(where: \.hasUserMessage)?.id }
+        let onScreen = tracking.onScreenBlockIDs
+        let topEdgeOnScreen = tracking.topEdgeOnScreenBlockIDs
+        if let top = outline.firstIndex(where: { onScreen.contains($0.id) && !topEdgeOnScreen.contains($0.id) }),
+           let current = outline[...top].last(where: \.hasUserMessage) {
+            return current.id
+        }
+        return outline.first { $0.hasUserMessage && onScreen.contains($0.id) }?.id
     }
 }
 
@@ -104,7 +160,7 @@ struct TimelineMinimapColumn: View {
 /// a preview bubble on hover, tap or drag to jump. Mounted for the whole
 /// life of a thread, so it costs nothing at rest: no timers, no continuous
 /// animation, plain rects only, and the bubble mounts solely while hovering.
-struct TimelineMinimapRail: View {
+struct TimelineMinimapRail: View, Equatable {
     let entries: [TimelineMinimapEntry]
     /// Full chat-column height. Ticks centre in this, so composer and queue
     /// growth never moves them; the container stays timeline-height, so hit
@@ -114,6 +170,12 @@ struct TimelineMinimapRail: View {
     /// Live scrub reports `animated: false` (the timeline tracks 1:1);
     /// release reports `true` (one glide to the landing block).
     var onNavigate: (String, Bool) -> Void
+
+    /// The same outline with the same tick lit draws the same rail, so a visibility change
+    /// that moved nothing is skipped here.
+    nonisolated static func == (lhs: TimelineMinimapRail, rhs: TimelineMinimapRail) -> Bool {
+        lhs.entries == rhs.entries && lhs.centerHeight == rhs.centerHeight && lhs.selectedID == rhs.selectedID
+    }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 

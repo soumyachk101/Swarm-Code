@@ -37,15 +37,22 @@ enum Storage {
         return (try? JSONDecoder.storage.decode(Library.self, from: data)) ?? Library()
     }
 
+    /// A thread's history. Taken from the prefetch when it was decoded ahead of time, so
+    /// opening a thread the sidebar warmed costs no parse on the main thread.
     static func loadDocument(_ id: UUID) -> ThreadDocument {
-        guard let data = try? Data(contentsOf: threadURL(id)),
-              let document = try? JSONDecoder.storage.decode(ThreadDocument.self, from: data) else {
-            return ThreadDocument(threadID: id)
-        }
-        return document
+        DocumentPrefetch.shared.take(id) ?? decodeDocument(id) ?? ThreadDocument(threadID: id)
+    }
+
+    /// Reads and decodes a thread file. Safe from any thread: the decoder is made here.
+    nonisolated static func decodeDocument(_ id: UUID) -> ThreadDocument? {
+        guard let data = try? Data(contentsOf: threadURL(id)) else { return nil }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(ThreadDocument.self, from: data)
     }
 
     static func deleteDocument(_ id: UUID) {
+        DocumentPrefetch.shared.forget(id)
         try? FileManager.default.removeItem(at: threadURL(id))
     }
 
@@ -78,6 +85,53 @@ enum MimeType {
         case "json": "application/json"
         case "md", "markdown": "text/markdown"
         default: "text/plain"
+        }
+    }
+}
+
+/// Thread histories decoded ahead of time, off the main thread. A thread's file can run to a
+/// megabyte, and decoding that inside the click that opens it is a visible hitch. Launch
+/// warms the threads most likely to be opened next and the sidebar warms a row the pointer
+/// rests on; a runtime takes its document from here when it is ready and decodes on the
+/// spot when it is not. A document is handed out once: the runtime that took it owns the
+/// history from then on, and a decode that lands after that is dropped.
+final class DocumentPrefetch: @unchecked Sendable {
+    static let shared = DocumentPrefetch()
+
+    private let lock = NSLock()
+    private var ready: [UUID: ThreadDocument] = [:]
+    private var pending: Set<UUID> = []
+    private var claimed: Set<UUID> = []
+
+    func warm(_ ids: [UUID]) {
+        let fresh: [UUID] = lock.withLock {
+            let fresh = ids.filter { ready[$0] == nil && !pending.contains($0) && !claimed.contains($0) }
+            pending.formUnion(fresh)
+            return fresh
+        }
+        guard !fresh.isEmpty else { return }
+        Task.detached(priority: .utility) { [self] in
+            for id in fresh {
+                let document = Storage.decodeDocument(id)
+                lock.withLock {
+                    pending.remove(id)
+                    if let document, !claimed.contains(id) { ready[id] = document }
+                }
+            }
+        }
+    }
+
+    func take(_ id: UUID) -> ThreadDocument? {
+        lock.withLock {
+            claimed.insert(id)
+            return ready.removeValue(forKey: id)
+        }
+    }
+
+    func forget(_ id: UUID) {
+        lock.withLock {
+            ready[id] = nil
+            claimed.remove(id)
         }
     }
 }

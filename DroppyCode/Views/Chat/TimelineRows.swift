@@ -21,6 +21,9 @@ enum TimelineMetrics {
 struct UserMessageRow: View {
     let entry: TimelineEntry
     let runtime: ThreadRuntime
+    /// Whether the message's turn can be reverted right now. Decided by the timeline, which
+    /// reads the provider and the turn list once for every row.
+    let canRevert: Bool
 
     @State private var isHovering = false
     @State private var isConfirmingRevert = false
@@ -72,11 +75,6 @@ struct UserMessageRow: View {
         }
     }
 
-    private var canRevert: Bool {
-        guard !runtime.isRunning, let turnID = entry.turnID, let thread = runtime.thread else { return false }
-        return thread.provider.supportsRewind && runtime.turns.contains { $0.id == turnID }
-    }
-
     private func revert(restoreFiles: Bool) {
         guard let turnID = entry.turnID else { return }
         Task { await runtime.revert(to: turnID, restoreFiles: restoreFiles) }
@@ -115,6 +113,14 @@ struct AttachmentThumbnail: View {
     /// The thumbnail's own NSView, handed to the panel on tap so the arrow
     /// lands on the tapped photo rather than the strip's middle.
     @State private var ownAnchor = WeakView()
+
+    init(attachment: Attachment, size: CGFloat = 56, preview: AttachmentPreviewCoordinator) {
+        self.attachment = attachment
+        self.size = size
+        self.preview = preview
+        // A photo shown before starts out drawn, so scrolling back to it never fades it in again.
+        _image = State(initialValue: attachment.isImage ? ThumbnailMemory.image(for: attachment.path, pointSize: size) : nil)
+    }
 
     var body: some View {
         Button {
@@ -160,8 +166,13 @@ struct AttachmentThumbnail: View {
         }
         .task(id: attachment.path) {
             guard attachment.isImage else { return }
-            let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size)
-            withAnimation(.easeOut(duration: 0.15)) { image = thumbnail?.image }
+            if let known = ThumbnailMemory.image(for: attachment.path, pointSize: size) {
+                if image !== known { image = known }
+                return
+            }
+            guard let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size) else { return }
+            ThumbnailMemory.store(thumbnail.image, for: attachment.path, pointSize: size)
+            withAnimation(.easeOut(duration: 0.15)) { image = thumbnail.image }
         }
     }
 }
@@ -176,7 +187,7 @@ struct AssistantMessageRow: View {
     var body: some View {
         if case .assistant(let message) = entry.item.content {
             VStack(alignment: .leading, spacing: 2) {
-                MarkdownView(text: message.text).equatable()
+                MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
                 HStack(spacing: 8) {
                     CopyButton(text: message.text)
                     if let summary {
@@ -482,16 +493,14 @@ private struct ToolDetailView: View {
 /// Parsed per-file diffs for expanded tool rows. Parsing runs once per distinct diff,
 /// so opening and closing a row is instant no matter how large the patch is.
 private enum DiffDetailCache {
-    @MainActor static var cache: [String: DiffFile] = [:]
-    private static let limit = 60
+    @MainActor private static var cache = RecentCache<String, DiffFile>(limit: 60)
 
     @MainActor
     static func file(diff: String, path: String) -> DiffFile {
         let key = path + "\n" + diff
-        if let hit = cache[key] { return hit }
+        if let hit = cache.value(for: key) { return hit }
         let parsed = DiffParser.parseHunks(diff, path: path)
-        if cache.count >= limit { cache.removeAll(keepingCapacity: true) }
-        cache[key] = parsed
+        cache.insert(parsed, for: key)
         return parsed
     }
 }
@@ -585,7 +594,7 @@ struct PlanCard: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    MarkdownView(text: plan.markdown).equatable()
+                    MarkdownView(text: plan.markdown, isStreaming: plan.state == .drafting).equatable()
                 }
                 if plan.state == .proposed, runtime.pendingPlanApproval == nil, !runtime.isRunning {
                     HStack(spacing: 8) {
@@ -718,7 +727,6 @@ struct TurnEndRow: View {
 /// A finished turn, collapsed to nothing more than its header, its final response
 /// and its file summary. The chevron re-opens the turn's full steps.
 struct TurnFinishedBlock: View {
-    @Environment(AppModel.self) private var model
     let runtime: ThreadRuntime
     let turnID: UUID
     let summary: TurnSummary
@@ -726,26 +734,13 @@ struct TurnFinishedBlock: View {
     /// Everything in the turn except the user message, the turn-end marker and
     /// reasoning. Pre-partitioned by the timeline, so rows never scan the thread.
     let content: [TimelineEntry]
+    let workingDirectory: String?
+    /// Whether the turn can be reverted right now. Decided by the timeline, which reads
+    /// the provider and the turn list once for every row.
+    let canUndo: Bool
 
     @State private var isExpanded = false
     @State private var isConfirmingUndo = false
-
-    private var assistantEntries: [TimelineEntry] {
-        content.filter { $0.kind == .assistant }
-    }
-
-    private var collapsedPlans: [TimelineEntry] {
-        content.filter { $0.kind == .plan }
-    }
-
-    /// Errors and warnings stay visible even when collapsed, so a failed turn
-    /// never hides what went wrong. Plain info notices stay in the expanded view.
-    private var collapsedNotices: [TimelineEntry] {
-        content.filter { entry in
-            guard entry.kind == .notice, case .notice(let notice) = entry.item.content else { return false }
-            return notice.level != .info
-        }
-    }
 
     struct FileStat: Hashable {
         var path: String
@@ -753,43 +748,64 @@ struct TurnFinishedBlock: View {
         var deletions: Int
     }
 
-    /// Per-file totals aggregated from this turn's tool edits. The header totals
-    /// come from the turn summary itself, which is measured from the actual diff.
-    private var fileStats: [FileStat] {
-        var totals: [String: FileStat] = [:]
-        for entry in content {
-            guard entry.kind == .tool, case .tool(let call) = entry.item.content else { continue }
-            for edit in call.edits {
-                let path = edit.path
-                guard !path.isEmpty else { continue }
-                var stat = totals[path] ?? FileStat(path: path, additions: 0, deletions: 0)
-                stat.additions += edit.additions
-                stat.deletions += edit.deletions
-                totals[path] = stat
+    /// Everything the body derives from the turn's content, gathered in one pass per
+    /// render instead of a filter per use.
+    private struct Derived {
+        var assistantEntries: [TimelineEntry] = []
+        var collapsedPlans: [TimelineEntry] = []
+        /// Errors and warnings stay visible even when collapsed, so a failed turn
+        /// never hides what went wrong. Plain info notices stay in the expanded view.
+        var collapsedNotices: [TimelineEntry] = []
+        /// Per-file totals aggregated from this turn's tool edits. The header totals
+        /// come from the turn summary itself, which is measured from the actual diff.
+        var fileStats: [FileStat] = []
+        var hasResponse = false
+        /// The turn's full steps, built only while they are showing.
+        var detailGroups: [TimelineGroup] = []
+
+        @MainActor
+        init(content: [TimelineEntry], expanded: Bool) {
+            var totals: [String: FileStat] = [:]
+            for entry in content {
+                switch entry.kind {
+                case .assistant:
+                    assistantEntries.append(entry)
+                    if !hasResponse, case .assistant(let message) = entry.item.content,
+                       !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        hasResponse = true
+                    }
+                case .plan:
+                    collapsedPlans.append(entry)
+                case .notice:
+                    if case .notice(let notice) = entry.item.content, notice.level != .info {
+                        collapsedNotices.append(entry)
+                    }
+                case .tool:
+                    guard case .tool(let call) = entry.item.content else { continue }
+                    for edit in call.edits where !edit.path.isEmpty {
+                        var stat = totals[edit.path] ?? FileStat(path: edit.path, additions: 0, deletions: 0)
+                        stat.additions += edit.additions
+                        stat.deletions += edit.deletions
+                        totals[edit.path] = stat
+                    }
+                default:
+                    break
+                }
             }
+            if !collapsedPlans.isEmpty || !collapsedNotices.isEmpty { hasResponse = true }
+            fileStats = totals.values.sorted { $0.path < $1.path }
+            if expanded { detailGroups = TimelineGroup.build(content, showReasoning: false) }
         }
-        return totals.values.sorted { $0.path < $1.path }
-    }
-
-    private var detailGroups: [TimelineGroup] {
-        TimelineGroup.build(content, showReasoning: false)
-    }
-
-    private var workingDirectory: String? {
-        guard let thread = model.thread(runtime.threadID) else { return nil }
-        if let worktree = thread.worktreePath { return worktree }
-        return model.project(thread.projectID)?.path
-    }
-
-    private var canUndo: Bool {
-        guard !runtime.isRunning, let thread = runtime.thread else { return false }
-        return thread.provider.supportsRewind && runtime.turns.contains { $0.id == turnID }
     }
 
     var body: some View {
+        let derived = Derived(content: content, expanded: isExpanded)
+        let showsBody = isExpanded
+            ? !derived.detailGroups.isEmpty || summary.filesChanged > 0
+            : derived.hasResponse || summary.filesChanged > 0
         VStack(alignment: .leading, spacing: 0) {
             ForEach(userEntries) { entry in
-                UserMessageRow(entry: entry, runtime: runtime)
+                UserMessageRow(entry: entry, runtime: runtime, canRevert: canUndo)
                     .padding(.bottom, TimelineMetrics.rowSpacing)
             }
             Button {
@@ -819,7 +835,7 @@ struct TurnFinishedBlock: View {
 
                 if isExpanded {
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
-                    ForEach(detailGroups) { group in
+                    ForEach(derived.detailGroups) { group in
                         switch group {
                         case .single(let entry):
                             switch entry.kind {
@@ -841,18 +857,18 @@ struct TurnFinishedBlock: View {
                         }
                     }
                 }
-                .padding(.bottom, collapsedHasResponse ? TimelineMetrics.rowSpacing : 0)
-            } else if collapsedHasResponse {
+                .padding(.bottom, derived.hasResponse ? TimelineMetrics.rowSpacing : 0)
+            } else if derived.hasResponse {
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
-                    ForEach(assistantEntries) { entry in
+                    ForEach(derived.assistantEntries) { entry in
                         if case .assistant(let message) = entry.item.content, !message.text.isEmpty {
                             MarkdownView(text: message.text).equatable()
                         }
                     }
-                    ForEach(collapsedPlans) { entry in
+                    ForEach(derived.collapsedPlans) { entry in
                         PlanCard(entry: entry, runtime: runtime)
                     }
-                    ForEach(collapsedNotices) { entry in
+                    ForEach(derived.collapsedNotices) { entry in
                         NoticeRow(entry: entry)
                     }
                 }
@@ -862,7 +878,7 @@ struct TurnFinishedBlock: View {
             if summary.filesChanged > 0 {
                 TurnFileCard(
                     summary: summary,
-                    files: fileStats,
+                    files: derived.fileStats,
                     canUndo: canUndo,
                     onUndo: { isConfirmingUndo = true },
                     onReview: {
@@ -880,18 +896,6 @@ struct TurnFinishedBlock: View {
         } message: {
             Text("Files go back to how they were before this turn, and the turn leaves the conversation.")
         }
-    }
-
-    private var collapsedHasResponse: Bool {
-        assistantEntries.contains {
-            guard case .assistant(let message) = $0.item.content else { return false }
-            return !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        } || !collapsedPlans.isEmpty || !collapsedNotices.isEmpty
-    }
-
-    private var showsBody: Bool {
-        if isExpanded { return !detailGroups.isEmpty || summary.filesChanged > 0 }
-        return collapsedHasResponse || summary.filesChanged > 0
     }
 }
 

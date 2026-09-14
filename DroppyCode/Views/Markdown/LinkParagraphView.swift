@@ -10,6 +10,8 @@ struct LinkParagraphView: NSViewRepresentable {
     let source: String
     var pointSize: CGFloat = 13
     var dimmed: Bool = false
+    /// Whether the text is still arriving, so its parses bypass the shared caches.
+    var streaming: Bool = false
     /// Bumped when favicons finish loading, so the icons appear.
     var revision: Int = 0
 
@@ -22,7 +24,7 @@ struct LinkParagraphView: NSViewRepresentable {
     func updateNSView(_ view: LinkTextView, context: Context) {
         // Read so a favicon-load bump rebuilds the string with icons.
         _ = revision
-        view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed))
+        view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming))
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: LinkTextView, context: Context) -> CGSize? {
@@ -52,8 +54,8 @@ struct LinkParagraphView: NSViewRepresentable {
     /// links), rebuilt on AppKit types with an explicit base font, adaptive
     /// colors and favicon attachments.
     @MainActor
-    static func attributed(source: String, pointSize: CGFloat, dimmed: Bool) -> NSAttributedString {
-        let pretty = RichLink.prettyAttributed(source)
+    static func attributed(source: String, pointSize: CGFloat, dimmed: Bool, streaming: Bool = false) -> NSAttributedString {
+        let pretty = RichLink.prettyAttributed(source, streaming: streaming)
         let base = NSFont.systemFont(ofSize: pointSize)
         let bold = NSFont.boldSystemFont(ofSize: pointSize)
         let italic = NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask)
@@ -138,21 +140,31 @@ final class LinkTextView: NSTextView {
         nil
     }
 
+    /// The last measurement, so the several `sizeThatFits` calls one layout pass makes
+    /// with the same width run the text layout once.
+    private var measuredWidth: CGFloat = 0
+    private var measuredHeight: CGFloat = 0
+
     /// New content; skips the layout pass when nothing changed (favicons and
     /// streaming rebuilds both funnel through here).
     func render(_ text: NSAttributedString) {
         if textStorage?.isEqual(to: text) != true {
             textStorage?.setAttributedString(text)
             lastMeasuredHeight = 0
+            measuredWidth = 0
         }
         invalidateIntrinsicContentSize()
     }
 
     func height(forWidth width: CGFloat) -> CGFloat {
         guard width > 0, let layout = layoutManager, let container = textContainer else { return 0 }
+        if width == measuredWidth { return measuredHeight }
         container.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
-        return ceil(layout.usedRect(for: container).height)
+        let height = ceil(layout.usedRect(for: container).height)
+        measuredWidth = width
+        measuredHeight = height
+        return height
     }
 
     override var intrinsicContentSize: NSSize {

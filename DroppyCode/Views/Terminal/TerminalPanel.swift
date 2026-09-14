@@ -8,6 +8,9 @@ struct TerminalPanel: View {
     let directory: String
 
     @State private var dragOrigin: Double?
+    /// The height while the edge is being dragged. Settings take it on release, so a drag
+    /// never writes user defaults on every frame.
+    @State private var dragHeight: Double?
 
     var body: some View {
         let terminals = model.terminals
@@ -59,7 +62,7 @@ struct TerminalPanel: View {
                 Spacer()
             }
         }
-        .frame(height: model.settings.terminalHeight)
+        .frame(height: dragHeight ?? model.settings.terminalHeight)
         // Rounded top corners, so the panel reads as a sheet rising into the conversation.
         .background(
             UnevenRoundedRectangle(
@@ -77,9 +80,13 @@ struct TerminalPanel: View {
             .onChanged { value in
                 let origin = dragOrigin ?? model.settings.terminalHeight
                 if dragOrigin == nil { dragOrigin = origin }
-                model.settings.terminalHeight = min(760, max(140, origin - value.translation.height))
+                dragHeight = min(760, max(140, origin - value.translation.height))
             }
-            .onEnded { _ in dragOrigin = nil }
+            .onEnded { _ in
+                if let dragHeight { model.settings.terminalHeight = dragHeight }
+                dragHeight = nil
+                dragOrigin = nil
+            }
     }
 }
 

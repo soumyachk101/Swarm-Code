@@ -129,12 +129,22 @@ enum Workspace {
         NSWorkspace.shared.open([URL(fileURLWithPath: path)], withApplicationAt: application, configuration: NSWorkspace.OpenConfiguration())
     }
 
+    /// Icons by bundle id. Each is a Launch Services lookup plus an icon read, and the "Open in"
+    /// menu asks for every editor's whenever the chat's chrome is rebuilt.
+    @MainActor private static var icons: [String: NSImage] = [:]
+
+    @MainActor
     static func icon(for editor: Editor) -> NSImage? {
+        if let cached = icons[editor.bundleID] { return cached }
         guard let application = NSWorkspace.shared.urlForApplication(withBundleIdentifier: editor.bundleID) else { return nil }
         let image = NSWorkspace.shared.icon(forFile: application.path)
         image.size = NSSize(width: 16, height: 16)
+        icons[editor.bundleID] = image
         return image
     }
+
+    /// Finder's icon, for the same menu.
+    @MainActor static let finderIcon = NSWorkspace.shared.icon(forFile: "/System/Library/CoreServices/Finder.app")
 
     static func revealInFinder(_ path: String) {
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])

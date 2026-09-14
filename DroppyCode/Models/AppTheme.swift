@@ -215,7 +215,14 @@ struct ThemeSpec {
 /// through the settings they already observe, so the static read is always
 /// fresh on the main thread.
 enum ThemeManager {
-    nonisolated(unsafe) static var current: AppTheme = .system
+    nonisolated(unsafe) static var current: AppTheme = .system {
+        didSet { spec = current.spec }
+    }
+
+    /// The current theme's colors, built once per theme change. `Chrome.accent` and friends
+    /// are read in hundreds of view bodies per frame, and building a spec parses hex colors,
+    /// so the parse happens here rather than on every read.
+    nonisolated(unsafe) private(set) static var spec: ThemeSpec = AppTheme.system.spec
 }
 
 extension Color {

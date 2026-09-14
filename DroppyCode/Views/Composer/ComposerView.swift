@@ -3,6 +3,9 @@ import SwiftUI
 
 struct ComposerArea: View {
     let runtime: ThreadRuntime
+    /// The folder the thread works in, for the `@` file index. Read once by the chat and
+    /// handed down, so the composer never observes the project itself.
+    let workingDirectory: String?
 
     /// The changes popover presented from the tab. Driven by
     /// `runtime.isDiffVisible`, so every opener (tab, Review, ⌘D) shares it.
@@ -35,7 +38,7 @@ struct ComposerArea: View {
                         }
                         .transition(.softAppear)
                     }
-                    ComposerView(runtime: runtime)
+                    ComposerView(runtime: runtime, workingDirectory: workingDirectory)
                 }
                 // NB: no .animation(..., value: changeStats) here on purpose: the tab's
                 // insertion animates via its .softAppear transition, and opening the
@@ -60,6 +63,7 @@ struct ComposerArea: View {
 struct ComposerView: View {
     @Environment(AppModel.self) private var model
     @Bindable var runtime: ThreadRuntime
+    let workingDirectory: String?
 
     @State private var textHeight: CGFloat = 20
     @State private var controller = ComposerController()
@@ -81,38 +85,57 @@ struct ComposerView: View {
         min(max(textHeight, Self.minComposerHeight), Self.maxComposerHeight)
     }
 
+    /// How far the controls bar reaches up under the text pill, the same overlap the changes
+    /// tab and the queue keep with its upper edge.
+    private static let barOverlap = ThreadChangesTab.overlap
+    /// The bar sits a little inside the pill's sides. The pill's corners curve in by this much
+    /// only in their last few points, so the bar's straight sides emerge right at the pill's
+    /// bottom edge instead of poking out beside its corners.
+    private static let barInset: CGFloat = 10
+
     var body: some View {
         let thread = model.thread(runtime.threadID)
-        VStack(alignment: .leading, spacing: 8) {
-            if !runtime.draft.attachments.isEmpty {
-                DraftAttachments(attachments: $runtime.draft.attachments)
-            }
-            ComposerTextView(
-                text: $runtime.draft.text,
-                height: $textHeight,
-                placeholder: placeholder(for: thread),
-                controller: controller,
-                onKey: handleKey,
-                onFiles: attach(urls:),
-                onImage: attach(imageData:),
-                onCursorChange: cursorMoved(to:),
-                onBlur: {
-                    // Clicking a row focuses the popover; only dismiss when
-                    // focus truly left both the text and the suggestions.
-                    if !controller.isClickInsideSuggestions() { suggestions = SuggestionState() }
+        // The text box is a pill of its own. The controls hang from its lower edge the way the
+        // changes tab and the queue hang from its upper one: a bar with rounded bottom corners
+        // that the pill draws over, so inside the glass container the two read as one piece.
+        VStack(spacing: -Self.barOverlap) {
+            VStack(alignment: .leading, spacing: 8) {
+                if !runtime.draft.attachments.isEmpty {
+                    DraftAttachments(attachments: $runtime.draft.attachments)
                 }
-            )
-            // The text view itself takes its new height at once, so it lays out
-            // every line with nothing to scroll; only the clip around it grows
-            // and shrinks. Animating the scroll view's own frame made AppKit
-            // scroll the caret into a too-short view and then snap back.
-            .frame(height: composerHeight)
-            .transaction { $0.animation = nil }
-            .frame(height: composerHeight, alignment: .top)
-            .clipped()
-            .animation(.smooth(duration: 0.28), value: composerHeight)
+                ComposerTextView(
+                    text: $runtime.draft.text,
+                    height: $textHeight,
+                    placeholder: placeholder(for: thread),
+                    controller: controller,
+                    onKey: handleKey,
+                    onFiles: attach(urls:),
+                    onImage: attach(imageData:),
+                    onCursorChange: cursorMoved(to:),
+                    onBlur: {
+                        // Clicking a row focuses the popover; only dismiss when
+                        // focus truly left both the text and the suggestions.
+                        if !controller.isClickInsideSuggestions() { suggestions = SuggestionState() }
+                    }
+                )
+                // The text view itself takes its new height at once, so it lays out
+                // every line with nothing to scroll; only the clip around it grows
+                // and shrinks. Animating the scroll view's own frame made AppKit
+                // scroll the caret into a too-short view and then snap back.
+                .frame(height: composerHeight)
+                .transaction { $0.animation = nil }
+                .frame(height: composerHeight, alignment: .top)
+                .clipped()
+                .animation(.smooth(duration: 0.28), value: composerHeight)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+            // Above the bar, so the pill's lower edge covers the bar's top rather than the reverse.
+            .zIndex(1)
 
             if let thread {
+                let shape = UnevenRoundedRectangle(bottomLeadingRadius: 12, bottomTrailingRadius: 12, style: .continuous)
                 HStack(spacing: 2) {
                     Button {
                         if model.settings.recentDownloadsPicker {
@@ -141,12 +164,13 @@ struct ComposerView: View {
                     )
                     SendButton(runtime: runtime) { send() }
                 }
+                .padding(.horizontal, 8)
+                .padding(.top, 7 + Self.barOverlap)
+                .padding(.bottom, 7)
+                .glassEffect(.regular, in: shape)
+                .padding(.horizontal, Self.barInset)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 12)
-        .padding(.bottom, 9)
-        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
         .onChange(of: suggestions) { _, new in
             if new.isVisible {
                 controller.showSuggestions(AnyView(suggestionMenu()), itemCount: new.items.count)
@@ -156,14 +180,9 @@ struct ComposerView: View {
         }
         .onDisappear { controller.hideSuggestions() }
         .onChange(of: runtime.threadID) { _, _ in controller.hideSuggestions() }
-        .task(id: workingDirectory(for: thread)) {
-            if let directory = workingDirectory(for: thread) { fileIndex.prepare(directory) }
+        .task(id: workingDirectory) {
+            if let workingDirectory { fileIndex.prepare(workingDirectory) }
         }
-    }
-
-    private func workingDirectory(for thread: ChatThread?) -> String? {
-        guard let thread, let project = model.project(thread.projectID) else { return nil }
-        return thread.worktreePath ?? project.path
     }
 
     /// The slash/@ list hosted in a caret-anchored NSPopover (see ComposerController).

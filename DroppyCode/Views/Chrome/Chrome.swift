@@ -57,25 +57,27 @@ enum Chrome {
     // MARK: Color and motion
 
     static func overlay(_ opacity: Double) -> Color {
-        Color(nsColor: .labelColor).opacity(opacity)
+        primaryText.opacity(opacity)
     }
 
-    static var primaryText: Color { Color(nsColor: .labelColor) }
-    static var secondaryText: Color { Color(nsColor: .secondaryLabelColor) }
+    // Dynamic system colors resolve at draw time, so one wrapped value serves every appearance.
+    static let primaryText = Color(nsColor: .labelColor)
+    static let secondaryText = Color(nsColor: .secondaryLabelColor)
+    private static let systemAccent = Color(nsColor: .controlAccentColor)
 
     /// The theme's accent, or the system control accent for System/Light/Dark.
     /// The window root also applies it as the view tint, so prominent glass
     /// buttons, toggles and progress indicators follow the theme.
-    static var accent: Color { ThemeManager.current.spec.accent ?? Color(nsColor: .controlAccentColor) }
+    static var accent: Color { ThemeManager.spec.accent ?? systemAccent }
 
     /// Status hues: system green/orange/red for System/Light/Dark, the
     /// palette's own hues for every named theme.
-    static var success: Color { ThemeManager.current.spec.success }
-    static var warning: Color { ThemeManager.current.spec.warning }
-    static var danger: Color { ThemeManager.current.spec.danger }
+    static var success: Color { ThemeManager.spec.success }
+    static var warning: Color { ThemeManager.spec.warning }
+    static var danger: Color { ThemeManager.spec.danger }
 
     /// The theme's glass tint, washed over capsules, sheets and the window.
-    static var glassTint: Color { ThemeManager.current.spec.surface }
+    static var glassTint: Color { ThemeManager.spec.surface }
 
     static var hover: Animation { .easeOut(duration: 0.1) }
 
@@ -689,15 +691,16 @@ struct GlassPickerButton<Value: Hashable>: View {
     }
 }
 
-/// A soft appearance: fades in from a light blur with a short rise. It runs once, when a view is
-/// inserted, on a few small layers, so streaming replies and filtered lists stay cheap.
+/// A soft appearance: fades in with a short rise. Opacity and offset are plain layer
+/// properties, so a view in its settled state costs nothing extra; a blur here would leave
+/// every timeline row and markdown block with a filter of its own, an offscreen pass each.
 struct SoftAppearModifier: ViewModifier {
     let isVisible: Bool
 
     func body(content: Content) -> some View {
         content
             .opacity(isVisible ? 1 : 0)
-            .blur(radius: isVisible ? 0 : 5)
+            .offset(y: isVisible ? 0 : 4)
     }
 }
 
