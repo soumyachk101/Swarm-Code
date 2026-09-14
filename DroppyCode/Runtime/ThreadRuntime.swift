@@ -222,16 +222,19 @@ final class ThreadRuntime {
 
     /// Moves a queued follow-up next to another one, for drag reordering. A no-op
     /// when it is already there, so hovering the same half never churns.
-    func moveFollowUp(_ id: UUID, to target: UUID, placeAfter: Bool) {
+    /// Moves a follow-up to sit right before or after `target`; returns whether the queue changed.
+    @discardableResult
+    func moveFollowUp(_ id: UUID, to target: UUID, placeAfter: Bool) -> Bool {
         guard id != target,
               let from = followUps.firstIndex(where: { $0.id == id }),
-              let to = followUps.firstIndex(where: { $0.id == target }) else { return }
+              let to = followUps.firstIndex(where: { $0.id == target }) else { return false }
         var dest = to + (placeAfter ? 1 : 0)
         if from < dest { dest -= 1 }
-        guard from != dest else { return }
+        guard from != dest else { return false }
         let prompt = followUps.remove(at: from)
         followUps.insert(prompt, at: dest)
         scheduleSave()
+        return true
     }
 
     func updateFollowUp(_ id: UUID, text: String, attachments: [Attachment]) {

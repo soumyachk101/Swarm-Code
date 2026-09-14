@@ -17,13 +17,19 @@ struct RowDrag<ID: Hashable> {
     /// Walks the grabbed row across every neighbour whose centre it has passed,
     /// so a fast flick crosses several rows in one step. `move` swaps the item
     /// with the neighbour (before it for `placeAfter: false`, after it otherwise)
-    /// and runs inside the caller's slide animation together with the slot
-    /// compensation. Returns whether anything moved.
+    /// and returns whether the order changed; it runs inside the caller's slide
+    /// animation, and the slot compensation is folded into `settled` here in
+    /// the same transaction. Returns whether anything moved.
+    ///
+    /// The compensation must be applied here, not by `move`: this is a
+    /// mutating call on a copy of the caller's `@State` value, so a write to
+    /// the state from inside `move` is invisible to the loop and clobbered
+    /// when the copy is written back.
     mutating func settle(
         order: [ID],
         heights: [ID: CGFloat],
         fallbackHeight: CGFloat,
-        move: (_ neighbour: ID, _ placeAfter: Bool, _ slot: CGFloat) -> Void
+        move: (_ neighbour: ID, _ placeAfter: Bool) -> Bool
     ) -> Bool {
         guard let id, let index = order.firstIndex(of: id) else { return false }
         let own = heights[id] ?? fallbackHeight
@@ -34,15 +40,15 @@ struct RowDrag<ID: Hashable> {
             if offset > 0, current + 1 < order.count {
                 let next = order[current + 1]
                 let slot = heights[next] ?? fallbackHeight
-                guard offset > (own + slot) / 2 else { break }
-                move(next, true, slot)
+                guard offset > (own + slot) / 2, move(next, true) else { break }
+                settled += slot
                 current += 1
                 moved = true
             } else if offset < 0, current > 0 {
                 let previous = order[current - 1]
                 let slot = heights[previous] ?? fallbackHeight
-                guard -offset > (own + slot) / 2 else { break }
-                move(previous, false, slot)
+                guard -offset > (own + slot) / 2, move(previous, false) else { break }
+                settled -= slot
                 current -= 1
                 moved = true
             } else {

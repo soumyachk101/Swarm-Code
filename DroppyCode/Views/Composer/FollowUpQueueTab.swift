@@ -118,13 +118,12 @@ struct FollowUpQueueTab: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) { drag.translation = translation }
 
-        let moved = drag.settle(order: runtime.followUps.map(\.id), heights: rowHeights, fallbackHeight: 44) { neighbour, placeAfter, slot in
+        let moved = drag.settle(order: runtime.followUps.map(\.id), heights: rowHeights, fallbackHeight: 44) { neighbour, placeAfter in
             // The neighbour slides and the grabbed row's slot moves in the
             // same animation as its compensation, so it stays put under
             // the pointer while the list flows around it.
             withAnimation(Self.slide) {
                 runtime.moveFollowUp(id, to: neighbour, placeAfter: placeAfter)
-                drag.settled += placeAfter ? slot : -slot
             }
         }
         if moved {

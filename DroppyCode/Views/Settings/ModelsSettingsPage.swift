@@ -97,8 +97,7 @@ struct ModelsSettingsPage: View {
     /// neighbour whose centre it has crossed. While a search filters the list
     /// the swaps still happen against the visible neighbour, so hidden models
     /// keep their place relative to it. The order is read fresh on every move
-    /// rather than captured by the row's gesture, which would go stale after
-    /// the first swap.
+    /// rather than captured by the row's gesture.
     private func dragChanged(_ pin: ModelPin, translation: CGFloat) {
         if drag.id != pin {
             drag = RowDrag(id: pin)
@@ -109,13 +108,9 @@ struct ModelsSettingsPage: View {
         withTransaction(transaction) { drag.translation = translation }
 
         let order = visiblePins(query: query.trimmingCharacters(in: .whitespacesAndNewlines))
-        let moved = drag.settle(order: order, heights: rowHeights, fallbackHeight: 54) { neighbour, placeAfter, slot in
+        let moved = drag.settle(order: order, heights: rowHeights, fallbackHeight: 54) { neighbour, placeAfter in
             withAnimation(Self.slide) {
-                // The slot compensation only follows a move that happened, so
-                // the row can never drift away from the pointer.
-                if model.settings.moveModel(pin, to: neighbour, placeAfter: placeAfter) {
-                    drag.settled += placeAfter ? slot : -slot
-                }
+                model.settings.moveModel(pin, to: neighbour, placeAfter: placeAfter)
             }
         }
         if moved {
@@ -355,3 +350,4 @@ private struct ProviderModelsSection: View {
         .task { await registry.loadCatalog(provider) }
     }
 }
+
