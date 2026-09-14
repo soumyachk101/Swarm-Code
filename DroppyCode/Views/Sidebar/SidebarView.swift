@@ -1,5 +1,5 @@
+import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
@@ -8,8 +8,12 @@ struct SidebarView: View {
     @State private var renaming: ChatThread?
     @State private var renameText = ""
     @State private var pendingDeletion: ChatThread?
-    @State private var draggingThreadID: UUID?
-    @State private var dropTarget: ThreadDropTarget?
+    /// The live reorder, exactly the queue's: the grabbed row follows the pointer, its
+    /// helpers with it, and neighbours slide across as its centre passes theirs.
+    @State private var drag = RowDrag<UUID>()
+    /// Every row's height by its item id. A thread's slot is its own row plus the helper
+    /// rows under it, so a dragged row crosses a neighbour with helpers in one go.
+    @State private var rowHeights: [String: CGFloat] = [:]
 
     private var query: String {
         search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -109,6 +113,7 @@ struct SidebarView: View {
             ActivityHeader(title: title, isFirst: isFirst)
         case .thread(let thread, let projectName, let peers):
             reorderableRow(thread, projectName: projectName, peers: peers)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[item.id] = $0 }
         case .helper(let thread, let isLast):
             SidebarHelperRow(
                 thread: thread,
@@ -126,8 +131,12 @@ struct SidebarView: View {
                     }
                 }
             )
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[item.id] = $0 }
+            .modifier(RidesWithDraggedParent(parentID: thread.parentThreadID, drag: drag))
         case .helperStub(let parent, let count):
             HelperStubRow(parent: parent, count: count) { fold(parent.id) }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[item.id] = $0 }
+                .modifier(RidesWithDraggedParent(parentID: parent.id, drag: drag))
         }
     }
 
@@ -297,46 +306,106 @@ struct SidebarView: View {
 
     // MARK: Rows
 
-    /// Drag a row above or below another: within its project in the project layout, within its group
-    /// in the activity layout.
+    /// Drag a row up or down the list and it moves live: within its project in the project
+    /// layout, within its group in the activity layout. Ahead of the row's own click, so a
+    /// drag never selects the thread on release; a plain click still does.
     private func reorderableRow(_ thread: ChatThread, projectName: String?, peers: [UUID]?) -> some View {
-        let target = dropTarget?.id == thread.id ? dropTarget : nil
-        return threadRow(thread, projectName: projectName)
-            .onDrag {
-                draggingThreadID = thread.id
-                return NSItemProvider(object: thread.id.uuidString as NSString)
-            }
-            .onDrop(
-                of: [.plainText],
-                delegate: ThreadDropDelegate(
-                    threadID: thread.id,
-                    rowHeight: projectName == nil ? Chrome.rowHeight : ThreadRowMetrics.detailedHeight,
-                    dragging: $draggingThreadID,
-                    target: $dropTarget,
-                    accepts: { id in
-                        if let peers { return peers.contains(id) }
-                        return model.thread(id)?.projectID == thread.projectID
-                    },
-                    onMove: { id, placeAfter in
-                        withAnimation(Chrome.panelSlide) {
-                            if let peers {
-                                model.moveInActivity(id, to: thread.id, placeAfter: placeAfter, among: peers)
-                            } else {
-                                model.moveThread(id, to: thread.id, placeAfter: placeAfter)
-                            }
-                        }
-                    }
-                )
+        let isDragged = drag.id == thread.id
+        return threadRow(thread, projectName: projectName, isDragged: isDragged)
+            .offset(y: isDragged ? drag.visualOffset : 0)
+            .zIndex(isDragged ? 1 : 0)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 4, coordinateSpace: .global)
+                    .onChanged { value in dragChanged(thread.id, translation: value.translation.height) }
+                    .onEnded { _ in dragEnded() }
             )
-            .overlay(alignment: target?.placeAfter == true ? .bottom : .top) {
-                DropIndicator(target: target)
-            }
     }
 
-    private func threadRow(_ thread: ChatThread, projectName: String?) -> some View {
+    // MARK: Reorder
+
+    /// Neighbours sliding out of the grabbed row's way.
+    private static let slide = Animation.spring(response: 0.28, dampingFraction: 0.82)
+
+    /// The pointer has moved `translation` since the grab. The grabbed row follows it
+    /// exactly and `RowDrag` swaps it past every neighbour whose centre it has crossed.
+    private func dragChanged(_ id: UUID, translation: CGFloat) {
+        if drag.id != id {
+            drag = RowDrag(id: id)
+            NSCursor.closedHand.push()
+        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { drag.translation = translation }
+
+        // The row's peers as the list stands now, not as it stood at the grab: every swap
+        // reorders them.
+        let (order, group) = peers(of: id)
+        let moved = drag.settle(order: order, heights: slotHeights(for: order), fallbackHeight: Chrome.rowHeight + 1) { neighbour, placeAfter in
+            // The neighbour slides and the grabbed row's slot moves in the same animation
+            // as its compensation, so it stays put under the pointer while the list flows
+            // around it.
+            withAnimation(Self.slide) {
+                if let group {
+                    model.moveInActivity(id, to: neighbour, placeAfter: placeAfter, among: group)
+                } else {
+                    model.moveThread(id, to: neighbour, placeAfter: placeAfter)
+                }
+            }
+        }
+        if moved {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+    }
+
+    private func dragEnded() {
+        guard drag.id != nil else { return }
+        NSCursor.pop()
+        // The offset animates from wherever the pointer let go to the row's slot, so the
+        // row settles instead of snapping.
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { drag = RowDrag() }
+    }
+
+    /// The threads a row can be reordered among, in their current order: its activity group
+    /// (returned as `group` too, for the move) or its project's top-level threads.
+    private func peers(of id: UUID) -> (order: [UUID], group: [UUID]?) {
+        if model.settings.sidebarActivityView {
+            for item in activityItems {
+                if case .thread(let thread, _, let peers) = item.kind, thread.id == id, let peers {
+                    return (peers, peers)
+                }
+            }
+            return ([], nil)
+        }
+        guard let thread = model.thread(id), let project = model.project(thread.projectID) else { return ([], nil) }
+        return (model.threads(in: project).map(\.id), nil)
+    }
+
+    /// Each peer's slot: its row, the helper rows or folded line under it, and the list's
+    /// spacing after each.
+    private func slotHeights(for order: [UUID]) -> [UUID: CGFloat] {
+        var heights: [UUID: CGFloat] = [:]
+        for id in order {
+            var height = (rowHeights[id.uuidString] ?? Chrome.rowHeight) + 1
+            let helpers = model.helpers(of: id)
+            if !helpers.isEmpty {
+                if model.thread(id)?.foldsHelpers == true {
+                    height += (rowHeights["helpers-\(id)"] ?? ThreadRowMetrics.helperHeight) + 1
+                } else {
+                    for helper in helpers {
+                        height += (rowHeights[helper.id.uuidString] ?? ThreadRowMetrics.helperHeight) + 1
+                    }
+                }
+            }
+            heights[id] = height
+        }
+        return heights
+    }
+
+    private func threadRow(_ thread: ChatThread, projectName: String?, isDragged: Bool = false) -> some View {
         SidebarThreadRow(
             thread: thread,
             projectName: projectName,
+            isDragged: isDragged,
             onRename: {
                 renameText = thread.title
                 renaming = thread
@@ -568,6 +637,20 @@ private struct HelperStubRow: View {
     }
 }
 
+/// A helper row or the folded line under a thread being dragged moves with it, lifted the
+/// same way, so the thread and its helpers travel as one block.
+private struct RidesWithDraggedParent: ViewModifier {
+    let parentID: UUID?
+    let drag: RowDrag<UUID>
+
+    func body(content: Content) -> some View {
+        let rides = parentID != nil && drag.id == parentID
+        content
+            .offset(y: rides ? drag.visualOffset : 0)
+            .zIndex(rides ? 1 : 0)
+    }
+}
+
 /// The dotted connector beside a helper's row: down from the row above, and a tick to the
 /// row. Where the helpers end it stops at the tick. The whole column folds the helpers away.
 private struct HelperConnector: View {
@@ -620,6 +703,8 @@ private struct SidebarThreadRow: View {
     let thread: ChatThread
     /// The project shown under the title in the activity layout; nil in the project layout.
     let projectName: String?
+    /// Lifted and following the pointer in a reorder.
+    var isDragged = false
     let onRename: () -> Void
     let onDelete: () -> Void
 
@@ -630,7 +715,7 @@ private struct SidebarThreadRow: View {
     var body: some View {
         let isSelected = model.selectedThreadID == thread.id
         let isDetailed = projectName != nil
-        let showsActions = isHovering || isMenuPresented
+        let showsActions = (isHovering || isMenuPresented) && !isDragged
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         Button {
             model.selectedThreadID = thread.id
@@ -705,6 +790,17 @@ private struct SidebarThreadRow: View {
             if hovering { model.warmDocuments([thread.id]) }
         }
         .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame.frame = $0 }
+        // Lifted: a touch larger with a shadow, over an opaque fill so the rows sliding
+        // underneath never show through. The queue's rows lift the same way.
+        .background {
+            if isDragged {
+                shape
+                    .fill(Chrome.overlay(0.12))
+                    .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
+            }
+        }
+        .scaleEffect(isDragged ? 1.02 : 1)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isDragged)
         .contextMenu { RowActionMenuButtons(actions: makeActions()) }
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
@@ -811,67 +907,6 @@ private struct ThreadBadge: View {
                     .offset(x: 2.5, y: -2.5)
             }
         }
-    }
-}
-
-private struct ThreadDropTarget: Equatable {
-    let id: UUID
-    let placeAfter: Bool
-}
-
-/// The accent line where a dragged thread will land. Its fade animates here, never the row under it.
-private struct DropIndicator: View {
-    let target: ThreadDropTarget?
-
-    var body: some View {
-        ZStack {
-            if let target {
-                Capsule()
-                    .fill(Chrome.accent)
-                    .frame(height: 2)
-                    .padding(.horizontal, 6)
-                    .offset(y: target.placeAfter ? 1 : -1)
-                    .transition(.opacity)
-            }
-        }
-        .allowsHitTesting(false)
-        .animation(Chrome.hover, value: target)
-    }
-}
-
-/// Reorders threads: the upper half of a row drops above it, the lower half below.
-private struct ThreadDropDelegate: DropDelegate {
-    let threadID: UUID
-    let rowHeight: CGFloat
-    @Binding var dragging: UUID?
-    @Binding var target: ThreadDropTarget?
-    let accepts: (UUID) -> Bool
-    let onMove: (UUID, Bool) -> Void
-
-    func validateDrop(info: DropInfo) -> Bool {
-        guard let dragging else { return false }
-        return dragging != threadID && accepts(dragging)
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        guard validateDrop(info: info) else { return nil }
-        let next = ThreadDropTarget(id: threadID, placeAfter: info.location.y > rowHeight / 2)
-        if target != next { target = next }
-        return DropProposal(operation: .move)
-    }
-
-    func dropExited(info: DropInfo) {
-        if target?.id == threadID { target = nil }
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        defer {
-            target = nil
-            dragging = nil
-        }
-        guard let dragging, dragging != threadID, accepts(dragging) else { return false }
-        onMove(dragging, info.location.y > rowHeight / 2)
-        return true
     }
 }
 
