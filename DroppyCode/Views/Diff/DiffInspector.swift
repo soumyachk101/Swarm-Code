@@ -472,12 +472,46 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
         if popover.isShown { popover.performClose(nil) }
     }
 
+    /// The composer area itself, for when the changes tab is not on screen (the
+    /// follow-up queue takes its slot) and the opener brought no view of its own.
+    func setFallbackAnchor(_ view: NSView) {
+        fallback = WeakView(view)
+        if desiredVisible { show() }
+    }
+
+    private var fallback: WeakView?
+    /// The view the open popover is anchored to.
+    private weak var shownOn: NSView?
+
+    /// A Review button asked for the popover: opens it there, moving it if it is
+    /// already open on another view.
+    func reopen(runtime: ThreadRuntime) {
+        self.runtime = runtime
+        desiredVisible = true
+        if popover.isShown {
+            if shownOn === resolvedAnchor() { return }
+            stopMonitors()
+            session += 1
+            pendingSession = session
+            popover.close()
+        }
+        show()
+    }
+
+    /// A Review button opens the popover on itself; the tab and ⌘D open it on
+    /// the tab, or on the composer while the queue has the tab's slot.
+    private func resolvedAnchor() -> NSView? {
+        let candidates = [runtime?.diffAnchor?.value, anchor?.value, fallback?.value]
+        return candidates.compactMap { $0 }.first { $0.window != nil }
+    }
+
     private func show() {
-        guard let runtime, let anchor = anchor?.value, anchor.window != nil else { return }
+        guard let runtime, let anchor = resolvedAnchor() else { return }
         session += 1
         guard !popover.isShown else { return }
         popover.setFixedContent(DiffInspector(runtime: runtime), size: NSSize(width: Self.width, height: Self.height))
         startMonitors()
+        shownOn = anchor
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
 

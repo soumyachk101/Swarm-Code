@@ -893,10 +893,9 @@ struct TurnFinishedBlock: View {
                     files: derived.fileStats,
                     canUndo: canUndo,
                     onUndo: { isConfirmingUndo = true },
-                    onReview: {
-                        if runtime.diffSelection != turnID { runtime.diffSelection = turnID }
-                        if !runtime.isDiffVisible { runtime.isDiffVisible = true }
-                    }
+                    // On the button itself, so the changes open where the reader
+                    // clicked, whatever is above the chat box.
+                    onReview: { button in runtime.showDiff(on: button, turn: turnID) }
                 )
             }
             }
@@ -916,7 +915,9 @@ private struct TurnFileCard: View {
     let files: [TurnFinishedBlock.FileStat]
     let canUndo: Bool
     let onUndo: () -> Void
-    let onReview: () -> Void
+    /// Receives the Review button's own view, for the popover to open on.
+    let onReview: (NSView) -> Void
+    @State private var reviewAnchor = WeakView()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -951,9 +952,15 @@ private struct TurnFileCard: View {
                     .buttonStyle(.plain)
                     .help("Revert this turn's files and conversation")
                 }
-                Button("Review", action: onReview)
-                    .buttonStyle(.glass)
-                    .help("Show this turn's changes")
+                Button("Review") {
+                    guard let view = reviewAnchor.value else { return }
+                    onReview(view)
+                }
+                .buttonStyle(.glass)
+                .background {
+                    AttachmentAnchorCapture { reviewAnchor.value = $0 }
+                }
+                .help("Show this turn's changes")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)

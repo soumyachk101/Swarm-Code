@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// One timeline row. A class, so a streaming row redraws without re-diffing the whole thread.
@@ -84,6 +85,22 @@ final class ThreadRuntime {
     var isTerminalVisible = false
     var isDiffVisible = false
     var diffSelection: UUID?
+    /// The view the changes popover should open on: a turn's Review button, or
+    /// nil for the changes tab. Held weakly so a row that leaves the screen never
+    /// keeps a view alive.
+    @ObservationIgnored var diffAnchor: WeakView?
+    /// Bumped by `showDiff(on:turn:)`, so the popover moves to the new anchor
+    /// even when it is already open somewhere else.
+    private(set) var diffOpenRequest = 0
+
+    /// Opens the changes popover on `anchor` (a Review button), showing `turn`'s
+    /// changes, or the whole thread's for nil.
+    func showDiff(on anchor: NSView, turn: UUID?) {
+        diffAnchor = WeakView(anchor)
+        if diffSelection != turn { diffSelection = turn }
+        if !isDiffVisible { isDiffVisible = true }
+        diffOpenRequest += 1
+    }
 
     @ObservationIgnored private weak var app: AppModel?
     @ObservationIgnored private var session: (any ProviderSession)?
