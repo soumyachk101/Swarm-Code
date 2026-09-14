@@ -324,12 +324,14 @@ struct EffortSliderCard: View {
 
     private var isFast: Bool { supportsFast && fastMode }
 
-    /// The title takes the slider's colour: purple at maximum, gold in fast
-    /// mode, and both blended when the two are on together.
+    private var brand: EffortBrand { EffortBrand(provider: provider) }
+
+    /// The title takes the slider's colour: the provider's brand at maximum, gold in
+    /// fast mode, and both blended when the two are on together.
     private var titleStyle: AnyShapeStyle {
         switch (isMaxEffort, isFast) {
-        case (true, true): AnyShapeStyle(LinearGradient(colors: [EffortPalette.supercharged, EffortPalette.fast], startPoint: .leading, endPoint: .trailing))
-        case (true, false): AnyShapeStyle(EffortPalette.supercharged)
+        case (true, true): AnyShapeStyle(LinearGradient(colors: [brand.titleColor, EffortPalette.fast], startPoint: .leading, endPoint: .trailing))
+        case (true, false): brand.title
         case (false, true): AnyShapeStyle(EffortPalette.fast)
         case (false, false): AnyShapeStyle(EffortPalette.title)
         }
@@ -405,6 +407,7 @@ struct EffortSliderCard: View {
                         }
                     ),
                     fastMode: isFast,
+                    brand: brand,
                     accessibilityTitle: title
                 )
             }
@@ -474,20 +477,23 @@ struct EffortSlider: View {
     let count: Int
     @Binding var index: Int
     /// Fast mode on, for a model that has it. Colours the fill gold with
-    /// speed streaks; at maximum effort it fuses with the purple particles.
+    /// speed streaks; at maximum effort it fuses with the brand's particles.
     var fastMode = false
+    /// The colours maximum effort wears: the provider's brand.
+    var brand: EffortBrand = .purple
     let accessibilityTitle: String
 
     @State private var dragX: CGFloat?
 
     private var look: TrackLook {
         let isMax = count > 1 && index == count - 1
-        return switch (isMax, fastMode) {
-        case (true, true): TrackLook.fusion
+        let kind: TrackLook.Kind = switch (isMax, fastMode) {
+        case (true, true): .fusion
         case (true, false): .supercharged
         case (false, true): .fast
         case (false, false): .plain
         }
+        return TrackLook(kind: kind, brand: brand)
     }
 
     var body: some View {
@@ -506,7 +512,7 @@ struct EffortSlider: View {
                     .fill(look.fill)
                     .frame(width: x + inset)
                     .overlay(alignment: .leading) {
-                        if look != .plain {
+                        if look.kind != .plain {
                             TrackEffect(look: look)
                                 .frame(width: x + inset, height: Self.trackHeight)
                                 .clipShape(Capsule(style: .continuous))
@@ -517,13 +523,17 @@ struct EffortSlider: View {
                 ForEach(0..<count, id: \.self) { stop in
                     let stopX = inset + CGFloat(stop) * step
                     Circle()
-                        .fill(stopX <= x ? Color.white.opacity(0.6) : Chrome.overlay(0.32))
+                        .fill(stopX <= x ? look.stopColor : Chrome.overlay(0.32))
                         .frame(width: 5, height: 5)
                         .position(x: stopX, y: Self.trackHeight / 2)
                 }
                 Circle()
                     .fill(Color.white)
-                    .shadow(color: look.glow, radius: look == .plain ? 4 : 8, y: 1)
+                    // On a white fill the white knob needs an edge to read against it.
+                    .overlay {
+                        Circle().strokeBorder(Color.black.opacity(look.isLightFill ? 0.14 : 0), lineWidth: 1)
+                    }
+                    .shadow(color: look.glow, radius: look.kind == .plain ? 4 : 8, y: 1)
                     .frame(width: Self.thumbSize, height: Self.thumbSize)
                     .scaleEffect(dragX == nil ? 1 : 1.06)
                     .position(x: x, y: Self.trackHeight / 2)
@@ -580,36 +590,140 @@ enum EffortPalette {
     static let fastFill = Color(red: 0.93, green: 0.66, blue: 0.13)
 }
 
-/// How the filled part of the effort track looks.
-enum TrackLook: Hashable {
-    case plain
-    /// Maximum effort: purple with particles drifting toward the knob.
-    case supercharged
-    /// Fast mode: gold with speed streaks and lightning.
-    case fast
-    /// Both: purple running into gold, particles, streaks, lightning and a sweeping sheen.
-    case fusion
+/// The colours a provider's maximum effort wears: its brand. Claude's terracotta,
+/// DeepSeek's blue, Meta's blue gradient, Google's Gemini gradient for Antigravity.
+/// Brands whose marks are black and white (Codex, Cursor, Grok, OpenCode, Devin) get
+/// a white fill with dark sparks, and everything in the track flips dark to read on it.
+enum EffortBrand: Hashable {
+    case claude
+    case deepseek
+    case meta
+    case antigravity
+    case silver
+    /// The stock purple, for a slider with no provider behind it.
+    case purple
 
+    init(provider: ProviderKind?) {
+        self = switch provider {
+        case .claude: .claude
+        case .deepseek: .deepseek
+        case .meta: .meta
+        case .antigravity: .antigravity
+        case .codex, .cursor, .grok, .opencode, .devin: .silver
+        case nil: .purple
+        }
+    }
+
+    /// The colour the effort name takes at maximum, also the near end of the fast blend.
+    var titleColor: Color {
+        switch self {
+        case .claude: Color(red: 0.93, green: 0.58, blue: 0.44)
+        case .deepseek: Color(red: 0.49, green: 0.58, blue: 1.0)
+        case .meta: Color(red: 0.31, green: 0.64, blue: 1.0)
+        case .antigravity: Color(red: 0.61, green: 0.45, blue: 0.80)
+        case .silver: Chrome.primaryText
+        case .purple: EffortPalette.supercharged
+        }
+    }
+
+    var title: AnyShapeStyle {
+        switch self {
+        case .antigravity: AnyShapeStyle(LinearGradient(colors: Self.gemini, startPoint: .leading, endPoint: .trailing))
+        default: AnyShapeStyle(titleColor)
+        }
+    }
+
+    /// The fill behind the particles.
     var fill: AnyShapeStyle {
         switch self {
+        case .claude: AnyShapeStyle(Color(red: 0.80, green: 0.42, blue: 0.28))
+        case .deepseek: AnyShapeStyle(Color(red: 0.24, green: 0.36, blue: 0.98))
+        case .meta: AnyShapeStyle(LinearGradient(
+            colors: [Color(red: 0.0, green: 0.39, blue: 0.88), Color(red: 0.0, green: 0.51, blue: 0.98)],
+            startPoint: .leading, endPoint: .trailing
+        ))
+        case .antigravity: AnyShapeStyle(LinearGradient(colors: Self.gemini, startPoint: .leading, endPoint: .trailing))
+        case .silver: AnyShapeStyle(LinearGradient(
+            colors: [Color.white, Color(red: 0.88, green: 0.88, blue: 0.91)],
+            startPoint: .leading, endPoint: .trailing
+        ))
+        case .purple: AnyShapeStyle(EffortPalette.superchargedFill)
+        }
+    }
+
+    /// The fill's darkest colour, for the fusion blend's near end and the knob's glow.
+    var fillColor: Color {
+        switch self {
+        case .claude: Color(red: 0.80, green: 0.42, blue: 0.28)
+        case .deepseek: Color(red: 0.24, green: 0.36, blue: 0.98)
+        case .meta: Color(red: 0.0, green: 0.45, blue: 0.93)
+        case .antigravity: Color(red: 0.56, green: 0.45, blue: 0.80)
+        case .silver: Color(red: 0.92, green: 0.92, blue: 0.94)
+        case .purple: EffortPalette.superchargedFill
+        }
+    }
+
+    /// The particles and sheen: white on colour, dark on white.
+    var spark: Color { self == .silver ? .black : .white }
+
+    /// Whether the fill is light enough that the knob and stops must read dark against it.
+    var isLight: Bool { self == .silver }
+
+    var glow: Color { self == .silver ? .black.opacity(0.35) : fillColor.opacity(0.6) }
+
+    /// Google's Gemini sweep: blue into violet into coral.
+    static let gemini = [
+        Color(red: 0.26, green: 0.52, blue: 0.96),
+        Color(red: 0.61, green: 0.45, blue: 0.80),
+        Color(red: 0.85, green: 0.40, blue: 0.44),
+    ]
+}
+
+/// How the filled part of the effort track looks.
+struct TrackLook: Hashable {
+    enum Kind: Hashable {
+        case plain
+        /// Maximum effort: the brand's fill with particles drifting toward the knob.
+        case supercharged
+        /// Fast mode: gold with speed streaks and lightning.
+        case fast
+        /// Both: the brand running into gold, particles, streaks, lightning and a sweeping sheen.
+        case fusion
+    }
+
+    var kind: Kind
+    var brand: EffortBrand
+
+    var fill: AnyShapeStyle {
+        switch kind {
         case .plain: AnyShapeStyle(Chrome.accent)
-        case .supercharged: AnyShapeStyle(EffortPalette.superchargedFill)
+        case .supercharged: brand.fill
         case .fast: AnyShapeStyle(EffortPalette.fastFill)
         case .fusion: AnyShapeStyle(LinearGradient(
-            colors: [EffortPalette.superchargedFill, EffortPalette.superchargedFill, EffortPalette.fastFill],
+            colors: [brand.fillColor, brand.fillColor, EffortPalette.fastFill],
             startPoint: .leading, endPoint: .trailing
         ))
         }
     }
 
     var glow: Color {
-        switch self {
+        switch kind {
         case .plain: .black.opacity(0.28)
-        case .supercharged: EffortPalette.superchargedFill.opacity(0.6)
+        case .supercharged: brand.glow
         case .fast: EffortPalette.fastFill.opacity(0.7)
         case .fusion: EffortPalette.fast.opacity(0.75)
         }
     }
+
+    /// Whether the fill under the knob is light (a white brand at maximum, not in fusion,
+    /// whose far end is gold).
+    var isLightFill: Bool { kind == .supercharged && brand.isLight }
+
+    /// The passed stops: white on colour, dark on a white fill.
+    var stopColor: Color { isLightFill ? .black.opacity(0.35) : .white.opacity(0.6) }
+
+    /// The particles' and sheen's colour.
+    var spark: Color { kind == .supercharged || kind == .fusion ? brand.spark : .white }
 }
 
 /// The track's animation, one small Canvas drawn only while the slider needs it.
@@ -624,19 +738,21 @@ private struct TrackEffect: View {
     @State private var startedAt = Date.now
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / (look == .supercharged ? 30 : 60), paused: reduceMotion)) { timeline in
+        let kind = look.kind
+        let spark = look.spark
+        TimelineView(.animation(minimumInterval: 1.0 / (kind == .supercharged ? 30 : 60), paused: reduceMotion)) { timeline in
             let time = timeline.date.timeIntervalSince(startedAt)
             Canvas { context, size in
                 guard size.width > 8 else { return }
-                if look == .supercharged || look == .fusion {
-                    Self.drawParticles(context, size: size, time: time)
+                if kind == .supercharged || kind == .fusion {
+                    Self.drawParticles(context, size: size, time: time, color: spark)
                 }
-                if look == .fast || look == .fusion {
+                if kind == .fast || kind == .fusion {
                     Self.drawStreaks(context, size: size, time: time)
                     Self.drawBolts(context, size: size, time: time)
                 }
-                if look == .fusion {
-                    Self.drawSheen(context, size: size, time: time)
+                if kind == .fusion {
+                    Self.drawSheen(context, size: size, time: time, color: spark)
                 }
             }
         }
@@ -644,7 +760,7 @@ private struct TrackEffect: View {
         .accessibilityHidden(true)
     }
 
-    private static func drawParticles(_ context: GraphicsContext, size: CGSize, time: TimeInterval) {
+    private static func drawParticles(_ context: GraphicsContext, size: CGSize, time: TimeInterval, color: Color) {
         let span = Double(size.width) + 8
         let count = max(10, Int(size.width / 5))
         for index in 0..<count {
@@ -662,7 +778,7 @@ private struct TrackEffect: View {
             guard opacity > 0.01 else { continue }
             context.fill(
                 Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)),
-                with: .color(.white.opacity(opacity))
+                with: .color(color.opacity(opacity))
             )
         }
     }
@@ -724,7 +840,7 @@ private struct TrackEffect: View {
     }
 
     /// A slanted band of light sweeping the whole fill every few seconds.
-    private static func drawSheen(_ context: GraphicsContext, size: CGSize, time: TimeInterval) {
+    private static func drawSheen(_ context: GraphicsContext, size: CGSize, time: TimeInterval, color: Color) {
         let width = Double(size.width)
         let height = Double(size.height)
         let band = 46.0
@@ -740,7 +856,7 @@ private struct TrackEffect: View {
         context.fill(
             path,
             with: .linearGradient(
-                Gradient(colors: [.white.opacity(0), .white.opacity(0.22), .white.opacity(0)]),
+                Gradient(colors: [color.opacity(0), color.opacity(0.22), color.opacity(0)]),
                 startPoint: CGPoint(x: x, y: 0),
                 endPoint: CGPoint(x: x + band + 10, y: 0)
             )
