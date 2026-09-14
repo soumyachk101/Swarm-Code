@@ -3,6 +3,11 @@ import SwiftUI
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    /// Shown from the chat's Threads button while the sidebar is hidden: the same list in a
+    /// popover, without the window buttons' clearance or the window-dragging background, and
+    /// picking a thread closes it.
+    var inPopover = false
+    var dismiss: (() -> Void)? = nil
 
     @State private var search = ""
     @State private var renaming: ChatThread?
@@ -22,9 +27,11 @@ struct SidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Clears the native window buttons that float over the sidebar's top corner.
-            Color.clear
-                .frame(height: Chrome.trafficLightDiameter)
-                .padding(.top, Chrome.trafficLightTop)
+            if !inPopover {
+                Color.clear
+                    .frame(height: Chrome.trafficLightDiameter)
+                    .padding(.top, Chrome.trafficLightTop)
+            }
 
             HStack(spacing: 6) {
                 SidebarSearchField(text: $search, prompt: "Search threads") {
@@ -38,7 +45,7 @@ struct SidebarView: View {
                 ))
             }
             .padding(.horizontal, Chrome.listInset)
-            .padding(.top, 14)
+            .padding(.top, inPopover ? 12 : 14)
 
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 1) {
@@ -78,7 +85,8 @@ struct SidebarView: View {
             .padding(.bottom, 12)
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .background { WindowDragArea() }
+        .background { if !inPopover { WindowDragArea() } }
+        .onChange(of: model.selectedThreadID) { if inPopover { dismiss?() } }
         .alert("Rename thread", isPresented: Binding(
             get: { renaming != nil },
             set: { if !$0 { renaming = nil } }

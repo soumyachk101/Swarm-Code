@@ -180,6 +180,12 @@ private struct ChatChromeRow: View {
         // a pass of its own. The spacing is well under the gaps, so nothing morphs together.
         GlassEffectContainer(spacing: 2) {
             HStack(alignment: .center, spacing: 10) {
+                // With the sidebar away, its list is one press away: the button arrives with the
+                // window buttons and leaves with them.
+                if !sidebarVisible {
+                    ThreadsButton()
+                        .transition(.softAppear)
+                }
                 ChromeCircleButton(symbol: "square.and.pencil", help: "New thread (⌘N)") {
                     model.newThread(in: project)
                 }
@@ -219,6 +225,23 @@ private struct ChatChromeRow: View {
         .padding(.horizontal, Chrome.chromeHorizontalPadding)
         .padding(.top, Chrome.chromeTopPadding)
         .animation(Chrome.panelSlide, value: sidebarVisible)
+    }
+}
+
+/// The sidebar's list in a popover, for a hidden sidebar: the same search, the same rows,
+/// the same footer, at the sidebar's own width. Picking a thread closes it.
+private struct ThreadsButton: View {
+    @Environment(AppModel.self) private var model
+    @State private var isPresented = false
+
+    var body: some View {
+        ChromeCircleButton(symbol: "list.bullet", help: "Threads") {
+            isPresented.toggle()
+        }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            SidebarView(inPopover: true, dismiss: { isPresented = false })
+                .frame(width: model.sidebar.width, height: 560)
+        }
     }
 }
 
