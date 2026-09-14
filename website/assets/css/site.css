@@ -1774,6 +1774,8 @@ html.nav-intro-done .nav__pill { animation: none; }
   margin-top: 18px;
 }
 .themes__name {
+  appearance: none;
+  border: 0;
   padding: 7px 13px;
   border-radius: 999px;
   background: transparent;
