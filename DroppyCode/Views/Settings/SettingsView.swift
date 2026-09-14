@@ -52,7 +52,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
-        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "binary", "path", "sign in", "login", "api key"]
+        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
         case .shortcuts: ["keyboard", "keys"]
         case .archive: ["archived", "restore"]
@@ -329,7 +329,9 @@ private struct ProvidersRefreshButton: View {
     }
 }
 
-/// Shows what launch (or the refresh button) last found. Opening or scrolling the page checks nothing.
+/// Shows what launch (or the refresh button) last found: opening or scrolling the page checks no provider.
+/// The one read it starts on its own is each signed-in account's usage limits, which the registry
+/// throttles to once a minute, so the numbers are on screen without a trip through a chat.
 private struct ProvidersSettingsPage: View {
     var body: some View {
         // Eager on purpose: a handful of sections, and lazy ones were rebuilt while scrolling,
@@ -350,6 +352,13 @@ private struct ProviderSettingsSection: View {
     @State private var apiKey = ""
     @State private var showsAPIKey = false
     @State private var keyCheck: Task<Void, Never>?
+
+    /// Limits and credits belong to a signed-in account, so a missing or signed-out provider shows none.
+    private var showsUsage: Bool {
+        guard PlanLimitsReader.exposesLimits(provider) || CreditsReader.exposesCredits(provider) else { return false }
+        let status = model.providers.status(provider)
+        return status.isInstalled && status.auth != .signedOut
+    }
 
     var body: some View {
         let status = model.providers.status(provider)
@@ -381,6 +390,19 @@ private struct ProviderSettingsSection: View {
                 .padding(.leading, 16)
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
+                if showsUsage {
+                    ChromeRowDivider()
+                    VStack(alignment: .leading, spacing: 14) {
+                        if PlanLimitsReader.exposesLimits(provider) {
+                            PlanLimitsView(provider: provider)
+                        }
+                        if CreditsReader.exposesCredits(provider) {
+                            CreditsView(provider: provider)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                }
                 if provider.isAPIKeyBased {
                     ChromeRowDivider()
                     ChromeRow(title: "API key", detail: "Stored in your Keychain. Get one at \(provider.apiKeySource ?? "the provider dashboard").") {
@@ -439,6 +461,14 @@ private struct ProviderSettingsSection: View {
         .onAppear {
             binaryPath = model.settings.binaryPath(for: provider)
             if provider.isAPIKeyBased { apiKey = model.settings.apiKeyInput(for: provider) }
+        }
+        .onChange(of: showsUsage, initial: true) { _, shows in
+            // Fires once when the page opens on a signed-in account and again when a check signs
+            // one in. Sections are eager, so scrolling never re-fires it, and the registry hands
+            // back what it read within the last minute instead of asking the provider again.
+            guard shows else { return }
+            model.providers.refreshPlanLimits(provider)
+            model.providers.refreshCredits(provider)
         }
         .onChange(of: binaryPath) { _, value in
             guard value != model.settings.binaryPath(for: provider) else { return }

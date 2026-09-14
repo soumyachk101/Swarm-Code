@@ -118,13 +118,18 @@ final class ProviderRegistry {
 
     private(set) var isRefreshing = false
 
-    /// The Providers page's refresh button: checks every provider again and reloads the live catalogs.
-    /// Nothing on that page checks on its own, so this is the only way it hits the CLIs and APIs.
+    /// The Providers page's refresh button: checks every provider again, re-reads the usage limits
+    /// the page shows for each signed-in account and reloads the live catalogs. Beyond the limits,
+    /// nothing on that page checks on its own, so this is the only way it hits the CLIs and APIs.
     func refreshEverything() async {
         guard !isRefreshing else { return }
         isRefreshing = true
         defer { isRefreshing = false }
         await refreshAll()
+        // Credits were already re-read when the key proved itself in `refreshAPIProvider`.
+        for provider in ProviderKind.allCases where status(provider).auth != .signedOut {
+            refreshPlanLimits(provider, force: true)
+        }
         await withTaskGroup(of: Void.self) { group in
             for provider in [ProviderKind.codex, .antigravity, .deepseek, .meta] where status(provider).isInstalled {
                 group.addTask { await self.loadCatalog(provider, force: true) }
