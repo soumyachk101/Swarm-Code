@@ -238,11 +238,18 @@ extension AppModel {
         case .interrupted: .stopped
         case .running: .running
         }
+        // The progress a native head reported while it ran lands on the record now, once.
+        let live = existingRuntime(for: id)
         updateHydraHead(id) {
             $0.status = outcome
             $0.summary = summary ?? $0.summary
             $0.finishedAt = .now
             if let landing { $0.landing = landing }
+            if let live {
+                if let activity = live.hydraActivity { $0.activity = activity }
+                $0.toolCalls = max($0.toolCalls, live.hydraToolCalls)
+                $0.tokens = max($0.tokens, live.hydraTokens)
+            }
         }
         guard let parentID = head.parentThreadID, let finished = thread(id)?.hydra else { return }
         let leadRuntime = runtime(for: parentID)

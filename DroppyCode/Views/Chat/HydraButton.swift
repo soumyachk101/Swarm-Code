@@ -78,46 +78,51 @@ private struct HydraMarkView: View {
 }
 
 /// The charge around an active Hydra button: a ring of the roster's colours that keeps
-/// turning, and a glow behind the mark that breathes. Both stop with reduced motion and
-/// leave a still ring, so the state still shows.
+/// turning, and a glow behind the mark that breathes. Both are animations the render
+/// server runs on its own (a rotation and an opacity, repeating), so a charged button
+/// costs the main thread nothing while it sits there; an earlier version re-rendered the
+/// view thirty times a second for as long as Hydra was on. Both stop with reduced motion
+/// and leave a still ring, so the state still shows.
 struct HydraCharge: View {
     private static let colors: [Color] = HydraRoster.personas.prefix(6).map(\.color)
 
+    @State private var isTurning = false
+    @State private var isBreathing = false
+
     var body: some View {
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            let turn = reduceMotion ? 0 : time.truncatingRemainder(dividingBy: 4) / 4
-            let breath = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(time * 2.2)
-            ZStack {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Chrome.accent.opacity(0.28 + 0.18 * breath), Chrome.accent.opacity(0)],
-                            center: .center,
-                            startRadius: 2,
-                            endRadius: 15
-                        )
+        ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Chrome.accent.opacity(0.46), Chrome.accent.opacity(0)],
+                        center: .center,
+                        startRadius: 2,
+                        endRadius: 15
                     )
-                    .padding(2)
-                Circle()
-                    .strokeBorder(
-                        AngularGradient(
-                            gradient: Gradient(colors: Self.colors + [Self.colors[0]]),
-                            center: .center,
-                            angle: .degrees(turn * 360)
-                        ),
-                        lineWidth: 2
-                    )
-                    .padding(1)
-                    .opacity(0.85 + 0.15 * breath)
-            }
+                )
+                .padding(2)
+                .opacity(isBreathing ? 1 : 0.6)
+            Circle()
+                .strokeBorder(
+                    AngularGradient(
+                        gradient: Gradient(colors: Self.colors + [Self.colors[0]]),
+                        center: .center
+                    ),
+                    lineWidth: 2
+                )
+                .padding(1)
+                .rotationEffect(.degrees(isTurning ? 360 : 0))
+                .opacity(isBreathing ? 1 : 0.85)
         }
         .allowsHitTesting(false)
+        .onAppear {
+            guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+            withAnimation(.linear(duration: 4).repeatForever(autoreverses: false)) { isTurning = true }
+            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { isBreathing = true }
+        }
     }
 }
 
-/// One-line summaries of a pair, for tooltips and rows.
 enum HydraPairSummary {
     /// "Heads on Opus · High effort", or what they inherit.
     @MainActor

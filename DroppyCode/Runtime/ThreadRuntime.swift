@@ -117,6 +117,24 @@ final class ThreadRuntime {
     @ObservationIgnored private var hydraReportsThisRequest = 0
     /// The team's finished work is on its way to the remote (see `AppModel.autoMergeHydraWork`).
     @ObservationIgnored var isHydraMerging = false
+    /// A native head's progress while it runs (its provider's note, its tool count, its
+    /// spend), kept here rather than on the thread record: the provider reports it many
+    /// times a second, and a write to a thread re-renders everything that lists threads.
+    /// Only the panel row that shows this head follows these; they land on the record
+    /// once the head finishes (see `AppModel.finishHydraHead`).
+    var hydraActivity: String?
+    var hydraToolCalls = 0
+    var hydraTokens = 0
+
+    /// The head's record with its live progress on top, for the views that show it.
+    func hydraLiveInfo(_ stored: HydraHeadInfo) -> HydraHeadInfo {
+        guard stored.status == .running else { return stored }
+        var info = stored
+        if let activity = hydraActivity { info.activity = activity }
+        info.toolCalls = max(info.toolCalls, hydraToolCalls)
+        info.tokens = max(info.tokens, hydraTokens)
+        return info
+    }
 
     private struct HydraBatch {
         var pending: Set<UUID>
@@ -1022,12 +1040,10 @@ final class ThreadRuntime {
         case .agentEvent(let agentID, let event):
             hydraAgentEvent(agentID, event)
         case .agentProgress(let agentID, let summary, let lastTool, let tokens, let toolCalls):
-            guard let headID = hydraNativeHeads[agentID] else { break }
-            app?.updateHydraHead(headID) { info in
-                if let summary, !summary.isEmpty { info.activity = summary } else if let lastTool { info.activity = lastTool }
-                if let tokens { info.tokens = tokens }
-                if let toolCalls { info.toolCalls = toolCalls }
-            }
+            guard let headID = hydraNativeHeads[agentID], let headRuntime = app?.runtime(for: headID) else { break }
+            if let summary, !summary.isEmpty { headRuntime.hydraActivity = summary } else if let lastTool { headRuntime.hydraActivity = lastTool }
+            if let tokens { headRuntime.hydraTokens = tokens }
+            if let toolCalls { headRuntime.hydraToolCalls = toolCalls }
         case .agentFinished(let agentID, let status, let summary):
             hydraAgentFinished(agentID, status: status, summary: summary)
         }
@@ -1221,10 +1237,8 @@ final class ThreadRuntime {
         case .turnCompleted(let status, _):
             hydraAgentFinished(agentID, status: status, summary: nil)
         case .toolStarted(_, let call):
-            app.updateHydraHead(headID) {
-                $0.toolCalls += 1
-                $0.activity = ToolPresentation.label(for: call)
-            }
+            headRuntime.hydraToolCalls += 1
+            headRuntime.hydraActivity = ToolPresentation.label(for: call)
             headRuntime.rehearse(event)
         case .usage, .sessionReady, .models, .commands, .title, .assistantMessageID:
             break
