@@ -67,6 +67,11 @@ struct SidebarView: View {
                 }
                 SidebarRow(title: "Settings", action: { WindowManager.shared.showSettings() }) {
                     SidebarIconBadge { SidebarSymbol("gear", scale: 1.15) }
+                        .overlay(alignment: .topTrailing) {
+                            if UpdateChecker.shared.updateAvailable {
+                                UpdateAvailableDot()
+                            }
+                        }
                 }
             }
             .padding(.horizontal, Chrome.listInset)

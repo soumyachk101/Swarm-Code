@@ -15,6 +15,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         windows.showMain()
         Task { await windows.model.bootstrap() }
+        UpdateChecker.shared.startBackgroundChecks()
+        // The relaunch after an install: the update story finishes on About, where it began.
+        if AppUpdater.shared.consumeRelaunchMarker() {
+            UpdateInstallProgress.shared.armCelebration()
+            windows.showSettings(page: .about)
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -37,12 +43,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        let identifier = response.notification.request.content.userInfo["threadID"] as? String
+        let userInfo = response.notification.request.content.userInfo
+        let identifier = userInfo["threadID"] as? String
+        let isUpdate = userInfo["update"] != nil
         await MainActor.run {
             if let identifier, let threadID = UUID(uuidString: identifier) {
                 self.model?.selectedThreadID = threadID
             }
             NSApp.activate()
+            if isUpdate { WindowManager.shared.showSettings(page: .about) }
         }
     }
 }
