@@ -37,6 +37,15 @@ extension AppModel {
         }
         let sorted = paths.sorted()
         guard !sorted.isEmpty else { return }
+        // A head's landing can leave conflict markers behind (see `Git.apply`), and a lead
+        // told not to look at git status may answer without settling them. Those markers
+        // must never reach the remote: the job stays in the checkout until they are gone.
+        let conflicted = await Self.pathsWithConflictMarkers(sorted, in: checkout)
+        guard conflicted.isEmpty else {
+            let files = conflicted.map { "`\($0)`" }.joined(separator: ", ")
+            note(leadID, "Hydra did not merge: conflict markers in \(conflicted.count == 1 ? "a file" : "\(conflicted.count) files").", "\(files) still \(conflicted.count == 1 ? "holds" : "hold") conflict markers from a head's landing. Resolve them, then ask for the merge again.")
+            return
+        }
 
         do {
             let head = try await git.commitHash()
@@ -184,6 +193,24 @@ extension AppModel {
         if slug.count > 40 { slug = String(slug.prefix(40)).trimmingCharacters(in: CharacterSet(charactersIn: "-")) }
         let suffix = String(UUID().uuidString.lowercased().prefix(6))
         return "hydra/\(slug.isEmpty ? "team" : slug)-\(suffix)"
+    }
+
+    /// The files among `paths` that hold a three-way merge's conflict markers: a line that
+    /// opens with `<<<<<<< ` and one that opens with `>>>>>>> `. Read off the main actor;
+    /// a file that is gone (a deletion the team made) or too large to be source is skipped.
+    private nonisolated static func pathsWithConflictMarkers(_ paths: [String], in checkout: String) async -> [String] {
+        await Task.detached(priority: .utility) {
+            let root = URL(fileURLWithPath: checkout)
+            let opening = Data("\n<<<<<<< ".utf8)
+            let closing = Data("\n>>>>>>> ".utf8)
+            return paths.filter { path in
+                let url = root.appendingPathComponent(path)
+                guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size <= 4_000_000,
+                      let data = try? Data(contentsOf: url) else { return false }
+                let body = Data([0x0A]) + data
+                return body.range(of: opening) != nil && body.range(of: closing) != nil
+            }
+        }.value
     }
 
     private static func filesLine(_ files: [DiffFile]) -> String {

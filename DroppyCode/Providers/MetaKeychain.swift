@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 /// Stores the Meta Model API key (MODEL_API_KEY) in the macOS Keychain so it
-/// never sits in plaintext alone. UserDefaults keeps a migrated copy for lookup.
+/// never sits in plaintext. UserDefaults keeps a copy only where the Keychain refuses it.
 enum MetaKeychain {
     private static let service = "Droppy Code"
     private static let account = "Meta API Key"
@@ -13,11 +13,14 @@ enum MetaKeychain {
         return fallback
     }
 
-    static func setAPIKey(_ key: String) {
+    /// Stores the key, or removes it for an empty one. Returns whether the Keychain took
+    /// it, so the caller knows whether a fallback copy is still needed.
+    @discardableResult
+    static func setAPIKey(_ key: String) -> Bool {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
             delete()
-            return
+            return true
         }
         let data = Data(trimmed.utf8)
         let query: [String: Any] = [
@@ -30,7 +33,7 @@ enum MetaKeychain {
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
         ]) { _, new in new }
-        SecItemAdd(attributes as CFDictionary, nil)
+        return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 
     private static func read() -> String? {

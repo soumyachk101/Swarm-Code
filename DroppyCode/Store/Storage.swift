@@ -80,6 +80,38 @@ enum Storage {
         try data.write(to: destination, options: .atomic)
         return Attachment(id: id, name: name, path: destination.path, mimeType: MimeType.of(fileExtension))
     }
+
+    /// Removes attachment files no thread refers to any more: the photos of a deleted
+    /// thread, a draft's that was never sent, a follow-up's that was dropped. A file is
+    /// only an orphan once it is a day old, so a draft still open when the app relaunches
+    /// keeps its files, and only files named the way `importAttachment` names them go.
+    /// Runs off the main actor; the thread files are scanned as text, never decoded.
+    nonisolated static func sweepOrphanedAttachments() async {
+        let attachments = attachmentsDirectory
+        let threads = threadsDirectory
+        await Task.detached(priority: .utility) {
+            let fileManager = FileManager.default
+            guard let names = try? fileManager.contentsOfDirectory(atPath: attachments.path), !names.isEmpty,
+                  let documents = try? fileManager.contentsOfDirectory(atPath: threads.path) else { return }
+            var referenced = Set<String>()
+            for document in documents where document.hasSuffix(".json") {
+                guard let data = try? Data(contentsOf: threads.appendingPathComponent(document)) else { continue }
+                let text = String(decoding: data, as: UTF8.self)
+                // The encoder writes the path's slashes as `\/`.
+                for match in text.matches(of: #/attachments\\?\/([0-9A-Fa-f-]{36}\.[A-Za-z0-9]+)/#) {
+                    referenced.insert(String(match.output.1))
+                }
+            }
+            let cutoff = Date.now.addingTimeInterval(-24 * 60 * 60)
+            for name in names where !referenced.contains(name) {
+                guard name.wholeMatch(of: #/[0-9A-Fa-f-]{36}\.[A-Za-z0-9]+/#) != nil else { continue }
+                let url = attachments.appendingPathComponent(name)
+                guard let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+                      modified < cutoff else { continue }
+                try? fileManager.removeItem(at: url)
+            }
+        }.value
+    }
 }
 
 enum MimeType {
