@@ -1464,6 +1464,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   stroke-linejoin: round;
 }
 .free .btn--applepill { width: 100%; justify-content: center; }
+.free__source { width: 100%; justify-content: center; margin-top: 10px; }
 .free__foot {
   margin-top: 14px;
   text-align: center;
@@ -1635,8 +1636,8 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 .footer__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
-  gap: 48px;
+  grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr));
+  gap: 40px;
   justify-items: center;
   text-align: center;
 }

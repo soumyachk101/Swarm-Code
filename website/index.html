@@ -53,7 +53,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&display=swap" rel="stylesheet">
 
   <script>try{if(sessionStorage.getItem("droppyCodeNavIntro")){document.documentElement.className+=" nav-intro-done";}else{sessionStorage.setItem("droppyCodeNavIntro","1");}}catch(e){}</script>
-  <link rel="stylesheet" href="assets/css/site.css?v=5">
+  <link rel="stylesheet" href="assets/css/site.css?v=6">
   <link rel="stylesheet" href="assets/css/wordscroll.css?v=5">
   <noscript><style>.reveal { opacity: 1; transform: none; } .hero__field, .outro__field { display: none; }</style></noscript>
 
@@ -72,7 +72,8 @@
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
     "author": { "@type": "Organization", "name": "Droppy", "url": "https://getdroppy.app" },
     "url": "https://getdroppycode.app/",
-    "license": "https://opensource.org/licenses/MIT"
+    "license": "https://opensource.org/licenses/MIT",
+    "sameAs": "https://gitlab.com/droppyformac1/droppy-code"
   }
   </script>
 </head>
@@ -96,6 +97,7 @@
         <a class="nav__link" href="#themes">Themes</a>
         <a class="nav__link" href="#features">Features</a>
         <a class="nav__link" href="#faq">FAQ</a>
+        <a class="nav__link" href="https://gitlab.com/droppyformac1/droppy-code" target="_blank" rel="noopener">Source</a>
         <a class="nav__link" href="https://getdroppy.app" target="_blank" rel="noopener">Droppy</a>
       </div>
       <button class="nav__menu" type="button" aria-expanded="false" aria-label="Menu">
@@ -450,7 +452,10 @@
             <svg class="btn--applepill-logo" aria-hidden="true"><use href="#apple-mark"/></svg>
             <span>Download for macOS</span>
           </a>
-          <p class="free__foot">Disk image, drag to Applications. Source under the <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noopener">MIT License</a>.</p>
+          <a class="btn--darkpill free__source" href="https://gitlab.com/droppyformac1/droppy-code" target="_blank" rel="noopener" aria-label="View the source on GitLab, opens in a new tab" data-morph-glyph="arrow-up-right">
+            <span>View source on GitLab</span>
+          </a>
+          <p class="free__foot">Disk image, drag to Applications. The source is on <a href="https://gitlab.com/droppyformac1/droppy-code" target="_blank" rel="noopener">GitLab</a> under the <a href="https://gitlab.com/droppyformac1/droppy-code/-/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>.</p>
         </div>
       </div>
     </section>
@@ -479,7 +484,17 @@
               <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
             </button>
             <div class="faq__answer"><div class="faq__answer-inner">
-              <p class="faq__answer-content">Yes. Droppy Code is free and released under the MIT License. You pay your agent providers as you already do; Droppy Code never sits in between, never proxies a request and never adds a markup.</p>
+              <p class="faq__answer-content">Yes. Droppy Code is free and released under the <a href="https://gitlab.com/droppyformac1/droppy-code/-/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>. You pay your agent providers as you already do; Droppy Code never sits in between, never proxies a request and never adds a markup.</p>
+            </div></div>
+          </div>
+
+          <div class="faq__item">
+            <button class="faq__question" aria-expanded="false">
+              <span>Is it open source?</span>
+              <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
+            </button>
+            <div class="faq__answer"><div class="faq__answer-inner">
+              <p class="faq__answer-content">Yes, all of it. The app lives on <a href="https://gitlab.com/droppyformac1/droppy-code" target="_blank" rel="noopener">GitLab</a>, written in Swift and SwiftUI, with every release and its notes on the <a href="https://gitlab.com/droppyformac1/droppy-code/-/releases" target="_blank" rel="noopener">releases page</a>. Read it, build it in Xcode, or send a merge request. The code is MIT; the Droppy name and icon are not, as the <a href="https://gitlab.com/droppyformac1/droppy-code/-/blob/main/TRADEMARK.md" target="_blank" rel="noopener">trademark policy</a> explains.</p>
             </div></div>
           </div>
 
@@ -612,6 +627,15 @@
         <a href="https://getdroppy.app/docs.html" target="_blank" rel="noopener">Docs</a>
         <a href="https://getdroppy.app/privacy-policy.html" target="_blank" rel="noopener">Privacy policy</a>
         <a href="https://getdroppy.app/terms-of-service.html" target="_blank" rel="noopener">Terms of service</a>
+      </nav>
+      <nav class="footer__col" aria-label="Open source">
+        <p class="footer__head">Open source</p>
+        <a href="https://gitlab.com/droppyformac1/droppy-code" target="_blank" rel="noopener">Source code</a>
+        <a href="https://gitlab.com/droppyformac1/droppy-code/-/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://gitlab.com/droppyformac1/droppy-code/-/merge_requests" target="_blank" rel="noopener">Merge requests</a>
+        <a href="https://gitlab.com/droppyformac1/droppy-code/-/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>
+        <a href="https://gitlab.com/droppyformac1/droppy-code/-/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">Third-party notices</a>
+        <a href="https://gitlab.com/droppyformac1/droppy-code/-/blob/main/TRADEMARK.md" target="_blank" rel="noopener">Trademark policy</a>
       </nav>
       <nav class="footer__col" aria-label="Connect">
         <p class="footer__head">Connect</p>
