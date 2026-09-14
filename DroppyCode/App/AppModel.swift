@@ -172,28 +172,37 @@ final class AppModel {
     }
 
     /// Places a thread directly above or below another thread in the same project.
-    func moveThread(_ id: UUID, to targetID: UUID, placeAfter: Bool) {
+    /// Places a thread directly above or below another in its project. Returns whether the
+    /// order changed, for a live drag that swaps one neighbour at a time.
+    @discardableResult
+    func moveThread(_ id: UUID, to targetID: UUID, placeAfter: Bool) -> Bool {
         guard id != targetID, let moving = thread(id), let target = thread(targetID),
-              moving.projectID == target.projectID, let project = project(moving.projectID) else { return }
-        var order = threads(in: project).map(\.id)
+              moving.projectID == target.projectID, let project = project(moving.projectID) else { return false }
+        let before = threads(in: project).map(\.id)
+        var order = before
         order.removeAll { $0 == id }
-        guard let index = order.firstIndex(of: targetID) else { return }
+        guard let index = order.firstIndex(of: targetID) else { return false }
         order.insert(id, at: placeAfter ? index + 1 : index)
+        guard order != before else { return false }
         if moving.isPinned != target.isPinned {
             updateThread(id) { $0.isPinned = target.isPinned }
         }
         for (position, threadID) in order.enumerated() {
             updateThread(threadID) { $0.sortOrder = Double(position) }
         }
+        return true
     }
 
-    /// Places a thread directly above or below another within the same group of the activity layout.
-    func moveInActivity(_ id: UUID, to targetID: UUID, placeAfter: Bool, among peers: [UUID]) {
-        guard id != targetID, peers.contains(id), peers.contains(targetID) else { return }
+    /// Places a thread directly above or below another within the same group of the activity
+    /// layout. Returns whether the order changed.
+    @discardableResult
+    func moveInActivity(_ id: UUID, to targetID: UUID, placeAfter: Bool, among peers: [UUID]) -> Bool {
+        guard id != targetID, peers.contains(id), peers.contains(targetID) else { return false }
         var order = peers
         order.removeAll { $0 == id }
-        guard let index = order.firstIndex(of: targetID) else { return }
+        guard let index = order.firstIndex(of: targetID) else { return false }
         order.insert(id, at: placeAfter ? index + 1 : index)
+        guard order != peers else { return false }
         let calendar = Calendar.current
         for (position, threadID) in order.enumerated() {
             updateThread(threadID) {
@@ -201,6 +210,7 @@ final class AppModel {
                 $0.activityOrderDay = calendar.startOfDay(for: $0.updatedAt)
             }
         }
+        return true
     }
 
     var archivedThreads: [ChatThread] {
