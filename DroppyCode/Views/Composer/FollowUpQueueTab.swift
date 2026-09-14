@@ -55,7 +55,7 @@ struct FollowUpQueueTab: View {
             // The rows stay in place and fold: a clip animates between zero
             // and their measured height while they fade, so nothing is ever
             // removed mid-animation to linger over the composer as a ghost.
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 Divider().opacity(0.5)
 
                 // Rows carry their own vertical padding and rule, so a row's
@@ -79,7 +79,7 @@ struct FollowUpQueueTab: View {
                     }
                 }
             }
-            .padding(.top, 8)
+            .padding(.top, 6)
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
                 if height > 0 { listHeight = height }
             }
@@ -118,7 +118,7 @@ struct FollowUpQueueTab: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) { drag.translation = translation }
 
-        let moved = drag.settle(order: runtime.followUps.map(\.id), heights: rowHeights, fallbackHeight: 44) { neighbour, placeAfter in
+        let moved = drag.settle(order: runtime.followUps.map(\.id), heights: rowHeights, fallbackHeight: 32) { neighbour, placeAfter in
             // The neighbour slides and the grabbed row's slot moves in the
             // same animation as its compensation, so it stays put under
             // the pointer while the list flows around it.
@@ -178,7 +178,7 @@ private struct FollowUpRow: View {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Chrome.secondaryText.opacity(isHoveringGrip ? 1 : 0.7))
-                .frame(width: 28, height: 28)
+                .frame(width: 28, height: 22)
                 .contentShape(.rect)
                 .onHover { hovering in
                     isHoveringGrip = hovering
@@ -205,7 +205,7 @@ private struct FollowUpRow: View {
             if !prompt.attachments.isEmpty {
                 HStack(spacing: 4) {
                     ForEach(prompt.attachments) { attachment in
-                        AttachmentThumbnail(attachment: attachment, size: 28, preview: preview)
+                        AttachmentThumbnail(attachment: attachment, size: 22, preview: preview)
                     }
                 }
                 .background {
@@ -247,7 +247,8 @@ private struct FollowUpRow: View {
             }
             .fixedSize()
         }
-        .padding(.vertical, 8)
+        // Tight rows: a one-line follow-up is 32 tall, the grip and buttons 22.
+        .padding(.vertical, 5)
         .overlay(alignment: .bottom) {
             if showsRule { Divider().opacity(0.35) }
         }
