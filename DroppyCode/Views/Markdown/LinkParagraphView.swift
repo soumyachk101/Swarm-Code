@@ -85,9 +85,9 @@ struct LinkParagraphView: NSViewRepresentable {
                         .foregroundColor: textColor,
                     ]))
                 }
+                // Colour and underline come from the view's `linkTextAttributes`.
                 out.append(NSAttributedString(string: string, attributes: [
                     .font: font,
-                    .foregroundColor: NSColor.linkColor,
                     .link: url,
                 ]))
             } else {
@@ -162,6 +162,14 @@ final class LinkTextView: NSTextView {
     /// New content; skips the layout pass when nothing changed (favicons and
     /// streaming rebuilds both funnel through here).
     func render(_ text: NSAttributedString) {
+        // Links wear the theme's accent with no underline, like the rest of
+        // the chrome; the system accent for System/Light/Dark. Set per render
+        // so a theme change recolours links already on screen.
+        linkTextAttributes = [
+            .foregroundColor: ThemeManager.spec.accent.map { NSColor($0) } ?? NSColor.controlAccentColor,
+            .underlineStyle: 0,
+            .cursor: NSCursor.pointingHand,
+        ]
         if textStorage?.isEqual(to: text) != true {
             textStorage?.setAttributedString(text)
             lastMeasuredHeight = 0
