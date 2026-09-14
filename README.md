@@ -14,6 +14,7 @@ It drives the coding agents you already have installed and signed in, on your ow
 | OpenCode | `opencode` | Agent Client Protocol |
 | Grok | `grok` | Agent Client Protocol |
 | Antigravity | `agy` | stream-json headless |
+| Copilot | `copilot` | headless JSON-RPC (the Copilot SDK protocol) |
 | DeepSeek | `DEEPSEEK_API_KEY` | native API (OpenAI-compatible) |
 | Meta | `MODEL_API_KEY` | native API at `api.meta.ai/v1` (Muse Spark) |
 
@@ -35,7 +36,7 @@ Remote access, mobile apps, cloud sync, telemetry and a web client are left out 
 ## Requirements
 
 - A Mac with Apple silicon running macOS 26 or later
-- At least one provider installed and signed in, for example `codex login` or `claude auth login`
+- At least one provider installed and signed in, for example `codex login`, `claude auth login` or `copilot login`
 - Git, plus `gh` or `glab` for pull requests
 
 ## Build
@@ -57,7 +58,7 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 | Folder | Contents |
 | --- | --- |
 | `DroppyCode/App` | App entry, commands, settings and the project library |
-| `DroppyCode/Providers` | Codex, Claude, ACP and Antigravity adapters behind one event model |
+| `DroppyCode/Providers` | Codex, Claude, ACP, Antigravity and Copilot adapters behind one event model |
 | `DroppyCode/Runtime` | Per-thread state, streaming, checkpoints and rewind |
 | `DroppyCode/Git` | Git, worktrees, checkpoints and diff parsing |
 | `DroppyCode/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
@@ -71,7 +72,7 @@ Droppy Code is made by [Droppy](https://getdroppy.app) for Mac. Find Droppy at [
 
 ## Acknowledgements
 
-The working indicators, the gradient pulse beside a reply and the mini pulse on working threads, along with their rotating words, are ported from [Zeron](https://github.com/zeronsh/zeron) by Wing, under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The working indicators, the gradient pulse beside a reply and the mini pulse on working threads, along with their rotating words, are ported from [Zeron](https://github.com/zeronsh/zeron) by Wing, under the MIT License. The Copilot provider icon is the `copilot` mark from GitHub's [Octicons](https://github.com/primer/octicons), under the MIT License. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 
