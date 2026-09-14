@@ -104,6 +104,9 @@ final class ThreadRuntime {
     @ObservationIgnored private var hydraBatches: [UUID: HydraBatch] = [:]
     /// Delegated tasks past the pair's limit, sent out as heads finish.
     @ObservationIgnored private var hydraWaiting: [(delegation: HydraDelegation, batchID: UUID)] = []
+    /// How many times heads have gone out for the user's current request; a message of
+    /// the user's own starts the count over.
+    @ObservationIgnored private var hydraDelegationRounds = 0
 
     private struct HydraBatch {
         var pending: Set<UUID>
@@ -239,7 +242,7 @@ final class ThreadRuntime {
 
     var sentPrompts: [String] {
         entries.compactMap { entry in
-            if case .user(let message) = entry.item.content, !message.isHydraReport { return message.text }
+            if case .user(let message) = entry.item.content, !message.isFromHydra { return message.text }
             return nil
         }
     }
@@ -453,6 +456,7 @@ final class ThreadRuntime {
             $0.updatedAt = .now
             $0.lastStatus = .running
         }
+        if hydraHeads == nil { hydraDelegationRounds = 0 }
         // A finished head told more from the panel is at work again: its lead's team
         // counts it, and its next report goes out as a fresh one.
         if let info = initialThread.hydra, info.kind == .droppy, info.isFinished {
@@ -496,7 +500,12 @@ final class ThreadRuntime {
             // A provider with no heads of its own is told, in front of every message, how to
             // ask Droppy Code for them.
             if !AppModel.hydraIsNative(thread.provider), let launch = app.hydraLaunch(for: thread) {
-                prompt = HydraPrompts.fallbackPreamble(maxHeads: launch.maxHeads, isolated: app.settings.hydraIsolateHeads) + prompt
+                let team = HydraPrompts.teamStatus(app.hydraTeam(of: threadID).compactMap(\.hydra))
+                if hydraHeads == nil {
+                    prompt = HydraPrompts.fallbackPreamble(maxHeads: launch.maxHeads, isolated: app.settings.hydraIsolateHeads, team: team) + prompt
+                } else {
+                    prompt = HydraPrompts.fallbackReportPreamble(team: team, canDelegate: hydraDelegationRounds < HydraPrompts.maxDelegationRounds) + prompt
+                }
             }
             phase = .running
             try await session.send(TurnInput(
@@ -1066,7 +1075,7 @@ final class ThreadRuntime {
         // sends the heads out instead, and their reports come back as the next
         // message. Either way the app hears whether a next turn is on its way, so
         // "finished" only sounds when nothing is.
-        let continues: Bool
+        var continues: Bool
         if pendingSend != nil {
             continues = drainPendingSend()
         } else if status == .completed, spawnDelegatedHeads(for: turnID) {
@@ -1076,6 +1085,9 @@ final class ThreadRuntime {
         } else {
             continues = drainFollowUps(after: status)
         }
+        // Heads still out will report, and the lead will work again: the job is not
+        // finished until it has heard from all of them.
+        if !continues, status == .completed, let app, app.runningDroppyHeads(of: threadID) > 0 { continues = true }
         app?.turnFinished(threadID, status: status, continues: continues)
     }
 
@@ -1228,7 +1240,10 @@ final class ThreadRuntime {
             let outcome: ToolCall.Status = status == .completed ? .completed : .failed
             applyToolUpdate(toolID, ToolUpdate(output: summary, status: outcome))
         case .droppy:
-            let report = HydraReport(headIndex: info.index, task: info.task, origin: info.origin, status: status, text: summary ?? "", landing: landing, copyPath: copyPath)
+            let report = HydraReport(
+                headIndex: info.index, task: info.task, origin: info.origin, status: status, text: summary ?? "",
+                landing: landing, copyPath: copyPath, elapsed: Date.now.timeIntervalSince(info.startedAt), toolCalls: info.toolCalls
+            )
             hydraPendingReports.removeAll { $0.headIndex == info.index }
             if let batchID = info.batchID, hydraBatches[batchID] != nil {
                 hydraBatches[batchID]?.pending.remove(headID)
@@ -1279,6 +1294,17 @@ final class ThreadRuntime {
               case .assistant(var message) = entry.item.content,
               let delegations = HydraPrompts.delegations(in: message.text) else { return false }
         message.text = HydraPrompts.withoutDelegationBlock(message.text)
+        // One request gets so many rounds of heads; past that the lead hears why none went
+        // out and finishes by itself, so no request chains heads without end.
+        guard hydraDelegationRounds < HydraPrompts.maxDelegationRounds else {
+            if message.text.isEmpty { message.text = "Asking for more heads." }
+            entry.item.content = .assistant(message)
+            scheduleSave()
+            let text = HydraPrompts.heldBackMessage(count: delegations.count)
+            Task { await startTurn(text: text, attachments: [], hydraHeads: []) }
+            return true
+        }
+        hydraDelegationRounds += 1
         if message.text.isEmpty { message.text = "Sending out heads." }
         entry.item.content = .assistant(message)
         let batchID = UUID()

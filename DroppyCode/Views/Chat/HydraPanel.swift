@@ -187,8 +187,16 @@ private struct HydraHeadsButton: View {
                         isPresented = false
                     }
                 }
-                if heads.contains(where: { $0.hydra?.isFinished == true }) {
+                if running > 1 || heads.contains(where: { $0.hydra?.isFinished == true }) {
                     PopoverDivider()
+                }
+                if running > 1 {
+                    PopoverItem("Stop all heads", symbol: "stop.circle") {
+                        model.stopAllHydraHeads(of: runtime.threadID)
+                        isPresented = false
+                    }
+                }
+                if heads.contains(where: { $0.hydra?.isFinished == true }) {
                     PopoverItem("Clear finished heads", symbol: "checkmark.circle") {
                         withAnimation(Chrome.panelSlide) {
                             model.clearFinishedHydraHeads(of: runtime.threadID)
@@ -379,7 +387,7 @@ enum HydraStatusText {
         case .running:
             return info.activity.map { "· " + TextCleanup.singleLine($0, limit: 40) } ?? "· working"
         case .completed:
-            return "· done" + elapsed(info) + (landed(info).map { " · " + $0 } ?? "")
+            return "· done" + elapsed(info) + steps(info) + (landed(info).map { " · " + $0 } ?? "")
         case .failed:
             return "· failed"
         case .stopped:
@@ -392,7 +400,7 @@ enum HydraStatusText {
         case .running:
             return info.activity.map { TextCleanup.singleLine($0, limit: 80) } ?? "Working"
         case .completed:
-            return "Done" + elapsed(info) + (landed(info).map { " · " + $0 } ?? "") + (info.summary.map { " · " + TextCleanup.singleLine($0, limit: 80) } ?? "")
+            return "Done" + elapsed(info) + steps(info) + (landed(info).map { " · " + $0 } ?? "") + (info.summary.map { " · " + TextCleanup.singleLine($0, limit: 80) } ?? "")
         case .failed:
             return "Failed" + (info.summary.map { " · " + TextCleanup.singleLine($0, limit: 80) } ?? "")
         case .stopped:
@@ -412,6 +420,11 @@ enum HydraStatusText {
             return "landed \(files), " + (landing.conflicts.count == 1 ? "1 conflict" : "\(landing.conflicts.count) conflicts")
         }
         return "landed \(files)"
+    }
+
+    private static func steps(_ info: HydraHeadInfo) -> String {
+        guard info.toolCalls > 0 else { return "" }
+        return info.toolCalls == 1 ? " · 1 step" : " · \(info.toolCalls) steps"
     }
 
     private static func elapsed(_ info: HydraHeadInfo) -> String {

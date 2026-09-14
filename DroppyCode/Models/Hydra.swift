@@ -266,6 +266,8 @@ struct HydraReport: Hashable, Sendable {
     var landing: HydraLanding?
     /// The head's own copy of the checkout, for work that did not land.
     var copyPath: String?
+    var elapsed: TimeInterval?
+    var toolCalls = 0
 }
 
 /// The words Hydra puts in front of the lead and the heads, per provider.
@@ -335,7 +337,7 @@ enum HydraPrompts {
         When you delegate:
         - \(howToWait)
         - Give each head one self-contained task with the exact files, symbols and acceptance criteria it needs. Heads share the checkout but not your context, so write the task as if to a capable colleague who has read nothing yet.
-        - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself.
+        - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself: never send out a head to verify, redo or finish another head's work.
         - Tell the user in one line which heads you sent out and what each one does.
 
         When they report back:
@@ -431,25 +433,77 @@ enum HydraPrompts {
 
     // MARK: - Droppy-run heads
 
+    /// How many times in a row a lead may send heads out for one request of the user's:
+    /// the first round, and one more for what failed or what the reports showed was
+    /// missing. Past that the lead finishes by itself, so no request can chain heads
+    /// that verify heads that verify heads.
+    static let maxDelegationRounds = 2
+
+    /// The lead's team in a line, for the front of its messages: it should never have to
+    /// guess who is still out or what came back.
+    static func teamStatus(_ heads: [HydraHeadInfo], now: Date = .now) -> String? {
+        guard !heads.isEmpty else { return nil }
+        let parts = heads.map { info -> String in
+            let name = info.persona.name
+            switch info.status {
+            case .running:
+                let minutes = Int(now.timeIntervalSince(info.startedAt) / 60)
+                return "\(name) (working\(minutes > 0 ? " for \(minutes)m" : ""))"
+            case .completed:
+                if let landing = info.landing {
+                    if landing.isEmpty { return "\(name) (done, changed nothing)" }
+                    if landing.landed { return "\(name) (done, landed \(landing.files.count == 1 ? "1 file" : "\(landing.files.count) files"))" }
+                    return "\(name) (done, patch kept)"
+                }
+                return "\(name) (done)"
+            case .failed: return "\(name) (failed)"
+            case .stopped: return "\(name) (stopped)"
+            }
+        }
+        return "Your heads so far: " + parts.joined(separator: ", ") + "."
+    }
+
     /// Put in front of the user's prompt on providers that run no heads of their own: the
     /// lead may end its reply with a delegation block, which Droppy Code turns into heads.
-    /// `isolated` says whether those heads get copies of the checkout of their own.
-    static func fallbackPreamble(maxHeads: Int, isolated: Bool) -> String {
+    /// `isolated` says whether those heads get copies of the checkout of their own; `team`
+    /// is the lead's team so far, when it has one.
+    static func fallbackPreamble(maxHeads: Int, isolated: Bool, team: String?) -> String {
         let whereHeadsWork = isolated
             ? "Each head works in a copy of the project of its own and Droppy Code lands its changes in your checkout when it reports"
             : "The heads work in your checkout"
         return """
-        [Hydra is on] You lead a team of up to \(maxHeads) helper agents ("heads"). For a simple or single-focus request, just do it yourself. If this request bundles several independent tasks or needs research across many files, delegate: finish your reply with one fenced block
+        [Hydra is on] You lead a team of up to \(maxHeads) helper agents ("heads").\(team.map { " " + $0 } ?? "") For a simple or single-focus request, just do it yourself. If this request bundles several independent tasks or needs research across many files, delegate: finish your reply with one fenced block
 
         ```hydra
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, and give no two heads the same file. The reports arrive as your next message with the work already in place: build on them, do not redo them, and never use git status or git diff to check on heads, since the checkout changes under you while they work.
+        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, and give no two heads the same file. The reports arrive as your next message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work.
 
         ---
 
         """
+    }
+
+    /// Put in front of a report message instead: the heads are back, and the lead's job
+    /// is to finish, not to send out more. `canDelegate` leaves one more round open for
+    /// what failed or turned out to be missing; otherwise the block is not offered at all.
+    static func fallbackReportPreamble(team: String?, canDelegate: Bool) -> String {
+        let more = canDelegate
+            ? "If a head failed or the reports show a piece of the user's request still undone, you may send out heads once more for exactly that, with the same ```hydra block at the end of your reply; never for verifying, redoing or finishing what a head already did."
+            : "Send out no more heads for this request; whatever is left, do yourself."
+        return """
+        [Hydra] Your heads reported back below.\(team.map { " " + $0 } ?? "") \(more)
+
+        ---
+
+        """
+    }
+
+    /// What the lead hears when its delegation block is refused: the request has had its
+    /// rounds of heads, and the rest is the lead's own.
+    static func heldBackMessage(count: Int) -> String {
+        "Hydra sent out none of the \(count == 1 ? "head" : "\(count) heads") you asked for: this request has had its \(maxDelegationRounds) rounds of heads already. Do the rest yourself now, without git status or git diff on the heads' work, and answer the user."
     }
 
     /// The delegation block at the end of a reply, if the lead wrote one.
@@ -551,7 +605,11 @@ enum HydraPrompts {
             case .stopped: " (stopped by the user before finishing)"
             case .running: ""
             }
-            var lines = ["## \(persona.name) — \(report.task)\(outcome)"]
+            var effort: [String] = []
+            if let elapsed = report.elapsed, elapsed >= 1 { effort.append(duration(elapsed)) }
+            if report.toolCalls > 0 { effort.append(report.toolCalls == 1 ? "1 tool" : "\(report.toolCalls) tools") }
+            let took = effort.isEmpty ? "" : " (" + effort.joined(separator: ", ") + ")"
+            var lines = ["## \(persona.name) — \(report.task)\(outcome)\(took)"]
             if let landing = landingLine(for: report) { lines.append(landing) }
             let body = report.text.trimmingCharacters(in: .whitespacesAndNewlines)
             lines.append(body.isEmpty ? "No report." : body)
@@ -568,6 +626,17 @@ enum HydraPrompts {
         if reports.contains(where: { !($0.landing?.conflicts.isEmpty ?? true) }) {
             closing.append("A file listed with conflicts was merged three-way and keeps conflict markers: resolve those first.")
         }
+        // Two heads on one file is the split the lead was told not to make; it hears
+        // which file, so it reads the result instead of trusting it.
+        var owners: [String: [String]] = [:]
+        for report in reports {
+            for file in report.landing?.files ?? [] {
+                owners[file.path, default: []].append(HydraRoster.persona(at: report.headIndex).name)
+            }
+        }
+        for (path, names) in owners.sorted(by: { $0.key < $1.key }) where names.count > 1 {
+            closing.append("\(list(names)) both changed \(path): read it as it is now before you build on it.")
+        }
         for report in reports {
             guard let landing = report.landing, let path = landing.patchPath else { continue }
             closing.append("\(HydraRoster.persona(at: report.headIndex).name)'s changes would not apply on their own; the patch is at \(path). Apply it with `git apply --3way \(path)` and settle what conflicts.")
@@ -583,7 +652,7 @@ enum HydraPrompts {
         }
         closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile, revert or redo anything. Build on the reports, read the files they name if something matters, run one verification if it matters, and finish the job.")
         if !stillWorking.isEmpty {
-            closing.append("Do not wait for \(list(stillWorking)) and do not take over \(stillWorking.count == 1 ? "its" : "their") tasks.")
+            closing.append("Do not wait for \(list(stillWorking)) and do not take over \(stillWorking.count == 1 ? "its" : "their") tasks; tell the user \(stillWorking.count == 1 ? "it is" : "they are") still at work and that you will hear from \(stillWorking.count == 1 ? "it" : "them").")
         }
 
         return """
@@ -611,6 +680,11 @@ enum HydraPrompts {
         if landing.patchPath != nil { return "Did not land: \(files.joined(separator: ", "))." }
         if let error = landing.error { return "Did not land (\(error)): \(files.joined(separator: ", "))." }
         return "Landed in your checkout: \(files.joined(separator: ", "))."
+    }
+
+    private static func duration(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        return total < 60 ? "\(total)s" : "\(total / 60)m \(total % 60)s"
     }
 
     private static func list(_ names: [String]) -> String {

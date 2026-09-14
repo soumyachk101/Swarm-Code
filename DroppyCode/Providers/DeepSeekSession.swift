@@ -32,6 +32,16 @@ final class DeepSeekSession: ProviderSession {
     private static let headPacingTools = 24
     private static let headPacingNote = "[Droppy Code] You have run \(headPacingTools) tools without changing a file. If the task is research, reply with your findings now. Otherwise act on what you know: make the change, or reply with what blocks you."
 
+    /// A head's budget for one turn. Past the first line it is told to wrap up; at the
+    /// second its tools go away and it gets one round to write its report, so the lead
+    /// hears from it instead of waiting on a head that would run all evening.
+    private static let headWrapUpTools = 50
+    private static let headMaxTools = 90
+    private static let headWrapUpSeconds: TimeInterval = 12 * 60
+    private static let headMaxSeconds: TimeInterval = 20 * 60
+    private static let headWrapUpNote = "[Droppy Code] Your budget is nearly spent. Finish now: complete the smallest correct version of the task, then reply with your report."
+    private static let headFinalNote = "[Droppy Code] Your budget is spent and your tools are gone. Reply now with your report: what you changed, how far it got, and what is left."
+
     private struct StreamRound: Sendable {
         var content = ""
         var reasoning = ""
@@ -99,11 +109,33 @@ final class DeepSeekSession: ProviderSession {
         var rounds = 0
         var toolsSinceChange = 0
         var pacingAt = Self.headPacingTools
+        var toolsUsed = 0
+        var wrapUpAsked = false
+        let turnStartedAt = Date.now
         var hitCeiling = false
         do {
             while !interrupted {
                 guard rounds < Self.maxRoundsPerTurn else { hitCeiling = true; break }
                 rounds += 1
+                // A head past its budget writes its report with no tools left to reach for.
+                if configuration.isHydraHead, toolsUsed >= Self.headMaxTools || Date.now.timeIntervalSince(turnStartedAt) >= Self.headMaxSeconds {
+                    messages.append(["role": "user", "content": .string(Self.headFinalNote)])
+                    let last = try await streamOneRound(model: currentModel, effort: input.effort, withTools: false)
+                    if let usage = last.usage {
+                        onEvent?(.usage(usage))
+                        TokenLedger.shared.record(spend: usage.usedTokens)
+                    }
+                    if let error = last.rawError, !error.isEmpty { throw ProviderError.failed(friendlyError(error, statusCode: last.statusCode)) }
+                    if !last.content.isEmpty {
+                        finalText = last.content
+                        messages.append(["role": "assistant", "content": .string(last.content), "reasoning_content": .string(last.reasoning)])
+                    }
+                    break
+                }
+                if configuration.isHydraHead, !wrapUpAsked, toolsUsed >= Self.headWrapUpTools || Date.now.timeIntervalSince(turnStartedAt) >= Self.headWrapUpSeconds {
+                    wrapUpAsked = true
+                    messages.append(["role": "user", "content": .string(Self.headWrapUpNote)])
+                }
                 // A head that only ever reads is paced: every so many tools without a
                 // change, a note in its history asks it to act or report. Its lead is
                 // waiting, and a research task has an answer by then.
@@ -138,6 +170,7 @@ final class DeepSeekSession: ProviderSession {
                 var shouldContinue = true
                 for tool in round.toolCalls {
                     if interrupted { shouldContinue = false; break }
+                    toolsUsed += 1
                     if tool.name == "write_file" || tool.name == "edit_file" {
                         toolsSinceChange = 0
                         pacingAt = Self.headPacingTools
@@ -224,27 +257,29 @@ final class DeepSeekSession: ProviderSession {
 
     // MARK: - Chat round
 
-    private func streamOneRound(model: String, effort: String?) async throws -> StreamRound {
+    private func streamOneRound(model: String, effort: String?, withTools: Bool = true) async throws -> StreamRound {
         // History trims slice blindly and interrupted turns leave calls
         // unanswered; either poisons every later request, so repair first.
         sanitizeHistory()
-        let payload = requestPayload(model: model, effort: effort)
+        let payload = requestPayload(model: model, effort: effort, withTools: withTools)
         let task = Task<StreamRound, Error> { try await self.performStream(payload: payload) }
         roundTask = task
         defer { roundTask = nil }
         return try await task.value
     }
 
-    private func requestPayload(model: String, effort: String?) -> [String: JSONValue] {
+    private func requestPayload(model: String, effort: String?, withTools: Bool = true) -> [String: JSONValue] {
         var payload: [String: JSONValue] = [
             "model": .string(model),
             "messages": .array(messages),
-            "tools": .array(toolDefinitions()),
-            "tool_choice": "auto",
             "stream": true,
             "stream_options": ["include_usage": true],
-            "thinking": ["type": "enabled"],
         ]
+        if withTools {
+            payload["tools"] = .array(toolDefinitions())
+            payload["tool_choice"] = "auto"
+        }
+        payload["thinking"] = ["type": "enabled"]
         if let mapped = Self.reasoningEffort(effort) { payload["reasoning_effort"] = .string(mapped) }
         return payload
     }

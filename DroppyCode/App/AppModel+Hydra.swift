@@ -75,6 +75,13 @@ extension AppModel {
         hydraHeads(of: parentID).count { $0.hydra?.kind == .droppy && $0.hydra?.status == .running }
     }
 
+    /// Every head a lead has sent out, in the panel or not, in the order they went.
+    func hydraTeam(of parentID: UUID) -> [ChatThread] {
+        threads
+            .filter { $0.parentThreadID == parentID && !$0.isArchived && $0.isHydraHead }
+            .sorted { ($0.hydra?.index ?? 0) < ($1.hydra?.index ?? 0) }
+    }
+
     /// The names of a lead's Droppy-run heads still at work, other than `excluding`.
     func workingHydraHeadNames(of parentID: UUID, excluding: Set<Int> = []) -> [String] {
         hydraHeads(of: parentID)
@@ -236,10 +243,10 @@ extension AppModel {
             $0.finishedAt = .now
             if let landing { $0.landing = landing }
         }
-        guard let parentID = head.parentThreadID else { return }
+        guard let parentID = head.parentThreadID, let finished = thread(id)?.hydra else { return }
         let leadRuntime = runtime(for: parentID)
         let copyPath = info.hasOwnCopy ? head.worktreePath : nil
-        leadRuntime.hydraHeadFinished(head.id, info: info, status: outcome, summary: summary, landing: landing, copyPath: copyPath)
+        leadRuntime.hydraHeadFinished(head.id, info: finished, status: outcome, summary: summary, landing: landing, copyPath: copyPath)
     }
 
     /// A Droppy-run head's turn ended: its last reply is its report, and the work in its
@@ -256,6 +263,10 @@ extension AppModel {
         if report.isEmpty, status == .failed, let notice = headRuntime?.entries.last(where: { $0.kind == .notice }),
            case .notice(let note) = notice.item.content {
             report = note.message
+        }
+        if let headRuntime {
+            let tools = headRuntime.entries.count { $0.kind == .tool }
+            updateHydraHead(head.id) { $0.toolCalls = tools }
         }
         // An API session is memory only, and keeping it is what lets the head be steered
         // on with its brief and its work still in mind; a process goes, and resumes by id.
@@ -329,6 +340,13 @@ extension AppModel {
         }
     }
 
+    /// Stops every head of a lead's still at work.
+    func stopAllHydraHeads(of parentID: UUID) {
+        for head in hydraHeads(of: parentID) where head.hydra?.status == .running {
+            stopHydraHead(head.id)
+        }
+    }
+
     /// Clears the panel: finished heads move under the lead in the sidebar, and the panel
     /// stays out of the way until the next head starts. Running heads keep working.
     func dismissHydraHeads(of parentID: UUID) {
@@ -387,7 +405,7 @@ extension AppModel {
         var context = HydraPrompts.ChatContext()
         for entry in leadRuntime.entries.reversed() {
             switch entry.item.content {
-            case .user(let message) where context.lastUserPrompt == nil && !message.isHydraReport:
+            case .user(let message) where context.lastUserPrompt == nil && !message.isFromHydra:
                 context.lastUserPrompt = message.text
             case .assistant(let message) where context.lastReply == nil:
                 context.lastReply = message.text
