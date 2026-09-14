@@ -26,7 +26,7 @@ struct FollowUpQueueTab: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 Image(systemName: "arrow.turn.down.right")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(Chrome.inlineIconFont)
                     .foregroundStyle(Chrome.secondaryText)
                 Text(verbatim: runtime.followUps.count == 1 ? "1 follow-up" : "\(runtime.followUps.count) follow-ups")
                     .foregroundStyle(Chrome.primaryText.opacity(0.9))
@@ -39,7 +39,7 @@ struct FollowUpQueueTab: View {
                     // Points the way the tab will go: down to close while open,
                     // up to reopen while collapsed.
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(Chrome.inlineIconFont)
                         .foregroundStyle(Chrome.secondaryText)
                         .frame(width: 22, height: 22)
                         .contentShape(.rect)

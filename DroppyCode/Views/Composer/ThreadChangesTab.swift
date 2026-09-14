@@ -16,7 +16,7 @@ struct ThreadChangesTab: View {
         Button(action: action) {
             HStack(spacing: 7) {
                 Image(systemName: "plusminus")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(Chrome.inlineIconFont)
                     .foregroundStyle(Chrome.secondaryText)
                 Text(verbatim: stats.files == 1 ? "1 file" : "\(stats.files) files")
                     .foregroundStyle(Chrome.primaryText.opacity(0.9))

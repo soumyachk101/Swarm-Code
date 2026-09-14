@@ -19,6 +19,12 @@ enum Chrome {
 
     // MARK: Sticky chrome row
 
+    /// One weight and size for every symbol that is a control on its own: chrome buttons,
+    /// the composer's paperclip and send, the terminal strip. Symbols beside text step down
+    /// a point so they sit level with the type; menu chevrons are small and bold.
+    static let iconFont: Font = .system(size: 12, weight: .semibold)
+    static let inlineIconFont: Font = .system(size: 11, weight: .semibold)
+    static let chevronFont: Font = .system(size: 8, weight: .bold)
     static let chromeHorizontalPadding: CGFloat = 14
     static let chromeTopPadding: CGFloat = 12
     static let capsuleContentHeight: CGFloat = 28
@@ -223,7 +229,7 @@ struct ChromeIconLabel: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 12, weight: .semibold))
+            .font(Chrome.iconFont)
             .foregroundStyle(foreground)
             .frame(width: Chrome.capsuleContentHeight, height: Chrome.capsuleContentHeight)
             .background {
@@ -303,7 +309,7 @@ struct ChromeCircleButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12, weight: .semibold))
+                .font(Chrome.iconFont)
                 .foregroundStyle(Chrome.primaryText.opacity(isHovering ? 1 : 0.92))
                 .frame(width: Chrome.capsuleHeight, height: Chrome.capsuleHeight)
                 .contentShape(Circle())
@@ -315,6 +321,38 @@ struct ChromeCircleButton: View {
         }
         .help(help)
         .accessibilityLabel(Text(help))
+    }
+}
+
+/// A round glass button that opens a popover menu, such as the permissions picker.
+struct ChromeCircleMenu<Content: View>: View {
+    let symbol: String
+    let help: String
+    @ViewBuilder var content: Content
+
+    @State private var isHovering = false
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            Image(systemName: symbol)
+                .font(Chrome.iconFont)
+                .foregroundStyle(Chrome.primaryText.opacity(isHovering || isPresented ? 1 : 0.92))
+                .frame(width: Chrome.capsuleHeight, height: Chrome.capsuleHeight)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .chromeGlassCircle()
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .help(help)
+        .accessibilityLabel(Text(help))
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            PopoverMenu { content }
+        }
     }
 }
 
@@ -334,12 +372,12 @@ struct ChromeTextMenu<Content: View>: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: symbol)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(Chrome.inlineIconFont)
                 Text(verbatim: title)
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(Chrome.chevronFont)
                     .foregroundStyle(Chrome.secondaryText)
             }
             .foregroundStyle(Chrome.primaryText.opacity(isHovering || isPresented ? 1 : 0.92))
@@ -557,7 +595,7 @@ struct RowAccessoryIcon: View {
 
     var body: some View {
         Image(systemName: symbol)
-            .font(.system(size: 11, weight: .semibold))
+            .font(Chrome.inlineIconFont)
             .foregroundStyle(Chrome.secondaryText)
             .frame(width: 20, height: 20)
             .contentShape(.rect)
@@ -665,7 +703,7 @@ struct GlassPickerButton<Value: Hashable>: View {
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+                    .font(Chrome.chevronFont)
                     .foregroundStyle(Chrome.secondaryText)
             }
             .foregroundStyle(Chrome.primaryText.opacity(isHovering || isPresented ? 1 : 0.92))

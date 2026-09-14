@@ -102,6 +102,9 @@ private struct ChatChromeRow: View {
                 ChromeCircleButton(symbol: "square.and.pencil", help: "New thread (⌘N)") {
                     model.newThread(in: project)
                 }
+                if let thread = model.thread(runtime.threadID) {
+                    PermissionMenu(thread: thread)
+                }
                 if git.isRepository {
                     BranchMenu(runtime: runtime, directory: directory, git: git)
                 }
@@ -195,6 +198,23 @@ final class GitStatusModel {
             return nil
         } catch {
             return error
+        }
+    }
+}
+
+/// The thread's permission level: how much the agent may do without asking.
+private struct PermissionMenu: View {
+    @Environment(AppModel.self) private var model
+    let thread: ChatThread
+
+    var body: some View {
+        ChromeCircleMenu(symbol: thread.runtimeMode.symbol, help: "\(thread.runtimeMode.title) · \(thread.runtimeMode.summary)") {
+            PopoverSectionHeader("Permissions")
+            ForEach(RuntimeMode.allCases) { mode in
+                PopoverItem(mode.title, symbol: mode.symbol, isChecked: thread.runtimeMode == mode) {
+                    model.updateThread(thread.id) { $0.runtimeMode = mode }
+                }
+            }
         }
     }
 }
