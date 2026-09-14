@@ -247,6 +247,14 @@ private struct GeneralSettingsPage: View {
                     SettingsSwitch(isOn: $settings.notifyWhenFinished)
                 }
                 ChromeRowDivider()
+                ChromeRow(title: "Chime when a turn finishes", detail: "A soft chime, whether or not the thread is in view") {
+                    SettingsSwitch(isOn: $settings.chimeWhenFinished)
+                }
+                // Switching it on plays the chime once, so you hear what you are getting.
+                .onChange(of: settings.chimeWhenFinished) { _, isOn in
+                    if isOn { FinishChime.play() }
+                }
+                ChromeRowDivider()
                 ChromeRow(title: "Confirm before deleting threads") {
                     SettingsSwitch(isOn: $settings.confirmBeforeDeleting)
                 }

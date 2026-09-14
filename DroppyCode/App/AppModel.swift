@@ -585,7 +585,9 @@ final class AppModel {
         NSApp.requestUserAttention(.informationalRequest)
     }
 
-    func turnFinished(_ id: UUID, status: TurnStatus) {
+    /// A turn ended. `continues` means a queued message picks up right away, so the agent is
+    /// still at work and neither the chime nor a notification claims otherwise.
+    func turnFinished(_ id: UUID, status: TurnStatus, continues: Bool) {
         // A helper is on screen with its parent, in the parent's floating panel.
         let onScreen = selectedThreadID == id || (selectedThreadID != nil && thread(id)?.parentThreadID == selectedThreadID)
         let isVisible = NSApp.isActive && onScreen
@@ -598,6 +600,11 @@ final class AppModel {
         // A helper panel closed mid-turn kept its session alive to finish stopping cleanly;
         // it has now.
         if sessionsToRelease.remove(id) != nil { existingRuntime(for: id)?.stopSession() }
+        guard !continues else { return }
+        // A stop the user asked for needs no chime; the agent finishing on its own gets one,
+        // whether or not the thread is in view.
+        let chimed = settings.chimeWhenFinished && status != .interrupted
+        if chimed { FinishChime.play() }
         guard !isVisible, settings.notifyWhenFinished, let thread = thread(id) else { return }
         let body = switch status {
         case .completed: "Finished."
@@ -605,7 +612,8 @@ final class AppModel {
         case .failed: "Stopped with an error."
         case .running: ""
         }
-        notify(threadID: id, title: thread.title, body: body)
+        // The chime has already sounded, so the banner stays quiet rather than doubling it.
+        notify(threadID: id, title: thread.title, body: body, sound: chimed ? nil : .default)
     }
 
     func markRead(_ id: UUID) {
@@ -622,12 +630,12 @@ final class AppModel {
         }
     }
 
-    private func notify(threadID: UUID, title: String, body: String) {
+    private func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
         requestNotificationPermission()
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.sound = .default
+        content.sound = sound
         content.userInfo = ["threadID": threadID.uuidString]
         let request = UNNotificationRequest(identifier: threadID.uuidString, content: content, trigger: nil)
         Task { try? await UNUserNotificationCenter.current().add(request) }
