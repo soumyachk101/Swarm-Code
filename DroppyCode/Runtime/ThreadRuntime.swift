@@ -377,7 +377,7 @@ final class ThreadRuntime {
         case "/plan":
             app?.updateThread(threadID) { $0.interactionMode = $0.interactionMode == .plan ? .build : .plan }
             return true
-        case "/compact" where thread?.provider == .codex || thread?.provider == .copilot || thread?.provider == .deepseek || thread?.provider == .meta:
+        case "/compact" where thread?.provider == .codex || thread?.provider == .deepseek || thread?.provider == .meta:
             compact()
             return true
         default:
@@ -458,13 +458,10 @@ final class ThreadRuntime {
 
     private func ensureSession(directory: String) async throws -> any ProviderSession {
         guard let app, let thread = app.thread(threadID) else { throw ProviderError.notRunning }
-        // Copilot switches modes live, except that Auto's assisted-approval judge is a
-        // session flag: entering or leaving Auto resumes the session with it set right.
-        let copilotLaunchMode: RuntimeMode? = thread.provider == .copilot && thread.runtimeMode == .auto ? .auto : nil
         let signature = SessionSignature(
             provider: thread.provider,
             directory: directory,
-            launchRuntimeMode: thread.provider == .cursor || thread.provider == .grok || thread.provider == .devin || thread.provider == .antigravity ? thread.runtimeMode : copilotLaunchMode,
+            launchRuntimeMode: thread.provider == .cursor || thread.provider == .grok || thread.provider == .devin || thread.provider == .antigravity ? thread.runtimeMode : nil,
             launchEffort: thread.provider == .claude || thread.provider == .antigravity ? thread.effort : nil,
             launchFast: thread.provider == .claude ? thread.fastMode : nil,
             launchModel: thread.provider == .antigravity ? thread.model : nil,
@@ -539,7 +536,6 @@ final class ThreadRuntime {
             case .codex: CodexSession(configuration: configuration)
             case .claude: ClaudeSession(configuration: configuration)
             case .antigravity: AntigravitySession(configuration: configuration)
-            case .copilot: CopilotSession(configuration: configuration)
             case .cursor, .opencode, .grok, .devin: ACPSession(configuration: configuration)
             case .deepseek: DeepSeekSession(configuration: configuration)
             case .meta: MetaSession(configuration: configuration)
@@ -631,14 +627,6 @@ final class ThreadRuntime {
         case .codex:
             if let codex = try? await ensureSession(directory: directory) as? CodexSession {
                 try? await codex.rollback(turns: removed.count)
-            }
-        case .copilot:
-            if let copilot = try? await ensureSession(directory: directory) as? CopilotSession {
-                do {
-                    try await copilot.rollback(turns: removed.count)
-                } catch {
-                    appendNotice(.warning, "Copilot kept its own history: \(error.localizedDescription)")
-                }
             }
         case .claude:
             session?.stop()
@@ -1223,5 +1211,44 @@ final class ThreadRuntime {
         document.followUps = followUps
         let url = Storage.threadURL(threadID)
         Task { await DiskWriter.shared.encodeAndWrite(document, to: url) }
+    }
+}
+
+// MARK: - Rehearsal
+
+extension ThreadRuntime {
+    /// Starts a turn with no provider behind it, for the website captures: the user message
+    /// lands, the working line appears, and `rehearse(_:)` then feeds the events a provider
+    /// would. `touchedPaths` and `providerDiff` give the turn a diff for the changes tab.
+    func rehearseTurn(_ text: String?, touchedPaths: [String] = [], providerDiff: String? = nil) {
+        let turnIndex = (turns.map(\.index).max() ?? -1) + 1
+        var turn = TurnRecord(index: turnIndex)
+        turn.touchedPaths = touchedPaths.isEmpty ? nil : touchedPaths
+        turn.providerDiff = providerDiff
+        if let text {
+            let userItem = TimelineItem(turnID: turn.id, content: .user(UserMessage(text: text)))
+            turn.userItemID = userItem.id
+            turns.append(turn)
+            append(userItem)
+        } else {
+            turns.append(turn)
+        }
+        currentTurnID = turn.id
+        phase = .running
+        turnStartedAt = .now
+        app?.updateThread(threadID) {
+            $0.updatedAt = .now
+            $0.lastStatus = .running
+        }
+    }
+
+    /// One provider event, through the same path a live session's events take.
+    func rehearse(_ event: ProviderEvent) {
+        handle(event)
+    }
+
+    /// Tells the changes tab and the diff panel that the turn's diff changed.
+    func noteDiffChanged() {
+        diffRevision += 1
     }
 }

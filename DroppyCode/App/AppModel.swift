@@ -590,6 +590,7 @@ final class AppModel {
     // MARK: - Attention
 
     func threadNeedsAttention(_ id: UUID) {
+        guard !WebsiteCaptures.isEnabled else { return }
         guard !(NSApp.isActive && selectedThreadID == id), let thread = thread(id) else { return }
         notify(threadID: id, title: thread.title, body: "Waiting for your decision.")
         NSApp.requestUserAttention(.informationalRequest)
@@ -633,7 +634,7 @@ final class AppModel {
     }
 
     func requestNotificationPermission() {
-        guard !didRequestNotifications else { return }
+        guard !didRequestNotifications, !WebsiteCaptures.isEnabled else { return }
         didRequestNotifications = true
         Task {
             _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
@@ -641,6 +642,7 @@ final class AppModel {
     }
 
     private func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
+        guard !WebsiteCaptures.isEnabled else { return }
         requestNotificationPermission()
         let content = UNMutableNotificationContent()
         content.title = title

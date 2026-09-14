@@ -8,6 +8,7 @@ enum DeepSeekKeychain {
     private static let account = "DeepSeek API Key"
 
     static func apiKey(fallback: String) -> String {
+        guard !WebsiteCaptures.isEnabled else { return "" }
         if let keychain = read(), !keychain.isEmpty { return keychain }
         return fallback
     }

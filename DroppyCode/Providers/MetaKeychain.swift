@@ -8,6 +8,7 @@ enum MetaKeychain {
     private static let account = "Meta API Key"
 
     static func apiKey(fallback: String) -> String {
+        guard !WebsiteCaptures.isEnabled else { return "" }
         if let keychain = read(), !keychain.isEmpty { return keychain }
         return fallback
     }

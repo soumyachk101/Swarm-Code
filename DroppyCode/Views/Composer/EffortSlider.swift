@@ -78,6 +78,12 @@ struct ModelEffortButton: View {
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ModelEffortPanel(threadID: thread.id, hasHistory: hasHistory)
         }
+        .background {
+            // The website captures hang the slider and the switcher from the real chip.
+            if WebsiteCaptures.isEnabled {
+                AttachmentAnchorCapture { WebsiteCaptures.modelChipAnchor = WeakView($0) }
+            }
+        }
         .task(id: thread.provider) { await registry.loadCatalog(thread.provider) }
     }
 }
@@ -172,7 +178,7 @@ private struct ModelEffortPanel: View {
     }
 }
 
-private struct ModelList: View {
+struct ModelList: View {
     @Environment(AppModel.self) private var model
     let thread: ChatThread
     let hasHistory: Bool
@@ -592,7 +598,7 @@ enum EffortPalette {
 
 /// The colours a provider's maximum effort wears: its brand. Claude's terracotta,
 /// DeepSeek's blue, Meta's blue gradient, Google's Gemini gradient for Antigravity.
-/// Brands whose marks are black and white (Codex, Cursor, Grok, OpenCode, Devin, Copilot) get
+/// Brands whose marks are black and white (Codex, Cursor, Grok, OpenCode, Devin) get
 /// a white fill with dark sparks, and everything in the track flips dark to read on it.
 enum EffortBrand: Hashable {
     case claude
@@ -609,7 +615,7 @@ enum EffortBrand: Hashable {
         case .deepseek: .deepseek
         case .meta: .meta
         case .antigravity: .antigravity
-        case .codex, .cursor, .grok, .opencode, .devin, .copilot: .silver
+        case .codex, .cursor, .grok, .opencode, .devin: .silver
         case nil: .purple
         }
     }

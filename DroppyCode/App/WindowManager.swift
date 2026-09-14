@@ -65,6 +65,12 @@ final class WindowManager {
         return window
     }
 
+    /// The main window for the website captures: the same window, at a fixed size, with
+    /// no frame autosave, so the run never reads or writes where the real window sits.
+    func makeCaptureWindow(size: NSSize) -> NSWindow {
+        makeWindow(title: "Droppy Code", size: size, resizable: true) { RootView() }
+    }
+
     private func makeSettingsWindow() -> NSWindow {
         let window = makeWindow(title: "Settings", size: Size.settings, resizable: false) { SettingsView() }
         window.center()
@@ -75,12 +81,13 @@ final class WindowManager {
         title: String,
         size: NSSize,
         resizable: Bool,
+        windowClass: NSWindow.Type = NSWindow.self,
         @ViewBuilder content: () -> Content
     ) -> NSWindow {
         var style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .fullSizeContentView]
         if resizable { style.insert(.resizable) }
         let frame = NSRect(origin: .zero, size: size)
-        let window = NSWindow(contentRect: frame, styleMask: style, backing: .buffered, defer: false)
+        let window = windowClass.init(contentRect: frame, styleMask: style, backing: .buffered, defer: false)
         window.title = title
         window.isReleasedWhenClosed = false
         window.animationBehavior = .documentWindow

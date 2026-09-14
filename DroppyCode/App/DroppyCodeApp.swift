@@ -8,6 +8,7 @@ struct DroppyCodeApp: App {
         // Provider processes can exit while we write to them; report EPIPE instead of crashing.
         signal(SIGPIPE, SIG_IGN)
         // Before anything reads settings or the library.
+        WebsiteCaptures.prepare()
         LegacyMigration.run()
     }
 

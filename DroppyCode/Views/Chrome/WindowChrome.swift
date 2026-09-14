@@ -119,7 +119,7 @@ final class SidebarLayout {
     @ObservationIgnored private var restingWidth: CGFloat
 
     init() {
-        let defaults = UserDefaults.standard
+        let defaults = WebsiteCaptures.defaults ?? .standard
         let stored = (defaults.object(forKey: Key.width) as? Double).map { CGFloat($0) } ?? Self.defaultWidth
         restingWidth = min(Self.maximumWidth, max(Self.minimumWidth, stored))
         width = restingWidth
@@ -165,7 +165,7 @@ final class SidebarLayout {
     }
 
     private func persist() {
-        let defaults = UserDefaults.standard
+        let defaults = WebsiteCaptures.defaults ?? .standard
         defaults.set(Double(restingWidth), forKey: Key.width)
         defaults.set(isVisible, forKey: Key.visible)
     }
