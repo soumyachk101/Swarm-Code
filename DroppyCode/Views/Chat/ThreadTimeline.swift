@@ -57,8 +57,8 @@ struct ThreadTimeline: View, Equatable {
     /// Older history is about to be loaded above the viewport; that growth keeps the
     /// bottom fixed whatever the reader is doing, so the messages in view stay put.
     @State private var historyLoadPending = false
-    /// The window of newest blocks that is built, so opening a long thread and scrolling
-    /// through it stays bounded no matter how much history it holds.
+    /// Lazy-loading window: only the newest groups are materialized, so opening a long
+    /// thread and scrolling through it stays instant no matter how much history it holds.
     @State private var visibleCount = TimelineWindow.firstPaint
 
     var body: some View {
@@ -200,12 +200,7 @@ struct ThreadTimeline: View, Equatable {
                         if isVisible { loadEarlier() }
                     }
                 }
-                // A plain stack, not a lazy one. The bottom anchor makes a lazy stack build
-                // every block in the window anyway, but it then throws away the ones that
-                // scroll far off and rebuilds them on the way back, ~9ms a block, inside a
-                // single frame: the hitch felt when scrolling through history. Built once,
-                // the window's blocks stay; the window itself keeps the count bounded.
-                VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+                LazyVStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(visible) { block in
                         let context = RowContext(
                             workingDirectory: workingDirectory,
@@ -565,9 +560,8 @@ enum DisplayBlock: Identifiable, Equatable {
     }
 }
 
-/// The window of blocks the timeline builds, so the number of live views stays bounded
-/// even for very long threads.
-///
+/// Lazy-loading window for the timeline: only the newest groups are materialized, so
+/// the number of live views stays bounded even for very long threads.
 /// Opening a thread builds and lays out every block in the window before the first
 /// frame — the bottom anchor needs the content's full height, and a block costs several
 /// milliseconds — so the window opens with a handful, grows to its resting size a beat
