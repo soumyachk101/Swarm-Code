@@ -205,7 +205,7 @@ private struct ProviderStatusRow: View {
                 }
             } else {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(Chrome.success)
             }
         }
         .padding(.horizontal, 16)

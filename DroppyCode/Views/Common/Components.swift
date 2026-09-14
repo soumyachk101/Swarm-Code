@@ -39,8 +39,8 @@ struct DiffStatLabel: View {
 
     var body: some View {
         HStack(spacing: 4) {
-            Text("+\(additions)").foregroundStyle(.green)
-            Text("−\(deletions)").foregroundStyle(.red)
+            Text("+\(additions)").foregroundStyle(Chrome.success)
+            Text("−\(deletions)").foregroundStyle(Chrome.danger)
         }
         .font(.caption.monospacedDigit())
     }

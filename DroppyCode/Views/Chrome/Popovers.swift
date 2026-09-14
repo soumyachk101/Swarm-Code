@@ -143,7 +143,7 @@ struct PopoverItem: View {
                         .lineLimit(1)
                 }
             }
-            .foregroundStyle(isDestructive ? Color.red : Chrome.primaryText)
+            .foregroundStyle(isDestructive ? Chrome.danger : Chrome.primaryText)
             .padding(.horizontal, 8)
             .frame(height: 26)
             .background {

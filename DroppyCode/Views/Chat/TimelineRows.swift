@@ -365,11 +365,11 @@ struct ToolRow: View {
                         if call.status == .failed, let exitCode = call.exitCode {
                             Text("exit \(exitCode)")
                                 .font(.caption.monospacedDigit())
-                                .foregroundStyle(.red)
+                                .foregroundStyle(Chrome.danger)
                         } else if call.status == .declined {
                             Text("Declined")
                                 .font(.caption)
-                                .foregroundStyle(.orange)
+                                .foregroundStyle(Chrome.warning)
                         }
                         if hasDetail {
                             Image(systemName: "chevron.right")
@@ -403,10 +403,10 @@ private struct ToolStatusIcon: View {
                     .controlSize(.mini)
             case .failed:
                 Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Chrome.danger)
             case .declined:
                 Image(systemName: "hand.raised.slash")
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Chrome.warning)
             case .completed:
                 Image(systemName: ToolPresentation.symbol(for: call.kind))
                     .foregroundStyle(.secondary)

@@ -1,29 +1,5 @@
 import SwiftUI
 
-enum AppearancePreference: String, CaseIterable, Identifiable, Equatable {
-    case system
-    case light
-    case dark
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .system: "System"
-        case .light: "Light"
-        case .dark: "Dark"
-        }
-    }
-
-    var colorScheme: ColorScheme? {
-        switch self {
-        case .system: nil
-        case .light: .light
-        case .dark: .dark
-        }
-    }
-}
-
 enum TextGenerationChoice: String, CaseIterable, Identifiable {
     case automatic
     case claude
@@ -68,6 +44,7 @@ final class AppSettings {
         static let confirmDelete = "confirmBeforeDeleting"
         static let showReasoning = "showReasoning"
         static let sidebarActivityView = "sidebarActivityView"
+        static let appTheme = "appTheme"
         static let appearance = "appearance"
         static let binaryPaths = "providerBinaryPaths"
         static let disabledProviders = "disabledProviders"
@@ -117,8 +94,11 @@ final class AppSettings {
         didSet { defaults.set(sidebarActivityView, forKey: Key.sidebarActivityView) }
     }
 
-    var appearance: AppearancePreference {
-        didSet { defaults.set(appearance.rawValue, forKey: Key.appearance) }
+    var theme: AppTheme {
+        didSet {
+            defaults.set(theme.rawValue, forKey: Key.appTheme)
+            ThemeManager.current = theme
+        }
     }
 
     var textGeneration: TextGenerationChoice {
@@ -214,7 +194,12 @@ final class AppSettings {
         confirmBeforeDeleting = defaults.object(forKey: Key.confirmDelete) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? true
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
-        appearance = AppearancePreference(rawValue: defaults.string(forKey: Key.appearance) ?? "") ?? .system
+        // The old System/Light/Dark choice maps straight onto the same themes.
+        let initialTheme = AppTheme(rawValue: defaults.string(forKey: Key.appTheme) ?? "")
+            ?? AppTheme(rawValue: defaults.string(forKey: Key.appearance) ?? "")
+            ?? .system
+        theme = initialTheme
+        ThemeManager.current = initialTheme
         textGeneration = TextGenerationChoice(rawValue: defaults.string(forKey: Key.textGeneration) ?? "") ?? .automatic
         commitInstructions = defaults.string(forKey: Key.commitInstructions) ?? ""
         terminalHeight = defaults.object(forKey: Key.terminalHeight) as? Double ?? 260

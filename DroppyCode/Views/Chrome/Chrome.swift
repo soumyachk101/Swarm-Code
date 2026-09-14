@@ -62,7 +62,20 @@ enum Chrome {
 
     static var primaryText: Color { Color(nsColor: .labelColor) }
     static var secondaryText: Color { Color(nsColor: .secondaryLabelColor) }
-    static var accent: Color { Color(nsColor: .controlAccentColor) }
+
+    /// The theme's accent, or the system control accent for System/Light/Dark.
+    /// The window root also applies it as the view tint, so prominent glass
+    /// buttons, toggles and progress indicators follow the theme.
+    static var accent: Color { ThemeManager.current.spec.accent ?? Color(nsColor: .controlAccentColor) }
+
+    /// Status hues: system green/orange/red for System/Light/Dark, the
+    /// palette's own hues for every named theme.
+    static var success: Color { ThemeManager.current.spec.success }
+    static var warning: Color { ThemeManager.current.spec.warning }
+    static var danger: Color { ThemeManager.current.spec.danger }
+
+    /// The theme's glass tint, washed over capsules, sheets and the window.
+    static var glassTint: Color { ThemeManager.current.spec.surface }
 
     static var hover: Animation { .easeOut(duration: 0.1) }
 
@@ -123,12 +136,13 @@ extension Color {
 // MARK: - Surfaces
 
 extension View {
+    /// Capsule buttons stay Liquid Glass, washed with a tad of the theme.
     func chromeGlassCapsule() -> some View {
-        glassEffect(.regular.interactive(), in: Capsule(style: .continuous))
+        glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)).interactive(), in: Capsule(style: .continuous))
     }
 
     func chromeGlassCircle() -> some View {
-        glassEffect(.regular.interactive(), in: Circle())
+        glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)).interactive(), in: Circle())
     }
 
     /// The inset content sheet the detail pane floats on.
@@ -144,7 +158,8 @@ private struct DetailSheetModifier: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: Chrome.sheetCornerRadius, style: .continuous)
         content
             .background {
-                shape.fill(colorScheme == .dark ? Color.black.opacity(0.34) : Color.white.opacity(0.42))
+                shape.fill(colorScheme == .dark ? Color.black.opacity(0.22) : Color.white.opacity(0.3))
+                shape.fill(Chrome.glassTint.opacity(colorScheme == .dark ? 0.22 : 0.16))
             }
             .clipShape(shape)
     }
@@ -164,6 +179,9 @@ struct WindowBackdrop: View {
                 shape
                     .fill(isDark ? Color.black : Color.white)
                     .opacity(isDark ? 0.26 : 0.18)
+            }
+            .overlay {
+                shape.fill(Chrome.glassTint.opacity(0.12))
             }
             .overlay {
                 shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
@@ -372,9 +390,9 @@ struct PaneTopVeil: View {
             if progress > 0 {
                 Rectangle()
                     .fill(.clear)
-                    .glassEffect(.regular, in: Rectangle())
+                    .glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)), in: Rectangle())
                 Rectangle()
-                    .fill((isDark ? Color.black : Color.white).opacity(scrim))
+                    .fill(Chrome.glassTint.opacity(scrim))
             }
         }
         .opacity(0.08 + 0.92 * progress)

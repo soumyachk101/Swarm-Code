@@ -596,7 +596,7 @@ private struct ThreadBadge: View {
         .overlay(alignment: .topTrailing) {
             if thread.hasUnread, !needsInput, !isRunning {
                 Circle()
-                    .fill(thread.lastStatus == .failed ? Color.red : Chrome.accent)
+                    .fill(thread.lastStatus == .failed ? Chrome.danger : Chrome.accent)
                     .frame(width: 7, height: 7)
                     .offset(x: 2.5, y: -2.5)
             }
@@ -742,12 +742,12 @@ private struct ActivityStatus: View {
         if !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true) {
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 11))
-                .foregroundStyle(Chrome.orange)
+                .foregroundStyle(Chrome.warning)
         } else if runtime?.isRunning == true {
             MiniSpinner(cellSize: 2.4)
         } else if thread.hasUnread {
             Circle()
-                .fill(thread.lastStatus == .failed ? Color.red : Chrome.accent)
+                .fill(thread.lastStatus == .failed ? Chrome.danger : Chrome.accent)
                 .frame(width: 7, height: 7)
                 .padding(.trailing, 4)
         }

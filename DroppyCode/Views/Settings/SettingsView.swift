@@ -50,7 +50,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var keywords: [String] {
         switch self {
-        case .general: ["permissions", "worktree", "reasoning", "notifications", "theme", "appearance", "dark", "light", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative"]
+        case .general: ["permissions", "worktree", "reasoning", "notifications", "theme", "appearance", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "binary", "path", "sign in", "login", "api key"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
@@ -251,8 +251,8 @@ private struct GeneralSettingsPage: View {
         }
         ChromeSection(title: "Appearance") {
             ChromeCard {
-                ChromeRow(title: "Theme") {
-                    GlassPickerButton(options: AppearancePreference.allCases.map { ($0, $0.title) }, selection: $settings.appearance)
+                ChromeRow(title: "Theme", detail: settings.theme.detail) {
+                    GlassPickerButton(options: AppTheme.allCases.map { ($0, $0.displayName) }, selection: $settings.theme)
                 }
             }
         }
