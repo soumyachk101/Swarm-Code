@@ -92,9 +92,17 @@ struct PopoverDivider: View {
     }
 }
 
+/// How a popover hosted by AppKit closes. SwiftUI's own popovers answer `dismiss`; one shown
+/// through an `NSPopover` sets this instead, and every row in it closes through it.
+extension EnvironmentValues {
+    @Entry var closePopover: (@MainActor () -> Void)?
+}
+
 /// One row. Pass `isChecked` (true or false) for choice lists so every row keeps the checkmark column.
 struct PopoverItem: View {
     let title: String
+    /// A styled title, such as a bold verb before a plain label, in place of the plain one.
+    var titleText: Text?
     var detail: String?
     var symbol: String?
     var image: NSImage?
@@ -107,6 +115,7 @@ struct PopoverItem: View {
     let action: @MainActor () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.closePopover) private var closePopover
     @State private var isHovering = false
 
     init(
@@ -133,9 +142,24 @@ struct PopoverItem: View {
         self.action = action
     }
 
+    /// A row whose title is styled text; `title` names it for accessibility.
+    init(
+        _ title: String,
+        text: Text,
+        symbol: String? = nil,
+        image: NSImage? = nil,
+        action: @escaping @MainActor () -> Void
+    ) {
+        self.title = title
+        self.titleText = text
+        self.symbol = symbol
+        self.image = image
+        self.action = action
+    }
+
     var body: some View {
         Button {
-            dismiss()
+            if let closePopover { closePopover() } else { dismiss() }
             // Runs after the popover closes, so an action that presents a sheet or alert is not swallowed.
             Task { @MainActor in action() }
         } label: {
@@ -164,7 +188,7 @@ struct PopoverItem: View {
                         .font(.system(size: 12))
                         .frame(width: 16)
                 }
-                Text(verbatim: title)
+                (titleText ?? Text(verbatim: title))
                     .font(.system(size: 13))
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -188,6 +212,7 @@ struct PopoverItem: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.4)
+        .accessibilityLabel(Text(detail.map { "\(title), \($0)" } ?? title))
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
