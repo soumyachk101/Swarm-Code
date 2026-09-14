@@ -16,6 +16,8 @@ final class GenieAnimator {
         let id = UUID()
         let image: NSImage
         let frame: CGRect
+        /// Where the flight lands, in the layer's coordinates; nil flies to the archive corner.
+        var target: CGPoint?
     }
 
     private(set) var flights: [Flight] = []
@@ -23,14 +25,14 @@ final class GenieAnimator {
     /// Flies a ghost of a row from `frame`. The ghost draws exactly what `ghost`
     /// returns, so pass the row as it looks — background included — and the row
     /// hands over to it without a visible change.
-    func launch<Ghost: View>(frame: CGRect, colorScheme: ColorScheme, @ViewBuilder ghost: () -> Ghost) {
+    func launch<Ghost: View>(frame: CGRect, colorScheme: ColorScheme, target: CGPoint? = nil, @ViewBuilder ghost: () -> Ghost) {
         guard frame.width > 1, frame.height > 1,
               !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         let renderer = ImageRenderer(content: GenieGhost(size: frame.size, content: ghost())
             .environment(\.colorScheme, colorScheme))
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
         guard let image = renderer.nsImage else { return }
-        flights.append(Flight(image: image, frame: frame))
+        flights.append(Flight(image: image, frame: frame, target: target))
     }
 
     func finish(_ id: UUID) {
@@ -74,7 +76,7 @@ private struct GenieFlightView: View {
     @State private var hasStarted = false
 
     var body: some View {
-        let target = CGPoint(x: 24, y: canvas.height - 12)
+        let target = flight.target ?? CGPoint(x: 24, y: canvas.height - 12)
         let frame = flight.frame
         Image(nsImage: flight.image)
             .resizable()

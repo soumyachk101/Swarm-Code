@@ -93,6 +93,9 @@ final class ThreadRuntime {
     var hydraSelectedHeadID: UUID?
     /// The Hydra panel was dismissed; the next head to start brings it back.
     var isHydraPanelHidden = false
+    /// The Hydra button's centre in window coordinates, for the genie flight's target.
+    /// Unobserved: written on every layout, read only while hiding the panel.
+    @ObservationIgnored var hydraButtonCenterInWindow: CGPoint?
     /// Heads by the tool row that stands for them in this timeline, so the row can show
     /// who was sent out.
     private(set) var hydraToolHeads: [String: UUID] = [:]
