@@ -112,6 +112,7 @@ final class AppModel {
         // so the first click into a conversation never parses its history on the main thread.
         let recent = threads.filter { !$0.isArchived && !$0.isInPanel }.sorted { $0.updatedAt > $1.updatedAt }.prefix(12).map(\.id)
         warmDocuments(recent)
+        sweepHydraCopies()
         await LoginEnvironment.load()
         await providers.refreshAll()
         if providers.status(.codex).isInstalled {
@@ -413,6 +414,7 @@ final class AppModel {
         for helper in helpers(of: id) { archive(helper.id) }
         if selectedThreadID == id { selectNeighbor(of: id) }
         existingRuntime(for: id)?.stopSession()
+        releaseHydraCopy(of: id)
         updateThread(id) {
             $0.isArchived = true
             $0.isPinned = false
@@ -540,7 +542,8 @@ final class AppModel {
         threads.removeAll { $0.id == id }
         if let project = project(thread.projectID) {
             let git = Git(project.path)
-            let worktree = removeWorktree ? thread.worktreePath : nil
+            // A head's copy of the checkout was Droppy Code's to make, so it always goes.
+            let worktree = removeWorktree || thread.hydra?.hasOwnCopy == true ? thread.worktreePath : nil
             Task {
                 await git.deleteCheckpoints(thread: id)
                 if let worktree { try? await git.removeWorktree(at: worktree) }
@@ -566,7 +569,11 @@ final class AppModel {
         for thread in removed {
             discardThreadState(thread)
             if let project = project(thread.projectID) {
-                Task { await Git(project.path).deleteCheckpoints(thread: thread.id) }
+                let copy = thread.hydra?.hasOwnCopy == true ? thread.worktreePath : nil
+                Task {
+                    await Git(project.path).deleteCheckpoints(thread: thread.id)
+                    if let copy { try? await Git(project.path).removeWorktree(at: copy) }
+                }
             }
         }
         let removedIDs = Set(removed.map(\.id))
@@ -741,9 +748,10 @@ final class AppModel {
         // it has now.
         if sessionsToRelease.remove(id) != nil { existingRuntime(for: id)?.stopSession() }
         // A head reports to its lead, which is the chat that chimes and notifies when
-        // the whole job is done.
+        // the whole job is done. A head with another turn coming (its report, after its
+        // budget ran out) reports at the end of that one.
         if isHead, let head = thread(id) {
-            hydraHeadTurnFinished(head, status: status)
+            if !continues { hydraHeadTurnFinished(head, status: status) }
             return
         }
         guard !continues else { return }
@@ -776,7 +784,7 @@ final class AppModel {
         }
     }
 
-    private func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
+    func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
         guard !WebsiteCaptures.isEnabled else { return }
         requestNotificationPermission()
         let content = UNMutableNotificationContent()
@@ -788,7 +796,7 @@ final class AppModel {
         Task { try? await UNUserNotificationCenter.current().add(request) }
     }
 
-    private func updateDockBadge() {
+    func updateDockBadge() {
         let unread = threads.count { $0.hasUnread && !$0.isArchived && !$0.isInPanel }
         NSApp.dockTile.badgeLabel = unread > 0 ? String(unread) : nil
     }

@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// The chat's Hydra switch, first in the chrome row. Off, it is a quiet mark of a lead with
-/// three heads. On, it charges up: the heads take the roster's colours, a ring of those
-/// colours runs around the button and a soft glow breathes behind it, so the chat reads as
-/// a team at work. A badge counts the heads out right now.
+/// The chat's Hydra switch, first in the chrome row. Off, it is a quiet three-headed mark.
+/// On, it charges up: a ring of the roster's colours runs around the button and a soft glow
+/// breathes behind it, so the chat reads as a team at work. A badge counts the heads out
+/// right now.
 struct HydraButton: View {
     @Environment(AppModel.self) private var model
     let thread: ChatThread
@@ -65,90 +65,64 @@ struct HydraButton: View {
     }
 }
 
-/// The lead-and-heads mark. On, each head wears one of the roster's first colours.
+/// The three-headed mark: quiet when Hydra is off, full when it is on or under the pointer.
 private struct HydraMarkView: View {
     let isOn: Bool
     let isHovering: Bool
 
     var body: some View {
-        let base = Chrome.primaryText.opacity(isHovering || isOn ? 1 : 0.92)
-        let size: CGFloat = 17
-        ZStack {
-            HydraSpokes()
-                .stroke(base.opacity(isOn ? 0.9 : 0.55), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
-            HydraCore()
-                .fill(base)
-            ForEach(0..<3, id: \.self) { index in
-                HydraHeadDot(index: index)
-                    .fill(isOn ? HydraRoster.personas[index].color : base.opacity(0.75))
-            }
-        }
-        .frame(width: size, height: size)
-    }
-}
-
-/// The lead at the centre of the mark.
-private struct HydraCore: Shape {
-    func path(in rect: CGRect) -> Path {
-        let core = min(rect.width, rect.height) * 0.15
-        return Path(ellipseIn: CGRect(x: rect.midX - core, y: rect.midY - core, width: core * 2, height: core * 2))
-    }
-}
-
-/// One head of the mark, on its orbit.
-private struct HydraHeadDot: Shape {
-    let index: Int
-
-    func path(in rect: CGRect) -> Path {
-        let orbit = min(rect.width, rect.height) * 0.36
-        let head = min(rect.width, rect.height) * 0.12
-        let angle = -.pi / 2 + CGFloat(index) * 2 * .pi / 3
-        let point = CGPoint(x: rect.midX + orbit * cos(angle), y: rect.midY + orbit * sin(angle))
-        return Path(ellipseIn: CGRect(x: point.x - head, y: point.y - head, width: head * 2, height: head * 2))
+        HydraMarkImage()
+            .foregroundStyle(Chrome.primaryText.opacity(isOn || isHovering ? 1 : 0.6))
+            .frame(width: 18, height: 18)
     }
 }
 
 /// The charge around an active Hydra button: a ring of the roster's colours that keeps
-/// turning, and a glow behind the mark that breathes. Both stop with reduced motion and
-/// leave a still ring, so the state still shows.
+/// turning, and a glow behind the mark that breathes. Both are animations the render
+/// server runs on its own (a rotation and an opacity, repeating), so a charged button
+/// costs the main thread nothing while it sits there; an earlier version re-rendered the
+/// view thirty times a second for as long as Hydra was on. Both stop with reduced motion
+/// and leave a still ring, so the state still shows.
 struct HydraCharge: View {
     private static let colors: [Color] = HydraRoster.personas.prefix(6).map(\.color)
 
+    @State private var isTurning = false
+    @State private var isBreathing = false
+
     var body: some View {
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: reduceMotion)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            let turn = reduceMotion ? 0 : time.truncatingRemainder(dividingBy: 4) / 4
-            let breath = reduceMotion ? 0.5 : 0.5 + 0.5 * sin(time * 2.2)
-            ZStack {
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [Chrome.accent.opacity(0.28 + 0.18 * breath), Chrome.accent.opacity(0)],
-                            center: .center,
-                            startRadius: 2,
-                            endRadius: 15
-                        )
+        ZStack {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [Chrome.accent.opacity(0.46), Chrome.accent.opacity(0)],
+                        center: .center,
+                        startRadius: 2,
+                        endRadius: 15
                     )
-                    .padding(2)
-                Circle()
-                    .strokeBorder(
-                        AngularGradient(
-                            gradient: Gradient(colors: Self.colors + [Self.colors[0]]),
-                            center: .center,
-                            angle: .degrees(turn * 360)
-                        ),
-                        lineWidth: 2
-                    )
-                    .padding(1)
-                    .opacity(0.85 + 0.15 * breath)
-            }
+                )
+                .padding(2)
+                .opacity(isBreathing ? 1 : 0.6)
+            Circle()
+                .strokeBorder(
+                    AngularGradient(
+                        gradient: Gradient(colors: Self.colors + [Self.colors[0]]),
+                        center: .center
+                    ),
+                    lineWidth: 2
+                )
+                .padding(1)
+                .rotationEffect(.degrees(isTurning ? 360 : 0))
+                .opacity(isBreathing ? 1 : 0.85)
         }
         .allowsHitTesting(false)
+        .onAppear {
+            guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+            withAnimation(.linear(duration: 4).repeatForever(autoreverses: false)) { isTurning = true }
+            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { isBreathing = true }
+        }
     }
 }
 
-/// One-line summaries of a pair, for tooltips and rows.
 enum HydraPairSummary {
     /// "Heads on Opus · High effort", or what they inherit.
     @MainActor

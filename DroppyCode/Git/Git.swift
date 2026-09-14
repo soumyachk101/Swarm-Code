@@ -161,19 +161,179 @@ struct Git: Sendable {
         try Self.check(await run(["push", "-u", "origin", "HEAD"], timeout: 300))
     }
 
-    /// Opens a pull request (GitHub) or merge request (GitLab) for the current branch.
-    func createPullRequest(title: String, body: String) async throws -> URL? {
-        let remote = await remoteURL() ?? ""
+    /// Opens a pull request (GitHub) or merge request (GitLab) for the current branch, or
+    /// for `source` into `target` when those are given.
+    func createPullRequest(title: String, body: String, source: String? = nil, target: String? = nil) async throws -> URL? {
         let result: ShellResult
-        if remote.contains("gitlab") {
-            result = try await Shell.run(tool: "glab", ["mr", "create", "--title", title, "--description", body, "--yes"], in: directory, timeout: 300)
-        } else {
-            result = try await Shell.run(tool: "gh", ["pr", "create", "--title", title, "--body", body], in: directory, timeout: 300)
+        switch await forge() {
+        case .gitlab:
+            var arguments = ["mr", "create", "--title", title, "--description", body, "--yes"]
+            if let source { arguments += ["--source-branch", source] }
+            if let target { arguments += ["--target-branch", target] }
+            result = try await Shell.run(tool: "glab", arguments, in: directory, timeout: 300)
+        case .github:
+            var arguments = ["pr", "create", "--title", title, "--body", body]
+            if let source { arguments += ["--head", source] }
+            if let target { arguments += ["--base", target] }
+            result = try await Shell.run(tool: "gh", arguments, in: directory, timeout: 300)
+        case .gitea:
+            var arguments = ["pulls", "create", "--title", title, "--description", body]
+            if let source { arguments += ["--head", source] }
+            if let target { arguments += ["--base", target] }
+            result = try await Shell.run(tool: "tea", arguments, in: directory, timeout: 300)
         }
         try Self.check(result)
         let text = result.output + "\n" + result.errorOutput
         let match = text.firstMatch(of: #/https://\S+/#)
         return match.flatMap { URL(string: String($0.output)) }
+    }
+
+    /// Which forge the origin remote is on, by its host: GitLab and GitHub by name, and
+    /// Gitea's family (tea serves them all) for anything else.
+    func forge() async -> MergeRequestLink.Forge {
+        let remote = (await remoteURL() ?? "").lowercased()
+        if remote.contains("gitlab") { return .gitlab }
+        if remote.contains("github") { return .github }
+        return .gitea
+    }
+
+    /// Lands a request with the forge's own CLI. GitLab answers 405 while it is still
+    /// checking a fresh request, so that is tried again a few times.
+    func mergePullRequest(_ link: MergeRequestLink) async throws {
+        let number = String(link.number)
+        var lastFailure = "The request could not be merged."
+        for attempt in 0..<6 {
+            let result: ShellResult
+            switch link.forge {
+            case .gitlab: result = try await Shell.run(tool: "glab", ["mr", "merge", number, "--yes"], in: directory, timeout: 300)
+            case .github: result = try await Shell.run(tool: "gh", ["pr", "merge", number, "--merge"], in: directory, timeout: 300)
+            case .gitea: result = try await Shell.run(tool: "tea", ["pulls", "merge", number], in: directory, timeout: 300)
+            }
+            if result.succeeded { return }
+            lastFailure = result.failureMessage
+            let text = (result.output + result.errorOutput).lowercased()
+            guard link.forge == .gitlab, text.contains("405") || text.contains("not allowed") || text.contains("checking") else { break }
+            try? await Task.sleep(for: .seconds(3 + attempt * 2))
+        }
+        throw ShellError(lastFailure)
+    }
+
+    // MARK: - Landing a team's work
+
+    /// The branch the remote treats as its default: what origin's HEAD points at, else
+    /// main or master where one exists.
+    func defaultBranch() async -> String {
+        if let head = try? await output(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]).trimmingCharacters(in: .whitespacesAndNewlines),
+           !head.isEmpty {
+            return head.hasPrefix("origin/") ? String(head.dropFirst("origin/".count)) : head
+        }
+        for candidate in ["main", "master"] where (try? await run(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/\(candidate)"]))?.succeeded == true {
+            return candidate
+        }
+        return "main"
+    }
+
+    /// A tree of HEAD with only `paths` taken from the working tree, additions and
+    /// deletions included: what one thread's work amounts to, with nothing else that
+    /// happens to be uncommitted alongside it.
+    func captureTree(paths: [String]) async throws -> String {
+        let fileManager = FileManager.default
+        let index = fileManager.temporaryDirectory.appendingPathComponent("droppy-code-index-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: index) }
+        let environment = ["GIT_INDEX_FILE": index.path]
+        try Self.check(await run(["read-tree", "HEAD"], environment: environment))
+        try Self.check(await run(["add", "-A", "--ignore-errors", "--"] + paths, environment: environment, timeout: 300))
+        let tree = try await run(["write-tree"], environment: environment)
+        try Self.check(tree)
+        return tree.trimmedOutput
+    }
+
+    func treeHash(of ref: String) async throws -> String {
+        try await output(["rev-parse", "\(ref)^{tree}"]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func commitHash(of ref: String = "HEAD") async throws -> String {
+        try await output(["rev-parse", "--verify", ref]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A commit of `tree` on `parent` in the user's own name, for a branch to carry.
+    func commitWork(_ tree: String, parent: String, message: String) async throws -> String {
+        let result = try await run(["commit-tree", tree, "-p", parent, "-F", "-"], input: Data(message.utf8))
+        try Self.check(result)
+        return result.trimmedOutput
+    }
+
+    func updateRef(_ ref: String, to commit: String) async throws {
+        try Self.check(await run(["update-ref", ref, commit]))
+    }
+
+    func pushBranch(_ name: String) async throws {
+        try Self.check(await run(["push", "-u", "origin", "refs/heads/\(name):refs/heads/\(name)"], timeout: 300))
+    }
+
+    func fetch() async throws {
+        try Self.check(await run(["fetch", "--quiet", "origin"], timeout: 300))
+    }
+
+    func isAncestor(_ commit: String, of other: String) async -> Bool {
+        (try? await run(["merge-base", "--is-ancestor", commit, other]))?.succeeded ?? false
+    }
+
+    /// Paths that differ between two commits or trees.
+    func changedPaths(from: String, to: String) async throws -> [String] {
+        try await output(["diff", "--name-only", from, to]).split(separator: "\n").map(String.init)
+    }
+
+    /// Paths with uncommitted changes, staged or not, untracked ones included.
+    func dirtyPaths() async -> [String] {
+        guard let text = try? await output(["status", "--porcelain=v1", "-z", "--untracked-files=all"]) else { return [] }
+        return text.split(separator: "\0").compactMap { entry -> String? in
+            guard entry.count > 3 else { return nil }
+            let path = String(entry.dropFirst(3))
+            // A rename lists "new -> old"; the new name is the one that is dirty.
+            return path.components(separatedBy: " -> ").first
+        }
+    }
+
+    /// Whether a rebase, merge or cherry-pick is underway: nothing may move then.
+    func hasOperationInProgress() async -> Bool {
+        for path in ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"] {
+            if let resolved = try? await output(["rev-parse", "--path-format=absolute", "--git-path", path]).trimmingCharacters(in: .whitespacesAndNewlines),
+               FileManager.default.fileExists(atPath: resolved) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Moves the current branch to `commit`; index and working tree stay as they are.
+    func resetSoft(to commit: String) async throws {
+        try Self.check(await run(["reset", "--soft", "--quiet", commit]))
+    }
+
+    /// The index takes HEAD's version of `paths`; the working tree stays as it is.
+    func resetIndex(paths: [String]) async throws {
+        guard !paths.isEmpty else { return }
+        try Self.check(await run(["reset", "--quiet", "--"] + paths))
+    }
+
+    /// Index and working tree take `ref`'s version of `paths`.
+    func checkoutPaths(from ref: String, _ paths: [String]) async throws {
+        guard !paths.isEmpty else { return }
+        try Self.check(await run(["checkout", "--quiet", ref, "--"] + paths))
+    }
+
+    func removePaths(_ paths: [String]) async throws {
+        guard !paths.isEmpty else { return }
+        try Self.check(await run(["rm", "--quiet", "--"] + paths))
+    }
+
+    func pathExists(_ path: String, in ref: String) async -> Bool {
+        (try? await run(["cat-file", "-e", "\(ref):\(path)"]))?.succeeded ?? false
+    }
+
+    func pullFastForward() async throws {
+        try Self.check(await run(["pull", "--ff-only", "--quiet"], timeout: 300))
     }
 
     // MARK: - Checkpoints
@@ -185,11 +345,7 @@ struct Git: Sendable {
     /// Snapshots the working tree into a hidden ref without touching the user's index or branch.
     func captureCheckpoint(_ ref: String) async throws {
         let tree = try await captureTree()
-        let identity = [
-            "GIT_AUTHOR_NAME": "Droppy Code", "GIT_AUTHOR_EMAIL": "droppy-code@localhost",
-            "GIT_COMMITTER_NAME": "Droppy Code", "GIT_COMMITTER_EMAIL": "droppy-code@localhost",
-        ]
-        let commit = try await run(["commit-tree", tree, "-m", "Droppy Code checkpoint"], environment: identity)
+        let commit = try await run(["commit-tree", tree, "-m", "Droppy Code checkpoint"], environment: Self.identity)
         try Self.check(commit)
         try Self.check(await run(["update-ref", ref, commit.trimmedOutput]))
     }
@@ -216,8 +372,12 @@ struct Git: Sendable {
         return tree.trimmedOutput
     }
 
-    func diff(from: String, to: String) async throws -> String {
-        let result = try await run(["diff", "--no-ext-diff", "-M", from, to])
+    /// The patch between two trees or refs. `binary` puts whole binary blobs in it, so a
+    /// picture a head added applies elsewhere.
+    func diff(from: String, to: String, binary: Bool = false) async throws -> String {
+        var arguments = ["diff", "--no-ext-diff", "-M"]
+        if binary { arguments.append("--binary") }
+        let result = try await run(arguments + [from, to])
         try Self.check(result)
         return result.output
     }
@@ -233,6 +393,68 @@ struct Git: Sendable {
         for ref in refs.split(separator: "\n") {
             _ = try? await run(["update-ref", "-d", String(ref)])
         }
+    }
+
+    // MARK: - Copies of the checkout
+
+    private static let identity = [
+        "GIT_AUTHOR_NAME": "Droppy Code", "GIT_AUTHOR_EMAIL": "droppy-code@localhost",
+        "GIT_COMMITTER_NAME": "Droppy Code", "GIT_COMMITTER_EMAIL": "droppy-code@localhost",
+    ]
+
+    /// A commit of `tree` on top of HEAD that no ref points at: the checkout as it is,
+    /// uncommitted work included, with the history behind it. Something a worktree can
+    /// start from.
+    func commitTree(_ tree: String, message: String) async throws -> String {
+        var arguments = ["commit-tree", tree, "-m", message]
+        if await hasCommits() { arguments += ["-p", "HEAD"] }
+        let result = try await run(arguments, environment: Self.identity)
+        try Self.check(result)
+        return result.trimmedOutput
+    }
+
+    /// A worktree at `path` with `commit` checked out and no branch: a copy of the
+    /// checkout to work in, whose own status shows only what changed in it.
+    func addDetachedWorktree(at path: String, commit: String) async throws {
+        try Self.check(await run(["worktree", "add", "--detach", path, commit], timeout: 300))
+    }
+
+    /// Forgets worktrees whose folders are gone from disk.
+    func pruneWorktrees() async {
+        _ = try? await run(["worktree", "prune"])
+    }
+
+    /// Applies `patch` to the working tree and stages nothing. A hunk that no longer fits
+    /// is merged three-way against the blobs the patch names; a file the merge cannot
+    /// settle keeps conflict markers, and those paths come back. Throws when nothing
+    /// could be applied at all.
+    func apply(_ patch: String) async throws -> [String] {
+        let data = Data(patch.utf8)
+        let plain = try await run(["apply", "--binary", "--whitespace=nowarn", "-"], input: data)
+        if plain.succeeded { return [] }
+
+        // The three-way merge works through an index that matches the working tree, so
+        // it gets a throwaway one that does, and the real index never changes.
+        let fileManager = FileManager.default
+        let index = fileManager.temporaryDirectory.appendingPathComponent("droppy-code-apply-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: index) }
+        let environment = ["GIT_INDEX_FILE": index.path]
+        if let indexPath = try? await output(["rev-parse", "--path-format=absolute", "--git-path", "index"])
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            fileManager.fileExists(atPath: indexPath) {
+            try? fileManager.copyItem(atPath: indexPath, toPath: index.path)
+        } else if await hasCommits() {
+            try Self.check(await run(["read-tree", "HEAD"], environment: environment))
+        }
+        try Self.check(await run(["add", "-A", "--", "."], environment: environment, timeout: 300))
+        let merged = try await run(["apply", "--3way", "--binary", "--whitespace=nowarn", "-"], environment: environment, input: data)
+        if merged.succeeded { return [] }
+        // "U path" names each file left with markers; without one, nothing was applied.
+        let conflicts = merged.errorOutput.split(separator: "\n").compactMap { line -> String? in
+            line.hasPrefix("U ") ? String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces) : nil
+        }
+        guard !conflicts.isEmpty else { throw ShellError(merged.failureMessage) }
+        return conflicts
     }
 }
 

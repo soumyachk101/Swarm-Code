@@ -29,7 +29,7 @@ struct UserMessageRow: View {
     @State private var isConfirmingRevert = false
 
     var body: some View {
-        if case .user(let message) = entry.item.content, message.isHydraReport {
+        if case .user(let message) = entry.item.content, message.isFromHydra {
             HydraReportRow(message: message)
         } else if case .user(let message) = entry.item.content {
             VStack(alignment: .trailing, spacing: 6) {
@@ -87,7 +87,8 @@ struct UserMessageRow: View {
 
 /// Heads reporting back to their lead: their glyphs and names on a line, and their reports
 /// folded under it. It sits on the user's side, since that is where the lead reads it from,
-/// but reads as the team's, not the user's.
+/// but reads as the team's, not the user's. A note from Hydra itself (heads held back)
+/// takes the same row without the glyphs.
 struct HydraReportRow: View {
     let message: UserMessage
 
@@ -97,23 +98,34 @@ struct HydraReportRow: View {
         let personas = (message.hydraHeads ?? []).map(HydraRoster.persona(at:))
         let names = personas.map(\.name)
         let who = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+        // A note from Hydra itself says what it is on its first line; the rest folds under.
+        let parts = message.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
+        let title = personas.isEmpty ? String(parts.first ?? "Hydra") : "\(who) reported back"
+        let body = personas.isEmpty ? String(parts.count > 1 ? parts[1] : "").trimmingCharacters(in: .whitespacesAndNewlines) : message.text
         VStack(alignment: .trailing, spacing: 6) {
             Button {
                 withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
+                    if personas.isEmpty {
+                        Image(systemName: "hand.raised.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Chrome.secondaryText)
+                    }
                     HStack(spacing: -4) {
                         ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
                             HydraGlyph(persona: persona, size: 18)
                         }
                     }
-                    Text(verbatim: "\(who) reported back")
+                    Text(verbatim: title)
                         .font(.callout.weight(.medium))
                         .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    if !body.isEmpty {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
                 }
                 .padding(.leading, 12)
                 .padding(.trailing, 14)
@@ -122,9 +134,10 @@ struct HydraReportRow: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .help(isExpanded ? "Hide the reports" : "Show the reports")
-            if isExpanded {
-                MarkdownView(text: message.text)
+            .disabled(body.isEmpty)
+            .help(isExpanded ? "Hide the message" : "Show the message")
+            if isExpanded, !body.isEmpty {
+                MarkdownView(text: body)
                     .padding(14)
                     .background(Chrome.overlay(0.05), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .transition(.softAppear)
@@ -133,7 +146,7 @@ struct HydraReportRow: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 96)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text("\(who) reported back"))
+        .accessibilityLabel(Text(title))
     }
 }
 
@@ -509,7 +522,7 @@ struct ToolRow: View {
                             // A row that sent out a head wears the head's glyph and name.
                             let head = call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
                             if let head {
-                                HydraGlyph(persona: head.persona, size: 14, isRunning: call.status == .running && head.status == .running)
+                                HydraGlyph(persona: head.persona, size: 14, isRunning: call.status == .running && head.status == .running, status: head.status)
                                     .frame(width: TimelineMetrics.iconWidth)
                             } else {
                                 ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)

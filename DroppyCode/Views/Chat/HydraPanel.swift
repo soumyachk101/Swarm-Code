@@ -55,9 +55,6 @@ struct HydraPanel: View {
                 .fill(.clear)
                 .glassEffect(.regular, in: shape)
                 .overlay {
-                    shape.fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
-                }
-                .overlay {
                     shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
                 }
         }
@@ -65,7 +62,15 @@ struct HydraPanel: View {
         .overlay {
             shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(colorScheme == .dark ? 0.36 : 0.22), radius: 28, y: 10)
+        // The scrim sits under the glass and carries the panel's shadow: a plain filled
+        // shape, so its shadow is drawn once and kept. A shadow on the whole panel was
+        // blurred again with every token the transcript streamed under it.
+        .background {
+            let isDark = colorScheme == .dark
+            shape
+                .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
+                .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
+        }
         .onDisappear {
             if isDragging { NSCursor.pop() }
             if isHoveringHandle { NSCursor.pop() }
@@ -80,7 +85,7 @@ struct HydraPanel: View {
                 HydraHeadsButton(runtime: runtime, heads: heads, dismiss: dismiss)
                 if let selected, let info = selected.hydra {
                     HStack(spacing: 6) {
-                        HydraGlyph(persona: info.persona, size: 16, isRunning: info.status == .running)
+                        HydraGlyph(persona: info.persona, size: 16, isRunning: info.status == .running, status: info.status)
                         Text(verbatim: info.persona.name)
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Chrome.primaryText.opacity(0.92))
@@ -188,14 +193,19 @@ private struct HydraHeadsButton: View {
                         isPresented = false
                     }
                 }
-                if heads.contains(where: { $0.hydra?.isFinished == true }) {
+                if running > 1 || heads.contains(where: { $0.hydra?.isFinished == true }) {
                     PopoverDivider()
+                }
+                if running > 1 {
+                    PopoverItem("Stop all heads", symbol: "stop.circle") {
+                        model.stopAllHydraHeads(of: runtime.threadID)
+                        isPresented = false
+                    }
+                }
+                if heads.contains(where: { $0.hydra?.isFinished == true }) {
                     PopoverItem("Clear finished heads", symbol: "checkmark.circle") {
                         withAnimation(Chrome.panelSlide) {
-                            for head in heads where head.hydra?.isFinished == true {
-                                model.updateThread(head.id) { $0.isInPanel = false }
-                            }
-                            if let parentID = heads.first?.parentThreadID { model.updateThread(parentID) { $0.foldsHelpers = false } }
+                            model.clearFinishedHydraHeads(of: runtime.threadID)
                         }
                     }
                 }
@@ -204,21 +214,18 @@ private struct HydraHeadsButton: View {
     }
 }
 
-/// The lead-and-heads mark at capsule size.
+/// The three-headed mark at capsule size.
 private struct HydraSpokesMark: View {
     var body: some View {
-        ZStack {
-            HydraSpokes()
-                .stroke(Chrome.primaryText.opacity(0.7), style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
-            HydraMark()
-                .fill(Chrome.primaryText.opacity(0.9))
-        }
-        .frame(width: 14, height: 14)
+        HydraMarkImage()
+            .foregroundStyle(Chrome.primaryText.opacity(0.9))
+            .frame(width: 15, height: 15)
     }
 }
 
-/// One head in the popover: its glyph, its name and task, what it is doing, and a stop
-/// button while it works.
+/// One head in the popover: its glyph (wearing its outcome once it is done), its name and
+/// task, what it is doing, and a stop button while it works. The head on stage sits on a
+/// tinted row.
 private struct HydraHeadRow: View {
     @Environment(AppModel.self) private var model
     let head: ChatThread
@@ -228,11 +235,14 @@ private struct HydraHeadRow: View {
     @State private var isHovering = false
 
     var body: some View {
-        if let info = head.hydra {
+        if let stored = head.hydra {
+            // A running native head's note and counts live on its runtime, off the thread
+            // record; this row is the one view that follows them.
+            let info = model.existingRuntime(for: head.id).map { $0.hydraLiveInfo(stored) } ?? stored
             HStack(spacing: 10) {
                 Button(action: select) {
                     HStack(spacing: 10) {
-                        HydraGlyph(persona: info.persona, size: 22, isRunning: info.status == .running)
+                        HydraGlyph(persona: info.persona, size: 22, isRunning: info.status == .running, status: info.status)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(verbatim: info.persona.name)
@@ -250,28 +260,14 @@ private struct HydraHeadRow: View {
                                 .truncationMode(.tail)
                         }
                         Spacer(minLength: 8)
-                        if isOnStage {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Chrome.primaryText)
-                        }
                     }
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 if info.status == .running, info.canStop {
-                    Button {
+                    HydraStopButton(name: info.persona.name) {
                         model.stopHydraHead(head.id)
-                    } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .frame(width: 22, height: 22)
-                            .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
-                    .help("Stop \(info.persona.name)")
-                    .opacity(isHovering ? 1 : 0.6)
                 }
             }
             .padding(.horizontal, 8)
@@ -279,14 +275,40 @@ private struct HydraHeadRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isHovering ? Chrome.overlay(0.1) : Color.clear)
+                    .fill(isOnStage ? Chrome.overlay(0.14) : (isHovering ? Chrome.overlay(0.08) : Color.clear))
             }
             .onHover { hovering in
                 withAnimation(Chrome.hover) { isHovering = hovering }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(Text("\(info.persona.name), \(HydraStatusText.long(info)), \(info.task)"))
+            .accessibilityLabel(Text("\(info.persona.name), \(HydraStatusText.long(info)), \(info.task)\(isOnStage ? ", on stage" : "")"))
         }
+    }
+}
+
+/// The stop button beside a working head: a round glass button that reads as one, with
+/// the stop mark in the danger colour when the pointer is on it.
+private struct HydraStopButton: View {
+    let name: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(isHovering ? Chrome.danger : Chrome.primaryText.opacity(0.85))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .chromeGlassCircle()
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .help("Stop \(name)")
+        .accessibilityLabel(Text("Stop \(name)"))
     }
 }
 
@@ -320,8 +342,8 @@ private struct HydraHeadTranscript: View {
                     .overlay(alignment: .top) {
                         JumpToLatestButton(scrollState: scrollState)
                     }
-            } else if let info = head.hydra {
-                HydraHeadFooter(info: info)
+            } else if let stored = head.hydra {
+                HydraHeadFooter(info: runtime.hydraLiveInfo(stored))
                     .overlay(alignment: .top) {
                         JumpToLatestButton(scrollState: scrollState)
                     }
@@ -383,7 +405,7 @@ enum HydraStatusText {
         case .running:
             return info.activity.map { "· " + TextCleanup.singleLine($0, limit: 40) } ?? "· working"
         case .completed:
-            return "· done" + elapsed(info)
+            return "· done" + elapsed(info) + steps(info) + (landed(info).map { " · " + $0 } ?? "")
         case .failed:
             return "· failed"
         case .stopped:
@@ -396,12 +418,31 @@ enum HydraStatusText {
         case .running:
             return info.activity.map { TextCleanup.singleLine($0, limit: 80) } ?? "Working"
         case .completed:
-            return "Done" + elapsed(info) + (info.summary.map { " · " + TextCleanup.singleLine($0, limit: 80) } ?? "")
+            return "Done" + elapsed(info) + steps(info) + (landed(info).map { " · " + $0 } ?? "") + (info.summary.map { " · " + TextCleanup.singleLine($0, limit: 80) } ?? "")
         case .failed:
             return "Failed" + (info.summary.map { " · " + TextCleanup.singleLine($0, limit: 80) } ?? "")
         case .stopped:
             return "Stopped"
         }
+    }
+
+    /// Where a Droppy-run head's work went, in a few words; nil for a head with no copy
+    /// of its own.
+    static func landed(_ info: HydraHeadInfo) -> String? {
+        guard let landing = info.landing else { return nil }
+        if landing.isEmpty { return "changed nothing" }
+        let files = landing.files.count == 1 ? "1 file" : "\(landing.files.count) files"
+        if landing.patchPath != nil { return "kept as a patch" }
+        if landing.error != nil { return "did not land" }
+        if !landing.conflicts.isEmpty {
+            return "landed \(files), " + (landing.conflicts.count == 1 ? "1 conflict" : "\(landing.conflicts.count) conflicts")
+        }
+        return "landed \(files)"
+    }
+
+    private static func steps(_ info: HydraHeadInfo) -> String {
+        guard info.toolCalls > 0 else { return "" }
+        return info.toolCalls == 1 ? " · 1 step" : " · \(info.toolCalls) steps"
     }
 
     private static func elapsed(_ info: HydraHeadInfo) -> String {

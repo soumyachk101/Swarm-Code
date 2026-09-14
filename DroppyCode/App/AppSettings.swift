@@ -89,6 +89,8 @@ final class AppSettings {
         static let metaAPIKey = "metaAPIKey"
         static let hydraEnabled = "hydraEnabled"
         static let hydraQueueHeads = "hydraQueueHeads"
+        static let hydraIsolateHeads = "hydraIsolateHeads"
+        static let hydraAutoMerge = "hydraAutoMerge"
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
         static let hydraPairs = "hydraPairs"
     }
@@ -250,6 +252,19 @@ final class AppSettings {
         didSet { defaults.set(hydraQueueHeads, forKey: Key.hydraQueueHeads) }
     }
 
+    /// A head Droppy Code runs gets a copy of the checkout of its own, so no head ever
+    /// sees another's half-done work; its changes land in the chat's checkout when it
+    /// reports. Off, the heads work in the checkout itself.
+    var hydraIsolateHeads: Bool {
+        didSet { defaults.set(hydraIsolateHeads, forKey: Key.hydraIsolateHeads) }
+    }
+
+    /// Once the lead has finished and every head is back, the team's work goes out as a
+    /// merge request and lands, and the checkout is brought up to date. Off unless asked.
+    var hydraAutoMerge: Bool {
+        didSet { defaults.set(hydraAutoMerge, forKey: Key.hydraAutoMerge) }
+    }
+
     /// A head that finishes leaves the Hydra panel on its own, for the sidebar under its
     /// lead, instead of waiting for "Clear finished heads".
     var hydraAutoClearFinished: Bool {
@@ -299,6 +314,8 @@ final class AppSettings {
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
         hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
+        hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
+        hydraAutoMerge = defaults.object(forKey: Key.hydraAutoMerge) as? Bool ?? false
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
     }

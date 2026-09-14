@@ -167,9 +167,6 @@ struct SubagentPanel: View {
                 .fill(.clear)
                 .glassEffect(.regular, in: shape)
                 .overlay {
-                    shape.fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
-                }
-                .overlay {
                     shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
                 }
         }
@@ -177,7 +174,15 @@ struct SubagentPanel: View {
         .overlay {
             shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
         }
-        .shadow(color: .black.opacity(colorScheme == .dark ? 0.36 : 0.22), radius: 28, y: 10)
+        // The scrim sits under the glass and carries the panel's shadow: a plain filled
+        // shape, so its shadow is drawn once and kept. A shadow on the whole panel was
+        // blurred again with every token the transcript streamed under it.
+        .background {
+            let isDark = colorScheme == .dark
+            shape
+                .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
+                .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
+        }
         .onDisappear {
             if isDragging { NSCursor.pop() }
             if isHoveringHandle { NSCursor.pop() }

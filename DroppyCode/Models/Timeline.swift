@@ -57,10 +57,11 @@ extension TimelineItem {
 struct UserMessage: Codable, Hashable, Sendable {
     var text: String
     var attachments: [Attachment] = []
-    /// Set when the message is heads reporting back to their lead rather than the user's
-    /// own words: the roster places of the heads that reported.
+    /// Set when the message is Hydra's rather than the user's own words: the roster
+    /// places of the heads reporting back, or empty for a note from Hydra itself.
     var hydraHeads: [Int]?
 
+    var isFromHydra: Bool { hydraHeads != nil }
     var isHydraReport: Bool { !(hydraHeads ?? []).isEmpty }
 }
 

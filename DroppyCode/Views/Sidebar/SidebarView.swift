@@ -622,7 +622,7 @@ private struct SidebarHelperRow: View {
                 HStack(spacing: 6) {
                     // A head keeps its glyph, so the team reads at a glance under its lead.
                     if let head = thread.hydra {
-                        HydraGlyph(persona: head.persona, size: 12)
+                        HydraGlyph(persona: head.persona, size: 12, status: head.status)
                     }
                     Text(verbatim: thread.title)
                         .font(.system(size: 12, weight: isSelected || thread.hasUnread ? .medium : .regular))

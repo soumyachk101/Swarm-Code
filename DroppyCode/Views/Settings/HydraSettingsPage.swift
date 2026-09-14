@@ -33,6 +33,18 @@ struct HydraSettingsPage: View {
                 .disabled(!settings.hydraEnabled)
                 .opacity(settings.hydraEnabled ? 1 : 0.5)
                 ChromeRowDivider()
+                ChromeRow(title: "Heads work in copies of their own", detail: "A head Droppy Code runs gets its own copy of the checkout, so no head sees another's half-done work; its changes land in the chat's checkout the moment it reports. Off, the heads work in the checkout itself.") {
+                    SettingsSwitch(isOn: $settings.hydraIsolateHeads)
+                }
+                .disabled(!settings.hydraEnabled)
+                .opacity(settings.hydraEnabled ? 1 : 0.5)
+                ChromeRowDivider()
+                ChromeRow(title: "Merge when the team is done", detail: "Once the lead has finished and every head is back, the files the team changed go out as a merge request on a branch of their own, land through glab, gh or tea, and the checkout is brought up to date, all without the checkout ever changing branch. Off, the work stays in the checkout for you.") {
+                    SettingsSwitch(isOn: $settings.hydraAutoMerge)
+                }
+                .disabled(!settings.hydraEnabled)
+                .opacity(settings.hydraEnabled ? 1 : 0.5)
+                ChromeRowDivider()
                 ChromeRow(title: "Clear finished heads automatically", detail: "A head that finishes leaves the panel on its own, for the sidebar under its lead, instead of waiting for “Clear finished heads”") {
                     SettingsSwitch(isOn: $settings.hydraAutoClearFinished)
                 }
@@ -92,29 +104,9 @@ struct HydraSettingsPage: View {
 /// The lead-and-heads mark, large, for the page's opening card.
 private struct HydraSettingsMark: View {
     var body: some View {
-        ZStack {
-            HydraSpokes()
-                .stroke(Chrome.primaryText.opacity(0.5), style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
-            HydraMark()
-                .fill(Chrome.primaryText.opacity(0.85))
-            ForEach(0..<3, id: \.self) { index in
-                HydraSettingsHead(index: index)
-                    .fill(HydraRoster.personas[index].color)
-            }
-        }
-        .frame(width: 30, height: 30)
-    }
-}
-
-private struct HydraSettingsHead: Shape {
-    let index: Int
-
-    func path(in rect: CGRect) -> Path {
-        let orbit = min(rect.width, rect.height) * 0.36
-        let head = min(rect.width, rect.height) * 0.11
-        let angle = -.pi / 2 + CGFloat(index) * 2 * .pi / 3
-        let point = CGPoint(x: rect.midX + orbit * cos(angle), y: rect.midY + orbit * sin(angle))
-        return Path(ellipseIn: CGRect(x: point.x - head, y: point.y - head, width: head * 2, height: head * 2))
+        HydraMarkImage()
+            .foregroundStyle(Chrome.primaryText.opacity(0.85))
+            .frame(width: 30, height: 30)
     }
 }
 

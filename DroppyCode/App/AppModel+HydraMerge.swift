@@ -1,0 +1,206 @@
+import AppKit
+import Foundation
+
+// With "Merge when the team is done" on, a Hydra lead's finished job lands by itself: the
+// files the lead and its heads changed go out as a commit on a branch of their own, the
+// branch is pushed, a merge request is opened and merged with the forge's CLI, and the
+// checkout is brought up to date. The checkout never changes branch for any of it: the
+// commit is built from a snapshot of the working tree, so nothing running in the checkout
+// meanwhile is disturbed, and nothing uncommitted that is not the team's goes along.
+
+extension AppModel {
+    /// Lands a lead's finished work, when the setting says so. Runs once per finished job;
+    /// what happened lands in the lead's timeline as a note from Hydra.
+    func autoMergeHydraWork(of leadID: UUID) async {
+        guard settings.hydraAutoMerge, let lead = thread(leadID), hydraIsOn(lead), let project = project(lead.projectID),
+              let runtime = existingRuntime(for: leadID), !runtime.isHydraMerging else { return }
+        runtime.isHydraMerging = true
+        defer { runtime.isHydraMerging = false }
+
+        let checkout = lead.worktreePath ?? project.path
+        let git = Git(checkout)
+        guard await git.isRepository(), await git.hasCommits() else { return }
+        guard await git.remoteURL() != nil else {
+            note(leadID, "Hydra did not merge: no remote.", "The team's work is in the checkout; there is no origin to push it to.")
+            return
+        }
+        guard !(await git.hasOperationInProgress()) else {
+            note(leadID, "Hydra did not merge: a rebase or merge is underway.", "The team's work is in the checkout; finish that first and merge by hand.")
+            return
+        }
+
+        // What the team touched: the lead's turns and the heads' landings. Only those
+        // paths go, so a sibling's uncommitted work in the same checkout stays behind.
+        var paths = Set(runtime.turns.flatMap { $0.touchedPaths ?? [] })
+        for head in hydraTeam(of: leadID) {
+            for file in head.hydra?.landing?.files ?? [] { paths.insert(file.path) }
+        }
+        let sorted = paths.sorted()
+        guard !sorted.isEmpty else { return }
+
+        do {
+            let head = try await git.commitHash()
+            let tree = try await git.captureTree(paths: sorted)
+            // Everything the team did is committed already, or was merged before.
+            guard try await tree != git.treeHash(of: "HEAD") else { return }
+
+            let patch = (try? await git.diff(from: head, to: tree)) ?? ""
+            let files = DiffParser.parse(patch)
+            let message = await commitMessage(for: lead, files: files, patch: patch, directory: checkout)
+            let subject = TextCleanup.singleLine(message, limit: 72)
+
+            let status = await git.status()
+            let target = await git.defaultBranch()
+            let current = status?.branch
+            // On the default branch the commit goes to a branch of its own, made and pushed
+            // without ever being checked out; on any other branch it is that branch's.
+            let ownBranch = current == nil || current == target
+            let branch = ownBranch ? Self.hydraBranchName(for: lead) : current!
+            let commit = try await git.commitWork(tree, parent: head, message: message)
+            try await git.updateRef("refs/heads/\(branch)", to: commit)
+            if !ownBranch {
+                // The branch moved under the checkout: the index catches up, the working
+                // tree already has the content.
+                try await git.resetIndex(paths: sorted)
+            }
+            try await git.pushBranch(branch)
+
+            let body = mergeRequestBody(for: lead, files: files, runtime: runtime)
+            guard let url = try await git.createPullRequest(title: subject, body: body, source: branch, target: target),
+                  let link = MergeRequestLink(url: url) else {
+                note(leadID, "Hydra pushed \(branch) but could not open a merge request.", "Open one for `\(branch)` into `\(target)` and merge it from there.")
+                return
+            }
+            do {
+                try await git.mergePullRequest(link)
+            } catch {
+                note(leadID, "Hydra opened \(link.label) but could not merge it.", "\(url.absoluteString)\n\n\(error.localizedDescription)\n\nMerge it from the link once it is ready; the branch `\(branch)` has the team's work.")
+                return
+            }
+
+            var lines = ["\(url.absoluteString)", "", Self.filesLine(files) + " landed on `\(target)` from `\(branch)`."]
+            if ownBranch {
+                let synced = await syncDefaultBranch(git, from: head, target: target, ownPaths: sorted)
+                lines.append(synced ? "The checkout is up to date." : "The checkout was left as it was: `\(target)` moved on in other ways meanwhile, or the team's files changed again; `git pull` when it suits you.")
+            } else if lead.worktreePath != nil {
+                // The lead worked in a worktree: the project's own checkout follows when it can.
+                let main = Git(project.path)
+                if await main.status()?.branch == target, await main.dirtyPaths().isEmpty, !(await main.hasOperationInProgress()) {
+                    if (try? await main.pullFastForward()) != nil { lines.append("The project checkout is up to date.") }
+                }
+            }
+            note(leadID, "Hydra merged \(link.label).", lines.joined(separator: "\n"))
+            existingRuntime(for: leadID)?.noteDiffChanged()
+        } catch {
+            note(leadID, "Hydra could not merge the team's work.", "\(error.localizedDescription)\n\nThe work is still in the checkout.")
+        }
+    }
+
+    /// Brings the checkout's default branch up to the merge without touching the working
+    /// tree: the branch moves to what origin has, the index takes the merged version of the
+    /// team's files (the working tree already holds it), and any other file the remote
+    /// changed meanwhile is checked out only where it is clean locally. Returns false, and
+    /// changes nothing, where that cannot be done safely.
+    private func syncDefaultBranch(_ git: Git, from head: String, target: String, ownPaths: [String]) async -> Bool {
+        let remote = "origin/\(target)"
+        guard (try? await git.fetch()) != nil, await git.isAncestor(head, of: remote) else { return false }
+        guard let changed = try? await git.changedPaths(from: head, to: remote) else { return false }
+        let own = Set(ownPaths)
+        let others = changed.filter { !own.contains($0) }
+        let dirty = Set(await git.dirtyPaths())
+        guard others.allSatisfy({ !dirty.contains($0) }) else { return false }
+        var kept: [String] = []
+        var gone: [String] = []
+        for path in others {
+            if await git.pathExists(path, in: remote) { kept.append(path) } else { gone.append(path) }
+        }
+        do {
+            try await git.resetSoft(to: remote)
+            try await git.resetIndex(paths: ownPaths)
+            try await git.checkoutPaths(from: remote, kept)
+            try await git.removePaths(gone)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    /// The commit message: written by the text engine from the patch, like the commit
+    /// sheet's, else the chat's title over the heads' tasks.
+    private func commitMessage(for lead: ChatThread, files: [DiffFile], patch: String, directory: String) async -> String {
+        if let engine = textEngine(preferring: lead.provider) {
+            let summary = files.map { "\($0.change == .added ? "A" : ($0.change == .deleted ? "D" : "M")) \($0.path)" }.joined(separator: "\n")
+            if let text = await TextGeneration.commitMessage(
+                summary: summary,
+                patch: patch,
+                instructions: settings.commitInstructions,
+                engine: engine,
+                directory: URL(fileURLWithPath: directory)
+            ), !text.isEmpty {
+                return text
+            }
+        }
+        var lines = [lead.title == ChatThread.untitled ? "Hydra: the team's work" : lead.title, ""]
+        for head in hydraTeam(of: lead.id) {
+            guard let info = head.hydra, !info.task.isEmpty else { continue }
+            lines.append("- \(info.persona.name): \(TextCleanup.singleLine(info.task, limit: 100))")
+        }
+        return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The request's description: what the team did and how the lead summed it up.
+    private func mergeRequestBody(for lead: ChatThread, files: [DiffFile], runtime: ThreadRuntime) -> String {
+        var lines = ["Opened by Droppy Code once its Hydra team finished.", ""]
+        let heads = hydraTeam(of: lead.id).compactMap(\.hydra).filter { !$0.task.isEmpty }
+        if !heads.isEmpty {
+            lines.append("## Heads")
+            for info in heads {
+                var line = "- **\(info.persona.name)** — \(TextCleanup.singleLine(info.task, limit: 120))"
+                if let landing = info.landing, !landing.files.isEmpty {
+                    line += " (\(landing.files.count == 1 ? "1 file" : "\(landing.files.count) files"))"
+                }
+                lines.append(line)
+            }
+            lines.append("")
+        }
+        if let reply = runtime.entries.last(where: { $0.kind == .assistant }).flatMap({ entry -> String? in
+            guard case .assistant(let message) = entry.item.content else { return nil }
+            return message.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }), !reply.isEmpty {
+            lines.append("## The lead's summary")
+            lines.append(reply.count > 2_000 ? String(reply.prefix(2_000)) + "…" : reply)
+            lines.append("")
+        }
+        lines.append("## Files")
+        lines += files.map { "- `\($0.path)` (+\($0.additions) −\($0.deletions))" }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func hydraBranchName(for lead: ChatThread) -> String {
+        let title = lead.title == ChatThread.untitled ? "team" : lead.title
+        var slug = title.lowercased().map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+        while slug.contains("--") { slug = slug.replacingOccurrences(of: "--", with: "-") }
+        slug = slug.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        if slug.count > 40 { slug = String(slug.prefix(40)).trimmingCharacters(in: CharacterSet(charactersIn: "-")) }
+        let suffix = String(UUID().uuidString.lowercased().prefix(6))
+        return "hydra/\(slug.isEmpty ? "team" : slug)-\(suffix)"
+    }
+
+    private static func filesLine(_ files: [DiffFile]) -> String {
+        let additions = files.reduce(0) { $0 + $1.additions }
+        let deletions = files.reduce(0) { $0 + $1.deletions }
+        return "\(files.count == 1 ? "1 file" : "\(files.count) files") (+\(additions) −\(deletions))"
+    }
+
+    /// A note from Hydra in the lead's timeline, and word of it when the chat is out of view.
+    private func note(_ leadID: UUID, _ title: String, _ body: String) {
+        existingRuntime(for: leadID)?.appendHydraNote(title + "\n" + body)
+        let onScreen = selectedThreadID == leadID
+        guard !(NSApp.isActive && onScreen) else { return }
+        updateThread(leadID) { $0.hasUnread = true }
+        updateDockBadge()
+        if settings.notifyWhenFinished, let lead = thread(leadID) {
+            notify(threadID: leadID, title: lead.title, body: title)
+        }
+    }
+}
