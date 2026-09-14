@@ -52,6 +52,9 @@ struct AppCommands: Commands {
             Button("Stop") { runtime?.interrupt() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .stopTurn))
                 .disabled(!(runtime?.isRunning ?? false))
+            Button("Queue a chat") { runtime?.queueDraftAsFollowUp() }
+                .keyboardShortcut(shortcuts.keyboardShortcut(for: .queueChat))
+                .disabled(!(runtime?.isRunning ?? false) || (runtime?.draft.isEmpty ?? true))
             Button("Toggle plan mode") {
                 guard let id = model.selectedThreadID else { return }
                 model.updateThread(id) { $0.interactionMode = $0.interactionMode == .plan ? .build : .plan }

@@ -233,12 +233,15 @@ struct ComposerView: View {
     }
 
     /// Command-Return: steer the running turn by queueing the draft behind it.
-    /// Idle, there is nothing to steer behind, so it just sends.
+    /// Idle, there is nothing to steer behind, so it just sends. The menu owns
+    /// the chord while a turn runs; this path only sees it when the command is
+    /// disabled or rebound, so it falls back to send once the chord moves.
     private func steer() {
         guard !runtime.draft.isEmpty else { return }
         historyIndex = nil
         suggestions = SuggestionState()
-        if runtime.isRunning {
+        if runtime.isRunning,
+           ShortcutStore.shared.chord(for: .queueChat) == KeyChord(keyCode: 36, modifiers: .command) {
             runtime.queueDraftAsFollowUp()
         } else {
             runtime.send()
@@ -461,7 +464,7 @@ private struct SendButton: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .padding(.leading, 4)
-        .help(isRunning ? "Stop (⌘.) · Return interrupts and sends" : "Send (Return)")
+        .help(isRunning ? "Stop (⌘.) · Return steers, ⌘Return queues" : "Send (Return) · ⌘Return queues while running")
     }
 }
 
