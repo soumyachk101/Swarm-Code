@@ -63,6 +63,7 @@ final class AppSettings {
         static let metaAPIKey = "metaAPIKey"
         static let hydraEnabled = "hydraEnabled"
         static let hydraQueueHeads = "hydraQueueHeads"
+        static let hydraIsolateHeads = "hydraIsolateHeads"
         static let hydraPairs = "hydraPairs"
     }
 
@@ -213,6 +214,13 @@ final class AppSettings {
         didSet { defaults.set(hydraQueueHeads, forKey: Key.hydraQueueHeads) }
     }
 
+    /// A head Droppy Code runs gets a copy of the checkout of its own, so no head ever
+    /// sees another's half-done work; its changes land in the chat's checkout when it
+    /// reports. Off, the heads work in the checkout itself.
+    var hydraIsolateHeads: Bool {
+        didSet { defaults.set(hydraIsolateHeads, forKey: Key.hydraIsolateHeads) }
+    }
+
     /// The lead-and-heads pairings, in the order they were added.
     private(set) var hydraPairs: [HydraPair] {
         didSet { store(hydraPairs, forKey: Key.hydraPairs) }
@@ -254,6 +262,7 @@ final class AppSettings {
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
         hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
+        hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
     }
 

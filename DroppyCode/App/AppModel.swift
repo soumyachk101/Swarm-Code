@@ -112,6 +112,7 @@ final class AppModel {
         // so the first click into a conversation never parses its history on the main thread.
         let recent = threads.filter { !$0.isArchived && !$0.isInPanel }.sorted { $0.updatedAt > $1.updatedAt }.prefix(12).map(\.id)
         warmDocuments(recent)
+        sweepHydraCopies()
         await LoginEnvironment.load()
         await providers.refreshAll()
         if providers.status(.codex).isInstalled {
@@ -405,6 +406,7 @@ final class AppModel {
         for helper in helpers(of: id) { archive(helper.id) }
         if selectedThreadID == id { selectNeighbor(of: id) }
         existingRuntime(for: id)?.stopSession()
+        releaseHydraCopy(of: id)
         updateThread(id) {
             $0.isArchived = true
             $0.isPinned = false
@@ -427,7 +429,8 @@ final class AppModel {
         threads.removeAll { $0.id == id }
         if let project = project(thread.projectID) {
             let git = Git(project.path)
-            let worktree = removeWorktree ? thread.worktreePath : nil
+            // A head's copy of the checkout was Droppy Code's to make, so it always goes.
+            let worktree = removeWorktree || thread.hydra?.hasOwnCopy == true ? thread.worktreePath : nil
             Task {
                 await git.deleteCheckpoints(thread: id)
                 if let worktree { try? await git.removeWorktree(at: worktree) }
@@ -453,7 +456,11 @@ final class AppModel {
         for thread in removed {
             discardThreadState(thread)
             if let project = project(thread.projectID) {
-                Task { await Git(project.path).deleteCheckpoints(thread: thread.id) }
+                let copy = thread.hydra?.hasOwnCopy == true ? thread.worktreePath : nil
+                Task {
+                    await Git(project.path).deleteCheckpoints(thread: thread.id)
+                    if let copy { try? await Git(project.path).removeWorktree(at: copy) }
+                }
             }
         }
         let removedIDs = Set(removed.map(\.id))

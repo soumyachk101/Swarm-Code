@@ -30,6 +30,24 @@ struct SessionConfiguration: Sendable {
     /// Set while Hydra is on for the thread: providers that run heads of their own define
     /// them at launch, on the pair's model and effort, and steer the lead towards them.
     var hydra: HydraLaunch?
+    /// The conversation so far, for a provider that keeps nothing between launches (the
+    /// API providers hold their history in memory only): the exchanges go back in as
+    /// context, so a session that starts over still knows what was said.
+    var transcript: [TranscriptMessage] = []
+    /// The thread is a Hydra head that Droppy Code runs: the session paces it, so a head
+    /// that keeps reading without ever changing anything is told to act.
+    var isHydraHead = false
+}
+
+/// One exchange of a conversation, for replaying it into a session that starts over.
+struct TranscriptMessage: Sendable {
+    enum Role: Sendable {
+        case user
+        case assistant
+    }
+
+    var role: Role
+    var text: String
 }
 
 /// A head a provider started inside the lead's session.

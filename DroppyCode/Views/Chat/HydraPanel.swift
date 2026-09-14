@@ -191,10 +191,7 @@ private struct HydraHeadsButton: View {
                     PopoverDivider()
                     PopoverItem("Clear finished heads", symbol: "checkmark.circle") {
                         withAnimation(Chrome.panelSlide) {
-                            for head in heads where head.hydra?.isFinished == true {
-                                model.updateThread(head.id) { $0.isInPanel = false }
-                            }
-                            if let parentID = heads.first?.parentThreadID { model.updateThread(parentID) { $0.foldsHelpers = false } }
+                            model.clearFinishedHydraHeads(of: runtime.threadID)
                         }
                     }
                 }
@@ -382,7 +379,7 @@ enum HydraStatusText {
         case .running:
             return info.activity.map { "· " + TextCleanup.singleLine($0, limit: 40) } ?? "· working"
         case .completed:
-            return "· done" + elapsed(info)
+            return "· done" + elapsed(info) + (landed(info).map { " · " + $0 } ?? "")
         case .failed:
             return "· failed"
         case .stopped:
@@ -395,12 +392,26 @@ enum HydraStatusText {
         case .running:
             return info.activity.map { TextCleanup.singleLine($0, limit: 80) } ?? "Working"
         case .completed:
-            return "Done" + elapsed(info) + (info.summary.map { " · " + TextCleanup.singleLine($0, limit: 80) } ?? "")
+            return "Done" + elapsed(info) + (landed(info).map { " · " + $0 } ?? "") + (info.summary.map { " · " + TextCleanup.singleLine($0, limit: 80) } ?? "")
         case .failed:
             return "Failed" + (info.summary.map { " · " + TextCleanup.singleLine($0, limit: 80) } ?? "")
         case .stopped:
             return "Stopped"
         }
+    }
+
+    /// Where a Droppy-run head's work went, in a few words; nil for a head with no copy
+    /// of its own.
+    static func landed(_ info: HydraHeadInfo) -> String? {
+        guard let landing = info.landing else { return nil }
+        if landing.isEmpty { return "changed nothing" }
+        let files = landing.files.count == 1 ? "1 file" : "\(landing.files.count) files"
+        if landing.patchPath != nil { return "kept as a patch" }
+        if landing.error != nil { return "did not land" }
+        if !landing.conflicts.isEmpty {
+            return "landed \(files), " + (landing.conflicts.count == 1 ? "1 conflict" : "\(landing.conflicts.count) conflicts")
+        }
+        return "landed \(files)"
     }
 
     private static func elapsed(_ info: HydraHeadInfo) -> String {

@@ -171,9 +171,17 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
     /// A native head whose spawning tool call returned at once: only the provider's own
     /// word ends it, never the tool result.
     var isBackground = true
+    /// Set on a Droppy-run head with a copy of the checkout of its own: the tree the copy
+    /// started from, which its work is measured against when it lands. Moves on with
+    /// every landing, so a head steered on afterwards lands only what is new.
+    var baseTree: String?
+    /// Where the head's work went the last time it reported.
+    var landing: HydraLanding?
 
     var persona: HydraPersona { HydraRoster.persona(at: index) }
     var isFinished: Bool { status.isFinished }
+    /// Whether the head works in a copy of the checkout that Droppy Code made for it.
+    var hasOwnCopy: Bool { baseTree != nil }
 
     init(index: Int, task: String, kind: Kind, origin: Origin) {
         self.index = index
@@ -201,7 +209,42 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
         batchID = container.value(.batchID, default: nil)
         canStop = container.value(.canStop, default: false)
         isBackground = container.value(.isBackground, default: true)
+        baseTree = container.value(.baseTree, default: nil)
+        landing = container.value(.landing, default: nil)
     }
+}
+
+/// Where a Droppy-run head's work went when it reported: into the lead's checkout, into
+/// it with conflicts left to settle, or into a patch file when it would not apply.
+struct HydraLanding: Codable, Hashable, Sendable {
+    struct File: Codable, Hashable, Sendable {
+        var path: String
+        var additions: Int
+        var deletions: Int
+    }
+
+    /// The files the head changed, with what the change amounted to.
+    var files: [File] = []
+    /// Files the three-way merge left conflict markers in.
+    var conflicts: [String] = []
+    /// Where the patch went when none of it could be applied.
+    var patchPath: String?
+    var error: String?
+
+    /// The head changed nothing.
+    var isEmpty: Bool { files.isEmpty && patchPath == nil && error == nil }
+    /// The work is in the checkout, conflict markers or not.
+    var landed: Bool { !files.isEmpty && patchPath == nil && error == nil }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        files = container.value(.files, default: [])
+        conflicts = container.value(.conflicts, default: [])
+        patchPath = container.value(.patchPath, default: nil)
+        error = container.value(.error, default: nil)
+    }
+
+    init() {}
 }
 
 /// A head the lead asked for through the delegation block, on a provider that runs no
@@ -218,12 +261,50 @@ struct HydraReport: Hashable, Sendable {
     var origin: HydraHeadInfo.Origin
     var status: HydraHeadInfo.Status
     var text: String
+    /// Where a Droppy-run head's work went; nil for a head that changed nothing or has
+    /// no copy of its own.
+    var landing: HydraLanding?
+    /// The head's own copy of the checkout, for work that did not land.
+    var copyPath: String?
 }
 
 /// The words Hydra puts in front of the lead and the heads, per provider.
 enum HydraPrompts {
     static let workerAgentName = "droppy-worker"
     static let scoutAgentName = "droppy-scout"
+
+    /// Where a Droppy-run head works: a copy of the checkout made for it, or the checkout
+    /// itself when the project cannot be copied (no git, no commits yet) or the user
+    /// prefers it so.
+    enum Workplace {
+        case ownCopy(path: String)
+        case shared(path: String)
+    }
+
+    /// What a head is told about the checkout it works in and what it may do to it. The
+    /// shared case is what every head lives with on providers that run heads natively.
+    private static func workplaceRules(_ workplace: Workplace) -> String {
+        switch workplace {
+        case .ownCopy(let path):
+            """
+            You have your own copy of the project at \(path): a git worktree Droppy Code made for you from the lead's checkout as it was when you were sent out, uncommitted work included. Work in it directly, on the files as they are; your tools already run there. When you report, Droppy Code carries your changes into the lead's checkout itself. So never commit, branch, stash, push, check out, reset, restore or clean anything, and never make or remove worktrees, whatever the project's own guidelines say about agents and worktrees: this copy already is yours. Do not use git to check your work either.
+            """
+        case .shared(let path):
+            """
+            You work in the lead's checkout at \(path), alongside the lead and the other heads, who are changing other files at the same time. Changes you did not make are expected there: leave every one of them alone, never stash, check out, reset, restore or clean anything, and never move work into a branch or worktree, whatever the project's own guidelines say about agents and worktrees. Do not use git status or git diff to check your work: they show everyone's changes, and the lead does the verifying.
+            """
+        }
+    }
+
+    /// How a head goes about its task, whatever provider runs it.
+    private static let howToWork = """
+    - Start on the task right away: read what you need and no more, then make the change.
+    - Do exactly this task and only this. Do not widen it, do not touch files it does not name unless it cannot be done otherwise, and never revert, reformat or clean up work that is not yours.
+    - Check what you changed with the narrowest thing that proves it, a targeted parse, type check or test; leave the project's full build and test suite to the lead unless the task asks for them.
+    - If something blocks you, stop and say so instead of guessing or working around it.
+    """
+
+    private static let howToReport = "Reply with a short report the lead can act on: what you did, the files you changed, how you checked it, and anything the lead must know. No preamble, no logs."
 
     /// Appended to the lead's system prompt on providers that run heads natively: when to
     /// delegate, how to split the work and what to do with the reports.
@@ -247,7 +328,7 @@ enum HydraPrompts {
         return """
         # Hydra
 
-        The user switched on Hydra for this chat: you lead a team of helper agents, called heads, that work in parallel on the same checkout. \(howToSpawn)
+        The user switched on Hydra for this chat: you lead a team of helper agents, called heads, that work in parallel in your checkout. \(howToSpawn)
 
         Delegate only when it pays off: a request that bundles several independent tasks, changes across several unrelated parts of the codebase, or research that needs many files or sources read. For a simple or single-focus request, do it yourself and send out nothing.
 
@@ -255,20 +336,25 @@ enum HydraPrompts {
         - \(howToWait)
         - Give each head one self-contained task with the exact files, symbols and acceptance criteria it needs. Heads share the checkout but not your context, so write the task as if to a capable colleague who has read nothing yet.
         - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself.
-        - Tell the user in one line which heads you sent out and what each one does. When they report back, check anything that matters before you build on it, then finish the job.
+        - Tell the user in one line which heads you sent out and what each one does.
+
+        When they report back:
+        - The checkout changes under you while heads work, and the user may be editing too. Never use git status or git diff to check on a head, and never reconcile, revert, stash or move changes you did not make.
+        - Take a report as done work: read the files it names if something matters, but do not redo the task and do not start it over because the tree looks different from what you expected. A head that failed leaves its part to you: do it or send it out again. A head the user stopped leaves its part alone unless the user asks.
+        - Then finish the job: integrate, run one verification if it matters, and answer the user.
         """
     }
 
     /// The system prompt a worker head runs with.
     static let workerPrompt = """
-    You are a Hydra head in Droppy Code: one of several helpers working in parallel for a lead agent on the same checkout. Do exactly the task you were given, and only that: do not widen it, do not touch files it does not name unless the task cannot be done otherwise, and never revert or reformat work you did not do. Verify what you change with the narrowest check that proves it. If something blocks you, say so instead of guessing.
+    You are a Hydra head in Droppy Code: one of several helpers working in parallel for a lead agent, in the lead's own checkout, where the lead and the other heads are changing other files at the same time. Do exactly the task you were given, and only that: do not widen it, do not touch files it does not name unless the task cannot be done otherwise, and never revert, reformat or clean up work that is not yours. Changes you did not make are expected in the checkout: leave them alone, never stash, check out, reset, restore or clean anything, and never move work into a branch or worktree, whatever the project's own guidelines say about agents and worktrees. Do not use git status or git diff to check your work: they show everyone's changes. Check what you changed with the narrowest thing that proves it and leave the full build and test suite to the lead. If something blocks you, say so instead of guessing.
 
-    Reply with a short report the lead can act on: what you did, the files you changed, how you verified it, and anything the lead must know. No preamble, no logs.
+    \(howToReport)
     """
 
     /// The system prompt a scout head runs with.
     static let scoutPrompt = """
-    You are a Hydra head in Droppy Code: a read-only researcher working in parallel for a lead agent. Answer exactly the question you were given, from the code and sources you can read. Change nothing.
+    You are a Hydra head in Droppy Code: a read-only researcher working in parallel for a lead agent, in the lead's own checkout, where the lead and other heads are changing files at the same time; uncommitted changes there are theirs and expected. Answer exactly the question you were given, from the code and sources you can read. Change nothing.
 
     Reply with a short report the lead can act on: the findings, with file paths and line references, and anything that contradicts what the lead assumed. No preamble.
     """
@@ -347,15 +433,19 @@ enum HydraPrompts {
 
     /// Put in front of the user's prompt on providers that run no heads of their own: the
     /// lead may end its reply with a delegation block, which Droppy Code turns into heads.
-    static func fallbackPreamble(maxHeads: Int) -> String {
-        """
+    /// `isolated` says whether those heads get copies of the checkout of their own.
+    static func fallbackPreamble(maxHeads: Int, isolated: Bool) -> String {
+        let whereHeadsWork = isolated
+            ? "Each head works in a copy of the project of its own and Droppy Code lands its changes in your checkout when it reports"
+            : "The heads work in your checkout"
+        return """
         [Hydra is on] You lead a team of up to \(maxHeads) helper agents ("heads"). For a simple or single-focus request, just do it yourself. If this request bundles several independent tasks or needs research across many files, delegate: finish your reply with one fenced block
 
         ```hydra
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there. Heads share the checkout but not your context, and no two may edit the same file. Their reports arrive as the next message; then integrate the results and finish the job.
+        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, and give no two heads the same file. The reports arrive as your next message with the work already in place: build on them, do not redo them, and never use git status or git diff to check on heads, since the checkout changes under you while they work.
 
         ---
 
@@ -382,16 +472,21 @@ enum HydraPrompts {
     }
 
     /// What a Droppy-run head is sent for a task the lead delegated.
-    static func delegatedHeadPrompt(persona: HydraPersona, delegation: HydraDelegation) -> String {
+    static func delegatedHeadPrompt(persona: HydraPersona, delegation: HydraDelegation, workplace: Workplace) -> String {
         """
-        You are \(persona.name), a Hydra head in Droppy Code: one of several helpers working in parallel for a lead agent on the same checkout. The lead delegated this task to you.
+        You are \(persona.name), a Hydra head in Droppy Code: one of several helpers working in parallel for a lead agent. The lead delegated this task to you.
 
         ## Your task: \(delegation.task)
         \(delegation.prompt)
 
-        Do exactly this task and only this: do not widen it, do not touch files it does not name unless the task cannot be done otherwise, and never revert or reformat work you did not do. Verify what you change with the narrowest check that proves it. If something blocks you, say so instead of guessing.
+        ## Where you work
+        \(workplaceRules(workplace))
 
-        Reply with a short report the lead can act on: what you did, the files you changed, how you verified it, and anything the lead must know. No preamble, no logs.
+        ## How to work
+        \(howToWork)
+
+        ## Your report
+        \(howToReport)
         """
     }
 
@@ -405,7 +500,7 @@ enum HydraPrompts {
     }
 
     /// What a Droppy-run head is sent for a task the user queued while the lead worked.
-    static func queuedHeadPrompt(persona: HydraPersona, task: String, context: ChatContext) -> String {
+    static func queuedHeadPrompt(persona: HydraPersona, task: String, context: ChatContext, workplace: Workplace) -> String {
         var lines: [String] = []
         if let prompt = context.lastUserPrompt, !prompt.isEmpty {
             lines.append("- The user last asked the lead: \(quoted(prompt, limit: 1_200))")
@@ -415,11 +510,11 @@ enum HydraPrompts {
         }
         if !context.touchedPaths.isEmpty {
             let paths = context.touchedPaths.prefix(20).joined(separator: ", ")
-            lines.append("- Files the lead has changed in its current turn: \(paths). Leave these alone; if your task cannot be done without touching one, keep the change minimal and say so in your report.")
+            lines.append("- Files the lead is changing in its current turn: \(paths). Leave these alone; if your task cannot be done without touching one, keep the change minimal and say so in your report.")
         }
         let contextBlock = lines.isEmpty ? "The lead has not said anything yet." : lines.joined(separator: "\n")
         return """
-        You are \(persona.name), a Hydra head in Droppy Code: a helper running in parallel with the lead agent on the same checkout. The user queued this task for you while the lead works on something else.
+        You are \(persona.name), a Hydra head in Droppy Code: a helper running in parallel with the lead agent. The user queued this task for you while the lead works on something else.
 
         ## What is going on in the main chat
         \(contextBlock)
@@ -427,39 +522,103 @@ enum HydraPrompts {
         ## Your task
         \(task)
 
-        Do exactly this task and only this: do not widen it, and never revert or reformat work you did not do. Verify what you change with the narrowest check that proves it. If something blocks you, say so instead of guessing.
+        ## Where you work
+        \(workplaceRules(workplace))
 
-        Reply with a short report for the lead: what you did, the files you changed, how you verified it, and anything the lead must know. No preamble, no logs.
+        ## How to work
+        \(howToWork)
+
+        ## Your report
+        \(howToReport)
         """
     }
 
-    /// The message the lead receives once heads have reported: one section per head.
-    static func reportMessage(_ reports: [HydraReport]) -> String {
+    /// The message the lead receives once heads have reported: one section per head, what
+    /// landed where, and what to do about it. `stillWorking` names the heads yet to report.
+    static func reportMessage(_ reports: [HydraReport], stillWorking: [String] = []) -> String {
         let names = reports.map { HydraRoster.persona(at: $0.headIndex).name }
-        let who = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+        var opening = "Hydra reports: \(list(names)) finished."
+        if !stillWorking.isEmpty {
+            opening += " \(list(stillWorking)) \(stillWorking.count == 1 ? "is" : "are") still at work; \(stillWorking.count == 1 ? "its report comes" : "their reports come") as a later message."
+        }
+
         var sections: [String] = []
         for report in reports {
             let persona = HydraRoster.persona(at: report.headIndex)
             let outcome = switch report.status {
             case .completed: ""
             case .failed: " (failed)"
-            case .stopped: " (stopped before finishing)"
+            case .stopped: " (stopped by the user before finishing)"
             case .running: ""
             }
+            var lines = ["## \(persona.name) — \(report.task)\(outcome)"]
+            if let landing = landingLine(for: report) { lines.append(landing) }
             let body = report.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            sections.append("## \(persona.name) — \(report.task)\(outcome)\n\(body.isEmpty ? "No report." : body)")
+            lines.append(body.isEmpty ? "No report." : body)
+            sections.append(lines.joined(separator: "\n"))
         }
-        let queued = reports.contains { $0.origin == .queued }
-        let closing = queued
-            ? "The user queued that work for the heads while you were busy; take it into account and carry on with the main job."
-            : "Fold these into your work, check anything that matters, and finish the job."
+
+        var closing: [String] = []
+        if reports.contains(where: { $0.landing?.landed == true }) {
+            closing.append("The changes listed above are in your checkout already; nothing needs applying.")
+        }
+        if reports.contains(where: { $0.copyPath == nil && $0.status == .completed }) {
+            closing.append("The heads worked in your checkout, so their changes are there already.")
+        }
+        if reports.contains(where: { !($0.landing?.conflicts.isEmpty ?? true) }) {
+            closing.append("A file listed with conflicts was merged three-way and keeps conflict markers: resolve those first.")
+        }
+        for report in reports {
+            guard let landing = report.landing, let path = landing.patchPath else { continue }
+            closing.append("\(HydraRoster.persona(at: report.headIndex).name)'s changes would not apply on their own; the patch is at \(path). Apply it with `git apply --3way \(path)` and settle what conflicts.")
+        }
+        if reports.contains(where: { $0.status == .failed }) {
+            closing.append("A head that failed leaves its part to you: do it yourself or send it out again.")
+        }
+        if reports.contains(where: { $0.status == .stopped }) {
+            closing.append("A head the user stopped leaves its part alone unless the user asks for it.")
+        }
+        if reports.contains(where: { $0.origin == .queued }) {
+            closing.append("The user queued that work for the heads while you were busy; take it into account and carry on with the main job.")
+        }
+        closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile, revert or redo anything. Build on the reports, read the files they name if something matters, run one verification if it matters, and finish the job.")
+        if !stillWorking.isEmpty {
+            closing.append("Do not wait for \(list(stillWorking)) and do not take over \(stillWorking.count == 1 ? "its" : "their") tasks.")
+        }
+
         return """
-        Hydra reports: \(who) finished.
+        \(opening)
 
         \(sections.joined(separator: "\n\n"))
 
-        \(closing)
+        \(closing.joined(separator: " "))
         """
+    }
+
+    /// One line on where a head's work went, for its section of the report. Nothing for
+    /// a head that worked in the checkout itself: its changes are simply there.
+    private static func landingLine(for report: HydraReport) -> String? {
+        guard let landing = report.landing else {
+            guard let path = report.copyPath else { return nil }
+            return report.status == .completed ? "Changed nothing." : "Nothing landed; its unfinished work is in its copy at \(path)."
+        }
+        if landing.isEmpty { return "Changed nothing." }
+        let files = landing.files.map { file -> String in
+            var line = "\(file.path) (+\(file.additions) −\(file.deletions))"
+            if landing.conflicts.contains(file.path) { line += " with conflicts" }
+            return line
+        }
+        if landing.patchPath != nil { return "Did not land: \(files.joined(separator: ", "))." }
+        if let error = landing.error { return "Did not land (\(error)): \(files.joined(separator: ", "))." }
+        return "Landed in your checkout: \(files.joined(separator: ", "))."
+    }
+
+    private static func list(_ names: [String]) -> String {
+        switch names.count {
+        case 0: ""
+        case 1: names[0]
+        default: names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+        }
     }
 
     private static func quoted(_ text: String, limit: Int) -> String {

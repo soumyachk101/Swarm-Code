@@ -185,11 +185,7 @@ struct Git: Sendable {
     /// Snapshots the working tree into a hidden ref without touching the user's index or branch.
     func captureCheckpoint(_ ref: String) async throws {
         let tree = try await captureTree()
-        let identity = [
-            "GIT_AUTHOR_NAME": "Droppy Code", "GIT_AUTHOR_EMAIL": "droppy-code@localhost",
-            "GIT_COMMITTER_NAME": "Droppy Code", "GIT_COMMITTER_EMAIL": "droppy-code@localhost",
-        ]
-        let commit = try await run(["commit-tree", tree, "-m", "Droppy Code checkpoint"], environment: identity)
+        let commit = try await run(["commit-tree", tree, "-m", "Droppy Code checkpoint"], environment: Self.identity)
         try Self.check(commit)
         try Self.check(await run(["update-ref", ref, commit.trimmedOutput]))
     }
@@ -216,8 +212,12 @@ struct Git: Sendable {
         return tree.trimmedOutput
     }
 
-    func diff(from: String, to: String) async throws -> String {
-        let result = try await run(["diff", "--no-ext-diff", "-M", from, to])
+    /// The patch between two trees or refs. `binary` puts whole binary blobs in it, so a
+    /// picture a head added applies elsewhere.
+    func diff(from: String, to: String, binary: Bool = false) async throws -> String {
+        var arguments = ["diff", "--no-ext-diff", "-M"]
+        if binary { arguments.append("--binary") }
+        let result = try await run(arguments + [from, to])
         try Self.check(result)
         return result.output
     }
@@ -233,6 +233,68 @@ struct Git: Sendable {
         for ref in refs.split(separator: "\n") {
             _ = try? await run(["update-ref", "-d", String(ref)])
         }
+    }
+
+    // MARK: - Copies of the checkout
+
+    private static let identity = [
+        "GIT_AUTHOR_NAME": "Droppy Code", "GIT_AUTHOR_EMAIL": "droppy-code@localhost",
+        "GIT_COMMITTER_NAME": "Droppy Code", "GIT_COMMITTER_EMAIL": "droppy-code@localhost",
+    ]
+
+    /// A commit of `tree` on top of HEAD that no ref points at: the checkout as it is,
+    /// uncommitted work included, with the history behind it. Something a worktree can
+    /// start from.
+    func commitTree(_ tree: String, message: String) async throws -> String {
+        var arguments = ["commit-tree", tree, "-m", message]
+        if await hasCommits() { arguments += ["-p", "HEAD"] }
+        let result = try await run(arguments, environment: Self.identity)
+        try Self.check(result)
+        return result.trimmedOutput
+    }
+
+    /// A worktree at `path` with `commit` checked out and no branch: a copy of the
+    /// checkout to work in, whose own status shows only what changed in it.
+    func addDetachedWorktree(at path: String, commit: String) async throws {
+        try Self.check(await run(["worktree", "add", "--detach", path, commit], timeout: 300))
+    }
+
+    /// Forgets worktrees whose folders are gone from disk.
+    func pruneWorktrees() async {
+        _ = try? await run(["worktree", "prune"])
+    }
+
+    /// Applies `patch` to the working tree and stages nothing. A hunk that no longer fits
+    /// is merged three-way against the blobs the patch names; a file the merge cannot
+    /// settle keeps conflict markers, and those paths come back. Throws when nothing
+    /// could be applied at all.
+    func apply(_ patch: String) async throws -> [String] {
+        let data = Data(patch.utf8)
+        let plain = try await run(["apply", "--binary", "--whitespace=nowarn", "-"], input: data)
+        if plain.succeeded { return [] }
+
+        // The three-way merge works through an index that matches the working tree, so
+        // it gets a throwaway one that does, and the real index never changes.
+        let fileManager = FileManager.default
+        let index = fileManager.temporaryDirectory.appendingPathComponent("droppy-code-apply-\(UUID().uuidString)")
+        defer { try? fileManager.removeItem(at: index) }
+        let environment = ["GIT_INDEX_FILE": index.path]
+        if let indexPath = try? await output(["rev-parse", "--path-format=absolute", "--git-path", "index"])
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            fileManager.fileExists(atPath: indexPath) {
+            try? fileManager.copyItem(atPath: indexPath, toPath: index.path)
+        } else if await hasCommits() {
+            try Self.check(await run(["read-tree", "HEAD"], environment: environment))
+        }
+        try Self.check(await run(["add", "-A", "--", "."], environment: environment, timeout: 300))
+        let merged = try await run(["apply", "--3way", "--binary", "--whitespace=nowarn", "-"], environment: environment, input: data)
+        if merged.succeeded { return [] }
+        // "U path" names each file left with markers; without one, nothing was applied.
+        let conflicts = merged.errorOutput.split(separator: "\n").compactMap { line -> String? in
+            line.hasPrefix("U ") ? String(line.dropFirst(2)).trimmingCharacters(in: .whitespaces) : nil
+        }
+        guard !conflicts.isEmpty else { throw ShellError(merged.failureMessage) }
+        return conflicts
     }
 }
 

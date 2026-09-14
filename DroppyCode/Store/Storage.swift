@@ -23,6 +23,14 @@ enum Storage {
         return url
     }
 
+    /// Where a head's work is kept as a patch when it would not land in the checkout.
+    static var patchesDirectory: URL {
+        let url = URL(fileURLWithPath: LoginEnvironment.homeDirectory)
+            .appendingPathComponent(".droppy-code/patches", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
     static func threadURL(_ id: UUID) -> URL {
         threadsDirectory.appendingPathComponent("\(id.uuidString).json")
     }

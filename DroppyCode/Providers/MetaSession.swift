@@ -34,6 +34,11 @@ final class MetaSession: ProviderSession {
     /// rounds means the model is looping, and the turn says so.
     private static let maxRoundsPerTurn = 200
 
+    /// How many tool calls a Hydra head may make without changing a file before it is
+    /// asked to act on what it knows, and again every so many after that.
+    private static let headPacingTools = 24
+    private static let headPacingNote = "[Droppy Code] You have run \(headPacingTools) tools without changing a file. If the task is research, reply with your findings now. Otherwise act on what you know: make the change, or reply with what blocks you."
+
     private struct StreamRound: Sendable {
         var content = ""
         var reasoning = ""
@@ -71,6 +76,12 @@ final class MetaSession: ProviderSession {
         isStopping = false
         if messages.isEmpty {
             messages = [["role": "system", "content": .string(systemPrompt())]]
+            // A relaunch starts with nothing said: the thread's past exchanges go back in,
+            // so the model still knows its brief and what it did about it.
+            for message in configuration.transcript {
+                messages.append(["role": message.role == .user ? "user" : "assistant", "content": .string(message.text)])
+            }
+            trimHistory()
         }
         // No `.models` event: the registry owns the live catalog, and a seed
         // sent here overwrote it every time a chat started.
@@ -93,11 +104,20 @@ final class MetaSession: ProviderSession {
 
         var finalText = ""
         var rounds = 0
+        var toolsSinceChange = 0
+        var pacingAt = Self.headPacingTools
         var hitCeiling = false
         do {
             while !interrupted {
                 guard rounds < Self.maxRoundsPerTurn else { hitCeiling = true; break }
                 rounds += 1
+                // A head that only ever reads is paced: every so many tools without a
+                // change, a note in its history asks it to act or report. Its lead is
+                // waiting, and a research task has an answer by then.
+                if configuration.isHydraHead, toolsSinceChange >= pacingAt {
+                    messages.append(["role": "user", "content": .string(Self.headPacingNote)])
+                    pacingAt = toolsSinceChange + Self.headPacingTools
+                }
                 let round = try await streamOneRound(model: currentModel, effort: input.effort)
                 // A round is one API response, so its total is exactly that
                 // response's spend.
@@ -125,6 +145,12 @@ final class MetaSession: ProviderSession {
                 var shouldContinue = true
                 for tool in round.toolCalls {
                     if interrupted { shouldContinue = false; break }
+                    if tool.name == "write_file" || tool.name == "edit_file" {
+                        toolsSinceChange = 0
+                        pacingAt = Self.headPacingTools
+                    } else {
+                        toolsSinceChange += 1
+                    }
                     let output = await executeTool(tool)
                     messages.append(["role": "tool", "tool_call_id": .string(tool.id), "content": .string(output)])
                     trimHistory()

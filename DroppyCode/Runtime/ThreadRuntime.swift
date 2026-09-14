@@ -334,16 +334,21 @@ final class ThreadRuntime {
         guard let app, app.settings.hydraQueueHeads, let thread, let launch = app.hydraLaunch(for: thread),
               app.runningDroppyHeads(of: threadID) < launch.maxHeads else { return false }
         let task = TextCleanup.singleLine(prompt.text, limit: 60)
-        let persona = HydraRoster.persona(at: thread.hydraSpawnCount)
-        let brief = HydraPrompts.queuedHeadPrompt(persona: persona, task: prompt.text, context: app.hydraChatContext(for: threadID))
-        return app.spawnHydraHead(
-            from: threadID,
-            task: task,
-            prompt: brief,
-            attachments: prompt.attachments,
-            kind: .droppy,
-            origin: .queued
-        ) != nil
+        let context = app.hydraChatContext(for: threadID)
+        let text = prompt.text
+        return app.spawnDroppyHead(from: threadID, task: task, origin: .queued, attachments: prompt.attachments) { persona, workplace in
+            HydraPrompts.queuedHeadPrompt(persona: persona, task: text, context: context, workplace: workplace)
+        } != nil
+    }
+
+    /// Follow-ups queued while the heads were all busy go out as heads once one frees up,
+    /// as long as the lead is still at work; an idle lead takes them itself, in order.
+    private func dispatchQueuedFollowUps() {
+        guard phase != .idle else { return }
+        while let next = followUps.first, dispatchQueuedHead(next) {
+            followUps.removeFirst()
+            scheduleSave()
+        }
     }
 
     func removeFollowUp(_ id: UUID) {
@@ -448,6 +453,14 @@ final class ThreadRuntime {
             $0.updatedAt = .now
             $0.lastStatus = .running
         }
+        // A finished head told more from the panel is at work again: its lead's team
+        // counts it, and its next report goes out as a fresh one.
+        if let info = initialThread.hydra, info.kind == .droppy, info.isFinished {
+            app.updateHydraHead(threadID) {
+                $0.status = .running
+                $0.finishedAt = nil
+            }
+        }
         scheduleSave()
         let isFirstTurn = turns.count == 1
 
@@ -483,7 +496,7 @@ final class ThreadRuntime {
             // A provider with no heads of its own is told, in front of every message, how to
             // ask Droppy Code for them.
             if !AppModel.hydraIsNative(thread.provider), let launch = app.hydraLaunch(for: thread) {
-                prompt = HydraPrompts.fallbackPreamble(maxHeads: launch.maxHeads) + prompt
+                prompt = HydraPrompts.fallbackPreamble(maxHeads: launch.maxHeads, isolated: app.settings.hydraIsolateHeads) + prompt
             }
             phase = .running
             try await session.send(TurnInput(
@@ -548,7 +561,9 @@ final class ThreadRuntime {
                     fastMode: thread.fastMode,
                     runtimeMode: thread.runtimeMode,
                     interactionMode: thread.interactionMode,
-                    apiKey: app.settings.apiKey(for: thread.provider)
+                    apiKey: app.settings.apiKey(for: thread.provider),
+                    transcript: apiTranscript(),
+                    isHydraHead: thread.hydra?.kind == .droppy
                 )
                 let created: any ProviderSession = switch thread.provider {
                 case .deepseek: DeepSeekSession(configuration: configuration)
@@ -621,6 +636,45 @@ final class ThreadRuntime {
         resumeAnchor = nil
         app.updateThread(threadID) { $0.providerSessionID = sessionID }
         return candidate
+    }
+
+    /// The conversation before the current turn as plain exchanges, for an API session
+    /// that starts over: it keeps its history in memory only, so this is how a head
+    /// steered on after its session went, or any chat reopened later, still knows what
+    /// was said and done. Tool calls stay out; the replies say what they did. Bounded, so
+    /// a long thread does not send its whole past with every relaunch.
+    private func apiTranscript() -> [TranscriptMessage] {
+        var transcript: [TranscriptMessage] = []
+        for entry in entries where entry.item.turnID != currentTurnID {
+            switch entry.item.content {
+            case .user(let message) where !message.text.isEmpty:
+                transcript.append(TranscriptMessage(role: .user, text: message.text))
+            case .assistant(let message) where !message.text.isEmpty:
+                // The status lines a turn streams between its tools read as one reply.
+                if let last = transcript.last, last.role == .assistant {
+                    transcript[transcript.count - 1].text += "\n\n" + message.text
+                } else {
+                    transcript.append(TranscriptMessage(role: .assistant, text: message.text))
+                }
+            default:
+                break
+            }
+        }
+        var kept = Array(transcript.suffix(40))
+        var budget = 60_000
+        for index in kept.indices.reversed() {
+            let length = kept[index].text.count
+            if length <= budget {
+                budget -= length
+            } else if budget > 200 {
+                kept[index].text = "…" + String(kept[index].text.suffix(budget))
+                budget = 0
+            } else {
+                kept.removeSubrange(...index)
+                break
+            }
+        }
+        return kept
     }
 
     // MARK: - Controls
@@ -1070,14 +1124,7 @@ final class ThreadRuntime {
             }
             return
         }
-        guard let head = app.spawnHydraHead(
-            from: threadID,
-            task: spawn.description,
-            prompt: spawn.prompt,
-            kind: .native,
-            origin: .delegated,
-            native: spawn
-        ) else { return }
+        guard let head = app.spawnNativeHead(from: threadID, spawn: spawn) else { return }
         hydraNativeHeads[spawn.id] = head.id
         if let toolUseID = spawn.toolUseID { hydraToolHeads[toolUseID] = head.id }
     }
@@ -1172,39 +1219,52 @@ final class ThreadRuntime {
 
     /// The app finished a head of this lead's (see `AppModel.finishHydraHead`): a native
     /// head's tool row completes; a Droppy-run head's report goes to the lead, once its
-    /// batch is complete.
-    func hydraHeadFinished(_ headID: UUID, info: HydraHeadInfo, status: HydraHeadInfo.Status, summary: String?) {
+    /// batch is complete. A head reporting again (steered on from the panel) replaces
+    /// any report of its own still waiting.
+    func hydraHeadFinished(_ headID: UUID, info: HydraHeadInfo, status: HydraHeadInfo.Status, summary: String?, landing: HydraLanding? = nil, copyPath: String? = nil) {
         switch info.kind {
         case .native:
             guard let toolID = info.toolUseID, let entry = entryIndex[toolID], case .tool(let call) = entry.item.content, call.status == .running else { return }
             let outcome: ToolCall.Status = status == .completed ? .completed : .failed
             applyToolUpdate(toolID, ToolUpdate(output: summary, status: outcome))
         case .droppy:
-            let report = HydraReport(headIndex: info.index, task: info.task, origin: info.origin, status: status, text: summary ?? "")
+            let report = HydraReport(headIndex: info.index, task: info.task, origin: info.origin, status: status, text: summary ?? "", landing: landing, copyPath: copyPath)
+            hydraPendingReports.removeAll { $0.headIndex == info.index }
             if let batchID = info.batchID, hydraBatches[batchID] != nil {
                 hydraBatches[batchID]?.pending.remove(headID)
+                hydraBatches[batchID]?.reports.removeAll { $0.headIndex == info.index }
                 hydraBatches[batchID]?.reports.append(report)
-                // A finished head makes room for a task still waiting in the same batch.
-                spawnWaitingHeads()
-                if let batch = hydraBatches[batchID], batch.pending.isEmpty, !hydraWaiting.contains(where: { $0.batchID == batchID }) {
-                    hydraBatches[batchID] = nil
-                    hydraPendingReports += batch.reports.sorted { $0.headIndex < $1.headIndex }
-                }
             } else {
                 hydraPendingReports.append(report)
             }
+            // A finished head makes room: for a task still waiting in a batch first, then
+            // for whatever the user queued while every head was busy.
+            spawnWaitingHeads()
+            dispatchQueuedFollowUps()
+            settleBatches()
             // An idle lead hears at once; one the user stopped waits for their next word.
             if phase == .idle, thread?.lastStatus != .interrupted { flushHydraReports() }
         }
     }
 
-    /// Sends the reports waiting on an idle lead as one message. Returns whether a turn starts.
+    /// A batch with every head back and nothing left to send out hands its reports over.
+    private func settleBatches() {
+        for (batchID, batch) in hydraBatches where batch.pending.isEmpty && !hydraWaiting.contains(where: { $0.batchID == batchID }) {
+            hydraBatches[batchID] = nil
+            hydraPendingReports += batch.reports.sorted { $0.headIndex < $1.headIndex }
+        }
+    }
+
+    /// Sends the reports waiting on an idle lead as one message, once no delegation is
+    /// still out: the lead is waiting for that batch, and hears everything with it rather
+    /// than starting on a queued head's report meanwhile. Returns whether a turn starts.
     @discardableResult
     private func flushHydraReports() -> Bool {
-        guard phase == .idle, !hydraPendingReports.isEmpty else { return false }
-        let reports = hydraPendingReports
+        guard phase == .idle, !hydraPendingReports.isEmpty, hydraBatches.isEmpty, let app else { return false }
+        let reports = hydraPendingReports.sorted { $0.headIndex < $1.headIndex }
         hydraPendingReports.removeAll()
-        let text = HydraPrompts.reportMessage(reports)
+        let stillWorking = app.workingHydraHeadNames(of: threadID, excluding: Set(reports.map(\.headIndex)))
+        let text = HydraPrompts.reportMessage(reports, stillWorking: stillWorking)
         Task { await startTurn(text: text, attachments: [], hydraHeads: reports.map(\.headIndex)) }
         return true
     }
@@ -1225,8 +1285,9 @@ final class ThreadRuntime {
         hydraBatches[batchID] = HydraBatch(pending: [])
         hydraWaiting += delegations.prefix(HydraPair.maxHeadsRange.upperBound * 2).map { (delegation: $0, batchID: batchID) }
         spawnWaitingHeads(limit: launch.maxHeads)
+        settleBatches()
         scheduleSave()
-        return true
+        return !hydraBatches.isEmpty || !hydraWaiting.isEmpty
     }
 
     /// Sends out delegated tasks still waiting, as far as the pair's limit allows.
@@ -1235,16 +1296,10 @@ final class ThreadRuntime {
         let maxHeads = limit ?? app.hydraLaunch(for: thread)?.maxHeads ?? HydraPair.defaultMaxHeads
         while !hydraWaiting.isEmpty, app.runningDroppyHeads(of: threadID) < maxHeads {
             let next = hydraWaiting.removeFirst()
-            let persona = HydraRoster.persona(at: app.thread(threadID)?.hydraSpawnCount ?? 0)
-            let brief = HydraPrompts.delegatedHeadPrompt(persona: persona, delegation: next.delegation)
-            guard let head = app.spawnHydraHead(
-                from: threadID,
-                task: next.delegation.task,
-                prompt: brief,
-                kind: .droppy,
-                origin: .delegated,
-                batchID: next.batchID
-            ) else { continue }
+            let delegation = next.delegation
+            guard let head = app.spawnDroppyHead(from: threadID, task: delegation.task, origin: .delegated, batchID: next.batchID, brief: { persona, workplace in
+                HydraPrompts.delegatedHeadPrompt(persona: persona, delegation: delegation, workplace: workplace)
+            }) else { continue }
             hydraBatches[next.batchID, default: HydraBatch(pending: [])].pending.insert(head.id)
         }
     }

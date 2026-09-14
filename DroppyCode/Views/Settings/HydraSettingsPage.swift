@@ -32,6 +32,12 @@ struct HydraSettingsPage: View {
                 }
                 .disabled(!settings.hydraEnabled)
                 .opacity(settings.hydraEnabled ? 1 : 0.5)
+                ChromeRowDivider()
+                ChromeRow(title: "Heads work in copies of their own", detail: "A head Droppy Code runs gets its own copy of the checkout, so no head sees another's half-done work; its changes land in the chat's checkout the moment it reports. Off, the heads work in the checkout itself.") {
+                    SettingsSwitch(isOn: $settings.hydraIsolateHeads)
+                }
+                .disabled(!settings.hydraEnabled)
+                .opacity(settings.hydraEnabled ? 1 : 0.5)
             }
         }
         ChromeSection(title: "Pairs") {
