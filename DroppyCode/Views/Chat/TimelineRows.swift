@@ -371,13 +371,15 @@ struct ToolRow: View {
     let runtime: ThreadRuntime
     var workingDirectory: String?
     @State private var isExpanded = false
-    /// The row's own view, so the changes popover opens on the row that was tapped.
+    /// The row's label (icon through chevron), so the changes popover hangs from the
+    /// text that was tapped. The row itself spans the column, and a popover anchored
+    /// on it centred itself on the empty half with its arrow pointing at nothing.
     @State private var popoverAnchor = WeakView()
 
     var body: some View {
         if case .tool(let call) = entry.item.content {
             // A row that carries a diff never unfolds: the diff opens in the changes
-            // popover, anchored on the row. Only a row whose content is its own output
+            // popover, below the row's label. Only a row whose content is its own output
             // (a command's text, a tool's detail) still expands in place.
             let edits = call.edits.filter { !$0.path.isEmpty }
             let opensDiff = !edits.isEmpty
@@ -386,33 +388,40 @@ struct ToolRow: View {
                 Button {
                     if opensDiff {
                         guard let view = popoverAnchor.value else { return }
-                        runtime.showDiff(on: view, turn: entry.turnID, focusPaths: edits.map(\.path))
+                        runtime.showDiff(on: view, edge: .minY, turn: entry.turnID, focusPaths: edits.map(\.path))
                     } else if showsOutput {
                         withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
                     }
                 } label: {
                     HStack(spacing: TimelineMetrics.iconSpacing) {
-                        ToolStatusIcon(call: call)
-                        // One text run after the icon, so the row reads as
-                        // icon + space + text instead of three spaced items.
-                        Text(ToolPresentation.label(for: call))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        if let stats = ToolPresentation.stats(for: call) {
-                            DiffStatLabel(additions: stats.additions, deletions: stats.deletions)
+                        HStack(spacing: TimelineMetrics.iconSpacing) {
+                            ToolStatusIcon(call: call)
+                            // One text run after the icon, so the row reads as
+                            // icon + space + text instead of three spaced items.
+                            Text(ToolPresentation.label(for: call))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if let stats = ToolPresentation.stats(for: call) {
+                                DiffStatLabel(additions: stats.additions, deletions: stats.deletions)
+                            }
+                            // Beside the subject, not out at the trailing edge: the chevron
+                            // belongs to the row's own text.
+                            if opensDiff {
+                                Image(systemName: "chevron.down")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                            } else if showsOutput {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.tertiary)
+                                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            }
                         }
-                        // Beside the subject, not out at the trailing edge: the chevron
-                        // belongs to the row's own text.
-                        if opensDiff {
-                            Image(systemName: "chevron.down")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                        } else if showsOutput {
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .background {
+                            if opensDiff {
+                                AttachmentAnchorCapture { popoverAnchor.value = $0 }
+                            }
                         }
                         Spacer(minLength: 8)
                         if call.status == .failed, let exitCode = call.exitCode {
@@ -434,11 +443,6 @@ struct ToolRow: View {
                 if isExpanded, showsOutput {
                     ToolDetailView(call: call, workingDirectory: workingDirectory)
                         .padding(.trailing, 12)
-                }
-            }
-            .background {
-                if opensDiff {
-                    AttachmentAnchorCapture { popoverAnchor.value = $0 }
                 }
             }
         }

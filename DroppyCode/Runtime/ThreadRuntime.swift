@@ -85,22 +85,27 @@ final class ThreadRuntime {
     var isTerminalVisible = false
     var isDiffVisible = false
     var diffSelection: UUID?
-    /// The view the changes popover should open on: a tool row, a turn's Review button,
-    /// or nil for the changes tab. Held weakly so a row that leaves the screen never
-    /// keeps a view alive.
+    /// The view the changes popover should open on: a tool row's label, a turn's Review
+    /// button, or nil for the changes tab. Held weakly so a row that leaves the screen
+    /// never keeps a view alive.
     @ObservationIgnored var diffAnchor: WeakView?
-    /// Bumped by `showDiff(on:turn:focusPaths:)`, so the popover moves to the new anchor
-    /// even when it is already open somewhere else.
+    /// The side of `diffAnchor` the popover hangs from. Anchors are plain, unflipped
+    /// views, so `.minY` is below (a tool row, as its chevron promises) and `.maxY` is
+    /// above (a Review button, at the foot of its turn).
+    @ObservationIgnored var diffAnchorEdge: NSRectEdge = .maxY
+    /// Bumped by `showDiff(on:edge:turn:focusPaths:)`, so the popover moves to the new
+    /// anchor even when it is already open somewhere else.
     private(set) var diffOpenRequest = 0
     /// The files a tapped tool row asked to see. The popover leaves these cards
     /// expanded and scrolls to the first of them; empty for the tab and the Review
     /// button, which open the whole selection.
     private(set) var diffFocusPaths: [String] = []
 
-    /// Opens the changes popover on `anchor` (a tool row or a Review button), showing
-    /// `turn`'s changes, or the whole thread's for nil.
-    func showDiff(on anchor: NSView, turn: UUID?, focusPaths: [String] = []) {
+    /// Opens the changes popover on `anchor` (a tool row or a Review button), hanging
+    /// from its `edge`, showing `turn`'s changes, or the whole thread's for nil.
+    func showDiff(on anchor: NSView, edge: NSRectEdge = .maxY, turn: UUID?, focusPaths: [String] = []) {
         diffAnchor = WeakView(anchor)
+        diffAnchorEdge = edge
         if diffSelection != turn { diffSelection = turn }
         if diffFocusPaths != focusPaths { diffFocusPaths = focusPaths }
         if !isDiffVisible { isDiffVisible = true }
