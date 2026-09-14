@@ -15,11 +15,10 @@ enum StripLog {
 /// Here one panel is shared and every tap swaps its content, so any photo
 /// opens in a single tap.
 ///
-/// The panel anchors to the strip itself rather than to each thumbnail: one
-/// stable anchor means no per-photo bookkeeping that can go stale (recycled
-/// views, unregistered ids) and silently swallow taps. While open, tapping
-/// another photo swaps the content in place instead of re-showing, which is
-/// the unreliable step for an already-shown popover.
+/// The panel anchors to the tapped thumbnail's own view, so the arrow lands
+/// on the photo every time. While open, tapping another photo swaps the
+/// content and re-shows at the new anchor, so the panel follows the tap
+/// instead of staying stranded at the previous photo.
 ///
 /// The panel is semitransient: taps elsewhere in the window still reach their
 /// target, and a tap outside the strip dismisses it, as does Escape, tapping
@@ -50,9 +49,9 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         if let currentID, !ids.contains(currentID) { close() }
     }
 
-    /// `view` is the tapped thumbnail's own view when it has one. Anchoring the
-    /// panel to the tapped thumbnail puts the arrow on the photo every time —
-    /// a strip-wide anchor can only aim at the strip's middle.
+    /// `view` is the tapped thumbnail's own view when it has one. The panel aims
+    /// at this click's tap point first, so the arrow lands on the photo even if
+    /// a stored view went stale; the thumbnail and strip anchors are fallbacks.
     func toggle(_ attachment: Attachment, over view: NSView? = nil) {
         StripLog.log.notice("toggle id=\(attachment.id) name=\(attachment.name, privacy: .public) shown=\(self.popover.isShown)")
         if currentID == attachment.id, popover.isShown {
@@ -72,25 +71,53 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         let content = AttachmentLargePreview(attachment: attachment)
         let size = Self.contentSize(for: attachment)
         currentID = attachment.id
-        // The tapped thumbnail's view is the anchor when it exists; it was just
-        // tapped, so it is provably in the window and never a stale recycled row.
-        guard let anchor = view ?? anchor?.value, anchor.window != nil else {
+        guard let (anchor, rect) = anchorTarget(thumbnailView: view) else {
             StripLog.log.notice("show BLOCKED id=\(attachment.id) anchorNil=\(self.anchor?.value == nil)")
             return
         }
         if popover.isShown {
-            // Already open: swap the content in place. Re-showing a shown
-            // popover is unreliable, and AppKit offers no way to move one.
+            // Already open for another photo: swap the content and ask AppKit
+            // to move the panel above the tapped photo. Re-showing a shown
+            // popover repositions it; the swap stays as the backstop, so even
+            // if a reposition were ever ignored the new photo still shows.
             StripLog.log.notice("show swap id=\(attachment.id)")
             popover.contentViewController = NSHostingController(rootView: content)
             popover.contentSize = size
+            popover.show(relativeTo: rect, of: anchor, preferredEdge: .maxY)
             return
         }
-        StripLog.log.notice("show open id=\(attachment.id) anchorFrame=\(anchor.frame.debugDescription, privacy: .public)")
         popover.contentViewController = NSHostingController(rootView: content)
         popover.contentSize = size
         startMonitors()
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+        popover.show(relativeTo: rect, of: anchor, preferredEdge: .maxY)
+    }
+
+    /// The view and rect to anchor the panel to, best proof first. A stored
+    /// thumbnail view can go stale (recycled rows, unregistered ids) and land
+    /// the arrow far from the tapped photo, so the first choice is this
+    /// click's own tap point inside the strip anchor: exactly where the finger
+    /// is. The thumbnail's own bounds and the strip's bounds stay as fallbacks
+    /// (keyboard/VoiceOver activation carries no click), and nil blocks.
+    private func anchorTarget(thumbnailView: NSView?) -> (NSView, NSRect)? {
+        if let strip = anchor?.value, strip.window != nil,
+           strip.bounds.width >= 8, strip.bounds.height >= 8,
+           let event = NSApp.currentEvent, event.type == .leftMouseUp,
+           event.window === strip.window {
+            var point = strip.convert(event.locationInWindow, from: nil)
+            point.x = min(max(point.x, strip.bounds.minX + 2), strip.bounds.maxX - 2)
+            let rect = NSRect(x: point.x - 1, y: strip.bounds.maxY - 1, width: 2, height: 1)
+            StripLog.log.notice("show anchor=tap stripFrame=\(strip.frame.debugDescription, privacy: .public)")
+            return (strip, rect)
+        }
+        if let thumbnailView, thumbnailView.window != nil {
+            StripLog.log.notice("show anchor=thumb thumbFrame=\(thumbnailView.frame.debugDescription, privacy: .public)")
+            return (thumbnailView, thumbnailView.bounds)
+        }
+        if let strip = anchor?.value, strip.window != nil {
+            StripLog.log.notice("show anchor=strip stripFrame=\(strip.frame.debugDescription, privacy: .public)")
+            return (strip, strip.bounds)
+        }
+        return nil
     }
 
     // MARK: - Dismissal
@@ -154,9 +181,12 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
             return NSSize(width: 504, height: ceil(display.height) + chrome)
         }
         if let text = textSample(for: attachment) {
-            return NSSize(width: 464, height: min(320, max(120, CGFloat(text.count / 4))) + chrome + 12)
+            // Measured overhead: outer padding (24) + spacing (10) + footer (~18).
+            return NSSize(width: 464, height: min(320, max(120, CGFloat(text.count / 4))) + 60)
         }
-        return NSSize(width: 344, height: 130)
+        // Measured content (~84: padding + 32pt icon row + spacing + footer), so the
+        // footer sits just above the photo instead of floating over dead space.
+        return NSSize(width: 344, height: 100)
     }
 
     private static func textSample(for attachment: Attachment) -> String? {

@@ -118,7 +118,7 @@ struct ComposerView: View {
                     }
                     .buttonStyle(.chip(active: showingRecents))
                     .help("Attach files")
-                    .popover(isPresented: $showingRecents, arrowEdge: .top) {
+                    .popover(isPresented: $showingRecents, arrowEdge: .bottom) {
                         DownloadsPopover(
                             pick: { showingRecents = false; attach(urls: [$0]) },
                             chooseOther: { showingRecents = false; chooseFiles() }
@@ -437,7 +437,7 @@ private struct ContextMeter: View {
             }
             .buttonStyle(.plain)
             .help(fraction.map { "\(Int($0 * 100))% of the context window used" } ?? "Usage limits")
-            .popover(isPresented: $isPresented, arrowEdge: .top) {
+            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
                 UsagePanel(usage: usage, provider: provider)
             }
         }

@@ -98,23 +98,36 @@ private struct FollowUpRow: View {
     /// The editor popover for this row, anchored to its pencil button.
     @State private var editor = FollowUpEditCoordinator()
 
+    /// Whether the pointer is over the reorder grip, for the grab cursor.
+    @State private var isHoveringGrip = false
+
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        // One shared center line: the number, grip, thumbnails, text and
+        // buttons all center on it, so single-line rows read as one line.
+        HStack(alignment: .center, spacing: 8) {
             Text(verbatim: "\(position)")
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(Chrome.secondaryText)
                 .frame(width: 14, alignment: .trailing)
-                .padding(.top, 1)
                 .accessibilityHidden(true)
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Chrome.secondaryText.opacity(0.7))
-                .frame(width: 18, height: 22)
+                .foregroundStyle(Chrome.secondaryText.opacity(isHoveringGrip ? 1 : 0.7))
+                .frame(width: 28, height: 28)
                 .contentShape(.rect)
+                .onHover { hovering in
+                    isHoveringGrip = hovering
+                    if hovering { NSCursor.openHand.push() } else { NSCursor.pop() }
+                }
+                .onDisappear {
+                    if isHoveringGrip { NSCursor.pop() }
+                    isHoveringGrip = false
+                }
                 .onDrag {
                     dragging = prompt.id
                     return NSItemProvider(object: prompt.id.uuidString as NSString)
                 }
+                .help("Drag to reorder")
                 .accessibilityLabel(Text("Drag to reorder"))
             if !prompt.attachments.isEmpty {
                 HStack(spacing: 4) {
@@ -299,6 +312,7 @@ private struct FollowUpEditor: View {
     @State private var text: String
     @State private var attachments: [Attachment]
     @State private var preview = AttachmentPreviewCoordinator()
+    @State private var showingFiles = false
     @FocusState private var editorFocused: Bool
 
     init(prompt: FollowUpPrompt, runtime: ThreadRuntime, onDone: @escaping () -> Void) {
@@ -329,46 +343,62 @@ private struct FollowUpEditor: View {
             }
             .frame(minHeight: 110)
             .background(Chrome.overlay(0.05), in: .rect(cornerRadius: 12, style: .continuous))
-            if !attachments.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    // The delete badge straddles the thumbnail's far top-right
-                    // corner. The cell's own top/trailing padding reserves that
-                    // overhang, so the badge sits inside its own cell — never in
-                    // the gap where a later sibling could cover it.
-                    HStack(spacing: 0) {
-                        ForEach(attachments) { attachment in
-                            AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
-                                .overlay(alignment: .topTrailing) {
-                                    Button {
-                                        StripLog.log.notice("sheet X tap id=\(attachment.id) name=\(attachment.name, privacy: .public) countBefore=\(attachments.count)")
-                                        attachments.removeAll { $0.id == attachment.id }
-                                        StripLog.log.notice("sheet X removed countAfter=\(attachments.count)")
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .symbolRenderingMode(.palette)
-                                            .foregroundStyle(.white, .black.opacity(0.6))
-                                            .padding(4)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .offset(x: 6, y: -6)
-                                    .accessibilityLabel(Text("Remove \(attachment.name)"))
+            ScrollView(.horizontal, showsIndicators: false) {
+                // The delete badge straddles the thumbnail's far top-right
+                // corner. The cell's own top/trailing padding reserves that
+                // overhang, so the badge sits inside its own cell — never in
+                // the gap where a later sibling could cover it.
+                HStack(spacing: 0) {
+                    ForEach(attachments) { attachment in
+                        AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
+                            .overlay(alignment: .topTrailing) {
+                                Button {
+                                    StripLog.log.notice("sheet X tap id=\(attachment.id) name=\(attachment.name, privacy: .public) countBefore=\(attachments.count)")
+                                    attachments.removeAll { $0.id == attachment.id }
+                                    StripLog.log.notice("sheet X removed countAfter=\(attachments.count)")
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .symbolRenderingMode(.palette)
+                                        .foregroundStyle(.white, .black.opacity(0.6))
+                                        .padding(4)
                                 }
-                                .padding(.top, 8)
-                                .padding(.trailing, 8)
-                        }
+                                .buttonStyle(.plain)
+                                .offset(x: 6, y: -6)
+                                .accessibilityLabel(Text("Remove \(attachment.name)"))
+                            }
+                            .padding(.top, 8)
+                            .padding(.trailing, 8)
                     }
-                    .background {
-                        AttachmentAnchorCapture { preview.setAnchor($0) }
+                    // The add tile: a file chip with a plus that opens the same
+                    // recent-downloads popover as the composer's paperclip.
+                    Button {
+                        showingFiles.toggle()
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .frame(width: 48, height: 48)
+                            .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 12, style: .continuous))
+                            .contentShape(.rect(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Add files")
+                    .accessibilityLabel(Text("Add files"))
+                    .disabled(attachments.count >= 8)
+                    .opacity(attachments.count >= 8 ? 0.4 : 1)
+                    .padding(.top, 8)
+                    .padding(.trailing, 8)
+                    .popover(isPresented: $showingFiles, arrowEdge: .bottom) {
+                        DownloadsPopover(
+                            pick: { importURL($0) },
+                            chooseOther: { showingFiles = false; chooseFiles() }
+                        )
                     }
                 }
+                .background {
+                    AttachmentAnchorCapture { preview.setAnchor($0) }
+                }
             }
-            Button {
-                chooseFiles()
-            } label: {
-                Label("Add files", systemImage: "paperclip")
-            }
-            .buttonStyle(.glass)
-            .disabled(attachments.count >= 8)
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { onDone() }
@@ -402,20 +432,27 @@ private struct FollowUpEditor: View {
         guard panel.runModal() == .OK else { return }
         for url in panel.urls {
             guard attachments.count < 8 else { break }
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { continue }
-            let fileExtension = url.pathExtension.lowercased()
-            if fileExtension == "heic" || fileExtension == "heif" {
-                guard let image = NSImage(contentsOf: url), let data = image.jpegData,
-                      let attachment = try? Storage.importAttachment(
-                        data: data,
-                        name: url.deletingPathExtension().lastPathComponent + ".jpg",
-                        fileExtension: "jpg"
-                      ) else { continue }
-                attachments.append(attachment)
-            } else if let attachment = try? Storage.importAttachment(from: url) {
-                attachments.append(attachment)
-            }
+            importURL(url)
+        }
+    }
+
+    /// Imports one file URL as an attachment, shared by the open panel and the
+    /// recent-downloads popover. HEIC/HEIF converts to JPEG like the composer.
+    private func importURL(_ url: URL) {
+        guard attachments.count < 8 else { return }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { return }
+        let fileExtension = url.pathExtension.lowercased()
+        if fileExtension == "heic" || fileExtension == "heif" {
+            guard let image = NSImage(contentsOf: url), let data = image.jpegData,
+                  let attachment = try? Storage.importAttachment(
+                    data: data,
+                    name: url.deletingPathExtension().lastPathComponent + ".jpg",
+                    fileExtension: "jpg"
+                  ) else { return }
+            attachments.append(attachment)
+        } else if let attachment = try? Storage.importAttachment(from: url) {
+            attachments.append(attachment)
         }
     }
 }

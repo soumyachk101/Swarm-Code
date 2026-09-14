@@ -74,7 +74,7 @@ struct ModelEffortButton: View {
         }
         .buttonStyle(.chip)
         .help("Model and reasoning effort")
-        .popover(isPresented: $isPresented, arrowEdge: .top) {
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ModelEffortPanel(threadID: thread.id, hasHistory: hasHistory)
         }
         .task(id: thread.provider) { await registry.loadCatalog(thread.provider) }
