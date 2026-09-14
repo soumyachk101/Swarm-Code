@@ -93,6 +93,10 @@ final class ThreadRuntime {
         var launchRuntimeMode: RuntimeMode?
         var launchEffort: String?
         var launchFast: Bool?
+        /// Antigravity pins model, effort, mode and plan state at launch
+        /// (`--model`, `--effort`, `--mode`), so any of them restarts it.
+        var launchModel: String?
+        var launchInteraction: InteractionMode?
     }
 
     private enum DeltaKind {
@@ -355,9 +359,11 @@ final class ThreadRuntime {
         let signature = SessionSignature(
             provider: thread.provider,
             directory: directory,
-            launchRuntimeMode: thread.provider == .cursor || thread.provider == .grok || thread.provider == .devin ? thread.runtimeMode : nil,
-            launchEffort: thread.provider == .claude ? thread.effort : nil,
-            launchFast: thread.provider == .claude ? thread.fastMode : nil
+            launchRuntimeMode: thread.provider == .cursor || thread.provider == .grok || thread.provider == .devin || thread.provider == .antigravity ? thread.runtimeMode : nil,
+            launchEffort: thread.provider == .claude || thread.provider == .antigravity ? thread.effort : nil,
+            launchFast: thread.provider == .claude ? thread.fastMode : nil,
+            launchModel: thread.provider == .antigravity ? thread.model : nil,
+            launchInteraction: thread.provider == .antigravity ? thread.interactionMode : nil
         )
         if let session, session.isRunning, sessionSignature == signature { return session }
         session?.stop()
@@ -427,6 +433,7 @@ final class ThreadRuntime {
             let created: any ProviderSession = switch thread.provider {
             case .codex: CodexSession(configuration: configuration)
             case .claude: ClaudeSession(configuration: configuration)
+            case .antigravity: AntigravitySession(configuration: configuration)
             case .cursor, .opencode, .grok, .devin: ACPSession(configuration: configuration)
             case .deepseek: DeepSeekSession(configuration: configuration)
             case .meta: MetaSession(configuration: configuration)

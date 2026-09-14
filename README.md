@@ -13,6 +13,7 @@ It drives the coding agents you already have installed and signed in, on your ow
 | Cursor | `cursor-agent` | Agent Client Protocol |
 | OpenCode | `opencode` | Agent Client Protocol |
 | Grok | `grok` | Agent Client Protocol |
+| Antigravity | `agy` | stream-json headless |
 | DeepSeek | `DEEPSEEK_API_KEY` | native API (OpenAI-compatible) |
 | Meta | `MODEL_API_KEY` | native API at `api.meta.ai/v1` (Muse Spark) |
 
@@ -55,7 +56,7 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 | Folder | Contents |
 | --- | --- |
 | `DroppyCode/App` | App entry, commands, settings and the project library |
-| `DroppyCode/Providers` | Codex, Claude and ACP adapters behind one event model |
+| `DroppyCode/Providers` | Codex, Claude, ACP and Antigravity adapters behind one event model |
 | `DroppyCode/Runtime` | Per-thread state, streaming, checkpoints and rewind |
 | `DroppyCode/Git` | Git, worktrees, checkpoints and diff parsing |
 | `DroppyCode/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
