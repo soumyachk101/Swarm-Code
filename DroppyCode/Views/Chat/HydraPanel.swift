@@ -93,6 +93,7 @@ struct HydraPanel: View {
                     .padding(.horizontal, Chrome.capsuleHorizontalPadding)
                     .frame(height: Chrome.capsuleContentHeight)
                     .padding(.vertical, Chrome.capsuleVerticalPadding)
+                    .fixedSize()
                     .chromeGlassCapsule()
                     .transition(.softAppear)
                 }
@@ -315,7 +316,7 @@ private struct HydraHeadTranscript: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if head.hydra?.kind == .droppy {
                 // A head of Droppy Code's own can be steered and answered like any chat.
-                ComposerArea(runtime: runtime, workingDirectory: workingDirectory)
+                ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true)
                     .overlay(alignment: .top) {
                         JumpToLatestButton(scrollState: scrollState)
                     }

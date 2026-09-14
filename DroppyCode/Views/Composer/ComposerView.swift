@@ -6,6 +6,8 @@ struct ComposerArea: View {
     /// The folder the thread works in, for the `@` file index. Read once by the chat and
     /// handed down, so the composer never observes the project itself.
     let workingDirectory: String?
+    /// Floating panels are narrow: the model chip collapses to the provider's icon.
+    var compactModelChip: Bool = false
 
     /// The changes popover presented from the tab. Driven by
     /// `runtime.isDiffVisible`, so every opener (tab, Review, ⌘D) shares it.
@@ -57,7 +59,7 @@ struct ComposerArea: View {
                         }
                         .transition(.softAppear)
                     }
-                    ComposerView(runtime: runtime, workingDirectory: workingDirectory)
+                    ComposerView(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: compactModelChip)
                 }
                 // NB: no .animation(..., value: changeStats) here on purpose: the tab's
                 // insertion animates via its .softAppear transition, and opening the
@@ -92,6 +94,8 @@ struct ComposerView: View {
     @Environment(AppModel.self) private var model
     @Bindable var runtime: ThreadRuntime
     let workingDirectory: String?
+    /// Floating panels are narrow: the model chip collapses to the provider's icon.
+    var compactModelChip: Bool = false
 
     @State private var textHeight: CGFloat = 20
     @State private var controller = ComposerController()
@@ -170,7 +174,7 @@ struct ComposerView: View {
                             chooseOther: { showingRecents = false; chooseFiles() }
                         )
                     }
-                    ModelEffortButton(thread: thread, hasHistory: !runtime.turns.isEmpty)
+                    ModelEffortButton(thread: thread, hasHistory: !runtime.turns.isEmpty, compact: compactModelChip)
                     ContextMeter(
                         usage: runtime.usage,
                         provider: thread.provider

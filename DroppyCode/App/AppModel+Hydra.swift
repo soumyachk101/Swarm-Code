@@ -6,9 +6,11 @@ import Foundation
 // timelines fill from the session's events; Droppy-run heads have sessions of their own.
 
 extension AppModel {
-    /// Whether a chat leads a team right now: Hydra on for the app and for the chat.
+    /// Whether a chat leads a team right now: Hydra on for the app. A chat keeps no
+    /// switch of its own: with Hydra on in Settings it stays on in every chat until it
+    /// is switched off there.
     func hydraIsOn(_ thread: ChatThread) -> Bool {
-        settings.hydraEnabled && thread.hydraEnabled && !thread.isHelper
+        settings.hydraEnabled && !thread.isHelper
     }
 
     /// Whether the provider runs heads inside its own session, with the pair's model and
@@ -160,6 +162,16 @@ extension AppModel {
             $0.status = outcome
             $0.summary = summary ?? $0.summary
             $0.finishedAt = .now
+        }
+        // Opt-in: a finished head leaves the panel on its own, for the sidebar under its
+        // lead, instead of waiting for "Clear finished heads". Running heads stay put.
+        if settings.hydraAutoClearFinished {
+            updateThread(id) { $0.isInPanel = false }
+            if let parentID = head.parentThreadID {
+                updateThread(parentID) { $0.foldsHelpers = false }
+                let leadRuntime = runtime(for: parentID)
+                if leadRuntime.hydraSelectedHeadID == id { leadRuntime.hydraSelectedHeadID = nil }
+            }
         }
         guard let parentID = head.parentThreadID else { return }
         let leadRuntime = runtime(for: parentID)
