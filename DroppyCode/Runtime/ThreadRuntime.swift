@@ -86,6 +86,10 @@ final class ThreadRuntime {
     @ObservationIgnored private var currentTurnID: UUID?
     @ObservationIgnored private var resumeAnchor: String?
     @ObservationIgnored private var interruptWatchdog: Task<Void, Never>?
+    /// Working-tree snapshots taken as command tools start, by tool id, and
+    /// the diffs being settled as they finish (see `watchCommand`).
+    @ObservationIgnored private var commandTrees: [String: Task<String?, Never>] = [:]
+    @ObservationIgnored private var commandSettles: [String: Task<Void, Never>] = [:]
 
     private struct SessionSignature: Equatable {
         var provider: ProviderKind
@@ -675,11 +679,16 @@ final class ThreadRuntime {
         case .toolStarted(let id, let call):
             flushDeltas()
             upsertTool(id, call)
+            if call.kind == .command { watchCommand(id) }
         case .toolOutput(let id, let text):
             queueDelta(id, .toolOutput, text)
         case .toolUpdated(let id, let update):
             flushDeltas()
             applyToolUpdate(id, update)
+            if let entry = entryIndex[id], case .tool(let call) = entry.item.content,
+               call.kind == .command, call.status != .running {
+                settleCommand(id)
+            }
         case .planDelta(let id, let text):
             queueDelta(id, .plan, text)
         case .planCompleted(let id, let markdown):
@@ -744,6 +753,11 @@ final class ThreadRuntime {
             drainPendingSend()
             return
         }
+        // Command diffs land before the turn's own summary counts them, and
+        // while the turn is still current so the snapshots can be compared.
+        for id in Array(commandTrees.keys) { settleCommand(id) }
+        for task in commandSettles.values { await task.value }
+        commandSettles.removeAll()
         currentTurnID = nil
         flushDeltas()
         approvals.removeAll()
@@ -981,6 +995,56 @@ final class ThreadRuntime {
         }
         entry.item.content = .tool(call)
         scheduleSave()
+    }
+
+    // MARK: - Command edits
+
+    /// Agents that edit files from the shell (python heredocs, sed -i, patch)
+    /// never report an edit, so a command's row gets its edits from the
+    /// working tree instead: a snapshot as it starts, another as it finishes,
+    /// and the diff between the two. Git-backed projects only.
+    private func watchCommand(_ id: String) {
+        guard commandTrees[id] == nil, let git = repositoryGit else { return }
+        commandTrees[id] = Task.detached(priority: .utility) { try? await git.captureTree() }
+    }
+
+    private func settleCommand(_ id: String) {
+        guard let before = commandTrees.removeValue(forKey: id), let git = repositoryGit else { return }
+        commandSettles[id] = Task { [weak self] in
+            guard let base = await before.value, let after = try? await git.captureTree(), base != after,
+                  let patch = try? await git.diff(from: base, to: after), !patch.isEmpty else { return }
+            let edits = Self.fileEdits(from: patch)
+            guard let self, !edits.isEmpty, let entry = entryIndex[id], case .tool(var call) = entry.item.content else { return }
+            // A provider that did report its edits keeps them.
+            guard call.edits.allSatisfy({ $0.diff == nil }) else { return }
+            call.edits = edits
+            entry.item.content = .tool(call)
+            scheduleSave()
+        }
+    }
+
+    private var repositoryGit: Git? {
+        guard let currentTurnID, let turn = turns.first(where: { $0.id == currentTurnID }), turn.baseCheckpoint != nil,
+              let app, let thread = app.thread(threadID), let project = app.project(thread.projectID) else { return nil }
+        return Git(thread.worktreePath ?? project.path)
+    }
+
+    /// One edit per file in a multi-file patch, with the file's own section as its diff.
+    private static func fileEdits(from patch: String) -> [FileEdit] {
+        var sections: [String] = []
+        for line in patch.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("diff --git ") {
+                sections.append(String(line))
+            } else if !sections.isEmpty {
+                sections[sections.count - 1] += "\n" + line
+            }
+        }
+        return sections.compactMap { section in
+            guard let file = DiffParser.parse(section).first else { return nil }
+            // Huge sections are stats only, so the thread file stays small.
+            let diff = section.utf8.count <= 200_000 ? section : nil
+            return FileEdit(path: file.path, diff: diff, additions: file.additions, deletions: file.deletions)
+        }
     }
 
     private func upsertTodos(_ steps: [TodoStep]) {

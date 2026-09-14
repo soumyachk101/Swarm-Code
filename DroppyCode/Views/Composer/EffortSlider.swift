@@ -321,6 +321,19 @@ struct EffortSliderCard: View {
         return ModelOption.effortTitle(efforts[resolvedIndex])
     }
 
+    private var isFast: Bool { supportsFast && fastMode }
+
+    /// The title takes the slider's colour: purple at maximum, gold in fast
+    /// mode, and both blended when the two are on together.
+    private var titleStyle: AnyShapeStyle {
+        switch (isMaxEffort, isFast) {
+        case (true, true): AnyShapeStyle(LinearGradient(colors: [EffortPalette.supercharged, EffortPalette.fast], startPoint: .leading, endPoint: .trailing))
+        case (true, false): AnyShapeStyle(EffortPalette.supercharged)
+        case (false, true): AnyShapeStyle(EffortPalette.fast)
+        case (false, false): AnyShapeStyle(EffortPalette.title)
+        }
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             ZStack {
@@ -345,8 +358,9 @@ struct EffortSliderCard: View {
                                     .foregroundStyle(Chrome.secondaryText)
                             }
                         }
-                        .foregroundStyle(isMaxEffort ? EffortPalette.supercharged : EffortPalette.title)
+                        .foregroundStyle(titleStyle)
                         .animation(.smooth(duration: 0.3), value: isMaxEffort)
+                        .animation(.smooth(duration: 0.3), value: isFast)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
                         .background {
@@ -389,6 +403,7 @@ struct EffortSliderCard: View {
                             withAnimation(.snappy(duration: 0.2)) { effort = efforts[index] }
                         }
                     ),
+                    fastMode: isFast,
                     accessibilityTitle: title
                 )
             }
@@ -457,9 +472,22 @@ struct EffortSlider: View {
 
     let count: Int
     @Binding var index: Int
+    /// Fast mode on, for a model that has it. Colours the fill gold with
+    /// speed streaks; at maximum effort it fuses with the purple particles.
+    var fastMode = false
     let accessibilityTitle: String
 
     @State private var dragX: CGFloat?
+
+    private var look: TrackLook {
+        let isMax = count > 1 && index == count - 1
+        return switch (isMax, fastMode) {
+        case (true, true): TrackLook.fusion
+        case (true, false): .supercharged
+        case (false, true): .fast
+        case (false, false): .plain
+        }
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -468,20 +496,21 @@ struct EffortSlider: View {
             let step = count > 1 ? (width - inset * 2) / CGFloat(count - 1) : 0
             let restingX = inset + CGFloat(index) * step
             let x = min(max(dragX ?? restingX, inset), width - inset)
-            let isSupercharged = count > 1 && index == count - 1
+            let look = look
 
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
                     .fill(Chrome.overlay(0.1))
                 Capsule(style: .continuous)
-                    .fill(isSupercharged ? EffortPalette.superchargedFill : Chrome.accent)
+                    .fill(look.fill)
                     .frame(width: x + inset)
                     .overlay(alignment: .leading) {
-                        if isSupercharged {
-                            SuperchargedTail()
+                        if look != .plain {
+                            TrackEffect(look: look)
                                 .frame(width: x + inset, height: Self.trackHeight)
                                 .clipShape(Capsule(style: .continuous))
                                 .transition(.opacity)
+                                .id(look)
                         }
                     }
                 ForEach(0..<count, id: \.self) { stop in
@@ -493,14 +522,14 @@ struct EffortSlider: View {
                 }
                 Circle()
                     .fill(Color.white)
-                    .shadow(color: isSupercharged ? EffortPalette.superchargedFill.opacity(0.6) : .black.opacity(0.28), radius: isSupercharged ? 8 : 4, y: 1)
+                    .shadow(color: look.glow, radius: look == .plain ? 4 : 8, y: 1)
                     .frame(width: Self.thumbSize, height: Self.thumbSize)
                     .scaleEffect(dragX == nil ? 1 : 1.06)
                     .position(x: x, y: Self.trackHeight / 2)
             }
             .frame(height: Self.trackHeight)
             .frame(maxHeight: .infinity)
-            .animation(.smooth(duration: 0.3), value: isSupercharged)
+            .animation(.smooth(duration: 0.3), value: look)
             .contentShape(.rect)
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -545,40 +574,68 @@ enum EffortPalette {
     static var title: Color { Chrome.accent.mix(with: .white, by: 0.22) }
     static let supercharged = Color(red: 0.74, green: 0.55, blue: 1.0)
     static let superchargedFill = Color(red: 0.55, green: 0.34, blue: 0.97)
+    /// Fast mode's gold: the bolt's yellow, deepened for a fill.
+    static let fast = Color(red: 1.0, green: 0.84, blue: 0.36)
+    static let fastFill = Color(red: 0.93, green: 0.66, blue: 0.13)
 }
 
-/// The maximum effort's tail: particles drifting through the whole purple fill toward the knob, each
-/// with its own height, size, speed and shimmer, fading in and out at the ends. One small Canvas at
-/// 30fps, drawn only while the slider sits at the maximum.
-private struct SuperchargedTail: View {
+/// How the filled part of the effort track looks.
+enum TrackLook: Hashable {
+    case plain
+    /// Maximum effort: purple with particles drifting toward the knob.
+    case supercharged
+    /// Fast mode: gold with speed streaks and lightning.
+    case fast
+    /// Both: purple running into gold, particles, streaks, lightning and a sweeping sheen.
+    case fusion
+
+    var fill: AnyShapeStyle {
+        switch self {
+        case .plain: AnyShapeStyle(Chrome.accent)
+        case .supercharged: AnyShapeStyle(EffortPalette.superchargedFill)
+        case .fast: AnyShapeStyle(EffortPalette.fastFill)
+        case .fusion: AnyShapeStyle(LinearGradient(
+            colors: [EffortPalette.superchargedFill, EffortPalette.superchargedFill, EffortPalette.fastFill],
+            startPoint: .leading, endPoint: .trailing
+        ))
+        }
+    }
+
+    var glow: Color {
+        switch self {
+        case .plain: .black.opacity(0.28)
+        case .supercharged: EffortPalette.superchargedFill.opacity(0.6)
+        case .fast: EffortPalette.fastFill.opacity(0.7)
+        case .fusion: EffortPalette.fast.opacity(0.75)
+        }
+    }
+}
+
+/// The track's animation, one small Canvas drawn only while the slider needs it.
+///
+/// Maximum effort: particles drifting through the fill toward the knob, each with its own height,
+/// size, speed and shimmer, fading at the ends. Fast mode: speed streaks zipping toward the knob
+/// and a lightning bolt flashing now and then. Both together layer the two, over a fill that runs
+/// from purple into gold, with a glossy sheen sweeping across. 30fps, 60 when streaks move.
+private struct TrackEffect: View {
+    let look: TrackLook
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var startedAt = Date.now
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / (look == .supercharged ? 30 : 60), paused: reduceMotion)) { timeline in
             let time = timeline.date.timeIntervalSince(startedAt)
             Canvas { context, size in
                 guard size.width > 8 else { return }
-                let span = Double(size.width) + 8
-                let count = max(10, Int(size.width / 5))
-                for index in 0..<count {
-                    let seed = Double(index)
-                    let height = Self.random(seed, 1)
-                    let speed = 12 + 28 * Self.random(seed, 2)
-                    let radius = 0.7 + 1.1 * Self.random(seed, 3)
-                    let start = Self.random(seed, 4) * span
-                    let brightness = 0.22 + 0.5 * Self.random(seed, 5)
-
-                    let x = (start + time * speed).truncatingRemainder(dividingBy: span) - 4
-                    let y = Double(size.height) * (0.16 + 0.68 * height)
-                    let shimmer = 0.6 + 0.4 * sin(time * (2 + 3 * Self.random(seed, 6)) + seed)
-                    let edge = min(1, max(0, x / 14), max(0, (Double(size.width) - x) / 14))
-                    let opacity = brightness * shimmer * edge
-                    guard opacity > 0.01 else { continue }
-                    context.fill(
-                        Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)),
-                        with: .color(.white.opacity(opacity))
-                    )
+                if look == .supercharged || look == .fusion {
+                    Self.drawParticles(context, size: size, time: time)
+                }
+                if look == .fast || look == .fusion {
+                    Self.drawStreaks(context, size: size, time: time)
+                    Self.drawBolts(context, size: size, time: time)
+                }
+                if look == .fusion {
+                    Self.drawSheen(context, size: size, time: time)
                 }
             }
         }
@@ -586,7 +643,115 @@ private struct SuperchargedTail: View {
         .accessibilityHidden(true)
     }
 
-    /// A stable pseudo-random value in 0..<1 for a particle and one of its traits.
+    private static func drawParticles(_ context: GraphicsContext, size: CGSize, time: TimeInterval) {
+        let span = Double(size.width) + 8
+        let count = max(10, Int(size.width / 5))
+        for index in 0..<count {
+            let seed = Double(index)
+            let height = random(seed, 1)
+            let speed = 12 + 28 * random(seed, 2)
+            let radius = 0.7 + 1.1 * random(seed, 3)
+            let start = random(seed, 4) * span
+            let brightness = 0.22 + 0.5 * random(seed, 5)
+
+            let x = (start + time * speed).truncatingRemainder(dividingBy: span) - 4
+            let y = Double(size.height) * (0.16 + 0.68 * height)
+            let shimmer = 0.6 + 0.4 * sin(time * (2 + 3 * random(seed, 6)) + seed)
+            let opacity = brightness * shimmer * edgeFade(x, width: Double(size.width))
+            guard opacity > 0.01 else { continue }
+            context.fill(
+                Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)),
+                with: .color(.white.opacity(opacity))
+            )
+        }
+    }
+
+    /// Thin streaks racing toward the knob, bright at the head and fading down the tail.
+    private static func drawStreaks(_ context: GraphicsContext, size: CGSize, time: TimeInterval) {
+        let width = Double(size.width)
+        let count = max(5, Int(width / 14))
+        for index in 0..<count {
+            let seed = Double(index) + 100
+            let length = 10 + 20 * random(seed, 1)
+            let speed = 110 + 190 * random(seed, 2)
+            let thickness = 1.1 + 1.1 * random(seed, 3)
+            let span = width + length + 12
+            let x = (random(seed, 4) * span + time * speed).truncatingRemainder(dividingBy: span) - length - 6
+            let y = Double(size.height) * (0.2 + 0.6 * random(seed, 5))
+            let brightness = (0.35 + 0.55 * random(seed, 6)) * edgeFade(x + length, width: width)
+            guard brightness > 0.02 else { continue }
+            let rect = CGRect(x: x, y: y - thickness / 2, width: length, height: thickness)
+            context.fill(
+                Path(roundedRect: rect, cornerRadius: thickness / 2),
+                with: .linearGradient(
+                    Gradient(colors: [.white.opacity(0), .white.opacity(brightness)]),
+                    startPoint: CGPoint(x: rect.minX, y: rect.midY),
+                    endPoint: CGPoint(x: rect.maxX, y: rect.midY)
+                )
+            )
+        }
+    }
+
+    /// Two lightning bolts on their own beats: each flashes for a quarter second every second
+    /// or two, somewhere new along the fill, as a glowing zigzag.
+    private static func drawBolts(_ context: GraphicsContext, size: CGSize, time: TimeInterval) {
+        let width = Double(size.width)
+        let height = Double(size.height)
+        for slot in 0..<2 {
+            let seed = Double(slot) + 200
+            let period = 1.4 + 0.9 * random(seed, 1)
+            let offset = random(seed, 2) * period
+            let cycle = ((time + offset) / period).rounded(.down)
+            let phase = (time + offset) - cycle * period
+            let flash = 0.26
+            guard phase < flash else { continue }
+            let intensity = sin(phase / flash * .pi)
+            let cycleSeed = seed + cycle * 7.31
+            let x = 12 + (width - 24) * random(cycleSeed, 3)
+            guard x > 6, x < width - 6 else { continue }
+            let lean = 3.0 + 3.0 * random(cycleSeed, 4)
+            var bolt = Path()
+            bolt.move(to: CGPoint(x: x + lean, y: 3))
+            bolt.addLine(to: CGPoint(x: x - lean * 0.4, y: height * 0.42))
+            bolt.addLine(to: CGPoint(x: x + lean * 0.5, y: height * 0.5))
+            bolt.addLine(to: CGPoint(x: x - lean, y: height - 3))
+            var glow = context
+            glow.addFilter(.blur(radius: 3))
+            glow.stroke(bolt, with: .color(EffortPalette.fast.opacity(0.9 * intensity)), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+            context.stroke(bolt, with: .color(.white.opacity(intensity)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+        }
+    }
+
+    /// A slanted band of light sweeping the whole fill every few seconds.
+    private static func drawSheen(_ context: GraphicsContext, size: CGSize, time: TimeInterval) {
+        let width = Double(size.width)
+        let height = Double(size.height)
+        let band = 46.0
+        let period = 2.8
+        let progress = (time / period).truncatingRemainder(dividingBy: 1)
+        let x = -band + (width + band * 2) * progress
+        var path = Path()
+        path.move(to: CGPoint(x: x + 10, y: 0))
+        path.addLine(to: CGPoint(x: x + band + 10, y: 0))
+        path.addLine(to: CGPoint(x: x + band, y: height))
+        path.addLine(to: CGPoint(x: x, y: height))
+        path.closeSubpath()
+        context.fill(
+            path,
+            with: .linearGradient(
+                Gradient(colors: [.white.opacity(0), .white.opacity(0.22), .white.opacity(0)]),
+                startPoint: CGPoint(x: x, y: 0),
+                endPoint: CGPoint(x: x + band + 10, y: 0)
+            )
+        )
+    }
+
+    /// Fades a point out over the last 14 points at either end of the fill.
+    private static func edgeFade(_ x: Double, width: Double) -> Double {
+        min(1, max(0, x / 14), max(0, (width - x) / 14))
+    }
+
+    /// A stable pseudo-random value in 0..<1 for an element and one of its traits.
     private static func random(_ index: Double, _ trait: Double) -> Double {
         let value = sin(index * 12.9898 + trait * 78.233) * 43758.5453
         return value - value.rounded(.down)

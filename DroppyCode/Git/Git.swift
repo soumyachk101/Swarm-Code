@@ -184,6 +184,19 @@ struct Git: Sendable {
 
     /// Snapshots the working tree into a hidden ref without touching the user's index or branch.
     func captureCheckpoint(_ ref: String) async throws {
+        let tree = try await captureTree()
+        let identity = [
+            "GIT_AUTHOR_NAME": "Droppy Code", "GIT_AUTHOR_EMAIL": "droppy-code@localhost",
+            "GIT_COMMITTER_NAME": "Droppy Code", "GIT_COMMITTER_EMAIL": "droppy-code@localhost",
+        ]
+        let commit = try await run(["commit-tree", tree, "-m", "Droppy Code checkpoint"], environment: identity)
+        try Self.check(commit)
+        try Self.check(await run(["update-ref", ref, commit.trimmedOutput]))
+    }
+
+    /// The working tree as a tree object: a cheap before/after marker for a
+    /// diff, with no commit and nothing referenced. Respects .gitignore.
+    func captureTree() async throws -> String {
         let fileManager = FileManager.default
         let index = fileManager.temporaryDirectory.appendingPathComponent("droppy-code-index-\(UUID().uuidString)")
         defer { try? fileManager.removeItem(at: index) }
@@ -200,13 +213,7 @@ struct Git: Sendable {
         try Self.check(await run(["add", "-A", "--", "."], environment: environment, timeout: 300))
         let tree = try await run(["write-tree"], environment: environment)
         try Self.check(tree)
-        let identity = [
-            "GIT_AUTHOR_NAME": "Droppy Code", "GIT_AUTHOR_EMAIL": "droppy-code@localhost",
-            "GIT_COMMITTER_NAME": "Droppy Code", "GIT_COMMITTER_EMAIL": "droppy-code@localhost",
-        ]
-        let commit = try await run(["commit-tree", tree.trimmedOutput, "-m", "Droppy Code checkpoint"], environment: identity)
-        try Self.check(commit)
-        try Self.check(await run(["update-ref", ref, commit.trimmedOutput]))
+        return tree.trimmedOutput
     }
 
     func diff(from: String, to: String) async throws -> String {

@@ -29,6 +29,20 @@ final class AntigravitySession: ProviderSession {
     private var isStopping = false
     /// Resolves the cumulative session token total into per-turn spend.
     private var spendTracker = TokenSpendTracker()
+    /// Namespaces step ids per launch. `step_index` counts up within one
+    /// process but a resumed conversation starts over, and a repeated id
+    /// would stream a new turn's text into an old entry of the thread.
+    private let launchID = String(UUID().uuidString.prefix(8))
+    /// Whether any reply text streamed this turn; without it, the result's
+    /// `response` is the reply.
+    private var streamedText = false
+    /// Files an edit step is about to change, captured when the step went
+    /// active. The stream never carries the edit itself, so the row's diff
+    /// is the file before against the file after.
+    private var editSnapshots: [String: String] = [:]
+    /// Tool steps whose start was announced, so a step that surfaces only as
+    /// finished still gets its proper row rather than a bare "Tool".
+    private var startedTools: Set<String> = []
 
     /// Reasoning efforts `agy --effort` accepts.
     static let efforts = ["low", "medium", "high"]
@@ -49,10 +63,15 @@ final class AntigravitySession: ProviderSession {
 
     func start() async throws -> String {
         guard let executable = configuration.executable else { throw ProviderError.notInstalled(configuration.provider) }
+        // `--add-dir` is what makes the thread's folder the workspace. The
+        // CLI does not adopt its cwd (verified live, git repo or not): without
+        // the flag the agent works in `~/.gemini/antigravity-cli/scratch` and
+        // spends its first steps hunting the home directory for the project.
         var arguments = [
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--print-timeout", "30m",
+            "--add-dir", workingDirectory,
         ]
         let (resolvedModel, resolvedEffort) = Self.normalize(model: model, effort: effort)
         if let resolvedModel, !resolvedModel.isEmpty { arguments += ["--model", resolvedModel] }
@@ -127,6 +146,7 @@ final class AntigravitySession: ProviderSession {
         // with an error, so images never go on the wire (see supportsImages).
         turnActive = true
         interruptRequested = false
+        streamedText = false
         onEvent?(.turnStarted(providerTurnID: nil))
         process.send(["event": "user", "message": ["content": .string(input.text)]])
     }
@@ -177,22 +197,37 @@ final class AntigravitySession: ProviderSession {
         let index = step["step_index"]?.int ?? 0
         switch step["step_type"]?.string {
         case "agent_response":
+            if let usage = Self.contextUsage(step["usage"]) { onEvent?(.usage(usage)) }
             guard let text = step["text_delta"]?.string, !text.isEmpty else { return }
-            onEvent?(.messageDelta(id: "agy-message-\(index)", text: text))
+            streamedText = true
+            onEvent?(.messageDelta(id: "agy-\(launchID)-message-\(index)", text: text))
         case "tool":
             guard let name = step["tool_name"]?.string ?? step["tool_info"]?["name"]?.string else { return }
-            let id = "agy-tool-\(index)"
+            let id = "agy-\(launchID)-tool-\(index)"
             let info = step["tool_info"] ?? .null
-            switch step["state"]?.string {
-            case "ERROR":
-                let message = info["error"]?["message"]?.string ?? "The tool failed."
-                onEvent?(.toolUpdated(id: id, update: ToolUpdate(output: message, status: .failed)))
-            case "DONE":
+            let parameters = info["parameters"] ?? .null
+            let error = info["error"]?["message"]?.string
+            let state = step["state"]?.string
+            if !startedTools.contains(id) {
+                startedTools.insert(id)
+                let call = makeToolCall(name: name, parameters: parameters)
+                if call.kind == .edit, state == "ACTIVE", let path = Self.path(in: parameters) {
+                    editSnapshots[id] = Self.snapshot(path) ?? ""
+                }
+                onEvent?(.toolStarted(id: id, call: call))
+                if state == "ACTIVE" { return }
+            }
+            // Errors ride on the `error` field (the documented shape) as well
+            // as an `ERROR` state, so either ends the call as a failure.
+            if state == "ERROR" || (state == "DONE" && error != nil) {
+                let message = error ?? "The tool failed."
+                let status: ToolCall.Status = Self.isDenied(message) ? .declined : .failed
+                onEvent?(.toolUpdated(id: id, update: ToolUpdate(output: message, status: status, edits: finishEdit(id, parameters: parameters))))
+            } else if state == "DONE" {
                 var update = ToolUpdate(status: .completed)
                 if let output = info["output"]?.string, !output.isEmpty { update.output = output }
+                update.edits = finishEdit(id, parameters: parameters)
                 onEvent?(.toolUpdated(id: id, update: update))
-            default:
-                onEvent?(.toolStarted(id: id, call: makeToolCall(name: name, parameters: info["parameters"] ?? .null)))
             }
         default:
             // `user_input` acknowledgements and `checkpoint` markers carry
@@ -201,18 +236,64 @@ final class AntigravitySession: ProviderSession {
         }
     }
 
+    /// The finished edit as a diff of the file before against after, for the
+    /// row's inline diff and the turn's changed-files attribution. Nil for
+    /// non-edit steps, so the update leaves the call's edits alone.
+    private func finishEdit(_ id: String, parameters: JSONValue) -> [FileEdit]? {
+        guard let before = editSnapshots.removeValue(forKey: id), let path = Self.path(in: parameters) else { return nil }
+        let relative = ToolTitles.relativePath(path, to: workingDirectory)
+        let after = Self.snapshot(path) ?? ""
+        guard before != after else { return [FileEdit(path: relative)] }
+        return [FileEdit(path: relative, old: before, new: after)]
+    }
+
+    /// Text files up to 1 MB; anything else (binary, huge, missing) reads as
+    /// empty so a write shows as a whole-file addition.
+    private static func snapshot(_ path: String) -> String? {
+        let url = URL(fileURLWithPath: path)
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 1_000_000 else { return nil }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }
+
+    /// The soft-deny wording headless runs use when a permission rule blocks
+    /// a tool: the agent asked, the user (or a rule) said no.
+    private static func isDenied(_ message: String) -> Bool {
+        let lowered = message.lowercased()
+        return lowered.contains("permission check failed") || lowered.contains("denied permission")
+            || lowered.contains("permission denied")
+    }
+
+    /// The context in use after a model call: the step's fresh input plus
+    /// what was served from cache, plus the reply. Result totals are the
+    /// session's cumulative spend and say nothing about the window.
+    private static func contextUsage(_ usage: JSONValue?) -> ContextUsage? {
+        guard let usage, !usage.isNull else { return nil }
+        let used = (usage["input_tokens"]?.int ?? 0) + (usage["cache_read_tokens"]?.int ?? 0) + (usage["output_tokens"]?.int ?? 0)
+        guard used > 0 else { return nil }
+        return ContextUsage(usedTokens: used, windowTokens: nil)
+    }
+
     private func handleResult(_ result: JSONValue) {
         turnActive = false
+        editSnapshots.removeAll()
+        startedTools.removeAll()
         if let usage = result["usage"], !usage.isNull {
             // Totals are cumulative over the session (per the headless docs),
-            // so the spend tracker resolves them into per-turn deltas.
+            // so the spend tracker resolves them into per-turn deltas. The
+            // context meter is fed per step instead (see handleStep).
             let used = usage["total_tokens"]?.int ?? ((usage["input_tokens"]?.int ?? 0) + (usage["output_tokens"]?.int ?? 0))
             if used > 0 {
-                onEvent?(.usage(ContextUsage(usedTokens: used, windowTokens: nil)))
                 let spend = spendTracker.spend(total: used)
                 if spend > 0 { TokenLedger.shared.record(spend: spend) }
             }
         }
+        // A turn whose reply never streamed (resumed conversations can answer
+        // in the result alone) still shows its text.
+        if !streamedText, let response = result["response"]?.string,
+           !response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            onEvent?(.messageCompleted(id: "agy-\(launchID)-result-\(UUID().uuidString.prefix(8))", text: response))
+        }
+        streamedText = false
         let denied = (result["denied_actions"]?.array ?? []).compactMap { $0["display_name"]?.string ?? $0["action"]?.string }
         if !denied.isEmpty {
             let names = denied.joined(separator: ", ")
@@ -229,7 +310,9 @@ final class AntigravitySession: ProviderSession {
             onEvent?(.turnCompleted(status: .interrupted, error: nil))
         } else {
             switch result["status"]?.string {
-            case "SUCCESS":
+            case "SUCCESS", "WAITING":
+                // WAITING: the agent stopped to ask something it cannot ask
+                // headless; the turn is over and the reply says what it needs.
                 onEvent?(.turnCompleted(status: .completed, error: nil))
             case "CANCELED", "INTERRUPTED":
                 onEvent?(.turnCompleted(status: .interrupted, error: nil))
@@ -507,29 +590,59 @@ final class AntigravitySession: ProviderSession {
 
     // MARK: - Tool mapping
 
+    /// Same row shapes as Claude's: the subject is the command, the path, the
+    /// pattern or the URL, and the detail is only what qualifies it (a search
+    /// folder, an MCP tool's input). The stream sends a display subset of the
+    /// parameters (`AbsolutePath`, `TargetFile`, `SearchDirectory`, ...), never
+    /// the edit content.
     private func makeToolCall(name: String, parameters: JSONValue) -> ToolCall {
         let kind = Self.kind(of: name)
-        var title: String?
-        if kind == .command {
-            title = parameters["CommandLine"]?.string ?? parameters["command"]?.string
-        } else {
-            title = Self.path(in: parameters).map { ToolTitles.relativePath($0, to: workingDirectory) }
-            if title == nil {
-                title = parameters["Query"]?.string ?? parameters["query"]?.string
-                    ?? parameters["Url"]?.string ?? parameters["URL"]?.string ?? parameters["url"]?.string
+        let path = Self.path(in: parameters).map { ToolTitles.relativePath($0, to: workingDirectory) }
+        switch kind {
+        case .command:
+            let command = Self.string(in: parameters, keys: ["CommandLine", "command", "Command"]).map(ToolTitles.unwrapShell)
+            return ToolCall(kind: .command, title: command ?? Self.humanize(name))
+        case .read:
+            var call = ToolCall(kind: .read, title: path ?? Self.string(in: parameters, keys: ["Url", "URL", "url"]) ?? Self.humanize(name))
+            if path != nil, let range = Self.lineRange(in: parameters) { call.detail = range }
+            return call
+        case .edit:
+            var call = ToolCall(kind: .edit, title: path ?? Self.humanize(name))
+            if let path { call.edits = [FileEdit(path: path)] }
+            return call
+        case .search:
+            let pattern = Self.string(in: parameters, keys: ["Query", "query", "Pattern", "pattern"])
+            let folder = Self.string(in: parameters, keys: ["SearchPath", "SearchDirectory", "DirectoryPath", "Path", "path"])
+                .map { ToolTitles.relativePath($0, to: workingDirectory) }
+            if let pattern {
+                return ToolCall(kind: .search, title: pattern, detail: folder)
             }
+            return ToolCall(kind: .search, title: folder ?? Self.humanize(name))
+        case .web:
+            let subject = Self.string(in: parameters, keys: ["Url", "URL", "url", "query", "Query"])
+            return ToolCall(kind: .web, title: subject ?? Self.humanize(name))
+        case .agent:
+            let task = Self.string(in: parameters, keys: ["Task", "task", "Prompt", "prompt", "Description", "description"])
+            return ToolCall(kind: .agent, title: task.map { TextCleanup.singleLine($0, limit: 96) } ?? Self.humanize(name))
+        case .mcp:
+            let server = Self.string(in: parameters, keys: ["ServerName", "server_name", "Server", "server"]) ?? "MCP"
+            let tool = Self.string(in: parameters, keys: ["ToolName", "tool_name", "Tool", "tool"]) ?? "tool"
+            let input = parameters["Arguments"] ?? parameters["arguments"] ?? parameters["Input"] ?? .null
+            return ToolCall(kind: .mcp, title: "\(server) · \(tool)", detail: input.isNull ? nil : input.compactString)
+        case .other:
+            var call = ToolCall(kind: .other, title: Self.humanize(name))
+            let detail = parameters.isNull ? nil : parameters.compactString
+            if let detail, !detail.isEmpty, detail != "{}", detail.count <= 300 { call.detail = detail }
+            return call
         }
-        var call = ToolCall(kind: kind, title: title ?? Self.humanize(name))
-        let detail = parameters.isNull ? nil : parameters.compactString
-        if let detail, !detail.isEmpty, detail != "{}", detail.count <= 300 { call.detail = detail }
-        return call
     }
 
     private static func kind(of name: String) -> ToolCall.Kind {
         switch name {
         case "run_command", "send_command_input", "command_status", "wait", "wait_5_seconds", "schedule":
             .command
-        case "view_file", "read_resource", "read_browser_page", "capture_browser_screenshot", "capture_browser_console_logs":
+        case "view_file", "view_file_outline", "view_code_item", "view_content_chunk", "read_resource",
+             "read_browser_page", "capture_browser_screenshot", "capture_browser_console_logs":
             .read
         case "write_to_file", "replace_file_content", "multi_replace_file_content", "sed_file", "notebook_edit", "notebook_execution":
             .edit
@@ -551,10 +664,24 @@ final class AntigravitySession: ProviderSession {
     }
 
     private static func path(in parameters: JSONValue) -> String? {
-        for key in ["FilePath", "DirectoryPath", "Path", "file", "path", "directory", "dir"] {
+        string(in: parameters, keys: [
+            "AbsolutePath", "TargetFile", "NotebookPath", "FilePath", "File", "file", "path", "Path",
+            "DirectoryPath", "directory", "dir",
+        ])
+    }
+
+    private static func string(in parameters: JSONValue, keys: [String]) -> String? {
+        for key in keys {
             if let value = parameters[key]?.string, !value.isEmpty { return value }
         }
         return nil
+    }
+
+    /// "L12–40" when a read names a line window, so partial reads read as such.
+    private static func lineRange(in parameters: JSONValue) -> String? {
+        guard let start = parameters["StartLine"]?.int else { return nil }
+        if let end = parameters["EndLine"]?.int, end > start { return "L\(start)–\(end)" }
+        return "L\(start)"
     }
 
     private static func humanize(_ name: String) -> String {
