@@ -280,22 +280,39 @@ struct ThreadTimeline: View, Equatable {
             if new.centerY != old.centerY, new.contentHeight == old.contentHeight, !tracking.isCoasting {
                 noteScrollMovement()
             }
-            if historyLoadPending, new.contentHeight > old.contentHeight {
+            // The offset moving while nothing else did is the reader scrolling: a drag, a flick,
+            // or wheel ticks, which report no phase at all. (A snap to the end below moves it
+            // too, and lands pinned, which is right.)
+            let scrolled = tracking.isUserScrolling
+                || (new.offset != old.offset && new.contentHeight == old.contentHeight
+                    && new.containerHeight == old.containerHeight && !tracking.isCoasting)
+            let atRest = !tracking.isUserScrolling && !tracking.isCoasting
+            if new.distanceFromBottom < -1, atRest {
+                // Past the end of the conversation, showing nothing: the content shrank under
+                // the offset. A finished turn folds its whole transcript into one block, and
+                // with the reader's place anchored at the top that left the viewport hanging
+                // in empty space until they came back to the thread. Never a valid place to
+                // be, whether or not the reader was following, so it snaps to the end.
+                withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+            } else if historyLoadPending, new.contentHeight > old.contentHeight {
                 // The history landed above the viewport with the bottom held; growth
                 // anchors by the reader's position again from here.
                 historyLoadPending = false
-                let pinned = new.distanceFromBottom < 48
+                let pinned = tracking.isPinnedToBottom || new.distanceFromBottom < 48
                 if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
-            } else if tracking.isUserScrolling {
+            } else if scrolled {
                 // Only the reader's own scrolling decides whether the timeline follows new text.
                 // Guarded, so measuring the scroll position never touches anything a body reads.
                 let pinned = new.distanceFromBottom < 48
                 if pinned != tracking.isPinnedToBottom { tracking.isPinnedToBottom = pinned }
                 if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
-            } else if new.contentHeight > old.contentHeight, tracking.isPinnedToBottom {
-                // Growth at the end is followed with a snap, never a slide: a new row lands in
-                // place and fades in on its own. An animated follow slid the working line and
-                // every fresh row up from under the bottom edge while it was appearing.
+            } else if tracking.isPinnedToBottom, atRest, abs(new.distanceFromBottom) > 1 {
+                // Pinned, at rest, and not at the end: the content grew or reflowed to a new
+                // width, the chat box took height, or the scroll view lost its place (rows
+                // measured after it anchored, a thread opened mid-animation) and is showing
+                // empty space past the conversation. The end is where the reader is; the
+                // timeline snaps back to it, never slides, so a new row lands in place and
+                // fades in on its own.
                 withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
             }
         }
@@ -433,14 +450,19 @@ final class TimelineScrollTracking {
 /// write to view state here would re-render the timeline mid-scroll.
 private struct ScrollMetrics: Equatable {
     var contentHeight: CGFloat
+    var containerHeight: CGFloat
     var distanceFromBottom: CGFloat
     var travel: CGFloat
     /// The viewport's vertical centre in the content: the sign that it moved.
     var centerY: CGFloat
+    /// The raw offset, which only a scroll changes; the centre moves with the viewport's height too.
+    var offset: CGFloat
 
     init(geometry: ScrollGeometry) {
         centerY = geometry.visibleRect.midY
+        offset = geometry.contentOffset.y
         contentHeight = geometry.contentSize.height
+        containerHeight = geometry.containerSize.height
         let insets = geometry.contentInsets.top + geometry.contentInsets.bottom
         // Never more than the content can actually scroll. While the queue tab folds,
         // the bottom inset shrinks a frame ahead of the filler that keeps a short
