@@ -18,9 +18,7 @@ struct ModelsSettingsPage: View {
         let registry = model.providers
         let pins = settings.modelList
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let visiblePins = Array(pins.enumerated()).filter { item in
-            Self.matches(registry.model(item.element.modelID, for: item.element.provider), id: item.element.modelID, provider: item.element.provider, query: trimmed)
-        }
+        let visiblePins = self.visiblePins(query: trimmed)
         let providers = registry.availableProviders.filter { provider in
             trimmed.isEmpty || registry.models(for: provider).contains { Self.matches($0, id: $0.id, provider: provider, query: trimmed) }
         }
@@ -38,24 +36,28 @@ struct ModelsSettingsPage: View {
                                 EmptyView()
                             }
                         } else {
-                            ForEach(Array(visiblePins.enumerated()), id: \.element.element) { position, item in
-                                let pin = item.element
-                                let isDragged = drag.id == pin
-                                VStack(spacing: 0) {
-                                    // The lifted row carries no divider, so nothing draws on top of it.
-                                    if position > 0 { ChromeRowDivider().opacity(isDragged ? 0 : 1) }
-                                    PinnedModelRow(
-                                        pin: pin,
-                                        isDragged: isDragged,
-                                        onDragChanged: { translation in
-                                            dragChanged(pin, translation: translation, order: visiblePins.map(\.element))
-                                        },
-                                        onDragEnded: { dragEnded() }
-                                    )
+                            // A plain stack, not the card's lazy one: a lazy stack
+                            // rebuilds a row that changes slot and animates it in
+                            // from the container's origin, so a reorder sent the
+                            // grabbed row flying to the top; it also ignores
+                            // zIndex, which the lifted row needs to draw on top.
+                            VStack(spacing: 0) {
+                                ForEach(visiblePins, id: \.self) { pin in
+                                    let isDragged = drag.id == pin
+                                    VStack(spacing: 0) {
+                                        // The lifted row carries no divider, so nothing draws on top of it.
+                                        if pin != visiblePins.first { ChromeRowDivider().opacity(isDragged ? 0 : 1) }
+                                        PinnedModelRow(
+                                            pin: pin,
+                                            isDragged: isDragged,
+                                            onDragChanged: { translation in dragChanged(pin, translation: translation) },
+                                            onDragEnded: { dragEnded() }
+                                        )
+                                    }
+                                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[pin] = $0 }
+                                    .offset(y: isDragged ? drag.visualOffset : 0)
+                                    .zIndex(isDragged ? 1 : 0)
                                 }
-                                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[pin] = $0 }
-                                .offset(y: isDragged ? drag.visualOffset : 0)
-                                .zIndex(isDragged ? 1 : 0)
                             }
                         }
                     }
@@ -83,11 +85,21 @@ struct ModelsSettingsPage: View {
 
     // MARK: - Reorder
 
+    /// The chosen models that match the search, in list order.
+    private func visiblePins(query: String) -> [ModelPin] {
+        let registry = model.providers
+        return model.settings.modelList.filter { pin in
+            Self.matches(registry.model(pin.modelID, for: pin.provider), id: pin.modelID, provider: pin.provider, query: query)
+        }
+    }
+
     /// The grabbed row follows the pointer and swaps past every visible
     /// neighbour whose centre it has crossed. While a search filters the list
     /// the swaps still happen against the visible neighbour, so hidden models
-    /// keep their place relative to it.
-    private func dragChanged(_ pin: ModelPin, translation: CGFloat, order: [ModelPin]) {
+    /// keep their place relative to it. The order is read fresh on every move
+    /// rather than captured by the row's gesture, which would go stale after
+    /// the first swap.
+    private func dragChanged(_ pin: ModelPin, translation: CGFloat) {
         if drag.id != pin {
             drag = RowDrag(id: pin)
             NSCursor.closedHand.push()
@@ -96,10 +108,14 @@ struct ModelsSettingsPage: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) { drag.translation = translation }
 
+        let order = visiblePins(query: query.trimmingCharacters(in: .whitespacesAndNewlines))
         let moved = drag.settle(order: order, heights: rowHeights, fallbackHeight: 54) { neighbour, placeAfter, slot in
             withAnimation(Self.slide) {
-                model.settings.moveModel(pin, to: neighbour, placeAfter: placeAfter)
-                drag.settled += placeAfter ? slot : -slot
+                // The slot compensation only follows a move that happened, so
+                // the row can never drift away from the pointer.
+                if model.settings.moveModel(pin, to: neighbour, placeAfter: placeAfter) {
+                    drag.settled += placeAfter ? slot : -slot
+                }
             }
         }
         if moved {

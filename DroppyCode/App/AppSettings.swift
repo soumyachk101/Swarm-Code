@@ -234,16 +234,18 @@ final class AppSettings {
         modelList.removeAll { $0 == pin }
     }
 
-    /// Puts `pin` right before or after `target`, for the grip drag in Settings.
-    func moveModel(_ pin: ModelPin, to target: ModelPin, placeAfter: Bool) {
+    /// Moves `pin` to sit right before or after `target`; returns whether the list changed.
+    @discardableResult
+    func moveModel(_ pin: ModelPin, to target: ModelPin, placeAfter: Bool) -> Bool {
         guard pin != target,
               let from = modelList.firstIndex(of: pin),
-              let to = modelList.firstIndex(of: target) else { return }
+              let to = modelList.firstIndex(of: target) else { return false }
         var dest = to + (placeAfter ? 1 : 0)
         if from < dest { dest -= 1 }
-        guard from != dest else { return }
+        guard from != dest else { return false }
         let moved = modelList.remove(at: from)
         modelList.insert(moved, at: dest)
+        return true
     }
 
     func preference(for provider: ProviderKind, model: String?) -> ModelPreference {
