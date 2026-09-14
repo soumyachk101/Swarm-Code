@@ -474,15 +474,17 @@ private struct DraftAttachments: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            // The delete badge sits fully inside the thumbnail's top-trailing
-            // corner: nothing overhangs into the next cell, so no later
-            // sibling can cover it and every photo stays deletable.
+            // The delete badge straddles the thumbnail's far top-right corner.
+            // Its 8pt overhang lands exactly in the inter-cell gap, so no later
+            // sibling covers it and every photo stays deletable.
             HStack(spacing: 8) {
                 ForEach(attachments) { attachment in
                     AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
                         .overlay(alignment: .topTrailing) {
                             Button {
+                                StripLog.log.debug("draft X tap id=\(attachment.id) name=\(attachment.name, privacy: .public) countBefore=\(attachments.count)")
                                 attachments.removeAll { $0.id == attachment.id }
+                                StripLog.log.debug("draft X removed countAfter=\(attachments.count)")
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
                                     .symbolRenderingMode(.palette)
@@ -490,16 +492,15 @@ private struct DraftAttachments: View {
                                     .padding(4)
                             }
                             .buttonStyle(.plain)
-                            .padding(.top, 2)
-                            .padding(.trailing, 2)
+                            .offset(x: 8, y: -8)
                             .accessibilityLabel(Text("Remove \(attachment.name)"))
                         }
                 }
             }
-            .padding(.top, 6)
-        }
-        .background {
-            AttachmentAnchorCapture { preview.setAnchor($0) }
+            .padding(.top, 8)
+            .background {
+                AttachmentAnchorCapture { preview.setAnchor($0) }
+            }
         }
         .onChange(of: attachments) {
             preview.retire(except: Set(attachments.map(\.id)))
