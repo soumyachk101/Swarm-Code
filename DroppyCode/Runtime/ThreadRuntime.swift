@@ -768,6 +768,8 @@ final class ThreadRuntime {
             questions.removeAll { $0.id == id }
         case .usage(let usage):
             self.usage = usage
+            // The turn just spent from the account, so the balance read before it is stale.
+            if let provider = thread?.provider { app?.providers.invalidateCredits(provider) }
         case .diff(let diff):
             if let currentTurnID { updateTurn(currentTurnID) { $0.providerDiff = diff } }
         case .notice(let notice):

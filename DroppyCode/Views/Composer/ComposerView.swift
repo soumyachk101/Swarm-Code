@@ -409,8 +409,10 @@ struct ComposerView: View {
 
 // MARK: - Controls
 
-/// The context ring. Clicking it opens the context window and the plan's usage limits.
+/// The context ring. Clicking it opens the context window and whatever else the provider
+/// reports: its plan's usage limits, or a pay-as-you-go key's remaining credits.
 private struct ContextMeter: View {
+    @Environment(AppModel.self) private var model
     let usage: ContextUsage?
     let provider: ProviderKind
 
@@ -418,7 +420,10 @@ private struct ContextMeter: View {
 
     var body: some View {
         let fraction = usage?.fraction
-        if fraction != nil || PlanLimitsReader.exposesLimits(provider) {
+        // A key with credit behind it has something to show from the first turn, before any
+        // usage has been reported, so the ring is not waiting on a context window to exist.
+        let hasCredits = CreditsReader.exposesCredits(provider) && model.settings.hasAPIKey(for: provider)
+        if fraction != nil || PlanLimitsReader.exposesLimits(provider) || hasCredits {
             Button {
                 isPresented.toggle()
             } label: {
@@ -436,11 +441,16 @@ private struct ContextMeter: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .help(fraction.map { "\(Int($0 * 100))% of the context window used" } ?? "Usage limits")
+            .help(helpText(fraction: fraction, hasCredits: hasCredits))
             .popover(isPresented: $isPresented, arrowEdge: .bottom) {
                 UsagePanel(usage: usage, provider: provider)
             }
         }
+    }
+
+    private func helpText(fraction: Double?, hasCredits: Bool) -> String {
+        if let fraction { return "\(Int(fraction * 100))% of the context window used" }
+        return hasCredits ? "Remaining credits" : "Usage limits"
     }
 }
 

@@ -7,6 +7,7 @@ enum DeepSeekAPI {
     static let baseURL = URL(string: "https://api.deepseek.com")!
     static let chatURL = URL(string: "https://api.deepseek.com/chat/completions")!
     static let modelsURL = URL(string: "https://api.deepseek.com/models")!
+    static let balanceURL = URL(string: "https://api.deepseek.com/user/balance")!
 
     /// True when the key lists models successfully.
     static func validate(apiKey: String) async -> Bool {
@@ -34,6 +35,36 @@ enum DeepSeekAPI {
         return ids.compactMap(Self.option(for:)).sorted { lhs, rhs in
             (lhs.isDefault ? 0 : 1, lhs.id) < (rhs.isDefault ? 0 : 1, rhs.id)
         }
+    }
+
+    /// The prepaid balance, from the endpoint platform.deepseek.com reads for its own
+    /// header. Nil when the key is missing, rejected or the API is unreachable, so the
+    /// usage panel says nothing rather than showing a number that is not the real one.
+    static func balance(apiKey: String) async -> ProviderCredits? {
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return nil }
+        var request = URLRequest(url: balanceURL, timeoutInterval: 15)
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = JSONValue.parse(data) else { return nil }
+        return credits(from: json)
+    }
+
+    /// `{"is_available": true, "balance_infos": [{"currency": "USD", "total_balance": "12.34",
+    /// "granted_balance": "2.34", "topped_up_balance": "10.00"}]}`. One entry per currency,
+    /// and the amounts arrive as strings, so they are parsed rather than decoded as numbers.
+    static func credits(from json: JSONValue) -> ProviderCredits? {
+        guard let info = json["balance_infos"]?.array?.first,
+              let total = info["total_balance"]?.string.flatMap(Double.init) else { return nil }
+        return ProviderCredits(
+            total: total,
+            currency: info["currency"]?.string ?? "",
+            toppedUp: info["topped_up_balance"]?.string.flatMap(Double.init),
+            granted: info["granted_balance"]?.string.flatMap(Double.init),
+            isUsable: json["is_available"]?.bool ?? true
+        )
     }
 
     static let deepseekEfforts = ["low", "high", "max"]
