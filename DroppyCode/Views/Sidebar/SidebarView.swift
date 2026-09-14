@@ -103,20 +103,21 @@ struct SidebarView: View {
             }
             Button("Cancel", role: .cancel) { renaming = nil }
         }
-        .confirmationDialog(
-            "Delete this thread?",
+    }
+
+    /// The delete question, asked in a popover on the row itself rather than a sheet over
+    /// the window. Clicking away or pressing Escape keeps the thread.
+    private func deletePopover<Row: View>(for thread: ChatThread, on row: Row) -> some View {
+        row.popover(
             isPresented: Binding(
-                get: { pendingDeletion != nil },
-                set: { if !$0 { pendingDeletion = nil } }
+                get: { pendingDeletion?.id == thread.id },
+                set: { if !$0, pendingDeletion?.id == thread.id { pendingDeletion = nil } }
             ),
-            presenting: pendingDeletion
-        ) { thread in
-            Button("Delete thread", role: .destructive) { model.delete(thread.id) }
-            if thread.worktreePath != nil {
-                Button("Delete thread and worktree", role: .destructive) { model.delete(thread.id, removeWorktree: true) }
+            arrowEdge: .trailing
+        ) {
+            DeleteThreadPopover(thread: thread) { removeWorktree in
+                model.delete(thread.id, removeWorktree: removeWorktree)
             }
-        } message: { thread in
-            Text("“\(thread.title)” and its history will be removed. Files in your project stay as they are.")
         }
     }
 
@@ -133,7 +134,7 @@ struct SidebarView: View {
             reorderableRow(thread, projectName: projectName, peers: peers)
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[item.id] = $0 }
         case .helper(let thread, let isLast):
-            SidebarHelperRow(
+            deletePopover(for: thread, on: SidebarHelperRow(
                 thread: thread,
                 isLast: isLast,
                 onFold: { fold(thread.parentThreadID) },
@@ -148,7 +149,7 @@ struct SidebarView: View {
                         model.delete(thread.id)
                     }
                 }
-            )
+            ))
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[item.id] = $0 }
             .modifier(RidesWithDraggedParent(parentID: thread.parentThreadID, drag: drag))
         case .helperStub(let parent, let count):
@@ -456,7 +457,7 @@ struct SidebarView: View {
     private func threadRow(_ thread: ChatThread, projectName: String?, isDragged: Bool = false) -> some View {
         // A thread with helpers under it gets the fold button; a settled one shows none.
         let hasHelpers = !thread.isSettled && !model.helpers(of: thread.id).isEmpty
-        return SidebarThreadRow(
+        return deletePopover(for: thread, on: SidebarThreadRow(
             thread: thread,
             projectName: projectName,
             isDragged: isDragged,
@@ -474,7 +475,27 @@ struct SidebarView: View {
                     model.delete(thread.id)
                 }
             }
-        )
+        ))
+    }
+}
+
+/// What the delete popover asks: the thread by name, what stays, and the destructive choice
+/// as a red row like the ellipsis menu's, with a second one for a thread's worktree.
+private struct DeleteThreadPopover: View {
+    let thread: ChatThread
+    let onDelete: (_ removeWorktree: Bool) -> Void
+
+    var body: some View {
+        PopoverMenu {
+            PopoverSectionHeader("Delete this thread?")
+            PopoverNote("“\(thread.title)” and its history will be removed. Files in your project stay as they are.")
+            PopoverDivider()
+            PopoverItem("Delete thread", symbol: "trash", isDestructive: true) { onDelete(false) }
+            if thread.worktreePath != nil {
+                PopoverItem("Delete thread and worktree", symbol: "trash", isDestructive: true) { onDelete(true) }
+            }
+        }
+        .frame(width: 280)
     }
 }
 
