@@ -28,6 +28,8 @@ final class AppModel {
     let providers: ProviderRegistry
     let terminals: TerminalStore
     let sidebar: SidebarLayout
+    /// Picks chats back up once a spent usage limit resets, with the setting on.
+    @ObservationIgnored private(set) var autoContinue: AutoContinue!
 
     /// The lists are the source of truth for anything that shows several items at once. Single
     /// lookups go through the cells below, so the timeline rows, composer and chat header of one
@@ -79,6 +81,7 @@ final class AppModel {
         // Property observers stay quiet inside an initializer, so the cells are built here once.
         Self.sync(&projectCells, with: projects)
         Self.sync(&threadCells, with: threads)
+        autoContinue = AutoContinue(app: self)
         if let lastID = settings.lastProjectID, project(lastID) == nil {
             settings.lastProjectID = nil
         }
@@ -747,6 +750,9 @@ final class AppModel {
         // A helper panel closed mid-turn kept its session alive to finish stopping cleanly;
         // it has now.
         if sessionsToRelease.remove(id) != nil { existingRuntime(for: id)?.stopSession() }
+        // A turn stopped by a spent usage limit waits for the reset and goes on by itself:
+        // no chime and no "stopped with an error", the wait says what is happening.
+        if autoContinue.turnFinished(id, status: status, continues: continues) { return }
         // A head reports to its lead, which is the chat that chimes and notifies when
         // the whole job is done. A head with another turn coming (its report, after its
         // budget ran out) reports at the end of that one.

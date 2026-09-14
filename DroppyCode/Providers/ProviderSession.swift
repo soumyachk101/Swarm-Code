@@ -94,6 +94,8 @@ enum ProviderEvent: Sendable {
     case usage(ContextUsage)
     case diff(String)
     case notice(Notice)
+    /// The account's usage limit is spent; the turn stops until it resets, at the time given when known.
+    case usageLimit(resetsAt: Date?)
     case modeChanged(InteractionMode)
     case models([ModelOption], current: String?)
     case commands([SlashCommand])

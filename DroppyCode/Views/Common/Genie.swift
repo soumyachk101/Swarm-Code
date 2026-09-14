@@ -18,21 +18,27 @@ final class GenieAnimator {
         let frame: CGRect
         /// Where the flight lands, in the layer's coordinates; nil flies to the archive corner.
         var target: CGPoint?
+        /// Played backwards: the ghost comes out of the target and settles into `frame`.
+        var isArrival = false
     }
 
     private(set) var flights: [Flight] = []
 
     /// Flies a ghost of a row from `frame`. The ghost draws exactly what `ghost`
     /// returns, so pass the row as it looks — background included — and the row
-    /// hands over to it without a visible change.
-    func launch<Ghost: View>(frame: CGRect, colorScheme: ColorScheme, target: CGPoint? = nil, @ViewBuilder ghost: () -> Ghost) {
+    /// hands over to it without a visible change. Arriving, the ghost flies the other
+    /// way: out of `target` and into `frame`. Returns false when nothing flies (reduced
+    /// motion, or nothing to draw), so the caller can show the real thing instead.
+    @discardableResult
+    func launch<Ghost: View>(frame: CGRect, colorScheme: ColorScheme, target: CGPoint? = nil, arriving: Bool = false, @ViewBuilder ghost: () -> Ghost) -> Bool {
         guard frame.width > 1, frame.height > 1,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return false }
         let renderer = ImageRenderer(content: GenieGhost(size: frame.size, content: ghost())
             .environment(\.colorScheme, colorScheme))
         renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
-        guard let image = renderer.nsImage else { return }
-        flights.append(Flight(image: image, frame: frame, target: target))
+        guard let image = renderer.nsImage else { return false }
+        flights.append(Flight(image: image, frame: frame, target: target, isArrival: arriving))
+        return true
     }
 
     func finish(_ id: UUID) {
@@ -78,12 +84,15 @@ private struct GenieFlightView: View {
     var body: some View {
         let target = flight.target ?? CGPoint(x: 24, y: canvas.height - 12)
         let frame = flight.frame
+        // An arrival is the same flight run backwards: all the way in at the start, and
+        // out of the funnel into place by the end.
+        let (start, end) = flight.isArrival ? (1.0, 0.0) : (0.0, 1.0)
         Image(nsImage: flight.image)
             .resizable()
             .frame(width: frame.width, height: frame.height)
             .position(x: frame.midX, y: frame.midY)
             .frame(width: canvas.width, height: canvas.height, alignment: .topLeading)
-            .keyframeAnimator(initialValue: 0.0, trigger: hasStarted) { content, progress in
+            .keyframeAnimator(initialValue: start, trigger: hasStarted) { content, progress in
                 content
                     .distortionEffect(
                         ShaderLibrary.genie(
@@ -95,7 +104,7 @@ private struct GenieFlightView: View {
                     )
                     .opacity(progress > 0.9 ? max(0, (1 - progress) / 0.1) : 1)
             } keyframes: { _ in
-                CubicKeyframe(1.0, duration: GenieAnimator.duration)
+                CubicKeyframe(end, duration: GenieAnimator.duration)
             }
             .onAppear { hasStarted = true }
             .task {

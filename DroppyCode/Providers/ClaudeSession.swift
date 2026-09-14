@@ -292,8 +292,12 @@ final class ClaudeSession: ProviderSession {
         case "result":
             handleResult(message)
         case "rate_limit_event":
-            if message["rate_limit_info"]?["status"]?.string == "rejected" {
-                onEvent?(.notice(Notice(level: .warning, message: "Claude hit a usage limit. The turn continues when the limit resets.")))
+            let info = message["rate_limit_info"] ?? .null
+            if info["status"]?.string == "rejected" {
+                let resetsAt = (info["resetsAt"]?.double ?? info["resetsAtSeconds"]?.double).map { Date(timeIntervalSince1970: $0) }
+                let when = resetsAt.map { " It resets at \(AutoContinue.format($0))." } ?? ""
+                onEvent?(.notice(Notice(level: .warning, message: "Claude hit a usage limit.\(when)")))
+                onEvent?(.usageLimit(resetsAt: resetsAt))
             }
         default:
             break
@@ -470,6 +474,8 @@ final class ClaudeSession: ProviderSession {
         } else if isError {
             let errors = (message["errors"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
             let text = message["result"]?.string ?? errors
+            // The limit refusal may arrive as the result alone, without a rate limit event before it.
+            if UsageLimitSignal.matches(text) { onEvent?(.usageLimit(resetsAt: UsageLimitSignal.resetTime(in: text))) }
             onEvent?(.turnCompleted(status: .failed, error: text.isEmpty ? "Claude stopped before finishing." : text))
         } else {
             onEvent?(.turnCompleted(status: .completed, error: nil))

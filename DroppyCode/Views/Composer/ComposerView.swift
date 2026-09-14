@@ -8,6 +8,8 @@ struct ComposerArea: View {
     let workingDirectory: String?
     /// Floating panels are narrow: the model chip collapses to the provider's icon.
     var compactModelChip: Bool = false
+    /// Whether the box takes typing focus as it appears; a floating panel's does not.
+    var takesFocusOnAppear = true
 
     /// The changes popover presented from the tab. Driven by
     /// `runtime.isDiffVisible`, so every opener (tab, Review, ⌘D) shares it.
@@ -59,7 +61,7 @@ struct ComposerArea: View {
                         }
                         .transition(.softAppear)
                     }
-                    ComposerView(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: compactModelChip)
+                    ComposerView(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: compactModelChip, takesFocusOnAppear: takesFocusOnAppear)
                 }
                 // NB: no .animation(..., value: changeStats) here on purpose: the tab's
                 // insertion animates via its .softAppear transition, and opening the
@@ -96,6 +98,7 @@ struct ComposerView: View {
     let workingDirectory: String?
     /// Floating panels are narrow: the model chip collapses to the provider's icon.
     var compactModelChip: Bool = false
+    var takesFocusOnAppear = true
 
     @State private var textHeight: CGFloat = 20
     @State private var controller = ComposerController()
@@ -139,7 +142,8 @@ struct ComposerView: View {
                         // Clicking a row focuses the popover; only dismiss when
                         // focus truly left both the text and the suggestions.
                         if !controller.isClickInsideSuggestions() { suggestions = SuggestionState() }
-                    }
+                    },
+                    takesFocusOnAppear: takesFocusOnAppear
                 )
                 // The text view itself takes its new height at once, so it lays out
                 // every line with nothing to scroll; only the clip around it grows

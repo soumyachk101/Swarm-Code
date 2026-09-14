@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The chat's Hydra mark, first in the chrome row: three heads on one body. With Hydra on
+/// The chat's Hydra mark, first in the chrome row: one dragon head in profile. With Hydra on
 /// in Settings it is always active in every chat: charged, a ring of the roster's colours
 /// turning around it and a soft glow breathing behind, so the chat reads as a team at
 /// work. The badge above it counts the heads at work; tapping the badge (or the mark)
@@ -17,67 +17,65 @@ struct HydraButton: View {
     var body: some View {
         let isOn = model.hydraIsOn(thread)
         let running = model.hydraHeads(of: thread.id).count { $0.hydra?.status == .running }
-        // Siblings, badge last: the badge always draws above the button's glass, and each
-        // keeps its own tap. Nested, the badge sat under the glass and its taps went to the mark.
-        ZStack(alignment: .topTrailing) {
-            Button {
-                togglePanel()
-            } label: {
-                ZStack {
-                    if isOn {
-                        HydraCharge()
-                            .transition(.scale(scale: 0.6).combined(with: .opacity))
-                    }
-                    HydraMarkView(isOn: isOn, isHovering: isHovering)
+        Button {
+            togglePanel()
+        } label: {
+            ZStack {
+                if isOn {
+                    HydraCharge()
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
-                .frame(width: Chrome.capsuleHeight, height: Chrome.capsuleHeight)
-                .contentShape(Circle())
+                HydraMarkView(isOn: isOn, isHovering: isHovering)
             }
-            .buttonStyle(.plain)
-            .chromeGlassCircle()
-            .onGeometryChange(for: CGPoint.self, of: {
-                let frame = $0.frame(in: .named(GenieAnimator.coordinateSpace))
-                return CGPoint(x: frame.midX, y: frame.midY)
-            }) { runtime.hydraButtonCenterInWindow = $0 }
-            .help(help(isOn: isOn, running: running))
-            .accessibilityLabel(Text(panelHelp(running: running)))
-            .accessibilityValue(Text(isOn ? "On" : "Off"))
-            if running > 0 {
-                Button {
-                    togglePanel()
-                } label: {
-                    Text(verbatim: "\(running)")
-                        .font(.system(size: 9, weight: .bold).monospacedDigit())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .frame(minWidth: 14, minHeight: 14)
-                        .background(Chrome.accent, in: Capsule())
+            .frame(width: Chrome.capsuleHeight, height: Chrome.capsuleHeight)
+            .contentShape(Circle())
+            // The badge is part of the glass's own content, which is the one place that
+            // draws above the glass: the chrome row's container composites every glass in
+            // it over everything else in it, so a badge laid over the button after the
+            // glass, as an overlay or a later sibling, came out underneath.
+            .overlay(alignment: .topTrailing) {
+                if running > 0 {
+                    HydraRunningBadge(running: running)
+                        .offset(x: 3, y: -3)
+                        .transition(.scale.combined(with: .opacity))
                 }
-                .buttonStyle(.plain)
-                .offset(x: 3, y: -3)
-                .transition(.scale.combined(with: .opacity))
-                .help(running == 1 ? "1 head working · Show or hide the Hydra panel" : "\(running) heads working · Show or hide the Hydra panel")
-                .accessibilityLabel(Text(running == 1 ? "1 head working, show or hide the Hydra panel" : "\(running) heads working, show or hide the Hydra panel"))
             }
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: running)
         }
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: running)
+        .buttonStyle(.plain)
+        .chromeGlassCircle()
+        .onGeometryChange(for: CGPoint.self, of: {
+            let frame = $0.frame(in: .named(GenieAnimator.coordinateSpace))
+            return CGPoint(x: frame.midX, y: frame.midY)
+        }) { runtime.hydraButtonCenterInWindow = $0 }
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
+        .help(help(isOn: isOn, running: running))
+        .accessibilityLabel(Text(panelHelp(running: running)))
+        .accessibilityValue(Text(isOn ? "On" : "Off"))
     }
 
     /// Opens the floating panel; open, hides it back into this button with a genie morph.
-    /// Heads keep working either way. Nothing to show yet, nothing happens.
+    /// Either way the panel itself comes or goes with no transition of its own: a ghost of
+    /// it does the flying, out of this button into the panel's place, or from the panel's
+    /// place down into this button. Heads keep working either way. Nothing to show yet,
+    /// nothing happens.
     private func togglePanel() {
         guard !model.hydraHeads(of: thread.id).isEmpty else { return }
+        let morphs = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if runtime.isHydraPanelHidden {
+            // The panel launches its own arrival once it knows where it sits.
+            runtime.hydraPanelMorphs = morphs
             withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden = false }
         } else {
-            if let frame = runtime.hydraPanelFrameInWindow, let target = runtime.hydraButtonCenterInWindow {
-                GenieAnimator.shared.launch(frame: frame, colorScheme: colorScheme, target: target) {
+            var flew = false
+            if morphs, let frame = runtime.hydraPanelFrameInWindow, let target = runtime.hydraButtonCenterInWindow {
+                flew = GenieAnimator.shared.launch(frame: frame, colorScheme: colorScheme, target: target) {
                     HydraPanelGhost(isDark: colorScheme == .dark)
                 }
             }
+            runtime.hydraPanelMorphs = flew
             withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden = true }
         }
     }
@@ -101,7 +99,7 @@ struct HydraButton: View {
     }
 }
 
-/// The three-headed mark: quiet when Hydra is off, full when it is on or under the pointer.
+/// The dragon-head mark: quiet when Hydra is off, full when it is on or under the pointer.
 private struct HydraMarkView: View {
     let isOn: Bool
     let isHovering: Bool
@@ -159,29 +157,21 @@ struct HydraCharge: View {
     }
 }
 
-/// The flat stand-in the Hydra panel becomes while it hides into the button: the
-/// panel's own glass, scrim, tint and hairline, minus its transcript, so the genie
-/// flight carries its glow rather than a blank tile.
-private struct HydraPanelGhost: View {
-    let isDark: Bool
+/// The count of heads at work, above the button's top-right: tapping it is tapping the
+/// button.
+private struct HydraRunningBadge: View {
+    let running: Int
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        ZStack {
-            shape
-                .fill(.clear)
-                .glassEffect(.regular, in: shape)
-                .overlay {
-                    shape.fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
-                }
-                .overlay {
-                    shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
-                }
-        }
-        .overlay {
-            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
-        }
-        .shadow(color: .black.opacity(isDark ? 0.36 : 0.22), radius: 28, y: 10)
+        Text(verbatim: "\(running)")
+            .font(.system(size: 9, weight: .bold).monospacedDigit())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 4)
+            .frame(minWidth: 14, minHeight: 14)
+            .background(Chrome.accent, in: Capsule())
+            .contentShape(Capsule())
+            .help(running == 1 ? "1 head working · Show or hide the Hydra panel" : "\(running) heads working · Show or hide the Hydra panel")
+            .accessibilityHidden(true)
     }
 }
 

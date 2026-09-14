@@ -145,10 +145,12 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
         case droppy
     }
 
-    /// Delegated by the lead, or queued by the user while the lead worked.
+    /// Delegated by the lead, queued by the user while the lead worked, or sent by the
+    /// user straight to a head with "Every message goes to a head" on.
     enum Origin: String, Codable, Sendable {
         case delegated
         case queued
+        case sent
     }
 
     enum Status: String, Codable, Sendable {
@@ -581,22 +583,27 @@ enum HydraPrompts {
         var touchedPaths: [String] = []
     }
 
-    /// What a Droppy-run head is sent for a task the user queued while the lead worked.
-    static func queuedHeadPrompt(persona: HydraPersona, task: String, context: ChatContext, workplace: Workplace) -> String {
+    /// What a Droppy-run head is sent for a task the user queued while the lead worked, or
+    /// sent straight to a head; `leadIsWorking` says which, so the head is told the truth
+    /// about the lead.
+    static func queuedHeadPrompt(persona: HydraPersona, task: String, context: ChatContext, workplace: Workplace, leadIsWorking: Bool = true) -> String {
         var lines: [String] = []
         if let prompt = context.lastUserPrompt, !prompt.isEmpty {
             lines.append("- The user last asked the lead: \(quoted(prompt, limit: 1_200))")
         }
         if let reply = context.lastReply, !reply.isEmpty {
-            lines.append("- The lead's latest reply so far: \(quoted(reply, limit: 800))")
+            lines.append("- The lead's latest reply\(leadIsWorking ? " so far" : ""): \(quoted(reply, limit: 800))")
         }
-        if !context.touchedPaths.isEmpty {
+        if leadIsWorking, !context.touchedPaths.isEmpty {
             let paths = context.touchedPaths.prefix(20).joined(separator: ", ")
             lines.append("- Files the lead is changing in its current turn: \(paths). Leave these alone; if your task cannot be done without touching one, keep the change minimal and say so in your report.")
         }
         let contextBlock = lines.isEmpty ? "The lead has not said anything yet." : lines.joined(separator: "\n")
+        let handoff = leadIsWorking
+            ? "The user queued this task for you while the lead works on something else."
+            : "The user sent this task straight to you; the lead is idle and will hear your report."
         return """
-        You are \(persona.name), a Hydra head in Droppy Code: a helper running in parallel with the lead agent. The user queued this task for you while the lead works on something else.
+        You are \(persona.name), a Hydra head in Droppy Code: a helper running in parallel with the lead agent. \(handoff)
 
         ## What is going on in the main chat
         \(contextBlock)
@@ -677,6 +684,9 @@ enum HydraPrompts {
         }
         if reports.contains(where: { $0.origin == .queued }) {
             closing.append("The user queued that work for the heads while you were busy; take it into account and carry on with the main job.")
+        }
+        if reports.contains(where: { $0.origin == .sent }) {
+            closing.append("The user sent that work straight to the heads instead of to you; take it into account, and reply to the user on it as if they had asked you.")
         }
         closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile, revert or redo anything. Build on the reports, read the files they name if something matters, run one verification if it matters, and finish the job.")
         if !stillWorking.isEmpty {

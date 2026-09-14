@@ -30,6 +30,12 @@ struct HydraSettingsPage: View {
                 ChromeRow(title: "Queued follow-ups go to heads", detail: "With Hydra on, a prompt queued behind a running turn starts on a head right away, with a note on what the lead is doing") {
                     SettingsSwitch(isOn: $settings.hydraQueueHeads)
                 }
+                .disabled(!settings.hydraEnabled || settings.hydraAlwaysHeads)
+                .opacity(settings.hydraEnabled && !settings.hydraAlwaysHeads ? 1 : 0.5)
+                ChromeRowDivider()
+                ChromeRow(title: "Every message goes to a head", detail: "With Hydra on, each message you send starts on a head of its own, sent or queued, whether the lead is busy or not; the lead only hears the heads' reports. When every head is busy, a message goes to the lead as usual.") {
+                    SettingsSwitch(isOn: $settings.hydraAlwaysHeads)
+                }
                 .disabled(!settings.hydraEnabled)
                 .opacity(settings.hydraEnabled ? 1 : 0.5)
                 ChromeRowDivider()

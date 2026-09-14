@@ -1,10 +1,80 @@
 import AppKit
 import SwiftUI
 
-/// Where the helper panel goes and how big it is, from the chat pane's size. Docked, it
-/// sits in the bottom-right corner beside the chat box, the two centred in the pane as one
-/// group; when the pane is too narrow for both side by side it sits above the box instead,
-/// so neither is ever covered. Dragged elsewhere, it stays within the pane.
+/// The side of the chat column a docked panel sits on.
+enum PanelDockSide: Equatable {
+    case leading, trailing
+}
+
+/// The corner a floating panel docks in.
+enum PanelDockCorner: Equatable {
+    case topLeading, topTrailing, bottomLeading, bottomTrailing
+
+    var side: PanelDockSide {
+        switch self {
+        case .topLeading, .bottomLeading: .leading
+        case .topTrailing, .bottomTrailing: .trailing
+        }
+    }
+
+    var isTop: Bool { self == .topLeading || self == .topTrailing }
+
+    /// The corner on the other side of the chat column, at the same edge.
+    var acrossTheColumn: PanelDockCorner {
+        switch self {
+        case .topLeading: .topTrailing
+        case .topTrailing: .topLeading
+        case .bottomLeading: .bottomTrailing
+        case .bottomTrailing: .bottomLeading
+        }
+    }
+}
+
+/// The room the docked panels take from the chat column on each side; the timeline and
+/// the chat box centre in what is left, so they stay lined up with each other.
+struct PanelReserve: Equatable {
+    var leading: CGFloat = 0
+    var trailing: CGFloat = 0
+}
+
+/// The four docked spots for the pane as it is.
+struct PanelDocks {
+    var topLeading: CGPoint
+    var topTrailing: CGPoint
+    var bottomLeading: CGPoint
+    var bottomTrailing: CGPoint
+
+    init(layout: SubagentPanelLayout, reserve: PanelReserve) {
+        topLeading = layout.dockedOrigin(.topLeading, reserve: reserve)
+        topTrailing = layout.dockedOrigin(.topTrailing, reserve: reserve)
+        bottomLeading = layout.dockedOrigin(.bottomLeading, reserve: reserve)
+        bottomTrailing = layout.dockedOrigin(.bottomTrailing, reserve: reserve)
+    }
+
+    subscript(corner: PanelDockCorner) -> CGPoint {
+        switch corner {
+        case .topLeading: topLeading
+        case .topTrailing: topTrailing
+        case .bottomLeading: bottomLeading
+        case .bottomTrailing: bottomTrailing
+        }
+    }
+
+    /// The docked spot in a corner with `below` panels already docked in it: each one
+    /// stacks a panel's height further from the edge, above the last at the bottom and
+    /// below it at the top.
+    func stacked(_ corner: PanelDockCorner, below: Int, layout: SubagentPanelLayout) -> CGPoint {
+        let spot = self[corner]
+        let step = CGFloat(below) * (layout.panelHeight + SubagentPanelLayout.gap)
+        let y = corner.isTop ? min(spot.y + step, layout.pane.height - layout.panelHeight - 8) : max(8, spot.y - step)
+        return CGPoint(x: spot.x, y: y)
+    }
+}
+
+/// Where a floating panel goes and how big it is, from the chat pane's size. Docked, it
+/// sits in a corner beside the chat column, the group centred in the pane; when the pane
+/// is too narrow for both side by side it sits in the corner above the box instead, so
+/// neither is ever covered. Dragged elsewhere, it stays within the pane.
 struct SubagentPanelLayout: Equatable {
     /// The panel's width, given the room: the composer's own column width at most.
     static let width: CGFloat = 400
@@ -47,18 +117,37 @@ struct SubagentPanelLayout: Equatable {
 
     var panelSize: CGSize { CGSize(width: panelWidth, height: panelHeight) }
 
-    /// The docked spot: beside the chat box, the pair centred, or above it when they do not fit.
-    var dockedOrigin: CGPoint {
+    /// The docked spot in a corner: beside the chat column, the group centred, at the top
+    /// under the chrome row or at the bottom level with the chat box; or, when the pane is
+    /// too narrow for both side by side, in the corner above the box. Panels docked on
+    /// both sides take room from both ends of the column, so it narrows to sit between them.
+    func dockedOrigin(_ corner: PanelDockCorner, reserve: PanelReserve) -> CGPoint {
+        let y = corner.isTop
+            ? Chrome.contentTopInset
+            : pane.height - (sitsBesideComposer ? Self.bottomMargin : composerAreaHeight + Self.gap) - panelHeight
         if sitsBesideComposer {
-            let composerWidth = min(Self.composerMaxWidth, pane.width - 2 * Self.sideMargin - composerReserve)
-            let groupWidth = composerWidth + Self.gap + panelWidth
-            let groupLeft = (pane.width - groupWidth) / 2
-            return CGPoint(x: groupLeft + composerWidth + Self.gap, y: pane.height - Self.bottomMargin - panelHeight)
+            let row = pane.width - reserve.leading - reserve.trailing
+            let composerWidth = min(Self.composerMaxWidth, row - 2 * Self.sideMargin)
+            let composerLeft = reserve.leading + (row - composerWidth) / 2
+            switch corner.side {
+            case .leading: return CGPoint(x: composerLeft - Self.gap - panelWidth, y: y)
+            case .trailing: return CGPoint(x: composerLeft + composerWidth + Self.gap, y: y)
+            }
         }
-        return CGPoint(
-            x: pane.width - Self.sideMargin - panelWidth,
-            y: pane.height - composerAreaHeight - Self.gap - panelHeight
-        )
+        return CGPoint(x: corner.side == .leading ? Self.sideMargin : pane.width - Self.sideMargin - panelWidth, y: y)
+    }
+
+    /// Where a dropped panel docks, if anywhere: let go in the top or bottom band and out
+    /// towards either side, it slides into that corner. Nil leaves it where it was dropped.
+    func dockCorner(forDrop origin: CGPoint, docks: PanelDocks) -> PanelDockCorner? {
+        let centre = origin.x + panelWidth / 2
+        let isTop = origin.y <= docks.topLeading.y + Self.snapDistance
+        let isBottom = origin.y >= docks.bottomLeading.y - Self.snapDistance
+        guard isTop || isBottom else { return nil }
+        let bottom = isBottom && !isTop
+        if centre >= docks.bottomTrailing.x - Self.snapDistance { return bottom ? .bottomTrailing : .topTrailing }
+        if centre <= docks.bottomLeading.x + panelWidth + Self.snapDistance { return bottom ? .bottomLeading : .topLeading }
+        return nil
     }
 
     /// Keeps a dragged panel inside the pane.
@@ -68,10 +157,6 @@ struct SubagentPanelLayout: Equatable {
             x: min(max(origin.x, inset), max(inset, pane.width - panelWidth - inset)),
             y: min(max(origin.y, inset), max(inset, pane.height - panelHeight - inset))
         )
-    }
-
-    func snapsToDock(_ origin: CGPoint) -> Bool {
-        abs(origin.x - dockedOrigin.x) < Self.snapDistance && abs(origin.y - dockedOrigin.y) < Self.snapDistance
     }
 }
 
@@ -92,8 +177,6 @@ struct SubagentPanel: View {
 
     @State private var scrollChrome = ChromeScrollModel()
     @State private var scrollState = TimelineScrollState()
-    @State private var isHoveringHandle = false
-    @State private var isDragging = false
 
     private static let cornerRadius: CGFloat = 22
     private static let handleHeight: CGFloat = Chrome.chromeTopPadding + Chrome.capsuleHeight + 6
@@ -112,7 +195,7 @@ struct SubagentPanel: View {
         )
         .equatable()
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true)
+            ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false)
                 .overlay(alignment: .top) {
                     JumpToLatestButton(scrollState: scrollState)
                 }
@@ -124,31 +207,9 @@ struct SubagentPanel: View {
             HStack(alignment: .top, spacing: 8) {
                 // The handle. Invisible, like a window's title bar with no title; the
                 // cursor says what it does.
-                Color.clear
+                PanelDragHandle(onDrag: onDrag, onDragEnd: onDragEnd)
                     .frame(maxWidth: .infinity)
                     .frame(height: Self.handleHeight)
-                    .contentShape(.rect)
-                    .onHover { hovering in
-                        isHoveringHandle = hovering
-                        guard !isDragging else { return }
-                        if hovering { NSCursor.openHand.push() } else { NSCursor.pop() }
-                    }
-                    .gesture(
-                        DragGesture(minimumDistance: 2, coordinateSpace: .global)
-                            .onChanged { value in
-                                if !isDragging {
-                                    isDragging = true
-                                    NSCursor.closedHand.push()
-                                }
-                                onDrag(value.translation)
-                            }
-                            .onEnded { _ in
-                                isDragging = false
-                                NSCursor.pop()
-                                if !isHoveringHandle { NSCursor.pop() }
-                                onDragEnd()
-                            }
-                    )
                     .help("Drag to move")
                     .accessibilityLabel(Text("Drag to move"))
                 ChromeCircleButton(symbol: "xmark", help: "Close and stop this chat") {
@@ -183,9 +244,90 @@ struct SubagentPanel: View {
                 .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
                 .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
         }
-        .onDisappear {
-            if isDragging { NSCursor.pop() }
-            if isHoveringHandle { NSCursor.pop() }
+    }
+}
+
+/// The strip a floating panel is dragged by. AppKit tracks the press itself, the way the
+/// sidebar's resize grip does: the first click takes hold even when the window is not key,
+/// nothing under the strip can claim the drag once it has begun, and the hand cursor is a
+/// real cursor rect. A SwiftUI drag gesture here lost most presses to the transcript's
+/// scroll view beneath it. Reports the pointer's travel since the press in the pane's
+/// coordinates, y running down like the panel's offset.
+struct PanelDragHandle: NSViewRepresentable {
+    let onDrag: (CGSize) -> Void
+    let onDragEnd: () -> Void
+
+    func makeNSView(context: Context) -> PanelDragHandleView {
+        let view = PanelDragHandleView(frame: .zero)
+        update(view)
+        return view
+    }
+
+    func updateNSView(_ nsView: PanelDragHandleView, context: Context) {
+        update(nsView)
+    }
+
+    private func update(_ view: PanelDragHandleView) {
+        view.onDrag = onDrag
+        view.onDragEnd = onDragEnd
+    }
+}
+
+final class PanelDragHandleView: NSView {
+    var onDrag: ((CGSize) -> Void)?
+    var onDragEnd: (() -> Void)?
+
+    /// How far the pointer travels before a press becomes a drag.
+    private static let slop: CGFloat = 2
+
+    private var pressOrigin: NSPoint = .zero
+    private var isDragging = false
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// A press on the handle moves the panel, never the window.
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        pressOrigin = event.locationInWindow
+        isDragging = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let travel = travel(to: event)
+        if !isDragging {
+            guard abs(travel.width) >= Self.slop || abs(travel.height) >= Self.slop else { return }
+            isDragging = true
+            NSCursor.closedHand.push()
         }
+        onDrag?(travel)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isDragging else { return }
+        isDragging = false
+        NSCursor.pop()
+        onDrag?(travel(to: event))
+        onDragEnd?()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Taken out mid-drag, the panel lets go of the cursor with it.
+        if window == nil, isDragging {
+            isDragging = false
+            NSCursor.pop()
+        }
+    }
+
+    /// The pointer's travel since the press. AppKit's y runs up; the panel's offset runs down.
+    private func travel(to event: NSEvent) -> CGSize {
+        let point = event.locationInWindow
+        return CGSize(width: point.x - pressOrigin.x, height: pressOrigin.y - point.y)
     }
 }
