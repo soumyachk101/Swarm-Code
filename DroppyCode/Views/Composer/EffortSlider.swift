@@ -475,7 +475,7 @@ private struct RoundIconButton: View {
     }
 }
 
-/// A thick capsule track with a dot per level, filled up to a large white knob that snaps to each level.
+/// A thick capsule track with a dot per level, filled up to a large glass knob that snaps to each level.
 struct EffortSlider: View {
     static let trackHeight: CGFloat = 34
     static let thumbSize: CGFloat = 42
@@ -533,14 +533,18 @@ struct EffortSlider: View {
                         .frame(width: 5, height: 5)
                         .position(x: stopX, y: Self.trackHeight / 2)
                 }
+                // The knob is a Liquid Glass lens: it refracts the fill's edge, the stops and
+                // the particles as it slides over them, lit white just enough to read as the
+                // knob on the dark track. The charged fills keep their glow under it.
                 Circle()
-                    .fill(Color.white)
-                    // On a white fill the white knob needs an edge to read against it.
+                    .fill(.clear)
+                    .frame(width: Self.thumbSize, height: Self.thumbSize)
+                    .glassEffect(.regular.tint(Color.white.opacity(look.isLightFill ? 0.55 : 0.32)).interactive(), in: Circle())
+                    // On a white fill the lens needs an edge to read against it.
                     .overlay {
                         Circle().strokeBorder(Color.black.opacity(look.isLightFill ? 0.14 : 0), lineWidth: 1)
                     }
                     .shadow(color: look.glow, radius: look.kind == .plain ? 4 : 8, y: 1)
-                    .frame(width: Self.thumbSize, height: Self.thumbSize)
                     .scaleEffect(dragX == nil ? 1 : 1.06)
                     .position(x: x, y: Self.trackHeight / 2)
             }
