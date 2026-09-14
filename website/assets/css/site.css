@@ -95,6 +95,8 @@
 
   --container-width: 1120px;
   --container-pad: 24px;
+  /* The one distance between a section's heading block and what follows it. */
+  --gap-heading: 48px;
   --nav-safe-top: env(safe-area-inset-top, 0px);
   --nav-dock-bar-height: 8px;
   --nav-dock-closed-height: 56px;
@@ -972,7 +974,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   --highlight-page-gutter: max(24px, calc((100vw - 1240px) / 2 + 24px));
   width: 100vw;
   margin-left: calc(50% - 50vw);
-  padding: 64px 0 12px;
+  padding: 0;
   overflow: hidden;
 }
 .showcase-highlights__head,
@@ -993,7 +995,7 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 .showcase-highlights__sub {
   max-width: none;
-  margin: 16px 0 0;
+  margin: 18px 0 0;
   color: var(--text-secondary);
   font-size: clamp(1rem, 1.7vw, 1.2rem);
   line-height: 1.5;
@@ -1006,7 +1008,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   grid-auto-columns: var(--highlight-card-width);
   gap: 20px;
   width: 100%;
-  margin-top: 42px;
+  margin-top: var(--gap-heading);
   padding: 0 var(--highlight-page-gutter) 10px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -1079,7 +1081,6 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 @media (max-width: 720px) {
   .fcard__head { padding: 24px 24px 18px; }
-  .showcase-highlights { padding-top: 48px; }
   .showcase-highlights__head,
   .showcase-highlights__controls { padding-inline: 18px; }
   .showcase-highlights__sub { white-space: normal; }
@@ -1106,7 +1107,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   grid-template-columns: repeat(6, minmax(0, 1fr));
   grid-auto-rows: minmax(260px, auto);
   gap: 20px;
-  margin-top: 56px;
+  margin-top: var(--gap-heading);
 }
 .tile {
   position: relative;
@@ -1272,7 +1273,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 40px 20px;
-  margin-top: 56px;
+  margin-top: var(--gap-heading);
   padding: 56px 48px;
 }
 .agent {
@@ -1331,7 +1332,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
-  margin-top: 48px;
+  margin-top: var(--gap-heading);
 }
 .stat {
   min-width: 0;
@@ -1358,7 +1359,8 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 
 .leftout {
-  margin-top: clamp(56px, 8vw, 96px);
+  /* A second heading block inside the section: the same distance as between sections. */
+  margin-top: clamp(40px, 6vw, 80px);
 }
 .leftout .section-heading { font-size: clamp(1.75rem, 4vw, 2.5rem); }
 .leftout__list {
@@ -1366,7 +1368,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px 28px;
-  margin-top: 22px;
+  margin-top: var(--gap-heading);
   font-size: clamp(1rem, 2vw, 1.15rem);
   color: var(--text-quaternary);
 }
@@ -1377,7 +1379,7 @@ html.nav-intro-done .nav__pill { animation: none; }
 
 .free {
   max-width: 560px;
-  margin: 0 auto;
+  margin: var(--gap-heading) auto 0;
   padding: 48px;
   border-radius: 40px;
   background: var(--bg-well);
@@ -1462,13 +1464,13 @@ html.nav-intro-done .nav__pill { animation: none; }
   line-height: 1.05;
   font-size: clamp(2.25rem, 5.5vw, 3.25rem);
   color: var(--text-primary);
-  margin: 0 auto 20px;
+  margin: 0 auto;
 }
 .faq {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px 20px;
-  margin-top: 48px;
+  margin-top: var(--gap-heading);
 }
 .faq__item {
   min-width: 0;
