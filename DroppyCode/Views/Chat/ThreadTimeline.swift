@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ThreadTimeline: View, Equatable {
@@ -31,7 +32,8 @@ struct ThreadTimeline: View, Equatable {
     /// are on screen and whether the timeline follows new text. It lives in an object rather
     /// than in view state on purpose. Rows write to it as they cross the viewport's edges and
     /// the scroll view writes to it as content grows, and only the rail reads it, so none of
-    /// that ever re-runs this body.
+    /// that ever re-runs this body. The one thing it tells the body is the rare request to
+    /// check its own layout (`repairLayout`).
     @State private var tracking = TimelineScrollTracking()
     /// The scroll position stays view state, never a property of an observable object. A
     /// `scrollTo` request is consumed by the scroll view writing the resolved position back
@@ -60,6 +62,9 @@ struct ThreadTimeline: View, Equatable {
     /// Lazy-loading window: only the newest groups are materialized, so opening a long
     /// thread and scrolling through it stays instant no matter how much history it holds.
     @State private var visibleCount = TimelineWindow.firstPaint
+    /// Changes to rebuild the lazy stack from scratch: the second repair for a viewport
+    /// the stack has built nothing for (see `repairLayout`).
+    @State private var stackGeneration = 0
 
     var body: some View {
         let entries = runtime.entries
@@ -228,9 +233,15 @@ struct ThreadTimeline: View, Equatable {
                             .onScrollVisibilityChange(threshold: 0.001) { isVisible in
                                 tracking.setVisible(block.id, isVisible)
                             }
+                            // A row the lazy stack throws away (scrolled far off, or gone
+                            // from the conversation) reports nothing more, so it leaves
+                            // the on-screen set here; the set is how the timeline knows
+                            // when it is showing nothing at all.
+                            .onDisappear { tracking.setVisible(block.id, false) }
                             .transition(.softAppear)
                     }
                 }
+                .id(stackGeneration)
                 .allowsHitTesting(!isReaderScrolling)
                 // The end of the conversation. While it is on screen the reader is at the latest message.
                 Color.clear
@@ -258,12 +269,11 @@ struct ThreadTimeline: View, Equatable {
         .defaultScrollAnchor(anchorsBottomOnGrowth ? .bottom : .top, for: .sizeChanges)
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
         .onScrollPhaseChange { _, phase in
-            tracking.isUserScrolling = phase == .interacting || phase == .decelerating
             // Fingers on the trackpad freeze the rows (no click can land then anyway); the
             // moment the scroll coasts or settles they come back, so a click that stops a
             // flick always reaches its target. Wheel scrolling reports no phases and is
             // caught by the movement below instead.
-            tracking.isCoasting = phase == .decelerating || phase == .animating
+            tracking.notePhase(phase)
             if phase == .interacting {
                 noteScrollMovement()
             } else {
@@ -272,6 +282,7 @@ struct ThreadTimeline: View, Equatable {
         }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             scrollChrome.update(travel: new.travel)
+            tracking.noteGeometry(offset: new.offset, distanceFromBottom: new.distanceFromBottom)
             // Movement with no phase behind it: wheel ticks. Content growing under a
             // resting reader is not scrolling.
             if new.centerY != old.centerY, new.contentHeight == old.contentHeight, !tracking.isCoasting {
@@ -320,7 +331,18 @@ struct ThreadTimeline: View, Equatable {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
             loadEarlier(to: TimelineWindow.initial)
+            // A thread that opened on nothing (its first rows never laid out where the
+            // bottom anchor put the viewport) is caught a beat from now.
+            tracking.armBlankWatch()
             await warmMarkdown()
+        }
+        .onChange(of: tracking.checkRequest) {
+            repairLayout()
+        }
+        .onChange(of: FrontMonitor.shared.revision) {
+            // The reader is back: the app came to the front or the window was uncovered.
+            // Whatever the conversation did unseen, the timeline checks itself now.
+            tracking.noteReturnToFront()
         }
         .onChange(of: runtime.isRunning) { _, running in
             // Sending a message always brings the reader back to the conversation's end.
@@ -379,6 +401,51 @@ struct ThreadTimeline: View, Equatable {
         if isReaderScrolling { isReaderScrolling = false }
     }
 
+    /// Puts the viewport back on the conversation when a layout pass has left it showing
+    /// nothing. The lazy stack lays out rows for the viewport it was last told about, and
+    /// nothing tells it when an anchor moves the offset under it: a finished turn folding
+    /// its transcript into one block, the working line coming and going, rows reflowing to
+    /// a new width. Left alone (the app in the back, another thread open) the conversation
+    /// changes shape many times over, and the reader comes back to an empty pane that only
+    /// their own scrolling fills in. This runs on request only: when no row has been on
+    /// screen for a beat, when a scroll phase that never settled is cleared, and when the
+    /// app or its window comes back to the front.
+    ///
+    /// Past the end, or pinned to the end and away from it, the timeline snaps to the end,
+    /// as it does on any measured frame. On the conversation but showing nothing, it does
+    /// what the reader would: scrolls, by a point, so the stack lays out for where the
+    /// viewport really is. Still nothing a beat later, the stack is rebuilt; still nothing,
+    /// the timeline goes to the end and stays pinned there. Rows coming back on screen
+    /// end the sequence wherever it is, and a fourth blank in a row is left alone.
+    private func repairLayout() {
+        guard viewportHeight > 0, !tracking.isUserScrolling, !tracking.isCoasting else { return }
+        let distance = tracking.distanceFromBottom
+        if distance < -1 || (tracking.isPinnedToBottom && abs(distance) > 1) {
+            withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+            // Rows on screen: the snap was all there was to do.
+            guard tracking.showsNothing, tracking.blankRepairs < 3 else { return }
+        } else if tracking.showsNothing {
+            switch tracking.blankRepairs {
+            case 0:
+                let y = tracking.offset
+                withTransaction(Self.unanimated) { position.scrollTo(y: y > 1 ? y - 1 : y + 1) }
+            case 1:
+                stackGeneration += 1
+            case 2:
+                tracking.isPinnedToBottom = true
+                anchorsBottomOnGrowth = true
+                withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+            default:
+                return
+            }
+        } else {
+            return
+        }
+        // Blank, and something was just done about it: checked again a beat from now.
+        tracking.blankRepairs += 1
+        tracking.armBlankWatch()
+    }
+
     private nonisolated static func visibleHeight(_ proxy: GeometryProxy) -> CGFloat {
         max(0, proxy.size.height - proxy.safeAreaInsets.top - proxy.safeAreaInsets.bottom)
     }
@@ -386,7 +453,9 @@ struct ThreadTimeline: View, Equatable {
 
 /// Scroll-driven facts about the timeline, kept out of view state so reporting them never
 /// re-renders the conversation. Every write is guarded against no-ops: an observable write
-/// notifies its readers whether or not the value moved.
+/// notifies its readers whether or not the value moved. It also keeps watch over the
+/// layout: which rows are on screen, whether a scroll phase has really ended, and when the
+/// timeline should check that it is showing anything at all.
 @MainActor
 @Observable
 final class TimelineScrollTracking {
@@ -405,14 +474,33 @@ final class TimelineScrollTracking {
     private(set) var activeBlockID: String?
     /// The blocks as laid out, in order, and which of them are sent messages.
     @ObservationIgnored private var outlineIDs: [String] = []
+    @ObservationIgnored private var outlineSet: Set<String> = []
     @ObservationIgnored private var userBlockIDs: Set<String> = []
     /// The blocks currently intersecting the viewport, from their own visibility callbacks.
     @ObservationIgnored private var visibleIDs: Set<String> = []
+    /// The offset and the distance from the end as last measured, for a repair to read
+    /// without waiting for another frame, and when the offset last moved.
+    @ObservationIgnored private(set) var offset: CGFloat = 0
+    @ObservationIgnored private(set) var distanceFromBottom: CGFloat = 0
+    @ObservationIgnored private var lastOffsetChangeAt: CFTimeInterval = 0
+    @ObservationIgnored private var phaseWatch: Task<Void, Never>?
+    @ObservationIgnored private var blankWatch: Task<Void, Never>?
+    /// How many repairs the current blank has had, so they escalate and then stop. Any
+    /// row coming on screen starts the count over.
+    @ObservationIgnored var blankRepairs = 0
+    /// Bumped when the timeline should look at its own layout (`ThreadTimeline.repairLayout`).
+    private(set) var checkRequest = 0
+
+    /// Rows to show, and none of them on screen.
+    var showsNothing: Bool {
+        !outlineIDs.isEmpty && visibleIDs.isDisjoint(with: outlineSet)
+    }
 
     func setOutline(_ blocks: [(id: String, hasUserMessage: Bool)]) {
         let ids = blocks.map(\.id)
         guard ids != outlineIDs else { return }
         outlineIDs = ids
+        outlineSet = Set(ids)
         userBlockIDs = Set(blocks.filter(\.hasUserMessage).map(\.id))
         resolveActive()
     }
@@ -420,8 +508,15 @@ final class TimelineScrollTracking {
     func setVisible(_ id: String, _ isVisible: Bool) {
         if isVisible {
             guard visibleIDs.insert(id).inserted else { return }
+            // Something is on screen: no blank to repair, and the next one starts fresh.
+            blankWatch?.cancel()
+            blankWatch = nil
+            blankRepairs = 0
         } else {
             guard visibleIDs.remove(id) != nil else { return }
+            // The last row left the screen. A replacement normally lands within the
+            // frame; the watch catches the case where nothing does.
+            if showsNothing { armBlankWatch() }
         }
         resolveActive()
     }
@@ -429,6 +524,57 @@ final class TimelineScrollTracking {
     func clearVisible() {
         visibleIDs.removeAll()
         if activeBlockID != nil { activeBlockID = nil }
+    }
+
+    func noteGeometry(offset: CGFloat, distanceFromBottom: CGFloat) {
+        if offset != self.offset { lastOffsetChangeAt = CACurrentMediaTime() }
+        self.offset = offset
+        self.distanceFromBottom = distanceFromBottom
+    }
+
+    /// A phase's end is not always delivered: content growing under an animated scroll
+    /// cuts it short, and the app going to the back mid-flick loses the last event. Left
+    /// as reported, the timeline would count itself as moving for good and never snap or
+    /// repair again. Coasting with the offset at rest for 400ms is over, whatever was
+    /// said, and the layout gets checked once it is.
+    func notePhase(_ phase: ScrollPhase) {
+        isUserScrolling = phase == .interacting || phase == .decelerating
+        isCoasting = phase == .decelerating || phase == .animating
+        phaseWatch?.cancel()
+        phaseWatch = nil
+        guard isCoasting else { return }
+        lastOffsetChangeAt = CACurrentMediaTime()
+        phaseWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(200))
+                guard let self, !Task.isCancelled else { return }
+                guard CACurrentMediaTime() - lastOffsetChangeAt >= 0.4 else { continue }
+                isUserScrolling = false
+                isCoasting = false
+                checkRequest += 1
+                return
+            }
+        }
+    }
+
+    /// Looks a beat from now for any row on screen; none, with rows to show, asks the
+    /// timeline to repair its layout. Re-armed by every call; a row reporting itself
+    /// visible disarms it.
+    func armBlankWatch() {
+        blankWatch?.cancel()
+        blankWatch = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, !Task.isCancelled, showsNothing else { return }
+            checkRequest += 1
+        }
+    }
+
+    /// The reader is back in front of the timeline: whatever it did unseen, it checks
+    /// itself now, with a full run of repairs available.
+    func noteReturnToFront() {
+        blankRepairs = 0
+        checkRequest += 1
+        armBlankWatch()
     }
 
     /// Takes the block in the middle of the on-screen run — a reply filling the viewport is
@@ -439,6 +585,35 @@ final class TimelineScrollTracking {
         let middle = onScreen[onScreen.count / 2].offset
         let resolved = outlineIDs[...middle].last { userBlockIDs.contains($0) }
         if resolved != activeBlockID { activeBlockID = resolved }
+    }
+}
+
+/// Bumps when the app comes to the front or one of its windows is uncovered: the moments
+/// a reader comes back to a timeline that has been changing unseen.
+@MainActor
+@Observable
+private final class FrontMonitor {
+    static let shared = FrontMonitor()
+    private(set) var revision = 0
+    @ObservationIgnored private var observers: [any NSObjectProtocol] = []
+
+    private init() {
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.revision += 1 }
+        })
+        observers.append(center.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            // Delivered on the main queue; the window is read on the main actor it belongs to.
+            nonisolated(unsafe) let object = note.object
+            MainActor.assumeIsolated {
+                guard let window = object as? NSWindow, window.occlusionState.contains(.visible) else { return }
+                self?.revision += 1
+            }
+        })
     }
 }
 
