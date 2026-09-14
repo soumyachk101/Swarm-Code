@@ -1,9 +1,21 @@
 import Foundation
 
 /// Drives `codex app-server` over JSON-RPC.
+///
+/// With Hydra on, the thread starts with config overrides that put the heads on the pair's
+/// model and effort and cap how many run at once, and with developer instructions that
+/// steer the lead towards `spawn_agent`. A head is a child thread of the app-server:
+/// `thread/started` announces it with the lead as its parent, its own notifications carry
+/// its thread id and go out wrapped in `agentEvent`, and its `turn/completed` ends it.
 @MainActor
 final class CodexSession: ProviderSession {
     var onEvent: ((ProviderEvent) -> Void)?
+
+    /// Whose transcript a notification belongs to.
+    private enum Target {
+        case lead
+        case head(String)
+    }
 
     private enum PendingRequest {
         case decision(RPCID, payloads: [String: JSONValue])
@@ -27,6 +39,11 @@ final class CodexSession: ProviderSession {
     private var isStopping = false
     /// Resolves the cumulative thread total into per-event spend for the ledger.
     private var spendTracker = TokenSpendTracker()
+    /// The heads' threads, spawned under this one, with each one's running turn (for
+    /// stopping it) and its own spend tracker.
+    private var headThreads: Set<String> = []
+    private var headTurns: [String: String] = [:]
+    private var headSpend: [String: TokenSpendTracker] = [:]
 
     init(configuration: SessionConfiguration) {
         self.configuration = configuration
@@ -60,6 +77,10 @@ final class CodexSession: ProviderSession {
             "approvalsReviewer": policy.reviewer,
         ]
         if let model = configuration.model { params["model"] = .string(model) }
+        if let hydra = configuration.hydra {
+            params["config"] = .object(HydraPrompts.codexConfig(hydra))
+            params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads))
+        }
 
         if let resumeID = configuration.resumeID {
             var resume = params
@@ -168,6 +189,14 @@ final class CodexSession: ProviderSession {
         connection?.close()
     }
 
+    func stopAgent(_ id: String) async -> Bool {
+        guard let connection, headThreads.contains(id), let turnID = headTurns[id] else { return false }
+        return (try? await connection.request("turn/interrupt", [
+            "threadId": .string(id),
+            "turnId": .string(turnID),
+        ])) != nil
+    }
+
     // MARK: - Catalog
 
     static func listModels(executable: URL, environment: [String: String]) async throws -> [ModelOption] {
@@ -269,34 +298,53 @@ final class CodexSession: ProviderSession {
     // MARK: - Notifications
 
     private func handleNotification(_ method: String, _ params: JSONValue) {
-        if let eventThread = params["threadId"]?.string, let threadID, eventThread != threadID { return }
+        if method == "thread/started" {
+            headStarted(params["thread"] ?? .null)
+            return
+        }
+        // Whose notification: the lead's, a head's, or some other thread's on the same server.
+        var target = Target.lead
+        if let eventThread = params["threadId"]?.string, let threadID, eventThread != threadID {
+            guard headThreads.contains(eventThread) else { return }
+            target = .head(eventThread)
+        }
+        let sink: (ProviderEvent) -> Void = switch target {
+        case .lead: { [weak self] event in self?.onEvent?(event) }
+        case .head(let id): { [weak self] event in self?.onEvent?(.agentEvent(agentID: id, event)) }
+        }
         switch method {
         case "turn/started":
-            turnID = params["turn"]?["id"]?.string
-            onEvent?(.turnStarted(providerTurnID: turnID))
+            let id = params["turn"]?["id"]?.string
+            switch target {
+            case .lead:
+                turnID = id
+            case .head(let head):
+                headTurns[head] = id
+            }
+            sink(.turnStarted(providerTurnID: id))
         case "item/started":
-            if let item = params["item"] { itemStarted(item) }
+            if let item = params["item"] { itemStarted(item, target: target, sink: sink) }
         case "item/completed":
-            if let item = params["item"] { itemCompleted(item) }
+            if let item = params["item"] { itemCompleted(item, target: target, sink: sink) }
         case "item/agentMessage/delta":
             if let id = params["itemId"]?.string, let delta = params["delta"]?.string {
-                onEvent?(.messageDelta(id: id, text: delta))
+                sink(.messageDelta(id: id, text: delta))
             }
         case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
             if let id = params["itemId"]?.string, let delta = params["delta"]?.string {
-                onEvent?(.reasoningDelta(id: id, text: delta))
+                sink(.reasoningDelta(id: id, text: delta))
             }
         case "item/reasoning/summaryPartAdded":
             if let id = params["itemId"]?.string, let index = params["summaryIndex"]?.int, index > 0 {
-                onEvent?(.reasoningDelta(id: id, text: "\n\n"))
+                sink(.reasoningDelta(id: id, text: "\n\n"))
             }
         case "item/commandExecution/outputDelta":
             if let id = params["itemId"]?.string, let delta = params["delta"]?.string {
-                onEvent?(.toolOutput(id: id, text: delta))
+                sink(.toolOutput(id: id, text: delta))
             }
         case "item/plan/delta":
             if let id = params["itemId"]?.string, let delta = params["delta"]?.string {
-                onEvent?(.planDelta(id: id, text: delta))
+                sink(.planDelta(id: id, text: delta))
             }
         case "turn/plan/updated":
             let steps = (params["plan"]?.array ?? []).compactMap { step -> TodoStep? in
@@ -308,12 +356,14 @@ final class CodexSession: ProviderSession {
                 }
                 return TodoStep(text: text, status: status)
             }
-            onEvent?(.todos(steps))
+            sink(.todos(steps))
         case "turn/diff/updated":
-            if let diff = params["diff"]?.string { onEvent?(.diff(diff)) }
+            if let diff = params["diff"]?.string { sink(.diff(diff)) }
         case "thread/tokenUsage/updated":
-            if let usage = params["tokenUsage"], let last = usage["last"] {
-                let used = last["totalTokens"]?.int ?? 0
+            guard let usage = params["tokenUsage"], let last = usage["last"] else { break }
+            let used = last["totalTokens"]?.int ?? 0
+            switch target {
+            case .lead:
                 onEvent?(.usage(ContextUsage(usedTokens: used, windowTokens: usage["modelContextWindow"]?.int)))
                 // The thread total only ever grows within a session, so its
                 // positive deltas are exact spend no matter how often this
@@ -325,9 +375,21 @@ final class CodexSession: ProviderSession {
                 } else {
                     TokenLedger.shared.record(spend: used)
                 }
+            case .head(let head):
+                // A head's spend is the account's spend too; its total lives on its own thread.
+                let total = usage["total"]?["totalTokens"]?.int ?? 0
+                if total > 0 {
+                    var tracker = headSpend[head] ?? TokenSpendTracker()
+                    let spend = tracker.spend(total: total)
+                    headSpend[head] = tracker
+                    if spend > 0 { TokenLedger.shared.record(spend: spend) }
+                } else {
+                    TokenLedger.shared.record(spend: used)
+                }
+                onEvent?(.agentProgress(agentID: head, summary: nil, lastTool: nil, tokens: total > 0 ? total : used, toolCalls: nil))
             }
         case "error":
-            if params["willRetry"]?.bool == true {
+            if case .lead = target, params["willRetry"]?.bool == true {
                 let message = Self.errorMessage(params["error"])
                 onEvent?(.notice(Notice(level: .warning, message: "\(message) Retrying.")))
             }
@@ -339,54 +401,116 @@ final class CodexSession: ProviderSession {
             default: .completed
             }
             let error = turn?["error"].flatMap { $0.isNull ? nil : Self.errorMessage($0) }
-            turnID = nil
-            onEvent?(.turnCompleted(status: status, error: error))
+            switch target {
+            case .lead:
+                turnID = nil
+                onEvent?(.turnCompleted(status: status, error: error))
+            case .head(let head):
+                headTurns[head] = nil
+                onEvent?(.agentFinished(agentID: head, status: status, summary: error))
+            }
         case "serverRequest/resolved":
             if let raw = params["requestId"], let id = RPCID(raw), pendingRequests.removeValue(forKey: id.key) != nil {
                 onEvent?(.requestResolved(id: id.key))
             }
         case "thread/compacted":
-            onEvent?(.notice(Notice(level: .info, message: "Context compacted.")))
+            sink(.notice(Notice(level: .info, message: "Context compacted.")))
         default:
             break
         }
     }
 
-    private func itemStarted(_ item: JSONValue) {
+    /// A thread the server started: a head, when the lead's thread is its parent.
+    private func headStarted(_ thread: JSONValue) {
+        guard let id = thread["id"]?.string, let threadID, thread["parentThreadId"]?.string == threadID, !headThreads.contains(id) else { return }
+        headThreads.insert(id)
+        let nickname = thread["agentNickname"]?.string
+        let role = thread["agentRole"]?.string
+        let preview = thread["preview"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let description = !preview.isEmpty ? TextCleanup.singleLine(preview, limit: 80) : ([nickname, role].compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? "Subagent")
+        onEvent?(.agentStarted(AgentSpawn(id: id, taskID: nil, toolUseID: nil, description: description, prompt: preview.nilIfEmpty, model: thread["model"]?.string)))
+    }
+
+    private func itemStarted(_ item: JSONValue, target: Target, sink: (ProviderEvent) -> Void) {
         guard let id = item["id"]?.string else { return }
         switch item["type"]?.string {
         case "agentMessage":
-            onEvent?(.messageDelta(id: id, text: item["text"]?.string ?? ""))
+            sink(.messageDelta(id: id, text: item["text"]?.string ?? ""))
         case "reasoning":
-            onEvent?(.reasoningDelta(id: id, text: ""))
+            sink(.reasoningDelta(id: id, text: ""))
         case "plan":
-            onEvent?(.planDelta(id: id, text: item["text"]?.string ?? ""))
-        case "userMessage", "hookPrompt", "functionCallOutput", "contextCompaction":
+            sink(.planDelta(id: id, text: item["text"]?.string ?? ""))
+        case "userMessage":
+            // A head's brief arrives as its first user message.
+            if case .head(let head) = target, let text = Self.userText(item) {
+                onEvent?(.agentStarted(AgentSpawn(id: head, taskID: nil, toolUseID: nil, description: TextCleanup.singleLine(text, limit: 80), prompt: text, model: nil)))
+            }
+        case "hookPrompt", "functionCallOutput", "contextCompaction":
             break
         default:
-            if let call = toolCall(from: item) { onEvent?(.toolStarted(id: id, call: call)) }
+            if let call = toolCall(from: item) { sink(.toolStarted(id: id, call: call)) }
         }
     }
 
-    private func itemCompleted(_ item: JSONValue) {
+    private func itemCompleted(_ item: JSONValue, target: Target, sink: (ProviderEvent) -> Void) {
         guard let id = item["id"]?.string else { return }
         switch item["type"]?.string {
         case "agentMessage":
-            onEvent?(.messageCompleted(id: id, text: item["text"]?.string ?? ""))
+            sink(.messageCompleted(id: id, text: item["text"]?.string ?? ""))
         case "reasoning":
             let summary = (item["summary"]?.array ?? []).compactMap(\.string).joined(separator: "\n\n")
             let content = (item["content"]?.array ?? []).compactMap(\.string).joined(separator: "\n\n")
-            onEvent?(.reasoningCompleted(id: id, text: summary.isEmpty ? content : summary))
+            sink(.reasoningCompleted(id: id, text: summary.isEmpty ? content : summary))
         case "plan":
-            onEvent?(.planCompleted(id: id, markdown: item["text"]?.string ?? ""))
+            sink(.planCompleted(id: id, markdown: item["text"]?.string ?? ""))
         case "userMessage", "hookPrompt", "functionCallOutput", "contextCompaction":
             break
         default:
             if let call = toolCall(from: item) {
-                onEvent?(.toolStarted(id: id, call: call))
-                onEvent?(.toolUpdated(id: id, update: toolUpdate(from: item)))
+                sink(.toolStarted(id: id, call: call))
+                sink(.toolUpdated(id: id, update: toolUpdate(from: item)))
             }
+            if case .lead = target { describeHeads(from: item) }
         }
+    }
+
+    /// A finished collab call names the heads it reached: a spawn carries the brief the
+    /// head was given, which is a better task line than its nickname. The lead's
+    /// sub-agent activity items bracket a head's life too, so a head whose own thread
+    /// stays quiet still ends.
+    private func describeHeads(from item: JSONValue) {
+        switch item["type"]?.string {
+        case "collabAgentToolCall":
+            guard item["tool"]?.string == "spawnAgent",
+                  let prompt = item["prompt"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty else { return }
+            for receiver in (item["receiverThreadIds"]?.array ?? []).compactMap(\.string) {
+                if !headThreads.contains(receiver) { headThreads.insert(receiver) }
+                onEvent?(.agentStarted(AgentSpawn(id: receiver, taskID: nil, toolUseID: item["id"]?.string, description: TextCleanup.singleLine(prompt, limit: 80), prompt: prompt, model: item["model"]?.string)))
+            }
+        case "subAgentActivity":
+            guard let agentThread = item["agentThreadId"]?.string, headThreads.contains(agentThread) else { return }
+            switch item["kind"]?.string {
+            case "completed":
+                headTurns[agentThread] = nil
+                onEvent?(.agentFinished(agentID: agentThread, status: .completed, summary: nil))
+            case "interrupted":
+                headTurns[agentThread] = nil
+                onEvent?(.agentFinished(agentID: agentThread, status: .interrupted, summary: nil))
+            default:
+                break
+            }
+        default:
+            break
+        }
+    }
+
+    /// The text of a user message item.
+    private static func userText(_ item: JSONValue) -> String? {
+        let parts = (item["content"]?.array ?? []).compactMap { part -> String? in
+            part["text"]?.string ?? (part["type"]?.string == "text" ? part["value"]?.string : nil)
+        }
+        let text = parts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
     }
 
     private func toolCall(from item: JSONValue) -> ToolCall? {
@@ -416,9 +540,25 @@ final class CodexSession: ProviderSession {
         case "webSearch":
             return ToolCall(kind: .web, title: item["query"]?.string ?? "Web search")
         case "collabAgentToolCall":
-            return ToolCall(kind: .agent, title: item["prompt"]?.string ?? "Agent", detail: item["tool"]?.string)
+            let verb = switch item["tool"]?.string {
+            case "spawnAgent": "Send out a head"
+            case "sendInput", "sendMessage", "followupTask": "Brief a head"
+            case "wait": "Wait for heads"
+            case "closeAgent", "interruptAgent": "Recall a head"
+            case "resumeAgent": "Resume a head"
+            case "listAgents": "List heads"
+            default: "Agent"
+            }
+            let brief = item["prompt"]?.string.map { TextCleanup.singleLine($0, limit: 90) }
+            return ToolCall(kind: .agent, title: brief ?? verb, detail: brief == nil ? nil : verb)
         case "subAgentActivity":
-            return ToolCall(kind: .agent, title: item["agentPath"]?.string ?? "Subagent")
+            let activity = switch item["kind"]?.string {
+            case "started": "started"
+            case "completed": "finished"
+            case "interrupted": "was stopped"
+            default: "reported"
+            }
+            return ToolCall(kind: .agent, title: "Head \(activity)", detail: item["agentPath"]?.string)
         case "imageView":
             return ToolCall(kind: .read, title: ToolTitles.relativePath(item["path"]?.string ?? "Image", to: workingDirectory))
         case "imageGeneration":

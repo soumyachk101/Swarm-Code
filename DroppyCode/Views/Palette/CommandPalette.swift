@@ -118,6 +118,12 @@ struct CommandPalette: View {
             actions.append(Item(id: "archive", title: "Archive thread", symbol: "archivebox", shortcut: "⇧⌘⌫") {
                 model.archive(threadID)
             })
+            if model.settings.hydraEnabled, let thread = model.thread(threadID), !thread.isHelper {
+                let isOn = thread.hydraEnabled
+                actions.append(Item(id: "hydra", title: isOn ? "Turn off Hydra" : "Turn on Hydra", symbol: "point.3.connected.trianglepath.dotted") {
+                    model.setHydra(!isOn, for: threadID)
+                })
+            }
         }
         actions.append(Item(id: "settings", title: "Settings", symbol: "gearshape", shortcut: "⌘,") { WindowManager.shared.showSettings() })
 

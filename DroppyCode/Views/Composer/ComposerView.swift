@@ -232,6 +232,7 @@ struct ComposerView: View {
     private func placeholder(for thread: ChatThread?) -> String {
         guard let thread else { return "" }
         if thread.interactionMode == .plan { return "Describe what you want to plan" }
+        if model.hydraIsOn(thread) { return "Ask \(thread.provider.displayName) for anything; big jobs go out to a team of heads" }
         return "Ask \(thread.provider.displayName) to build, fix or explain. @ for files, / for commands"
     }
 

@@ -71,6 +71,11 @@ final class AppModel {
         for index in threads.indices where threads[index].lastStatus == .running {
             threads[index].lastStatus = .interrupted
         }
+        // A head at work when the app last quit went with its session.
+        for index in threads.indices where threads[index].hydra?.status == .running {
+            threads[index].hydra?.status = .stopped
+            threads[index].hydra?.finishedAt = .now
+        }
         // Property observers stay quiet inside an initializer, so the cells are built here once.
         Self.sync(&projectCells, with: projects)
         Self.sync(&threadCells, with: threads)
@@ -462,9 +467,17 @@ final class AppModel {
     /// interrupted turn has finished (see turnFinished).
     @ObservationIgnored private var sessionsToRelease: Set<UUID> = []
 
-    /// The helper a thread spawned and still shows in its floating panel, if any.
+    /// The helper a thread spawned and still shows in its floating panel, if any. Hydra
+    /// heads have a panel of their own (see `hydraHeads(of:)`).
     func subagent(of parentID: UUID) -> ChatThread? {
-        threads.first { $0.parentThreadID == parentID && $0.isInPanel && !$0.isArchived }
+        threads.first { $0.parentThreadID == parentID && $0.isInPanel && !$0.isArchived && !$0.isHydraHead }
+    }
+
+    /// Adds a thread the app made for another thread: a head, say. The caller selects it
+    /// or leaves it in a panel as it sees fit.
+    func insertThread(_ thread: ChatThread) {
+        threads.append(thread)
+        scheduleSave()
     }
 
     /// Spawns a helper thread beside `parentID` and sends it `prompt` at once. The helper
@@ -590,8 +603,10 @@ final class AppModel {
     // MARK: - Attention
 
     func threadNeedsAttention(_ id: UUID) {
-        guard !WebsiteCaptures.isEnabled else { return }
-        guard !(NSApp.isActive && selectedThreadID == id), let thread = thread(id) else { return }
+        guard !WebsiteCaptures.isEnabled, let thread = thread(id) else { return }
+        // A thread in a panel is on screen with its parent.
+        let onScreen = selectedThreadID == id || (thread.isInPanel && selectedThreadID == thread.parentThreadID)
+        guard !(NSApp.isActive && onScreen) else { return }
         notify(threadID: id, title: thread.title, body: "Waiting for your decision.")
         NSApp.requestUserAttention(.informationalRequest)
     }
@@ -602,15 +617,22 @@ final class AppModel {
         // A helper is on screen with its parent, in the parent's floating panel.
         let onScreen = selectedThreadID == id || (selectedThreadID != nil && thread(id)?.parentThreadID == selectedThreadID)
         let isVisible = NSApp.isActive && onScreen
+        let isHead = thread(id)?.isHydraHead == true
         updateThread(id) {
             $0.lastStatus = status
             $0.updatedAt = .now
-            if !isVisible { $0.hasUnread = true }
+            if !isVisible, !isHead { $0.hasUnread = true }
         }
         updateDockBadge()
         // A helper panel closed mid-turn kept its session alive to finish stopping cleanly;
         // it has now.
         if sessionsToRelease.remove(id) != nil { existingRuntime(for: id)?.stopSession() }
+        // A head reports to its lead, which is the chat that chimes and notifies when
+        // the whole job is done.
+        if isHead, let head = thread(id) {
+            hydraHeadTurnFinished(head, status: status)
+            return
+        }
         guard !continues else { return }
         // A stop the user asked for needs no chime; the agent finishing on its own gets one,
         // whether or not the thread is in view.

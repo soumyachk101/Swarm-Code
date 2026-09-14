@@ -12,6 +12,12 @@ import Foundation
 /// (`userInput.request`) and plan exits (`exitPlanMode.request`) are server
 /// requests answered in place.
 ///
+/// With Hydra on, the session is created with the heads as custom agents on the pair's
+/// model and effort, the lead's brief appended to the system message, and sub-agent
+/// streaming switched on. A head's events carry its `agentId` and go out wrapped in
+/// `agentEvent`; `subagent.started`, `subagent.completed` and `subagent.failed` bracket
+/// its life. Copilot offers no way to stop one head on its own.
+///
 /// Protocol reference: https://github.com/github/copilot-sdk, `nodejs/src/client.ts`
 /// and the generated `rpc.ts` and `session-events.ts`. Verified live against
 /// `copilot 1.0.83` (protocol version 3): framing, ping, account auth, session
@@ -56,6 +62,9 @@ final class CopilotSession: ProviderSession {
     private var shownReasoning: Set<String> = []
     /// The CLI's slash commands and their aliases, which `send` invokes instead of prompting with.
     private var commandNames: Set<String> = []
+    /// The brief each `task` call gave its head, by call id, so a head that starts can be
+    /// named by what it was sent to do.
+    private var taskBriefs: [String: (description: String, prompt: String?)] = [:]
 
     /// Commands Droppy Code answers with its own controls: permission modes, the model
     /// picker, plan mode, the session list and the working directory.
@@ -115,11 +124,15 @@ final class CopilotSession: ProviderSession {
             "requestPermission": true,
             "requestUserInput": true,
             "requestExitPlanMode": true,
-            "includeSubAgentStreamingEvents": false,
+            "includeSubAgentStreamingEvents": .bool(configuration.hydra != nil),
             "isExperimentalMode": .bool(configuration.runtimeMode == .auto),
         ]
         if let model, !model.isEmpty { params["model"] = .string(model) }
         if let effort, !effort.isEmpty { params["reasoningEffort"] = .string(effort) }
+        if let hydra = configuration.hydra {
+            params["customAgents"] = .array(HydraPrompts.copilotAgents(hydra))
+            params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, maxHeads: hydra.maxHeads))]
+        }
         return params
     }
 
@@ -467,34 +480,42 @@ final class CopilotSession: ProviderSession {
     private func handleNotification(_ method: String, _ params: JSONValue) {
         guard method == "session.event", let event = params["event"], let type = event["type"]?.string else { return }
         if let eventSession = params["sessionId"]?.string, let sessionID, eventSession != sessionID { return }
-        // Sub-agents stream under their own agent id; their parent `task` row stands for
-        // them. Their permission prompts still need answering and their spend still
-        // counts, so those pass.
-        let isSubagent = event["agentId"]?.string != nil
-        if isSubagent, type != "assistant.usage", type.hasPrefix("assistant.") || type.hasPrefix("tool.") { return }
+        // Sub-agents stream under their own agent id. With Hydra on they are heads and their
+        // transcripts go to the head's own timeline; otherwise their parent `task` row stands
+        // for them. Their permission prompts still need answering and their spend still
+        // counts, so those pass either way.
+        let agentID = event["agentId"]?.string
+        if agentID != nil, configuration.hydra == nil, type != "assistant.usage", type.hasPrefix("assistant.") || type.hasPrefix("tool.") { return }
+        let sink: (ProviderEvent) -> Void = if let agentID {
+            { [weak self] event in self?.onEvent?(.agentEvent(agentID: agentID, event)) }
+        } else {
+            { [weak self] event in self?.onEvent?(event) }
+        }
         let data = event["data"] ?? .null
         switch type {
         case "assistant.turn_start":
-            if !turnActive {
+            if agentID != nil {
+                sink(.turnStarted(providerTurnID: data["turnId"]?.string))
+            } else if !turnActive {
                 turnActive = true
                 onEvent?(.turnStarted(providerTurnID: data["turnId"]?.string))
             }
         case "assistant.message_delta":
             if let id = data["messageId"]?.string, let delta = data["deltaContent"]?.string {
                 streamedMessages.insert(id)
-                onEvent?(.messageDelta(id: id, text: delta))
+                sink(.messageDelta(id: id, text: delta))
             }
         case "assistant.message":
-            handleMessage(data)
+            handleMessage(data, sink: sink)
         case "assistant.reasoning_delta":
             if let id = data["reasoningId"]?.string, let delta = data["deltaContent"]?.string {
-                onEvent?(.reasoningDelta(id: id, text: delta))
+                sink(.reasoningDelta(id: id, text: delta))
             }
         case "assistant.reasoning":
             if let id = data["reasoningId"]?.string {
                 let text = data["content"]?.string ?? ""
                 shownReasoning.insert(Self.reasoningKey(text))
-                onEvent?(.reasoningCompleted(id: id, text: text))
+                sink(.reasoningCompleted(id: id, text: text))
             }
         case "assistant.usage":
             let spend = (data["inputTokens"]?.int ?? 0) + (data["outputTokens"]?.int ?? 0)
@@ -505,18 +526,35 @@ final class CopilotSession: ProviderSession {
             }
         case "tool.execution_start":
             if let id = data["toolCallId"]?.string, let name = data["toolName"]?.string {
-                toolRequested(id: id, name: name, arguments: data["arguments"] ?? .null, server: data["mcpServerName"]?.string, mcpTool: data["mcpToolName"]?.string)
+                toolRequested(id: id, name: name, arguments: data["arguments"] ?? .null, server: data["mcpServerName"]?.string, mcpTool: data["mcpToolName"]?.string, sink: sink)
             }
         case "tool.execution_partial_result":
             if let id = data["toolCallId"]?.string, let output = data["partialOutput"]?.string {
-                onEvent?(.toolOutput(id: id, text: output))
+                sink(.toolOutput(id: id, text: output))
             }
         case "tool.execution_progress":
             if let id = data["toolCallId"]?.string, let message = data["progressMessage"]?.string {
-                onEvent?(.toolUpdated(id: id, update: ToolUpdate(detail: message)))
+                sink(.toolUpdated(id: id, update: ToolUpdate(detail: message)))
             }
         case "tool.execution_complete":
-            handleToolResult(data)
+            handleToolResult(data, sink: sink)
+        case "subagent.started":
+            guard let agentID, configuration.hydra != nil else { break }
+            let brief = data["toolCallId"]?.string.flatMap { taskBriefs[$0] }
+            onEvent?(.agentStarted(AgentSpawn(
+                id: agentID,
+                taskID: nil,
+                toolUseID: data["toolCallId"]?.string,
+                description: brief?.description ?? data["agentDisplayName"]?.string ?? data["agentName"]?.string ?? "Subagent",
+                prompt: brief?.prompt,
+                model: data["model"]?.string
+            )))
+        case "subagent.completed":
+            guard let agentID, configuration.hydra != nil else { break }
+            onEvent?(.agentFinished(agentID: agentID, status: data["cancelled"]?.bool == true ? .interrupted : .completed, summary: nil))
+        case "subagent.failed":
+            guard let agentID, configuration.hydra != nil else { break }
+            onEvent?(.agentFinished(agentID: agentID, status: .failed, summary: data["error"]?.string))
         case "permission.requested":
             handlePermission(data)
         case "permission.completed":
@@ -562,40 +600,46 @@ final class CopilotSession: ProviderSession {
         }
     }
 
-    private func handleMessage(_ data: JSONValue) {
+    private func handleMessage(_ data: JSONValue, sink: (ProviderEvent) -> Void) {
         guard let id = data["messageId"]?.string else { return }
         // Models that think without reasoning events carry the text on the message instead.
         if let reasoning = data["reasoningText"]?.string, !reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            !shownReasoning.contains(Self.reasoningKey(reasoning)) {
             shownReasoning.insert(Self.reasoningKey(reasoning))
-            onEvent?(.reasoningCompleted(id: "\(id)-reasoning", text: reasoning))
+            sink(.reasoningCompleted(id: "\(id)-reasoning", text: reasoning))
         }
         let content = data["content"]?.string ?? ""
         if !content.isEmpty || streamedMessages.contains(id) {
-            onEvent?(.messageCompleted(id: id, text: content))
+            sink(.messageCompleted(id: id, text: content))
         }
         // The calls this message asks for, so a permission prompt has its row to point at.
         for request in data["toolRequests"]?.array ?? [] {
             guard let callID = request["toolCallId"]?.string, let name = request["name"]?.string else { continue }
-            toolRequested(id: callID, name: name, arguments: request["arguments"] ?? .null, server: request["mcpServerName"]?.string, mcpTool: request["mcpToolName"]?.string)
+            toolRequested(id: callID, name: name, arguments: request["arguments"] ?? .null, server: request["mcpServerName"]?.string, mcpTool: request["mcpToolName"]?.string, sink: sink)
         }
     }
 
-    private func toolRequested(id: String, name: String, arguments: JSONValue, server: String?, mcpTool: String?) {
+    private func toolRequested(id: String, name: String, arguments: JSONValue, server: String?, mcpTool: String?, sink: (ProviderEvent) -> Void) {
         guard toolNames[id] == nil else { return }
         toolNames[id] = name
         if name == "update_todo" {
-            onEvent?(.todos(Self.todos(from: arguments["todos"]?.string ?? "")))
+            sink(.todos(Self.todos(from: arguments["todos"]?.string ?? "")))
             return
         }
+        if name == "task" {
+            taskBriefs[id] = (
+                arguments["description"]?.string ?? arguments["name"]?.string ?? "Subagent",
+                arguments["prompt"]?.string ?? arguments["task"]?.string
+            )
+        }
         guard let call = toolCall(name: name, arguments: arguments, server: server, mcpTool: mcpTool) else { return }
-        onEvent?(.toolStarted(id: id, call: call))
+        sink(.toolStarted(id: id, call: call))
         if !call.edits.isEmpty {
-            onEvent?(.toolUpdated(id: id, update: ToolUpdate(edits: call.edits)))
+            sink(.toolUpdated(id: id, update: ToolUpdate(edits: call.edits)))
         }
     }
 
-    private func handleToolResult(_ data: JSONValue) {
+    private func handleToolResult(_ data: JSONValue, sink: (ProviderEvent) -> Void) {
         guard let id = data["toolCallId"]?.string else { return }
         let name = toolNames[id] ?? ""
         guard !Self.hiddenTools.contains(name) else { return }
@@ -607,7 +651,7 @@ final class CopilotSession: ProviderSession {
             update.output = result["detailedContent"]?.string ?? result["content"]?.string
         }
         update.status = succeeded ? .completed : (declinedTools.contains(id) ? .declined : .failed)
-        onEvent?(.toolUpdated(id: id, update: update))
+        sink(.toolUpdated(id: id, update: update))
     }
 
     private func finishTurn(aborted: Bool) {

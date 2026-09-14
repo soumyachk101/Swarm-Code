@@ -5,6 +5,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case general
     case providers
     case models
+    case hydra
     case sourceControl
     case shortcuts
     case archive
@@ -17,6 +18,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: "General"
         case .providers: "Providers"
         case .models: "Models"
+        case .hydra: "Hydra"
         case .sourceControl: "Source control"
         case .shortcuts: "Shortcuts"
         case .archive: "Archive"
@@ -29,6 +31,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: "gear"
         case .providers: "cpu"
         case .models: "slider.horizontal.3"
+        case .hydra: "point.3.connected.trianglepath.dotted"
         case .sourceControl: "arrow.triangle.branch"
         case .shortcuts: "command"
         case .archive: "archivebox"
@@ -41,6 +44,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: Chrome.gray
         case .providers: Chrome.blue
         case .models: Color(red: 0.686, green: 0.322, blue: 0.871)
+        case .hydra: Color(red: 0.188, green: 0.690, blue: 0.780)
         case .sourceControl: Color(red: 0.345, green: 0.337, blue: 0.839)
         case .shortcuts: Color(red: 0.32, green: 0.48, blue: 0.93)
         case .archive: Chrome.orange
@@ -52,6 +56,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
+        case .hydra: ["hydra", "heads", "subagents", "sub-agents", "agents", "team", "orchestrator", "worker", "pair", "pairs", "parallel", "delegate", "queue"]
         case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "copilot", "github", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
         case .shortcuts: ["keyboard", "keys"]
@@ -225,6 +230,7 @@ struct SettingsView: View {
         case .providers: ProvidersSettingsPage()
         case .models:
             ModelsSettingsPage(query: modelSearch)
+        case .hydra: HydraSettingsPage()
         case .sourceControl: SourceControlSettingsPage()
         case .shortcuts: ShortcutsSettingsPage()
         case .archive: ArchiveSettingsPage()
@@ -237,7 +243,7 @@ struct SettingsView: View {
     }
 }
 
-private struct SettingsSwitch: View {
+struct SettingsSwitch: View {
     @Binding var isOn: Bool
 
     var body: some View {

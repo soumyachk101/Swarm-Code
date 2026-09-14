@@ -61,6 +61,9 @@ final class AppSettings {
         static let lastProjectID = "lastProjectID"
         static let deepseekAPIKey = "deepseekAPIKey"
         static let metaAPIKey = "metaAPIKey"
+        static let hydraEnabled = "hydraEnabled"
+        static let hydraQueueHeads = "hydraQueueHeads"
+        static let hydraPairs = "hydraPairs"
     }
 
     static let modelListLimit = 15
@@ -199,6 +202,22 @@ final class AppSettings {
         didSet { store(modelPreferences, forKey: Key.modelPreferences) }
     }
 
+    /// Hydra is available: every chat gets its own switch for it in the chrome row.
+    var hydraEnabled: Bool {
+        didSet { defaults.set(hydraEnabled, forKey: Key.hydraEnabled) }
+    }
+
+    /// With Hydra on in a chat, a follow-up queued while a turn runs goes to a head at once
+    /// instead of waiting for the turn.
+    var hydraQueueHeads: Bool {
+        didSet { defaults.set(hydraQueueHeads, forKey: Key.hydraQueueHeads) }
+    }
+
+    /// The lead-and-heads pairings, in the order they were added.
+    private(set) var hydraPairs: [HydraPair] {
+        didSet { store(hydraPairs, forKey: Key.hydraPairs) }
+    }
+
     init() {
         let defaults = WebsiteCaptures.defaults ?? .standard
         defaultProvider = ProviderKind(rawValue: defaults.string(forKey: Key.defaultProvider) ?? "") ?? .codex
@@ -233,6 +252,42 @@ final class AppSettings {
         lastEfforts = defaults.dictionary(forKey: Key.efforts) as? [String: String] ?? [:]
         modelList = Self.load([ModelPin].self, forKey: Key.modelList) ?? []
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
+        hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
+        hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
+        hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
+    }
+
+    // MARK: - Hydra pairs
+
+    func addHydraPair(_ pair: HydraPair) {
+        hydraPairs.append(pair)
+    }
+
+    func updateHydraPair(_ id: UUID, _ change: (inout HydraPair) -> Void) {
+        guard let index = hydraPairs.firstIndex(where: { $0.id == id }) else { return }
+        var pair = hydraPairs[index]
+        change(&pair)
+        pair.maxHeads = min(max(pair.maxHeads, HydraPair.maxHeadsRange.lowerBound), HydraPair.maxHeadsRange.upperBound)
+        guard pair != hydraPairs[index] else { return }
+        hydraPairs[index] = pair
+    }
+
+    func removeHydraPair(_ id: UUID) {
+        hydraPairs.removeAll { $0.id == id }
+    }
+
+    func hydraPair(_ id: UUID?) -> HydraPair? {
+        guard let id else { return nil }
+        return hydraPairs.first { $0.id == id }
+    }
+
+    /// The pair a chat leads with: the one for its provider whose lead model is the chat's,
+    /// else one for any model on the provider, else the provider's first pair.
+    func hydraPair(for provider: ProviderKind, model: String?) -> HydraPair? {
+        let candidates = hydraPairs.filter { $0.provider == provider }
+        if let model, let exact = candidates.first(where: { $0.orchestratorModel == model }) { return exact }
+        if let any = candidates.first(where: { $0.orchestratorModel == nil }) { return any }
+        return candidates.first
     }
 
     // MARK: - Model picker

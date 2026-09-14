@@ -92,9 +92,21 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     var isInPanel = false
     /// Whether this thread's helpers are folded away under it in the sidebar.
     var foldsHelpers = false
+    /// Whether Hydra is on for this chat: with the app-wide switch on too, the chat's agent
+    /// leads a team of heads on big jobs.
+    var hydraEnabled = false
+    /// The pair the heads run on while Hydra is on, when one was picked for this chat.
+    var hydraPairID: UUID?
+    /// How many heads this chat has sent out so far: the next one's place in the roster.
+    var hydraSpawnCount = 0
+    /// Set on a head: the thread is one of its parent's team.
+    var hydra: HydraHeadInfo?
 
     /// Spawned from another thread, whichever side of the panel it is on.
     var isHelper: Bool { parentThreadID != nil }
+
+    /// A Hydra head, whichever side of the panel it is on.
+    var isHydraHead: Bool { hydra != nil }
 
     init(projectID: UUID, provider: ProviderKind, model: String?, effort: String?, runtimeMode: RuntimeMode, fastMode: Bool = false) {
         id = UUID()
@@ -141,6 +153,10 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         parentThreadID = container.value(.parentThreadID, default: nil)
         isInPanel = container.value(.isInPanel, default: false)
         foldsHelpers = container.value(.foldsHelpers, default: false)
+        hydraEnabled = container.value(.hydraEnabled, default: false)
+        hydraPairID = container.value(.hydraPairID, default: nil)
+        hydraSpawnCount = container.value(.hydraSpawnCount, default: 0)
+        hydra = container.value(.hydra, default: nil)
     }
 }
 

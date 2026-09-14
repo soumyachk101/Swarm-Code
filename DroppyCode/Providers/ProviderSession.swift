@@ -27,6 +27,26 @@ struct SessionConfiguration: Sendable {
     var interactionMode: InteractionMode
     /// Native API providers (DeepSeek, Meta) authenticate with this instead of a CLI.
     var apiKey: String?
+    /// Set while Hydra is on for the thread: providers that run heads of their own define
+    /// them at launch, on the pair's model and effort, and steer the lead towards them.
+    var hydra: HydraLaunch?
+}
+
+/// A head a provider started inside the lead's session.
+struct AgentSpawn: Sendable {
+    /// The provider's id for the head, which its later events carry.
+    var id: String
+    /// Claude's task id, which is what stops the head; nil where the id above does.
+    var taskID: String?
+    /// The tool call in the lead's transcript that spawned the head.
+    var toolUseID: String?
+    var description: String
+    /// The head's brief, when the provider says.
+    var prompt: String?
+    var model: String?
+    /// Whether the spawning tool call returns before the head is done. A foreground head
+    /// is finished by its tool result; a background one only by the provider saying so.
+    var isBackground = true
 }
 
 enum ApprovalDecision: Sendable {
@@ -60,6 +80,14 @@ enum ProviderEvent: Sendable {
     case assistantMessageID(String)
     case turnCompleted(status: TurnStatus, error: String?)
     case exited(error: String?)
+    /// A head started inside the session, or an existing one was described further.
+    case agentStarted(AgentSpawn)
+    /// An event from inside a head's own transcript.
+    indirect case agentEvent(agentID: String, ProviderEvent)
+    /// The provider's word on a running head: a progress note, its last tool, its spend.
+    case agentProgress(agentID: String, summary: String?, lastTool: String?, tokens: Int?, toolCalls: Int?)
+    /// A head finished, with the provider's summary of its result when it has one.
+    case agentFinished(agentID: String, status: TurnStatus, summary: String?)
 }
 
 struct ToolUpdate: Sendable {
@@ -85,6 +113,12 @@ protocol ProviderSession: AnyObject {
     func answerQuestion(_ requestID: String, answers: [String: [String]])
     func compact() async throws
     func stop()
+    /// Stops a head running inside the session. Returns whether the provider could.
+    func stopAgent(_ id: String) async -> Bool
+}
+
+extension ProviderSession {
+    func stopAgent(_ id: String) async -> Bool { false }
 }
 
 enum ProviderError: LocalizedError {
