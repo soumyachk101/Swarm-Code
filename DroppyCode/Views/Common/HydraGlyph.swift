@@ -8,6 +8,11 @@ struct HydraGlyph: View {
     var size: CGFloat = 20
     /// A soft ring breathes around a head still at work.
     var isRunning = false
+    /// A finished head wears its outcome on the glyph's bottom-right corner: a green tick
+    /// for done, red for failed, grey for stopped. Nil, or running, shows nothing.
+    var status: HydraHeadInfo.Status?
+
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
@@ -27,7 +32,36 @@ struct HydraGlyph: View {
                 .offset(y: persona.shape == .triangle ? size * 0.08 : 0)
         }
         .frame(width: size, height: size)
-        .accessibilityLabel(Text(persona.name))
+        .overlay(alignment: .bottomTrailing) {
+            if let status, status.isFinished {
+                badge(for: status)
+            }
+        }
+        .accessibilityLabel(Text(status.map { "\(persona.name), \($0.rawValue)" } ?? persona.name))
+    }
+
+    /// The outcome as a small disc riding the corner, cut out from the glyph by a ring in
+    /// the surface's colour, the way a presence badge sits on an avatar.
+    private func badge(for status: HydraHeadInfo.Status) -> some View {
+        let diameter = max(8, size * 0.5)
+        let (symbol, color): (String, Color) = switch status {
+        case .completed: ("checkmark", Chrome.success)
+        case .failed: ("xmark", Chrome.danger)
+        default: ("stop.fill", Chrome.secondaryText)
+        }
+        return ZStack {
+            Circle()
+                .fill(color)
+            Image(systemName: symbol)
+                .font(.system(size: diameter * 0.55, weight: .heavy))
+                .foregroundStyle(.white)
+        }
+        .frame(width: diameter, height: diameter)
+        .overlay {
+            Circle().strokeBorder(colorScheme == .dark ? Color.black.opacity(0.55) : Color.white.opacity(0.95), lineWidth: max(1, diameter * 0.12))
+        }
+        .offset(x: diameter * 0.3, y: diameter * 0.3)
+        .transition(.scale.combined(with: .opacity))
     }
 }
 

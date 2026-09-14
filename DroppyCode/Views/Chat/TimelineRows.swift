@@ -522,7 +522,7 @@ struct ToolRow: View {
                             // A row that sent out a head wears the head's glyph and name.
                             let head = call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
                             if let head {
-                                HydraGlyph(persona: head.persona, size: 14, isRunning: call.status == .running && head.status == .running)
+                                HydraGlyph(persona: head.persona, size: 14, isRunning: call.status == .running && head.status == .running, status: head.status)
                                     .frame(width: TimelineMetrics.iconWidth)
                             } else {
                                 ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)

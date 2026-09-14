@@ -80,7 +80,7 @@ struct HydraPanel: View {
                 HydraHeadsButton(runtime: runtime, heads: heads, dismiss: dismiss)
                 if let selected, let info = selected.hydra {
                     HStack(spacing: 6) {
-                        HydraGlyph(persona: info.persona, size: 16, isRunning: info.status == .running)
+                        HydraGlyph(persona: info.persona, size: 16, isRunning: info.status == .running, status: info.status)
                         Text(verbatim: info.persona.name)
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Chrome.primaryText.opacity(0.92))
@@ -221,8 +221,9 @@ private struct HydraSpokesMark: View {
     }
 }
 
-/// One head in the popover: its glyph, its name and task, what it is doing, and a stop
-/// button while it works.
+/// One head in the popover: its glyph (wearing its outcome once it is done), its name and
+/// task, what it is doing, and a stop button while it works. The head on stage sits on a
+/// tinted row.
 private struct HydraHeadRow: View {
     @Environment(AppModel.self) private var model
     let head: ChatThread
@@ -236,7 +237,7 @@ private struct HydraHeadRow: View {
             HStack(spacing: 10) {
                 Button(action: select) {
                     HStack(spacing: 10) {
-                        HydraGlyph(persona: info.persona, size: 22, isRunning: info.status == .running)
+                        HydraGlyph(persona: info.persona, size: 22, isRunning: info.status == .running, status: info.status)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
                                 Text(verbatim: info.persona.name)
@@ -254,28 +255,14 @@ private struct HydraHeadRow: View {
                                 .truncationMode(.tail)
                         }
                         Spacer(minLength: 8)
-                        if isOnStage {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Chrome.primaryText)
-                        }
                     }
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 if info.status == .running, info.canStop {
-                    Button {
+                    HydraStopButton(name: info.persona.name) {
                         model.stopHydraHead(head.id)
-                    } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .frame(width: 22, height: 22)
-                            .contentShape(.rect)
                     }
-                    .buttonStyle(.plain)
-                    .help("Stop \(info.persona.name)")
-                    .opacity(isHovering ? 1 : 0.6)
                 }
             }
             .padding(.horizontal, 8)
@@ -283,14 +270,40 @@ private struct HydraHeadRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(isHovering ? Chrome.overlay(0.1) : Color.clear)
+                    .fill(isOnStage ? Chrome.overlay(0.14) : (isHovering ? Chrome.overlay(0.08) : Color.clear))
             }
             .onHover { hovering in
                 withAnimation(Chrome.hover) { isHovering = hovering }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(Text("\(info.persona.name), \(HydraStatusText.long(info)), \(info.task)"))
+            .accessibilityLabel(Text("\(info.persona.name), \(HydraStatusText.long(info)), \(info.task)\(isOnStage ? ", on stage" : "")"))
         }
+    }
+}
+
+/// The stop button beside a working head: a round glass button that reads as one, with
+/// the stop mark in the danger colour when the pointer is on it.
+private struct HydraStopButton: View {
+    let name: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(isHovering ? Chrome.danger : Chrome.primaryText.opacity(0.85))
+                .frame(width: 26, height: 26)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .chromeGlassCircle()
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .help("Stop \(name)")
+        .accessibilityLabel(Text("Stop \(name)"))
     }
 }
 
