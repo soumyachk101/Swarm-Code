@@ -200,8 +200,8 @@ final class AppSettings {
     var deepseekAPIKeyInput: String {
         didSet {
             guard deepseekAPIKeyInput != oldValue else { return }
-            DeepSeekKeychain.setAPIKey(deepseekAPIKeyInput)
-            storeAPIKeyFallback(deepseekAPIKeyInput, forKey: Key.deepseekAPIKey)
+            let kept = DeepSeekKeychain.setAPIKey(deepseekAPIKeyInput)
+            storeAPIKeyFallback(kept ? "" : deepseekAPIKeyInput, forKey: Key.deepseekAPIKey)
         }
     }
 
@@ -211,11 +211,13 @@ final class AppSettings {
     var metaAPIKeyInput: String {
         didSet {
             guard metaAPIKeyInput != oldValue else { return }
-            MetaKeychain.setAPIKey(metaAPIKeyInput)
-            storeAPIKeyFallback(metaAPIKeyInput, forKey: Key.metaAPIKey)
+            let kept = MetaKeychain.setAPIKey(metaAPIKeyInput)
+            storeAPIKeyFallback(kept ? "" : metaAPIKeyInput, forKey: Key.metaAPIKey)
         }
     }
 
+    /// The plaintext copy in defaults, for a Mac whose Keychain refused the key; an empty
+    /// value removes it, so a key the Keychain holds never sits in the defaults too.
     private func storeAPIKeyFallback(_ value: String, forKey key: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
@@ -322,6 +324,10 @@ final class AppSettings {
         }
         deepseekAPIKeyInput = DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "")
         metaAPIKeyInput = MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "")
+        // Earlier builds kept a plaintext copy of every key in the defaults; one the
+        // Keychain holds needs none.
+        if !DeepSeekKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.deepseekAPIKey) }
+        if !MetaKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.metaAPIKey) }
         binaryPaths = defaults.dictionary(forKey: Key.binaryPaths) as? [String: String] ?? [:]
         disabledProviders = defaults.stringArray(forKey: Key.disabledProviders) ?? []
         lastModels = defaults.dictionary(forKey: Key.models) as? [String: String] ?? [:]

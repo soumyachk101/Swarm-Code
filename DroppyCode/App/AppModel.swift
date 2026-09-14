@@ -127,6 +127,10 @@ final class AppModel {
         if providers.status(.meta).isInstalled {
             await providers.loadCatalog(.meta)
         }
+        // Last, once nothing the first click needs is waiting on the disk: the attachment
+        // files no thread refers to any more go, a day after they were written.
+        guard !WebsiteCaptures.isEnabled else { return }
+        await Storage.sweepOrphanedAttachments()
     }
 
     // MARK: - Lookup

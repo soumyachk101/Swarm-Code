@@ -22,7 +22,7 @@ struct HydraButton: View {
         } label: {
             ZStack {
                 if isOn {
-                    HydraCharge()
+                    HydraCharge(isWorking: running > 0)
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
                 HydraMarkView(isOn: isOn, isHovering: isHovering)
@@ -116,46 +116,72 @@ private struct HydraMarkView: View {
     }
 }
 
-/// The charge around an active Hydra button: a ring of the roster's colours that keeps
-/// turning, and a glow behind the mark that breathes. Both are animations the render
-/// server runs on its own (a rotation and an opacity, repeating), so a charged button
-/// costs the main thread nothing while it sits there; an earlier version re-rendered the
-/// view thirty times a second for as long as Hydra was on. Both stop with reduced motion
-/// and leave a still ring, so the state still shows.
+/// The charge around an active Hydra button: a ring of the roster's colours and a glow
+/// behind the mark. While a head works the ring keeps turning and the glow breathes;
+/// both are animations the render server runs on its own (a rotation and an opacity,
+/// repeating), so a working team costs the main thread nothing. With no head out the
+/// ring stands still: the button sits inside a glass surface, and glass redraws with
+/// every frame its content moves, so a ring that turned all day kept the compositor
+/// busy for every chat with Hydra on. Reduced motion keeps the still ring too.
 struct HydraCharge: View {
+    /// Whether any head is at work: the ring turns and the glow breathes only then.
+    var isWorking = true
+
     private static let colors: [Color] = HydraRoster.personas.prefix(6).map(\.color)
 
+    var body: some View {
+        ZStack {
+            if isWorking, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                HydraChargeMotion()
+            } else {
+                Self.glow(breathing: false)
+                Self.ring(turned: false)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    static func glow(breathing: Bool) -> some View {
+        Circle()
+            .fill(
+                RadialGradient(
+                    colors: [Chrome.accent.opacity(0.46), Chrome.accent.opacity(0)],
+                    center: .center,
+                    startRadius: 2,
+                    endRadius: 15
+                )
+            )
+            .padding(2)
+            .opacity(breathing ? 1 : 0.6)
+    }
+
+    static func ring(turned: Bool, bright: Bool = false) -> some View {
+        Circle()
+            .strokeBorder(
+                AngularGradient(
+                    gradient: Gradient(colors: colors + [colors[0]]),
+                    center: .center
+                ),
+                lineWidth: 2
+            )
+            .padding(1)
+            .rotationEffect(.degrees(turned ? 360 : 0))
+            .opacity(bright ? 1 : 0.85)
+    }
+}
+
+/// The charge in motion. A view of its own, so the repeating animations start when a head
+/// goes out and are torn down with it when the last one is back.
+private struct HydraChargeMotion: View {
     @State private var isTurning = false
     @State private var isBreathing = false
 
     var body: some View {
         ZStack {
-            Circle()
-                .fill(
-                    RadialGradient(
-                        colors: [Chrome.accent.opacity(0.46), Chrome.accent.opacity(0)],
-                        center: .center,
-                        startRadius: 2,
-                        endRadius: 15
-                    )
-                )
-                .padding(2)
-                .opacity(isBreathing ? 1 : 0.6)
-            Circle()
-                .strokeBorder(
-                    AngularGradient(
-                        gradient: Gradient(colors: Self.colors + [Self.colors[0]]),
-                        center: .center
-                    ),
-                    lineWidth: 2
-                )
-                .padding(1)
-                .rotationEffect(.degrees(isTurning ? 360 : 0))
-                .opacity(isBreathing ? 1 : 0.85)
+            HydraCharge.glow(breathing: isBreathing)
+            HydraCharge.ring(turned: isTurning, bright: isBreathing)
         }
-        .allowsHitTesting(false)
         .onAppear {
-            guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
             withAnimation(.linear(duration: 4).repeatForever(autoreverses: false)) { isTurning = true }
             withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { isBreathing = true }
         }
