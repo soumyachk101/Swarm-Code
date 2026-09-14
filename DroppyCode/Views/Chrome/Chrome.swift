@@ -392,7 +392,9 @@ struct PaneTopVeil: View {
                     .fill(.clear)
                     .glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)), in: Rectangle())
                 Rectangle()
-                    .fill(Chrome.glassTint.opacity(scrim))
+                    .fill((isDark ? Color.black : Color.white).opacity(scrim))
+                Rectangle()
+                    .fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
             }
         }
         .opacity(0.08 + 0.92 * progress)
