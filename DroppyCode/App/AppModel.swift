@@ -105,7 +105,7 @@ final class AppModel {
     func bootstrap() async {
         // The threads most likely to be opened first decode in the background from the start,
         // so the first click into a conversation never parses its history on the main thread.
-        let recent = threads.filter { !$0.isArchived }.sorted { $0.updatedAt > $1.updatedAt }.prefix(12).map(\.id)
+        let recent = threads.filter { !$0.isArchived && !$0.isInPanel }.sorted { $0.updatedAt > $1.updatedAt }.prefix(12).map(\.id)
         warmDocuments(recent)
         await LoginEnvironment.load()
         await providers.refreshAll()
@@ -141,7 +141,7 @@ final class AppModel {
         if let lastID = settings.lastProjectID, let last = project(lastID) { return last }
         // No selection (for example after relaunch): stay in the folder you last worked in
         // instead of jumping back to the first project ever added.
-        if let recent = threads.filter({ !$0.isArchived }).max(by: { $0.updatedAt < $1.updatedAt }),
+        if let recent = threads.filter({ !$0.isArchived && !$0.isInPanel }).max(by: { $0.updatedAt < $1.updatedAt }),
            let recentProject = project(recent.projectID) { return recentProject }
         return projects.first
     }
@@ -151,9 +151,14 @@ final class AppModel {
         if settings.lastProjectID != id { settings.lastProjectID = id }
     }
 
+    /// The project's top-level threads, in sidebar order. A helper whose parent is among
+    /// them sits under that parent instead (see `helpers(of:)`); one whose parent is gone
+    /// or archived stands on its own.
     func threads(in project: Project) -> [ChatThread] {
-        threads
-            .filter { $0.projectID == project.id && !$0.isArchived }
+        let shown = threads.filter { $0.projectID == project.id && !$0.isArchived && !$0.isInPanel }
+        let shownIDs = Set(shown.map(\.id))
+        return shown
+            .filter { $0.parentThreadID.map { !shownIDs.contains($0) } ?? true }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
                 switch (lhs.sortOrder, rhs.sortOrder) {
@@ -202,9 +207,26 @@ final class AppModel {
         threads.filter(\.isArchived).sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    /// Threads in the order the sidebar shows them, for keyboard navigation.
+    /// Threads in the order the sidebar shows them, for keyboard navigation: each thread
+    /// followed by the helpers under it, unless they are folded away.
     var sidebarThreads: [ChatThread] {
-        projects.filter(\.isExpanded).flatMap { threads(in: $0) }
+        projects.filter(\.isExpanded).flatMap { project in
+            threads(in: project).flatMap { thread in
+                thread.foldsHelpers ? [thread] : [thread] + helpers(of: thread.id)
+            }
+        }
+    }
+
+    /// The helpers that sit under a thread in the sidebar: spawned from it, out of the panel,
+    /// not archived. Newest first, like the threads around them.
+    func helpers(of parentID: UUID) -> [ChatThread] {
+        threads
+            .filter { $0.parentThreadID == parentID && !$0.isInPanel && !$0.isArchived }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func toggleHelpersFold(_ parentID: UUID) {
+        updateThread(parentID) { $0.foldsHelpers.toggle() }
     }
 
     func runtime(for id: UUID) -> ThreadRuntime {
@@ -364,6 +386,8 @@ final class AppModel {
     }
 
     func archive(_ id: UUID) {
+        // The helpers under a thread go with it, and come back with it.
+        for helper in helpers(of: id) { archive(helper.id) }
         if selectedThreadID == id { selectNeighbor(of: id) }
         existingRuntime(for: id)?.stopSession()
         updateThread(id) {
@@ -374,10 +398,15 @@ final class AppModel {
 
     func unarchive(_ id: UUID) {
         updateThread(id) { $0.isArchived = false }
+        for helper in threads where helper.parentThreadID == id && helper.isArchived {
+            updateThread(helper.id) { $0.isArchived = false }
+        }
     }
 
     func delete(_ id: UUID, removeWorktree: Bool = false) {
         guard let thread = thread(id) else { return }
+        // A helper still in its panel goes with the thread it belongs to.
+        for helper in threads where helper.parentThreadID == id { delete(helper.id) }
         if selectedThreadID == id { selectNeighbor(of: id) }
         discardThreadState(thread)
         threads.removeAll { $0.id == id }
@@ -397,17 +426,95 @@ final class AppModel {
     func deleteArchivedThreads() {
         let archived = threads.filter(\.isArchived)
         guard !archived.isEmpty else { return }
-        if let selectedThreadID, archived.contains(where: { $0.id == selectedThreadID }) {
+        // Helpers still in an archived thread's panel go with it.
+        let archivedIDs = Set(archived.map(\.id))
+        let removed = archived + threads.filter { helper in
+            guard let parent = helper.parentThreadID else { return false }
+            return archivedIDs.contains(parent) && !archivedIDs.contains(helper.id)
+        }
+        if let selectedThreadID, removed.contains(where: { $0.id == selectedThreadID }) {
             self.selectedThreadID = nil
         }
-        for thread in archived {
+        for thread in removed {
             discardThreadState(thread)
             if let project = project(thread.projectID) {
                 Task { await Git(project.path).deleteCheckpoints(thread: thread.id) }
             }
         }
-        threads.removeAll { $0.isArchived }
+        let removedIDs = Set(removed.map(\.id))
+        threads.removeAll { removedIDs.contains($0.id) }
         scheduleSave()
+    }
+
+    // MARK: - Subagents
+
+    /// Helpers whose panel closed while they worked: their session goes once the
+    /// interrupted turn has finished (see turnFinished).
+    @ObservationIgnored private var sessionsToRelease: Set<UUID> = []
+
+    /// The helper a thread spawned and still shows in its floating panel, if any.
+    func subagent(of parentID: UUID) -> ChatThread? {
+        threads.first { $0.parentThreadID == parentID && $0.isInPanel && !$0.isArchived }
+    }
+
+    /// Spawns a helper thread beside `parentID` and sends it `prompt` at once. The helper
+    /// runs on its parent's provider, model, effort and permissions, so it works exactly as
+    /// the chat that spawned it would, in the project folder itself: a merge lands on the
+    /// main checkout, never in a thread's worktree. A parent already showing a helper hands
+    /// the prompt to that one instead: sent now when it is idle, queued behind its running
+    /// turn otherwise.
+    @discardableResult
+    func spawnSubagent(from parentID: UUID, title: String, prompt: String) -> ChatThread? {
+        guard let parent = thread(parentID) else { return nil }
+        if let existing = subagent(of: parentID) {
+            let runtime = runtime(for: existing.id)
+            if runtime.isRunning {
+                runtime.enqueueFollowUp(text: prompt, attachments: [])
+            } else {
+                runtime.draft = ComposerDraft(text: prompt)
+                runtime.send()
+            }
+            return existing
+        }
+        var thread = ChatThread(
+            projectID: parent.projectID,
+            provider: parent.provider,
+            model: parent.model,
+            effort: parent.effort,
+            runtimeMode: parent.runtimeMode,
+            fastMode: parent.fastMode
+        )
+        thread.parentThreadID = parentID
+        thread.isInPanel = true
+        thread.title = title
+        thread.hasCustomTitle = true
+        threads.append(thread)
+        scheduleSave()
+        // A fresh helper opens docked, wherever the last one was dragged to.
+        runtime(for: parentID).subagentPanelOrigin = nil
+        let runtime = runtime(for: thread.id)
+        runtime.draft = ComposerDraft(text: prompt)
+        runtime.send()
+        return thread
+    }
+
+    /// Closes a helper's panel: its turn stops, and it moves to the sidebar under the thread
+    /// that spawned it, as a smaller row, so what it did stays a click away.
+    func closeSubagent(_ id: UUID) {
+        guard let helper = thread(id) else { return }
+        if let runtime = existingRuntime(for: id) {
+            // A running turn ends as interrupted and releases its session once it has
+            // (see turnFinished); an idle one has nothing to wait for.
+            if runtime.isRunning {
+                sessionsToRelease.insert(id)
+                runtime.interrupt()
+            } else {
+                runtime.stopSession()
+            }
+        }
+        updateThread(id) { $0.isInPanel = false }
+        // A fresh helper under a parent unfolds them, so the one just closed is in view.
+        if let parentID = helper.parentThreadID { updateThread(parentID) { $0.foldsHelpers = false } }
     }
 
     private func discardThreadState(_ thread: ChatThread) {
@@ -479,13 +586,18 @@ final class AppModel {
     }
 
     func turnFinished(_ id: UUID, status: TurnStatus) {
-        let isVisible = NSApp.isActive && selectedThreadID == id
+        // A helper is on screen with its parent, in the parent's floating panel.
+        let onScreen = selectedThreadID == id || (selectedThreadID != nil && thread(id)?.parentThreadID == selectedThreadID)
+        let isVisible = NSApp.isActive && onScreen
         updateThread(id) {
             $0.lastStatus = status
             $0.updatedAt = .now
             if !isVisible { $0.hasUnread = true }
         }
         updateDockBadge()
+        // A helper panel closed mid-turn kept its session alive to finish stopping cleanly;
+        // it has now.
+        if sessionsToRelease.remove(id) != nil { existingRuntime(for: id)?.stopSession() }
         guard !isVisible, settings.notifyWhenFinished, let thread = thread(id) else { return }
         let body = switch status {
         case .completed: "Finished."
@@ -522,7 +634,7 @@ final class AppModel {
     }
 
     private func updateDockBadge() {
-        let unread = threads.count { $0.hasUnread && !$0.isArchived }
+        let unread = threads.count { $0.hasUnread && !$0.isArchived && !$0.isInPanel }
         NSApp.dockTile.badgeLabel = unread > 0 ? String(unread) : nil
     }
 

@@ -83,6 +83,18 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     /// The day that place was given; a thread active on a later day is newest first again.
     var activityOrderDay: Date?
     var lastStatus: TurnStatus?
+    /// The thread this one was spawned from, for a helper (a merge, for now). A helper opens
+    /// in its parent's floating panel and, once that closes, sits under its parent in the
+    /// sidebar as a smaller row for as long as the parent is there.
+    var parentThreadID: UUID?
+    /// Whether the helper is showing in its parent's floating panel. While it is, it is kept
+    /// out of the sidebar, the palette, the recent picks and the unread count.
+    var isInPanel = false
+    /// Whether this thread's helpers are folded away under it in the sidebar.
+    var foldsHelpers = false
+
+    /// Spawned from another thread, whichever side of the panel it is on.
+    var isHelper: Bool { parentThreadID != nil }
 
     init(projectID: UUID, provider: ProviderKind, model: String?, effort: String?, runtimeMode: RuntimeMode, fastMode: Bool = false) {
         id = UUID()
@@ -126,6 +138,9 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         activityOrder = container.value(.activityOrder, default: nil)
         activityOrderDay = container.value(.activityOrderDay, default: nil)
         lastStatus = container.value(.lastStatus, default: nil)
+        parentThreadID = container.value(.parentThreadID, default: nil)
+        isInPanel = container.value(.isInPanel, default: false)
+        foldsHelpers = container.value(.foldsHelpers, default: false)
     }
 }
 

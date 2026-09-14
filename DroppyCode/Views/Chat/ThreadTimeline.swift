@@ -81,13 +81,12 @@ struct ThreadTimeline: View, Equatable {
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
         var visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
-        // The running turn's trailing tool run is not a block of its own: the working line
-        // carries it (its summary beside the spinner, its steps behind the chevron) until a
-        // reply follows, when it comes back as a collapsed group above the answer.
-        var liveWork: [TimelineEntry] = []
+        // The running turn's trailing tool run is not a block of its own: the working tab on
+        // the chat box carries it (its summary beside the spinner, its steps behind the
+        // chevron) until a reply follows, when it comes back as a collapsed group above the
+        // answer. The tab finds the same run by walking back from the end (WorkingTab.liveWork).
         if runtime.isRunning, runtime.entries.last?.kind != .assistant,
-           case .group(.work(_, let entries, false), _, _) = visible.last {
-            liveWork = entries
+           case .group(.work(_, _, false), _, _) = visible.last {
             visible.removeLast()
         }
         // The turns a row may offer to revert. Read here, once, so a turn record changing
@@ -98,7 +97,7 @@ struct ThreadTimeline: View, Equatable {
         // space, so the conversation stays centered exactly like the composer.
         // Ticks centre in the full column height, so the queue tab opening never moves them.
         return ZStack(alignment: .leading) {
-            timelineScroll(visible: visible, hidden: hidden, liveWork: liveWork, rewindable: rewindable)
+            timelineScroll(visible: visible, hidden: hidden, rewindable: rewindable)
             if blocks.count(where: \.hasUserMessage) > 1 {
                 TimelineMinimapColumn(
                     blocks: blocks,
@@ -172,7 +171,7 @@ struct ThreadTimeline: View, Equatable {
         await MarkdownView.warm(texts)
     }
 
-    private func timelineScroll(visible: [DisplayBlock], hidden: Int, liveWork: [TimelineEntry], rewindable: Set<UUID>) -> some View {
+    private func timelineScroll(visible: [DisplayBlock], hidden: Int, rewindable: Set<UUID>) -> some View {
         // The outline the rail resolves against, kept in step with what is laid out.
         tracking.setOutline(visible.map { ($0.id, $0.hasUserMessage) })
         return ScrollView {
@@ -216,14 +215,6 @@ struct ThreadTimeline: View, Equatable {
                                 tracking.setVisible(block.id, isVisible)
                             }
                             .transition(.softAppear)
-                    }
-                    if runtime.isRunning {
-                        WorkingIndicatorSlot(
-                            runtime: runtime,
-                            liveWork: liveWork,
-                            workingDirectory: workingDirectory,
-                            showsThinking: model.settings.showReasoning
-                        )
                     }
                 }
                 .allowsHitTesting(!isReaderScrolling)
@@ -687,93 +678,6 @@ struct TimelineGroupView: View {
     }
 }
 
-/// The one line a running turn shows: Zeron's gradient pulse, what the agent is doing
-/// right now (the live tool run's summary, or a word that changes every few seconds
-/// before any tool starts) and the elapsed time. Collapsed by default; the chevron
-/// opens the thinking (when shown) and the run's steps beneath it.
-private struct WorkingIndicator: View {
-    let runtime: ThreadRuntime
-    let startedAt: Date
-    let seed: UInt64
-    /// The running turn's thinking. When there is any, a chevron opens it beneath the indicator.
-    let thinkingSteps: [ThinkingStep]
-    /// The tool run in progress, folded into this line while it runs.
-    let liveWork: [TimelineEntry]
-    var workingDirectory: String?
-    @State private var now = Date.now
-    @State private var isExpanded = false
-
-    var body: some View {
-        let elapsed = now.timeIntervalSince(startedAt)
-        let word = WorkingWords.word(seed: seed, elapsedSeconds: Int64(max(0, elapsed)))
-        let label = liveWork.isEmpty ? "\(word)…" : WorkGroupSummary.text(for: liveWork)
-        let canExpand = !thinkingSteps.isEmpty || !liveWork.isEmpty
-        VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
-            Button {
-                guard canExpand else { return }
-                withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
-            } label: {
-                HStack(spacing: TimelineMetrics.iconSpacing) {
-                    WorkingSpinner(cellSize: 3.5)
-                        .frame(width: TimelineMetrics.iconWidth)
-                    Text(verbatim: label)
-                        .foregroundStyle(.secondary)
-                        .id(label)
-                        .transition(.opacity.combined(with: .offset(y: 3)))
-                    Text(RelativeTime.duration(elapsed))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                    if canExpand {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            .transition(.opacity)
-                    }
-                }
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .help(canExpand ? (isExpanded ? "Hide these steps" : "Show these steps") : "")
-            .accessibilityHint(canExpand ? Text("Shows what the agent is doing") : Text(""))
-
-            if isExpanded, canExpand {
-                if !thinkingSteps.isEmpty {
-                    VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
-                        ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
-                            MarkdownView(text: step.text, isStreaming: step.isStreaming).equatable()
-                        }
-                    }
-                    .foregroundStyle(.secondary)
-                    .environment(\.markdownPointSize, 12)
-                    .environment(\.markdownDimmed, true)
-                    .padding(.leading, TimelineMetrics.iconWidth + TimelineMetrics.iconSpacing)
-                    .transition(.softAppear)
-                }
-                if !liveWork.isEmpty {
-                    WorkSteps(entries: liveWork, runtime: runtime, workingDirectory: workingDirectory)
-                        .transition(.softAppear)
-                }
-            }
-        }
-        .animation(.smooth(duration: 0.35), value: label)
-        .animation(.smooth(duration: 0.2), value: canExpand)
-        .font(.callout)
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                now = .now
-            }
-        }
-    }
-}
-
-/// One piece of the running turn's thinking, and whether it is still arriving.
-struct ThinkingStep: Equatable {
-    var text: String
-    var isStreaming: Bool
-}
-
 /// Whether the reader has scrolled away from the latest message, shared with the composer that shows the jump button.
 @MainActor
 @Observable
@@ -783,54 +687,5 @@ final class TimelineScrollState {
 
     func jumpToLatest() {
         jumpRequest += 1
-    }
-}
-
-/// Where the working indicator sits while a turn runs. The moment the reply it is waiting on
-/// arrives, the indicator steps aside and the reply takes its line, so the answer begins exactly
-/// where the indicator was instead of pushing it down. It comes back below when the agent moves on
-/// to another step. Indicator and reply are both one row tall — replies keep their hover line
-/// inside the gap below them, never in their height — so the handover moves nothing. Only the
-/// newest entry's kind is read here, which never changes while text streams, plus the turn's thinking.
-private struct WorkingIndicatorSlot: View {
-    let runtime: ThreadRuntime
-    /// The tool run in progress, shown on the working line instead of as a group.
-    let liveWork: [TimelineEntry]
-    let workingDirectory: String?
-    let showsThinking: Bool
-
-    var body: some View {
-        let replyTookOver = runtime.entries.last?.kind == .assistant
-        ZStack(alignment: .topLeading) {
-            if !replyTookOver {
-                WorkingIndicator(
-                    runtime: runtime,
-                    startedAt: runtime.turnStartedAt ?? .now,
-                    seed: WorkingWords.seed(runtime.threadID.uuidString),
-                    thinkingSteps: showsThinking ? thinking : [],
-                    liveWork: liveWork,
-                    workingDirectory: workingDirectory
-                )
-                .transition(.asymmetric(
-                    insertion: .softAppear,
-                    removal: .opacity.animation(.easeOut(duration: 0.1))
-                ))
-            }
-        }
-    }
-
-    /// The running turn's thinking. Kind and turn are fixed at creation, so they are checked before
-    /// any content is read.
-    private var thinking: [ThinkingStep] {
-        guard let turnID = runtime.entries.last.flatMap(\.turnID) else { return [] }
-        // Walks back from the end and stops at the previous turn, so streamed thinking never rescans the thread.
-        var steps: [ThinkingStep] = []
-        for entry in runtime.entries.reversed() {
-            guard let entryTurn = entry.turnID else { continue }
-            guard entryTurn == turnID else { break }
-            guard entry.kind == .reasoning, case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { continue }
-            steps.append(ThinkingStep(text: block.text, isStreaming: block.isStreaming))
-        }
-        return steps.reversed()
     }
 }

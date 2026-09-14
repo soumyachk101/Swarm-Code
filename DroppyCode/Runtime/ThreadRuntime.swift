@@ -84,6 +84,9 @@ final class ThreadRuntime {
     var draft = ComposerDraft()
     var isTerminalVisible = false
     var isDiffVisible = false
+    /// Where the helper panel this thread spawned was dragged to, as its top-left corner in
+    /// the chat pane; nil while it sits docked in the bottom-right corner beside the chat box.
+    var subagentPanelOrigin: CGPoint?
     var diffSelection: UUID?
     /// The view the changes popover should open on: a tool row's label, a turn's Review
     /// button, or nil for the changes tab. Held weakly so a row that leaves the screen

@@ -21,6 +21,7 @@ struct LinkParagraphView: NSViewRepresentable {
     func makeNSView(context: Context) -> LinkTextView {
         let view = LinkTextView()
         view.delegate = context.coordinator
+        view.mergeTarget = context.environment.mergeRequestTarget
         onHost?(view)
         return view
     }
@@ -28,6 +29,7 @@ struct LinkParagraphView: NSViewRepresentable {
     func updateNSView(_ view: LinkTextView, context: Context) {
         // Read so a favicon-load bump rebuilds the string with icons.
         _ = revision
+        view.mergeTarget = context.environment.mergeRequestTarget
         view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming))
     }
 
@@ -105,11 +107,38 @@ struct LinkParagraphView: NSViewRepresentable {
     }
 }
 
+/// What a merge or pull request link in a chat hands its request to, set by a chat that can
+/// spawn a merge helper; a link then offers "Merge" at the top of its menu. Compared by the
+/// chat it stands for, so a chat setting it on every render never re-renders a link paragraph.
+struct MergeRequestTarget: Equatable {
+    let chatID: UUID
+    let merge: @MainActor (MergeRequestLink) -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.chatID == rhs.chatID
+    }
+}
+
+private struct MergeRequestTargetKey: EnvironmentKey {
+    static let defaultValue: MergeRequestTarget? = nil
+}
+
+extension EnvironmentValues {
+    var mergeRequestTarget: MergeRequestTarget? {
+        get { self[MergeRequestTargetKey.self] }
+        set { self[MergeRequestTargetKey.self] = newValue }
+    }
+}
+
 /// Non-editable selectable text view that sizes itself to its content width.
 /// No continuous work: layout runs once per text or width change.
 final class LinkTextView: NSTextView {
     private var lastLaidOutWidth: CGFloat = 0
     private var lastMeasuredHeight: CGFloat = 0
+
+    /// Receives a merge or pull request link when its menu's Merge item is chosen. Nil keeps
+    /// the system's menu on every link.
+    var mergeTarget: MergeRequestTarget?
 
     /// The view owns its text storage. `init(frame:textContainer:)` only takes a
     /// container and holds it weakly; a bare container with no layout manager or
@@ -173,12 +202,69 @@ final class LinkTextView: NSTextView {
 
     /// Whether `point`, in this view's coordinates, is over a link.
     func hasLink(at point: CGPoint) -> Bool {
-        guard let layoutManager, let textContainer, let textStorage, textStorage.length > 0 else { return false }
+        link(at: point) != nil
+    }
+
+    /// The link under `point`, in this view's coordinates.
+    func link(at point: CGPoint) -> URL? {
+        guard let layoutManager, let textContainer, let textStorage, textStorage.length > 0 else { return nil }
         let glyph = layoutManager.glyphIndex(for: point, in: textContainer)
         guard glyph < layoutManager.numberOfGlyphs,
-              layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer).contains(point) else { return false }
+              layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer).contains(point) else { return nil }
         let index = layoutManager.characterIndexForGlyph(at: glyph)
-        return index < textStorage.length && textStorage.attribute(.link, at: index, effectiveRange: nil) != nil
+        guard index < textStorage.length, let link = textStorage.attribute(.link, at: index, effectiveRange: nil) else { return nil }
+        if let url = link as? URL { return url }
+        if let string = link as? String { return URL(string: string) }
+        return nil
+    }
+
+    // MARK: - Link menu
+
+    /// A merge or pull request link gets "Merge" at the top of its menu, with the plain link
+    /// items and the system's own below it. Every other link keeps the system's menu.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard mergeTarget != nil, let url = link(at: point), let request = MergeRequestLink(url: url) else {
+            return super.menu(for: event)
+        }
+        let menu = NSMenu()
+        let merge = NSMenuItem(title: "Merge \(request.label)", action: #selector(mergeRequest(_:)), keyEquivalent: "")
+        merge.target = self
+        merge.representedObject = request
+        menu.addItem(merge)
+        menu.addItem(.separator())
+        let open = NSMenuItem(title: "Open Link", action: #selector(openLink(_:)), keyEquivalent: "")
+        open.target = self
+        open.representedObject = url
+        menu.addItem(open)
+        let copy = NSMenuItem(title: "Copy Link", action: #selector(copyLink(_:)), keyEquivalent: "")
+        copy.target = self
+        copy.representedObject = url
+        menu.addItem(copy)
+        if let standard = super.menu(for: event), !standard.items.isEmpty {
+            menu.addItem(.separator())
+            for item in standard.items {
+                standard.removeItem(item)
+                menu.addItem(item)
+            }
+        }
+        return menu
+    }
+
+    @objc private func mergeRequest(_ sender: NSMenuItem) {
+        guard let request = sender.representedObject as? MergeRequestLink else { return }
+        mergeTarget?.merge(request)
+    }
+
+    @objc private func openLink(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func copyLink(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(url.absoluteString, forType: .string)
     }
 
     /// The last measurement, so the several `sizeThatFits` calls one layout pass makes

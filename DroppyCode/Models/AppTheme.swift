@@ -215,8 +215,16 @@ struct ThemeSpec {
 /// through the settings they already observe, so the static read is always
 /// fresh on the main thread.
 enum ThemeManager {
+    /// Posted after the theme changes, for layer-backed views whose colours are set once
+    /// rather than resolved on every draw (the spinners' cells), so they follow the theme
+    /// even when nothing re-renders them.
+    static let didChange = Notification.Name("ThemeManager.didChange")
+
     nonisolated(unsafe) static var current: AppTheme = .system {
-        didSet { spec = current.spec }
+        didSet {
+            spec = current.spec
+            NotificationCenter.default.post(name: didChange, object: nil)
+        }
     }
 
     /// The current theme's colors, built once per theme change. `Chrome.accent` and friends
