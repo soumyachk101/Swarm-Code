@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Draws Hydra's heads: twenty-five dragon heads in profile and the three-headed mark, as
+"""Draws Hydra's heads: twenty-five dragon heads in profile and the one-headed mark, as
 template SVGs for the asset catalog. Every head is one closed contour built from parts
 (neck, skull and horns, snout, mouth, throat) plus an eye and sometimes a nostril, cut as
 holes by winding. Run it to regenerate the assets; pass --render for a contact sheet at
@@ -171,41 +171,14 @@ SPECS = [
  ("Gus",    dict(skull="swept",    snout="beak",     mouth="closed", neck="plain",  throat="wattle", nostril=(88,64))),
 ]
 
-# ---------- the three-headed mark ----------
+# ---------- the mark ----------
 def mark_svg():
-    fills = []
-    strokes = []
-    def add(pts, positive=True):
-        fills.append(smooth_path(ensure_dir(pts, positive)))
-    base = head_points(neck="plain", skull="single", snout="long", mouth="closed", throat="plain")
-    # Three heads in a fan, close to the body: the outer two face out and up, the middle
-    # one faces up. Positive angles turn clockwise on screen, so a mirrored (left-facing)
-    # head lifts its snout with a positive angle and a right-facing one with a negative.
-    heads = [
-        dict(mirror=True,  scale=0.5, angle=28,  dx=-27, dy=-19),
-        dict(mirror=False, scale=0.5, angle=-78, dx=3,   dy=-35),
-        dict(mirror=False, scale=0.5, angle=-28, dx=27,  dy=-19),
-    ]
-    eye_base = (63, 43)
-    # One solid collar joins the dome to the three heads' neck cuts, so the mark is a
-    # single mass with three heads on it, nothing hollow between them.
-    cuts = []
-    for h in heads:
-        pts = transform(base, h["scale"], h["angle"], h["mirror"], h["dx"], h["dy"])
-        add(pts, True)
-        ex, ey = transform([eye_base], h["scale"], h["angle"], h["mirror"], h["dx"], h["dy"])[0][:2]
-        fills.append(circle_path(ex, ey, 4.6*h["scale"], clockwise=False))
-        cb, cf = pts[0][:2], pts[-1][:2]
-        cuts.append(((cb[0]+cf[0])/2, (cb[1]+cf[1])/2))
-    l, m, r = cuts
-    # The collar's top rises under the middle head's snout, where a wedge opened between
-    # it and the right head; it stays below every eye.
-    add([(20,92,S),(16,80),(l[0],l[1]+2),(30,40),(40,22),(52,26),(62,30),(72,34),(74,40),(r[0],r[1]+2),(84,80),(80,92,S)], True)
-    add([(18,92,S),(16,82),(28,70),(50,63),(72,70),(84,82),(82,92,S)], True)
-    fill_d = " ".join(fills)
-    stroke_d = " ".join(strokes)
-    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -8 100 100" width="100" height="100">'
-            f'<path fill="#000000" fill-rule="nonzero" d="{fill_d}"/></svg>')
+    """The Hydra mark is one clean dragon head, drawn from the same parts as the roster
+    but bolder: two horns, a long snout, a closed mouth and a nostril, filling the frame.
+    An earlier mark fanned three half-size heads on one collar; at the 15 to 30 points
+    the mark is shown at, that read as a blob. One head reads at any size."""
+    return head_svg(dict(skull="double", snout="long", mouth="closed", neck="plain", throat="plain",
+                         eye=("round", 63, 43, 5), nostril=(86, 63)))
 
 # ---------- write + render ----------
 def install(name, svg):

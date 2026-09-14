@@ -200,6 +200,9 @@ extension AppModel {
     /// the checkout itself.
     private func makeHydraCopy(for head: ChatThread, of checkout: String) async -> (path: String, tree: String)? {
         guard let info = head.hydra, let project = project(head.projectID) else { return nil }
+        // A head's work landing in the checkout right now finishes first, so the copy
+        // starts from the checkout whole rather than half-way through a patch.
+        if let parentID = head.parentThreadID { await existingRuntime(for: parentID)?.hydraLanding?.value }
         let git = Git(checkout)
         guard await git.isRepository(), await git.hasCommits() else { return nil }
         let folder = project.name.replacingOccurrences(of: " ", with: "-").lowercased()
@@ -261,6 +264,7 @@ extension AppModel {
                 updateThread(parentID) { $0.foldsHelpers = false }
                 let leadRuntime = runtime(for: parentID)
                 if leadRuntime.hydraSelectedHeadID == id { leadRuntime.hydraSelectedHeadID = nil }
+                if leadRuntime.hydraPoppedHeadID == id { leadRuntime.hydraPoppedHeadID = nil }
             }
         }
         guard let parentID = head.parentThreadID, let finished = thread(id)?.hydra else { return }
@@ -307,7 +311,22 @@ extension AppModel {
     /// patch between the two trees, applied there, three-way where the checkout has moved
     /// on. What lands moves the base forward, so a head steered on later lands only what
     /// is new; a patch that will not apply is kept as a file and the base stays.
+    /// Landings into one checkout go one at a time: heads finishing together would
+    /// otherwise write into it at once, and the later patch be judged against files the
+    /// earlier one was still changing.
     private func landHydraHead(_ id: UUID) async -> HydraLanding {
+        guard let parentID = thread(id)?.parentThreadID else { return HydraLanding() }
+        let leadRuntime = runtime(for: parentID)
+        let previous = leadRuntime.hydraLanding
+        let landing = Task<HydraLanding, Never> {
+            await previous?.value
+            return await self.applyHydraHead(id)
+        }
+        leadRuntime.hydraLanding = Task { _ = await landing.value }
+        return await landing.value
+    }
+
+    private func applyHydraHead(_ id: UUID) async -> HydraLanding {
         var landing = HydraLanding()
         guard let head = thread(id), let info = head.hydra, let base = info.baseTree, let copy = head.worktreePath,
               let parentID = head.parentThreadID, let lead = thread(parentID), let checkout = hydraCheckout(of: lead) else { return landing }
@@ -374,6 +393,7 @@ extension AppModel {
         let leadRuntime = runtime(for: parentID)
         leadRuntime.isHydraPanelHidden = true
         leadRuntime.hydraSelectedHeadID = nil
+        leadRuntime.hydraPoppedHeadID = nil
     }
 
     /// Finished heads leave the panel for the sidebar, and give their copies back.

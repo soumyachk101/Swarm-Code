@@ -216,6 +216,10 @@ struct ComposerTextView: NSViewRepresentable {
     var onImage: (Data) -> Void
     var onCursorChange: (Int) -> Void
     var onBlur: () -> Void = {}
+    /// Whether the text takes typing focus as it appears. The chat's own box does; a
+    /// floating panel's never does, so a head arriving or coming on stage while the user
+    /// types in the chat leaves the caret where it is.
+    var takesFocusOnAppear = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -266,7 +270,10 @@ struct ComposerTextView: NSViewRepresentable {
             Task { @MainActor in coordinator?.parent.onBlur() }
         }
         Task { @MainActor in
-            textView.window?.makeFirstResponder(textView)
+            // And never from another box the user is typing in, whichever one this is.
+            if takesFocusOnAppear, let window = textView.window, !(window.firstResponder is ComposerNSTextView) {
+                window.makeFirstResponder(textView)
+            }
             coordinator.updateHeight()
         }
         return scrollView

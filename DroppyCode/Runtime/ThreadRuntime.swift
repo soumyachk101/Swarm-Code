@@ -85,12 +85,20 @@ final class ThreadRuntime {
     var isTerminalVisible = false
     var isDiffVisible = false
     /// Where the helper panel this thread spawned was dragged to, as its top-left corner in
-    /// the chat pane; nil while it sits docked in the bottom-right corner beside the chat box.
+    /// the chat pane; nil while it sits docked in a corner beside the chat column.
     var subagentPanelOrigin: CGPoint?
+    /// Which corner the helper panel docks in.
+    var subagentPanelDock: PanelDockCorner = .bottomTrailing
     /// Where the Hydra panel was dragged to, the same way; nil while docked.
     var hydraPanelOrigin: CGPoint?
+    var hydraPanelDock: PanelDockCorner = .bottomTrailing
     /// The head whose timeline the Hydra panel shows.
     var hydraSelectedHeadID: UUID?
+    /// The head popped out of the Hydra panel into a second panel of its own, if any, and
+    /// where that panel was dragged to; nil while docked.
+    var hydraPoppedHeadID: UUID?
+    var hydraPoppedPanelOrigin: CGPoint?
+    var hydraPoppedPanelDock: PanelDockCorner = .bottomLeading
     /// The Hydra panel was dismissed; the next head to start brings it back.
     var isHydraPanelHidden = false
     /// The Hydra button's centre in window coordinates, for the genie flight's target.
@@ -99,6 +107,11 @@ final class ThreadRuntime {
     /// The Hydra panel's frame in window coordinates, for the genie flight's source.
     /// Unobserved: written on every layout, read only while hiding the panel.
     @ObservationIgnored var hydraPanelFrameInWindow: CGRect?
+    /// The Hydra panel's next appearance or departure is a genie flight to or from the
+    /// button: a ghost does the moving, so the panel itself comes and goes with no
+    /// transition of its own. Set by the button as it toggles the panel, cleared by the
+    /// panel once it has appeared or gone.
+    @ObservationIgnored var hydraPanelMorphs = false
     /// Heads by the tool row that stands for them in this timeline, so the row can show
     /// who was sent out.
     private(set) var hydraToolHeads: [String: UUID] = [:]
@@ -106,6 +119,12 @@ final class ThreadRuntime {
     @ObservationIgnored private var hydraNativeHeads: [String: UUID] = [:]
     /// Reports from Droppy-run heads waiting for the lead to be idle.
     @ObservationIgnored private var hydraPendingReports: [HydraReport] = []
+    /// The reports' turn is on its way (see `flushHydraReports`): a head finishing in the
+    /// meantime joins it rather than starting a turn of its own.
+    @ObservationIgnored private var hydraFlushScheduled = false
+    /// The landing under way in this lead's checkout (see `AppModel.landHydraHead`); the
+    /// next head's waits behind it, so two never write the same files at once.
+    @ObservationIgnored var hydraLanding: Task<Void, Never>?
     /// Delegations still in flight: the heads of each batch report together.
     @ObservationIgnored private var hydraBatches: [UUID: HydraBatch] = [:]
     /// Delegated tasks past the pair's limit, sent out as heads finish.
@@ -296,6 +315,8 @@ final class ThreadRuntime {
             return
         }
         draft = ComposerDraft()
+        // With every message going to a head, the lead stays idle for the reports.
+        if dispatchSentHead(text: text, attachments: attachments) { return }
         Task { await startTurn(text: text, attachments: attachments) }
     }
 
@@ -325,6 +346,12 @@ final class ThreadRuntime {
     /// if the turn finished on its own in the meantime).
     func interruptAndSend() {
         guard !draft.isEmpty, phase != .idle else { return }
+        // With every message going to a head, Return while the lead works sends the
+        // draft to a head and leaves the lead's turn alone.
+        if dispatchSentHead(text: draft.text, attachments: draft.attachments) {
+            draft = ComposerDraft()
+            return
+        }
         pendingSend = PendingSend(text: draft.text, attachments: draft.attachments)
         draft = ComposerDraft()
         interrupt()
@@ -368,13 +395,31 @@ final class ThreadRuntime {
     /// Hands a queued prompt to a Droppy-run head, when the app and the chat allow it and
     /// the pair has room for one more. Returns whether the head went out.
     private func dispatchQueuedHead(_ prompt: FollowUpPrompt) -> Bool {
-        guard let app, app.settings.hydraQueueHeads, let thread, let launch = app.hydraLaunch(for: thread),
+        guard let app, app.settings.hydraQueueHeads || app.settings.hydraAlwaysHeads else { return false }
+        return dispatchHead(prompt, origin: .queued)
+    }
+
+    /// Hands a message the user sent, idle lead or not, to a Droppy-run head, when every
+    /// message goes to heads and the pair has room. The local commands stay with the chat.
+    /// Returns whether the head went out; if not, the message goes the ordinary way.
+    private func dispatchSentHead(text: String, attachments: [Attachment]) -> Bool {
+        guard let app, app.settings.hydraAlwaysHeads else { return false }
+        let prompt = FollowUpPrompt(text: text.trimmingCharacters(in: .whitespacesAndNewlines), attachments: attachments)
+        guard !prompt.isEmpty, prompt.text != "/plan", prompt.text != "/compact" else { return false }
+        return dispatchHead(prompt, origin: .sent)
+    }
+
+    /// Sends a prompt out as a Droppy-run head with a note on what the lead is doing, or
+    /// that it is idle. Returns whether the head went out.
+    private func dispatchHead(_ prompt: FollowUpPrompt, origin: HydraHeadInfo.Origin) -> Bool {
+        guard let app, let thread, let launch = app.hydraLaunch(for: thread),
               app.runningDroppyHeads(of: threadID) < launch.maxHeads else { return false }
         let task = TextCleanup.singleLine(prompt.text, limit: 60)
         let context = app.hydraChatContext(for: threadID)
+        let leadIsWorking = phase != .idle
         let text = prompt.text
-        return app.spawnDroppyHead(from: threadID, task: task, origin: .queued, attachments: prompt.attachments) { persona, workplace in
-            HydraPrompts.queuedHeadPrompt(persona: persona, task: text, context: context, workplace: workplace)
+        return app.spawnDroppyHead(from: threadID, task: task, origin: origin, attachments: prompt.attachments) { persona, workplace in
+            HydraPrompts.queuedHeadPrompt(persona: persona, task: text, context: context, workplace: workplace, leadIsWorking: leadIsWorking)
         } != nil
     }
 
@@ -1014,6 +1059,8 @@ final class ThreadRuntime {
             if let currentTurnID { updateTurn(currentTurnID) { $0.providerDiff = diff } }
         case .notice(let notice):
             appendNotice(notice.level, notice.message)
+        case .usageLimit(let resetsAt):
+            app?.autoContinue.noteLimit(threadID, resetsAt: resetsAt)
         case .modeChanged(let mode):
             app?.updateThread(threadID) { $0.interactionMode = mode }
         case .models(let list, _):
@@ -1354,16 +1401,27 @@ final class ThreadRuntime {
     /// Sends the reports waiting on an idle lead as one message, once no delegation is
     /// still out: the lead is waiting for that batch, and hears everything with it rather
     /// than starting on a queued head's report meanwhile. Returns whether a turn starts.
+    /// The reports stay put until the turn takes them: heads finishing together then go
+    /// out as one message, instead of each starting a turn the next one cuts short.
     @discardableResult
     private func flushHydraReports() -> Bool {
-        guard phase == .idle, !hydraPendingReports.isEmpty, hydraBatches.isEmpty, let app else { return false }
+        guard phase == .idle, !hydraPendingReports.isEmpty, hydraBatches.isEmpty, !hydraFlushScheduled else { return false }
+        hydraFlushScheduled = true
+        Task { await startHydraReportTurn() }
+        return true
+    }
+
+    /// The turn `flushHydraReports` scheduled. A lead no longer idle (the user got a word
+    /// in first) keeps the reports waiting for the end of that turn instead.
+    private func startHydraReportTurn() async {
+        hydraFlushScheduled = false
+        guard phase == .idle, !hydraPendingReports.isEmpty, hydraBatches.isEmpty, let app else { return }
         let reports = hydraPendingReports.sorted { $0.headIndex < $1.headIndex }
         hydraPendingReports.removeAll()
         let stillWorking = app.workingHydraHeadNames(of: threadID, excluding: Set(reports.map(\.headIndex)))
         let text = HydraPrompts.reportMessage(reports, stillWorking: stillWorking)
         hydraReportsThisRequest += reports.count
-        Task { await startTurn(text: text, attachments: [], hydraHeads: reports.map(\.headIndex)) }
-        return true
+        await startTurn(text: text, attachments: [], hydraHeads: reports.map(\.headIndex))
     }
 
     /// A reply from a provider with no heads of its own may end in a delegation block:

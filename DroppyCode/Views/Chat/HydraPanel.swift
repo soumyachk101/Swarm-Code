@@ -5,8 +5,12 @@ import SwiftUI
 /// panel: the head on stage in the middle, its conversation live as it works, and a strip
 /// along the top that is the handle. The strip's left end counts the heads and opens
 /// them in a popover, where any head can take the stage or be stopped; its right end
-/// dismisses the panel. A Droppy-run head keeps its own chat box at the bottom, so it can
-/// be steered or answered; a native head shows what it is up to instead.
+/// pops the head on stage out into a second panel of its own, and dismisses the panel. A
+/// Droppy-run head keeps its own chat box at the bottom, so it can be steered or answered;
+/// a native head shows what it is up to instead.
+///
+/// Popped out, the panel holds one head: no count at the left, and its right end puts the
+/// head back in the team panel.
 struct HydraPanel: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -15,22 +19,58 @@ struct HydraPanel: View {
     let size: CGSize
     let workingDirectory: String?
     let projectName: String?
+    /// A second panel holding one head popped out of the team panel.
+    var isPoppedOut = false
     /// The pointer's travel since the handle was grabbed.
     let onDrag: (CGSize) -> Void
     let onDragEnd: () -> Void
+    /// Pops the head on stage out into its own panel; nil where it cannot go anywhere.
+    var popOut: ((UUID) -> Void)? = nil
+    /// Dismisses the panel; for a popped-out one, puts its head back in the team panel.
     let dismiss: () -> Void
 
-    @State private var isHoveringHandle = false
-    @State private var isDragging = false
+    /// Out of sight while a ghost of the panel flies in from the button. Opened from the
+    /// button, the panel starts unseen, so it never shows for a frame before the ghost
+    /// sets off; its first layout starts the flight or, if none can fly, shows it.
+    @State private var isArriving: Bool
+
+    init(
+        runtime: ThreadRuntime,
+        heads: [ChatThread],
+        size: CGSize,
+        workingDirectory: String?,
+        projectName: String?,
+        isPoppedOut: Bool = false,
+        onDrag: @escaping (CGSize) -> Void,
+        onDragEnd: @escaping () -> Void,
+        popOut: ((UUID) -> Void)? = nil,
+        dismiss: @escaping () -> Void
+    ) {
+        self.runtime = runtime
+        self.heads = heads
+        self.size = size
+        self.workingDirectory = workingDirectory
+        self.projectName = projectName
+        self.isPoppedOut = isPoppedOut
+        self.onDrag = onDrag
+        self.onDragEnd = onDragEnd
+        self.popOut = popOut
+        self.dismiss = dismiss
+        // Only the team panel flies in from the button; a popped-out head just appears.
+        _isArriving = State(initialValue: !isPoppedOut && runtime.hydraPanelMorphs)
+    }
 
     private static let cornerRadius: CGFloat = 22
     private static let stripHeight: CGFloat = Chrome.chromeTopPadding + Chrome.capsuleHeight + 6
 
     var body: some View {
         // The head on stage: the one picked, else the newest still working, else the newest.
-        let selected = heads.first { $0.id == runtime.hydraSelectedHeadID }
-            ?? heads.last { $0.hydra?.status == .running }
-            ?? heads.last
+        // A popped-out panel holds one head, and that one is on stage.
+        let selected = isPoppedOut
+            ? heads.first
+            : heads.first { $0.id == runtime.hydraSelectedHeadID }
+                ?? heads.last { $0.hydra?.status == .running }
+                ?? heads.last
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
         ZStack {
             if let selected {
@@ -71,21 +111,55 @@ struct HydraPanel: View {
                 .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
                 .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
         }
+        .opacity(isArriving ? 0 : 1)
         .onGeometryChange(for: CGRect.self, of: {
             $0.frame(in: .named(GenieAnimator.coordinateSpace))
-        }) { runtime.hydraPanelFrameInWindow = $0 }
+        }) { frame in
+            // The genie flies to and from the team panel; the popped-out one just fades.
+            if !isPoppedOut {
+                runtime.hydraPanelFrameInWindow = frame
+                if runtime.hydraPanelMorphs { arrive(at: frame) }
+            }
+        }
         .onDisappear {
-            if isDragging { NSCursor.pop() }
-            if isHoveringHandle { NSCursor.pop() }
+            // Gone into the button: the ghost is flying, and the next showing starts clean.
+            runtime.hydraPanelMorphs = false
         }
     }
 
-    /// The handle across the top: the count and the head on stage at the left, the close
-    /// button at the right, and the room between them drags the panel.
+    /// Opened from the button, the panel appears where it will sit but stays out of sight
+    /// while a ghost of it flies out of the button and into that place; it shows itself
+    /// as the ghost lands. The panel's first layout is the earliest the flight can start,
+    /// since only then is the destination known. No flight, no wait.
+    private func arrive(at frame: CGRect) {
+        runtime.hydraPanelMorphs = false
+        guard let target = runtime.hydraButtonCenterInWindow else {
+            isArriving = false
+            return
+        }
+        let isDark = colorScheme == .dark
+        let flew = GenieAnimator.shared.launch(frame: frame, colorScheme: colorScheme, target: target, arriving: true) {
+            HydraPanelGhost(isDark: isDark)
+        }
+        guard flew else {
+            isArriving = false
+            return
+        }
+        isArriving = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(GenieAnimator.duration - 0.08))
+            withAnimation(.easeOut(duration: 0.12)) { isArriving = false }
+        }
+    }
+
+    /// The handle across the top: the count and the head on stage at the left, the pop-out
+    /// and close buttons at the right, and the room between them drags the panel.
     private func strip(selected: ChatThread?) -> some View {
         HStack(alignment: .top, spacing: 8) {
             HStack(spacing: 8) {
-                HydraHeadsButton(runtime: runtime, heads: heads, dismiss: dismiss)
+                if !isPoppedOut {
+                    HydraHeadsButton(runtime: runtime, heads: heads, dismiss: dismiss)
+                }
                 if let selected, let info = selected.hydra {
                     HStack(spacing: 6) {
                         HydraGlyph(persona: info.persona, size: 16, isRunning: info.status == .running, status: info.status)
@@ -103,6 +177,11 @@ struct HydraPanel: View {
                     .padding(.vertical, Chrome.capsuleVerticalPadding)
                     .fixedSize()
                     .chromeGlassCapsule()
+                    // The name is a label, not a control, so it drags the panel too:
+                    // it is where the hand goes when there is little room beside it.
+                    .overlay {
+                        PanelDragHandle(onDrag: onDrag, onDragEnd: onDragEnd)
+                    }
                     .transition(.softAppear)
                 }
             }
@@ -110,44 +189,60 @@ struct HydraPanel: View {
             .padding(.leading, Chrome.chromeHorizontalPadding)
             // The handle. Invisible, like a window's title bar with no title; the cursor
             // says what it does.
-            Color.clear
+            PanelDragHandle(onDrag: onDrag, onDragEnd: onDragEnd)
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.stripHeight)
-                .contentShape(.rect)
-                .onHover { hovering in
-                    isHoveringHandle = hovering
-                    guard !isDragging else { return }
-                    if hovering { NSCursor.openHand.push() } else { NSCursor.pop() }
-                }
-                .gesture(
-                    DragGesture(minimumDistance: 2, coordinateSpace: .global)
-                        .onChanged { value in
-                            if !isDragging {
-                                isDragging = true
-                                NSCursor.closedHand.push()
-                            }
-                            onDrag(value.translation)
-                        }
-                        .onEnded { _ in
-                            isDragging = false
-                            NSCursor.pop()
-                            if !isHoveringHandle { NSCursor.pop() }
-                            onDragEnd()
-                        }
-                )
                 .help("Drag to move")
                 .accessibilityLabel(Text("Drag to move"))
-            ChromeCircleButton(symbol: "xmark", help: "Dismiss the panel; heads keep working") {
-                dismiss()
+            HStack(spacing: 8) {
+                if isPoppedOut {
+                    ChromeCircleButton(symbol: "arrow.down.left", help: "Put \(selected?.hydra?.persona.name ?? "the head") back in the team panel") {
+                        dismiss()
+                    }
+                } else {
+                    // The head on stage pops out into a second panel, as long as another
+                    // head stays behind to keep this one.
+                    if let selected, let popOut, heads.count > 1 {
+                        ChromeCircleButton(symbol: "arrow.up.right", help: "Pop \(selected.hydra?.persona.name ?? "this head") out into its own panel") {
+                            popOut(selected.id)
+                        }
+                        .transition(.softAppear)
+                    }
+                    ChromeCircleButton(symbol: "xmark", help: "Dismiss the panel; heads keep working") {
+                        dismiss()
+                    }
+                }
             }
             .padding(.top, Chrome.chromeTopPadding)
             .padding(.trailing, Chrome.chromeHorizontalPadding)
         }
         .animation(Chrome.panelSlide, value: selected?.id)
+        .animation(Chrome.panelSlide, value: heads.count > 1)
     }
 }
 
-/// The count at the strip's left end: it opens the team in a popover.
+/// The flat stand-in the Hydra panel becomes for a genie flight to or from the button:
+/// the panel's scrim, tint and hairline in its shape, minus its glass, transcript and
+/// shadow. A ghost is rendered once into an image, where glass has nothing to sample
+/// and a shadow nothing to fall on, so those are left out rather than drawn blank.
+struct HydraPanelGhost: View {
+    let isDark: Bool
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        ZStack {
+            shape.fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.62 : 0.7))
+            shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
+            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
+        }
+    }
+}
+
+/// The count at the strip's left end: it opens the team in a popover. Not a Button: a
+/// plain-style Button keeps the click to itself and the glass never sees it, so the capsule
+/// sat still under the pointer while the name capsule beside it, bare interactive glass,
+/// pressed like a native control. The tap rides along with the glass's own tracking instead,
+/// so the whole capsule presses the native way.
 private struct HydraHeadsButton: View {
     @Environment(AppModel.self) private var model
     let runtime: ThreadRuntime
@@ -159,34 +254,32 @@ private struct HydraHeadsButton: View {
 
     var body: some View {
         let running = heads.count { $0.hydra?.status == .running }
-        Button {
-            isPresented.toggle()
-        } label: {
-            HStack(spacing: 6) {
-                HydraSpokesMark()
-                Text(verbatim: "\(heads.count)")
-                    .font(.system(size: 12.5, weight: .semibold).monospacedDigit())
-                if running > 0 {
-                    MiniSpinner()
-                }
-                Image(systemName: "chevron.down")
-                    .font(Chrome.chevronFont)
-                    .foregroundStyle(Chrome.secondaryText)
+        HStack(spacing: 6) {
+            HydraSpokesMark()
+            Text(verbatim: "\(heads.count)")
+                .font(.system(size: 12.5, weight: .semibold).monospacedDigit())
+            if running > 0 {
+                MiniSpinner()
             }
-            .foregroundStyle(Chrome.primaryText.opacity(isHovering || isPresented ? 1 : 0.92))
-            .padding(.horizontal, Chrome.capsuleHorizontalPadding)
-            .frame(height: Chrome.capsuleContentHeight)
-            .padding(.vertical, Chrome.capsuleVerticalPadding)
-            .contentShape(Capsule(style: .continuous))
+            Image(systemName: "chevron.down")
+                .font(Chrome.chevronFont)
+                .foregroundStyle(Chrome.secondaryText)
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(Chrome.primaryText.opacity(isHovering || isPresented ? 1 : 0.92))
+        .padding(.horizontal, Chrome.capsuleHorizontalPadding)
+        .frame(height: Chrome.capsuleContentHeight)
+        .padding(.vertical, Chrome.capsuleVerticalPadding)
+        .contentShape(Capsule(style: .continuous))
         .fixedSize()
         .chromeGlassCapsule()
+        .simultaneousGesture(TapGesture().onEnded { isPresented.toggle() })
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
         .help(heads.count == 1 ? "1 head" : "\(heads.count) heads")
+        .accessibilityAddTraits(.isButton)
         .accessibilityLabel(Text(heads.count == 1 ? "1 head" : "\(heads.count) heads"))
+        .accessibilityAction { isPresented.toggle() }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             PopoverMenu {
                 PopoverSectionHeader(running == 0 ? "Heads" : (running == 1 ? "1 head working" : "\(running) heads working"))
@@ -217,7 +310,7 @@ private struct HydraHeadsButton: View {
     }
 }
 
-/// The three-headed mark at capsule size.
+/// The dragon-head mark at capsule size.
 private struct HydraSpokesMark: View {
     var body: some View {
         HydraMarkImage()
@@ -289,27 +382,21 @@ private struct HydraHeadRow: View {
     }
 }
 
-/// The stop button beside a working head: a round glass button that reads as one, with
-/// the stop mark in the danger colour when the pointer is on it.
+/// The stop button beside a working head: the same tinted circle with the white stop
+/// mark the composer shows while a turn runs.
 private struct HydraStopButton: View {
     let name: String
     let action: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
         Button(action: action) {
             Image(systemName: "stop.fill")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(isHovering ? Chrome.danger : Chrome.primaryText.opacity(0.85))
-                .frame(width: 26, height: 26)
-                .contentShape(Circle())
+                .font(Chrome.iconFont)
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(.tint, in: .circle)
         }
         .buttonStyle(.plain)
-        .chromeGlassCircle()
-        .onHover { hovering in
-            withAnimation(Chrome.hover) { isHovering = hovering }
-        }
         .help("Stop \(name)")
         .accessibilityLabel(Text("Stop \(name)"))
     }
@@ -341,7 +428,7 @@ private struct HydraHeadTranscript: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if head.hydra?.kind == .droppy {
                 // A head of Droppy Code's own can be steered and answered like any chat.
-                ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true)
+                ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false)
                     .overlay(alignment: .top) {
                         JumpToLatestButton(scrollState: scrollState)
                     }

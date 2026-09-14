@@ -454,12 +454,15 @@ struct SidebarView: View {
     }
 
     private func threadRow(_ thread: ChatThread, projectName: String?, isDragged: Bool = false) -> some View {
-        SidebarThreadRow(
+        // A thread with helpers under it gets the fold button; a settled one shows none.
+        let hasHelpers = !thread.isSettled && !model.helpers(of: thread.id).isEmpty
+        return SidebarThreadRow(
             thread: thread,
             projectName: projectName,
             isDragged: isDragged,
             // The popover is another window: no glide can cross into the main one from it.
             listFrame: inPopover ? nil : listFrame,
+            onToggleFold: hasHelpers ? { fold(thread.id) } : nil,
             onRename: {
                 renameText = thread.title
                 renaming = thread
@@ -588,6 +591,9 @@ private enum ThreadRowMetrics {
     /// trailing end of an open one. The settled title starts past the check.
     static let settledCheckInset: CGFloat = 6
     static let openCheckInset: CGFloat = 26
+    /// Where the fold button sits on a thread with helpers: past the ellipsis and the check
+    /// (or the archive button) at the trailing end.
+    static let foldInset: CGFloat = 46
     static let settledTitleInset: CGFloat = 22
     /// The connector's column: the dotted line runs down it, under the parent's badge.
     static let connectorWidth: CGFloat = 28
@@ -791,6 +797,8 @@ private struct SidebarThreadRow: View {
     var isDragged = false
     /// The list's frame in the window, for the glide; nil where no glide can show.
     var listFrame: FrameHolder?
+    /// Folds the helpers under this thread away or brings them back; nil when it has none.
+    var onToggleFold: (() -> Void)?
     let onRename: () -> Void
     let onDelete: () -> Void
 
@@ -805,6 +813,7 @@ private struct SidebarThreadRow: View {
         let isSettled = thread.isSettled
         let isDetailed = projectName != nil && !isSettled
         let showsActions = (isHovering || isMenuPresented) && !isDragged
+        let showsFold = showsActions && onToggleFold != nil
         let settles = model.settings.threadFinishAction == .settle
         // The check shows at the trailing end while the thread is open (beside the ellipsis,
         // on hover) and sits at the front once it has settled.
@@ -820,7 +829,7 @@ private struct SidebarThreadRow: View {
                 thread: thread,
                 projectName: projectName,
                 isSelected: isSelected,
-                trailingClearance: Self.trailingClearance(isSettled: isSettled, isDetailed: isDetailed, showsActions: showsActions || isSettling)
+                trailingClearance: Self.trailingClearance(isSettled: isSettled, isDetailed: isDetailed, showsActions: showsActions || isSettling, showsFold: showsFold)
             ) {
                 ThreadBadge(thread: thread)
             }
@@ -868,6 +877,20 @@ private struct SidebarThreadRow: View {
             }
             .padding(.trailing, 6)
         }
+        // The helpers under the thread fold away and come back from here, as they do from the
+        // connector beside them. The button sits before the check (or the archive) and the ellipsis.
+        .overlay(alignment: .trailing) {
+            if showsFold, let onToggleFold {
+                let folded = thread.foldsHelpers
+                Button(action: onToggleFold) {
+                    RowAccessoryIcon(folded ? "chevron.right" : "chevron.down")
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, ThreadRowMetrics.foldInset)
+                .help(folded ? "Show helpers" : "Hide helpers")
+                .accessibilityLabel(Text(folded ? "Show helpers" : "Hide helpers"))
+            }
+        }
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
             // The pointer resting on a row usually means a click is coming: decode its history now.
@@ -910,8 +933,8 @@ private struct SidebarThreadRow: View {
 
     /// The room the title leaves for what sits at the row's trailing end: the check and the
     /// ellipsis on hover, the status or the time otherwise.
-    private static func trailingClearance(isSettled: Bool, isDetailed: Bool, showsActions: Bool) -> CGFloat {
-        if showsActions { return isSettled ? 30 : 52 }
+    private static func trailingClearance(isSettled: Bool, isDetailed: Bool, showsActions: Bool, showsFold: Bool = false) -> CGFloat {
+        if showsActions { return (isSettled ? 30 : 52) + (showsFold ? 20 : 0) }
         return isDetailed || isSettled ? 18 : 52
     }
 

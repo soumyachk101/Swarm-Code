@@ -67,6 +67,7 @@ final class AppSettings {
         static let notify = "notifyWhenFinished"
         static let chime = "chimeWhenFinished"
         static let confirmDelete = "confirmBeforeDeleting"
+        static let autoContinueAfterLimit = "autoContinueAfterLimit"
         static let threadFinishAction = "threadFinishAction"
         static let settleSound = "settleSound"
         static let showReasoning = "showReasoning"
@@ -89,6 +90,7 @@ final class AppSettings {
         static let metaAPIKey = "metaAPIKey"
         static let hydraEnabled = "hydraEnabled"
         static let hydraQueueHeads = "hydraQueueHeads"
+        static let hydraAlwaysHeads = "hydraAlwaysHeads"
         static let hydraIsolateHeads = "hydraIsolateHeads"
         static let hydraAutoMerge = "hydraAutoMerge"
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
@@ -122,6 +124,12 @@ final class AppSettings {
 
     var confirmBeforeDeleting: Bool {
         didSet { defaults.set(confirmBeforeDeleting, forKey: Key.confirmDelete) }
+    }
+
+    /// A turn that stops on the provider's usage limit is picked back up by itself: the chat
+    /// waits for the limit to reset, then tells the agent to continue where it left off.
+    var autoContinueAfterLimit: Bool {
+        didSet { defaults.set(autoContinueAfterLimit, forKey: Key.autoContinueAfterLimit) }
     }
 
     /// What the check on a thread row, ⇧⌘⌫ and the palette's finish action do.
@@ -252,6 +260,13 @@ final class AppSettings {
         didSet { defaults.set(hydraQueueHeads, forKey: Key.hydraQueueHeads) }
     }
 
+    /// With Hydra on, every message the user sends goes to a head, sent or queued, idle
+    /// lead or not: the lead only ever hears the heads' reports. When every head is busy,
+    /// a message goes the ordinary way.
+    var hydraAlwaysHeads: Bool {
+        didSet { defaults.set(hydraAlwaysHeads, forKey: Key.hydraAlwaysHeads) }
+    }
+
     /// A head Droppy Code runs gets a copy of the checkout of its own, so no head ever
     /// sees another's half-done work; its changes land in the chat's checkout when it
     /// reports. Off, the heads work in the checkout itself.
@@ -284,6 +299,7 @@ final class AppSettings {
         notifyWhenFinished = defaults.object(forKey: Key.notify) as? Bool ?? true
         chimeWhenFinished = defaults.object(forKey: Key.chime) as? Bool ?? true
         confirmBeforeDeleting = defaults.object(forKey: Key.confirmDelete) as? Bool ?? true
+        autoContinueAfterLimit = defaults.object(forKey: Key.autoContinueAfterLimit) as? Bool ?? false
         threadFinishAction = ThreadFinishAction(rawValue: defaults.string(forKey: Key.threadFinishAction) ?? "") ?? .settle
         settleSound = defaults.object(forKey: Key.settleSound) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
@@ -314,6 +330,7 @@ final class AppSettings {
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
         hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
+        hydraAlwaysHeads = defaults.object(forKey: Key.hydraAlwaysHeads) as? Bool ?? false
         hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
         hydraAutoMerge = defaults.object(forKey: Key.hydraAutoMerge) as? Bool ?? false
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
