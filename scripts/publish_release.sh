@@ -53,8 +53,9 @@ glab release create "$TAG" "$DMG#Droppy Code $VERSION (Apple silicon)" \
 step "Pointing the latest-download permalink at it"
 LINK_ID=$(glab api "projects/$ENCODED_PROJECT/releases/$TAG/assets/links" \
   | python3 -c 'import json, sys; links = json.load(sys.stdin); print(next(l["id"] for l in links if l["url"].lower().endswith(".dmg")))')
+# GitLab insists on a name or url in every link update, so the name rides along.
 glab api -X PUT "projects/$ENCODED_PROJECT/releases/$TAG/assets/links/$LINK_ID" \
-  -f "direct_asset_path=$ASSET_PATH" -f link_type=package > /dev/null
+  -f "name=Droppy Code $VERSION (Apple silicon)" -f "direct_asset_path=$ASSET_PATH" -f link_type=package > /dev/null
 
 step "Checking the permalink"
 curl -sIL "https://gitlab.com/$PROJECT/-/releases/permalink/latest/downloads${ASSET_PATH}" | grep -i "content-disposition"
