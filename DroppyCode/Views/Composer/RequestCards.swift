@@ -8,7 +8,7 @@ struct ApprovalCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: request.symbol)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(Chrome.warning)
                 Text(request.headline)
                     .font(.headline)
                 Spacer()

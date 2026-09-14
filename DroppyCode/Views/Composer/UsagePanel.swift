@@ -97,8 +97,8 @@ private struct LimitRow: View {
     }
 
     private static func tint(for percent: Double) -> Color {
-        if percent >= 90 { return Color(red: 0.86, green: 0.33, blue: 0.31) }
-        if percent >= 75 { return Chrome.orange }
+        if percent >= 90 { return Chrome.danger }
+        if percent >= 75 { return Chrome.warning }
         return Chrome.accent
     }
 

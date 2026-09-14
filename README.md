@@ -23,6 +23,7 @@ It drives the coding agents you already have installed and signed in, on your ow
 - Streaming conversations with reasoning, tool calls, plans, to-do lists and errors.
 - Approvals and questions from the agent, answered inline.
 - Plan mode, model and reasoning selection, and four permission modes per thread.
+- Twenty-six tinted-glass themes, from System to Catppuccin, Dracula, Claude and Codex.
 - A diff for every turn, captured as hidden git checkpoints, with revert.
 - An embedded terminal per thread, plus project scripts from `droppy-code.json`.
 - New threads in their own git worktree.

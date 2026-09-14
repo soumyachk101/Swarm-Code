@@ -105,14 +105,30 @@ private struct HostedRoot<Content: View>: View {
         content
             .environment(model)
             .buttonBorderShape(.capsule)
-            .preferredColorScheme(model.settings.appearance.colorScheme)
-            .onChange(of: model.settings.appearance, initial: true) { _, appearance in
-                NSApp.appearance = switch appearance {
-                case .system: nil
+            .preferredColorScheme(model.settings.theme.spec.scheme)
+            .modifier(ThemeTint(theme: model.settings.theme))
+            .onChange(of: model.settings.theme, initial: true) { _, theme in
+                NSApp.appearance = switch theme.spec.scheme {
+                case nil: nil
                 case .light: NSAppearance(named: .aqua)
                 case .dark: NSAppearance(named: .darkAqua)
+                @unknown default: nil
                 }
             }
+    }
+}
+
+/// Tints prominent glass buttons, toggles and progress views with the
+/// theme's accent. System/Light/Dark keep the system control accent.
+private struct ThemeTint: ViewModifier {
+    let theme: AppTheme
+
+    func body(content: Content) -> some View {
+        if let accent = theme.spec.accent {
+            content.tint(accent)
+        } else {
+            content
+        }
     }
 }
 
