@@ -392,6 +392,24 @@ final class AppModel {
         scheduleSave()
     }
 
+    /// Deletes every archived thread at once: histories, terminals and checkpoints go with them.
+    /// Worktrees stay on disk, exactly as they do after a single delete.
+    func deleteArchivedThreads() {
+        let archived = threads.filter(\.isArchived)
+        guard !archived.isEmpty else { return }
+        if let selectedThreadID, archived.contains(where: { $0.id == selectedThreadID }) {
+            self.selectedThreadID = nil
+        }
+        for thread in archived {
+            discardThreadState(thread)
+            if let project = project(thread.projectID) {
+                Task { await Git(project.path).deleteCheckpoints(thread: thread.id) }
+            }
+        }
+        threads.removeAll { $0.isArchived }
+        scheduleSave()
+    }
+
     private func discardThreadState(_ thread: ChatThread) {
         runtimes[thread.id]?.stopSession()
         runtimes[thread.id] = nil
