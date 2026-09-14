@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Every theme Droppy Code offers: the system look plus the palettes the big
@@ -110,7 +111,7 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable, Sendable {
         success: String?, warning: String?, danger: String?
     ) {
         switch self {
-        case .system: (nil, nil, "8E8E93", nil, nil, nil)
+        case .system: (nil, nil, "1E1E20", nil, nil, nil)
         case .light: (.light, nil, "FFFFFF", nil, nil, nil)
         case .dark: (.dark, nil, "1E1E20", nil, nil, nil)
         case .catppuccinMocha: (.dark, "CBA6F7", "1E1E2E", "A6E3A1", "F9E2AF", "F38BA8")
@@ -141,10 +142,21 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable, Sendable {
 
     var spec: ThemeSpec {
         let palette = palette
+        let surfaceColor: Color
+        if self == .system {
+            surfaceColor = Color(nsColor: NSColor(name: nil, dynamicProvider: { appearance in
+                let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                return isDark
+                    ? NSColor(srgbRed: 0x1E / 255.0, green: 0x1E / 255.0, blue: 0x20 / 255.0, alpha: 1.0)
+                    : NSColor(srgbRed: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
+            }))
+        } else {
+            surfaceColor = Color(hex: palette.surface)
+        }
         return ThemeSpec(
             scheme: palette.scheme,
             accent: palette.accent.map(Color.init(hex:)),
-            surface: Color(hex: palette.surface),
+            surface: surfaceColor,
             success: palette.success.map(Color.init(hex:)) ?? .green,
             warning: palette.warning.map(Color.init(hex:)) ?? .orange,
             danger: palette.danger.map(Color.init(hex:)) ?? .red
