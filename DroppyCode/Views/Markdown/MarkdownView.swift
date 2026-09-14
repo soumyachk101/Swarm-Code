@@ -57,6 +57,48 @@ struct MarkdownView: View, Equatable {
         blockCache.insert(parsed, for: text)
         return parsed
     }
+
+    /// Parses finished messages before their rows are built, off the main thread, so a row
+    /// scrolling into view finds its blocks and its paragraphs' runs already made instead of
+    /// parsing them on the frame. Texts already cached cost nothing.
+    @MainActor
+    static func warm(_ texts: [String]) async {
+        let missing = texts.filter { !blockCache.contains($0) }
+        guard !missing.isEmpty else { return }
+        let parsed = await Task.detached(priority: .utility) {
+            missing.map { text -> (String, [MarkdownBlock], [(String, AttributedString)]) in
+                let blocks = MarkdownParser.parse(text)
+                var inline: [(String, AttributedString)] = []
+                for source in inlineSources(of: blocks) { inline.append((source, RichLink.build(source))) }
+                return (text, blocks, inline)
+            }
+        }.value
+        for (text, blocks, inline) in parsed {
+            if !blockCache.contains(text) { blockCache.insert(blocks, for: text) }
+            for (source, pretty) in inline { RichLink.warm(source, with: pretty) }
+        }
+    }
+
+    /// Every inline-styled string a set of blocks renders: paragraphs, headings, list items.
+    nonisolated private static func inlineSources(of blocks: [MarkdownBlock]) -> [String] {
+        var out: [String] = []
+        for block in blocks {
+            switch block {
+            case .paragraph(let text), .heading(_, let text):
+                out.append(text)
+            case .list(_, _, let items):
+                for item in items {
+                    if !item.text.isEmpty { out.append(item.text) }
+                    out += inlineSources(of: item.children)
+                }
+            case .quote(let inner):
+                out += inlineSources(of: inner)
+            case .code, .table, .rule:
+                break
+            }
+        }
+        return out
+    }
 }
 
 struct MarkdownBlockView: View, Equatable {
@@ -201,8 +243,13 @@ enum RichLink {
         return value
     }
 
+    /// Stores a run built off the main thread (see `MarkdownView.warm`).
     @MainActor
-    private static func build(_ source: String) -> AttributedString {
+    static func warm(_ source: String, with pretty: AttributedString) {
+        if !prettyCache.contains(source) { prettyCache.insert(pretty, for: source) }
+    }
+
+    nonisolated static func build(_ source: String) -> AttributedString {
         let base = baseAttributed(source)
         var result = AttributedString()
         for run in base.runs {
@@ -439,6 +486,10 @@ struct InlineText: View {
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.markdownStreaming) private var streaming
     @State private var faviconRevision = 0
+    /// The link paragraph's text view, for the hover that sets the cursor.
+    @State private var linkView = WeakView()
+    /// Whether the pointing hand is up over a link, so hover only sets the cursor on change.
+    @State private var showsHand = false
 
     init(_ source: String) {
         self.source = source
@@ -454,10 +505,26 @@ struct InlineText: View {
             // from the bottom.
             let font = NSFont.systemFont(ofSize: pointSize)
             let lineHeight = ceil(font.ascender - font.descender + font.leading)
-            LinkParagraphView(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming, revision: faviconRevision)
+            LinkParagraphView(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming, revision: faviconRevision, onHost: { linkView.value = $0 })
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { _ in ceil(font.ascender) }
                 .alignmentGuide(.lastTextBaseline) { $0.height - lineHeight + ceil(font.ascender) }
+                // The pointing hand over links, from here rather than the text view's own
+                // tracking (which AppKit would rebuild every scrolled frame). Hover is off
+                // while the timeline scrolls, so this costs nothing then.
+                .onContinuousHover(coordinateSpace: .local) { phase in
+                    let overLink: Bool
+                    switch phase {
+                    case .active(let point): overLink = (linkView.value as? LinkTextView)?.hasLink(at: point) ?? false
+                    case .ended: overLink = false
+                    }
+                    guard overLink != showsHand else { return }
+                    showsHand = overLink
+                    if overLink { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
+                .onDisappear {
+                    if showsHand { NSCursor.pop(); showsHand = false }
+                }
                 .task(id: source) { await fetchFavicons() }
         } else {
             RichInlineBuilder.text(for: source, streaming: streaming)

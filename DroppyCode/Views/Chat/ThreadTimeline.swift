@@ -45,6 +45,9 @@ struct ThreadTimeline: View, Equatable {
     /// re-hit-tests every row's hover region each frame and the rows flip their hover state
     /// (and animate it) as they pass — a fifth of the main thread's scroll-time work.
     @State private var isReaderScrolling = false
+    /// Watches for the scroll to settle once movement has been seen, so the freeze lifts
+    /// 150ms after the last frame that moved, for wheel and trackpad alike.
+    @State private var settleWatch: Task<Void, Never>?
     /// Which edge stays put when the content's height changes. At the conversation's end
     /// it is the bottom, so streaming text and the working line grow in place. Once the
     /// reader has scrolled up it is the top: a row expanded mid-thread then pushes what
@@ -56,7 +59,7 @@ struct ThreadTimeline: View, Equatable {
     @State private var historyLoadPending = false
     /// Lazy-loading window: only the newest groups are materialized, so opening a long
     /// thread and scrolling through it stays instant no matter how much history it holds.
-    @State private var visibleCount = TimelineWindow.initial
+    @State private var visibleCount = TimelineWindow.firstPaint
 
     var body: some View {
         let entries = runtime.entries
@@ -145,20 +148,42 @@ struct ThreadTimeline: View, Equatable {
         }
     }
 
-    /// The content's coordinate space, in which blocks report their tops.
-    private static let contentSpace = "timeline-content"
+    /// Brings more older blocks into the window: one page, or up to `count`. The bottom
+    /// stays held while they land above the viewport, so what the reader is looking at
+    /// does not move.
+    private func loadEarlier(to count: Int? = nil) {
+        guard !historyLoadPending else { return }
+        let target = count ?? visibleCount + TimelineWindow.page
+        guard target > visibleCount else { return }
+        historyLoadPending = true
+        anchorsBottomOnGrowth = true
+        visibleCount = target
+    }
+
+    /// Parses every finished reply's markdown off the main thread, so rows scrolling into
+    /// view for the first time never parse on the frame. Cached texts are skipped.
+    private func warmMarkdown() async {
+        var texts: [String] = []
+        for entry in runtime.entries {
+            guard case .assistant(let message) = entry.item.content, !message.isStreaming else { continue }
+            texts.append(message.text)
+        }
+        guard !texts.isEmpty else { return }
+        await MarkdownView.warm(texts)
+    }
 
     private func timelineScroll(visible: [DisplayBlock], hidden: Int, liveWork: [TimelineEntry], rewindable: Set<UUID>) -> some View {
-        // The rail's order of messages, kept in step with what is laid out.
-        tracking.setUserBlocks(visible.filter(\.hasUserMessage).map(\.id))
+        // The outline the rail resolves against, kept in step with what is laid out.
+        tracking.setOutline(visible.map { ($0.id, $0.hasUserMessage) })
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
                 if hidden > 0 {
+                    // Older history loads itself as the reader nears the top, a page at a
+                    // time, so scrolling back never stops at a button; the pill is still
+                    // there to tap for anyone who gets to it first.
                     Button {
-                        historyLoadPending = true
-                        anchorsBottomOnGrowth = true
-                        visibleCount += TimelineWindow.page
+                        loadEarlier()
                     } label: {
                         Label("Show \(hidden) earlier messages", systemImage: "chevron.up")
                             .font(.callout)
@@ -171,6 +196,9 @@ struct ThreadTimeline: View, Equatable {
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.top, TimelineMetrics.rowSpacing)
+                    .onScrollVisibilityChange(threshold: 0.1) { isVisible in
+                        if isVisible { loadEarlier() }
+                    }
                 }
                 LazyVStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(visible) { block in
@@ -181,10 +209,11 @@ struct ThreadTimeline: View, Equatable {
                         DisplayBlockView(block: block, runtime: runtime, context: context)
                             .equatable()
                             .id(block.id)
-                            // Where the block starts in the content, for the rail. Reported
-                            // on layout only, never per scroll frame.
-                            .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.contentSpace)).minY }) { top in
-                                tracking.setTop(block.id, top)
+                            // Reported when a block enters or leaves the viewport, never per
+                            // frame. (A geometry observer per block made the lazy stack
+                            // re-measure every child on every scrolled frame.)
+                            .onScrollVisibilityChange(threshold: 0.001) { isVisible in
+                                tracking.setVisible(block.id, isVisible)
                             }
                             .transition(.softAppear)
                     }
@@ -215,7 +244,6 @@ struct ThreadTimeline: View, Equatable {
             .padding(.bottom, 18)
             // A short conversation still fills the pane, with its messages resting at the bottom.
             .frame(maxWidth: .infinity, minHeight: viewportHeight, alignment: .top)
-            .coordinateSpace(.named(Self.contentSpace))
         }
         .id(runtime.threadID)
         .scrollIndicators(.never)
@@ -225,42 +253,59 @@ struct ThreadTimeline: View, Equatable {
         .defaultScrollAnchor(anchorsBottomOnGrowth ? .bottom : .top, for: .sizeChanges)
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
         .onScrollPhaseChange { _, phase in
-            let scrolling = phase == .interacting || phase == .decelerating
-            tracking.isUserScrolling = scrolling
-            if isReaderScrolling != scrolling { isReaderScrolling = scrolling }
+            tracking.isUserScrolling = phase == .interacting || phase == .decelerating
+            // Fingers on the trackpad freeze the rows (no click can land then anyway); the
+            // moment the scroll coasts or settles they come back, so a click that stops a
+            // flick always reaches its target. Wheel scrolling reports no phases and is
+            // caught by the movement below instead.
+            tracking.isCoasting = phase == .decelerating || phase == .animating
+            if phase == .interacting {
+                noteScrollMovement()
+            } else {
+                liftScrollFreeze()
+            }
         }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             scrollChrome.update(travel: new.travel)
-            tracking.updateActive(centerY: new.centerY)
-            if tracking.isUserScrolling {
+            // Movement with no phase behind it: wheel ticks. Content growing under a
+            // resting reader is not scrolling.
+            if new.centerY != old.centerY, new.contentHeight == old.contentHeight, !tracking.isCoasting {
+                noteScrollMovement()
+            }
+            if historyLoadPending, new.contentHeight > old.contentHeight {
+                // The history landed above the viewport with the bottom held; growth
+                // anchors by the reader's position again from here.
+                historyLoadPending = false
+                let pinned = new.distanceFromBottom < 48
+                if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
+            } else if tracking.isUserScrolling {
                 // Only the reader's own scrolling decides whether the timeline follows new text.
                 // Guarded, so measuring the scroll position never touches anything a body reads.
                 let pinned = new.distanceFromBottom < 48
                 if pinned != tracking.isPinnedToBottom { tracking.isPinnedToBottom = pinned }
                 if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
-            } else if new.contentHeight > old.contentHeight {
-                if historyLoadPending {
-                    // The history landed above the viewport with the bottom held; growth
-                    // anchors by the reader's position again from here.
-                    historyLoadPending = false
-                    let pinned = new.distanceFromBottom < 48
-                    if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
-                } else if tracking.isPinnedToBottom {
-                    withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
-                }
+            } else if new.contentHeight > old.contentHeight, tracking.isPinnedToBottom {
+                withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
             }
+        }
+        .task(id: runtime.threadID) {
+            // The first frame shows only the newest few blocks, so a thread opens at once;
+            // the rest of the initial window lands a beat later, above the viewport, while
+            // the reader is already looking at the end.
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled else { return }
+            loadEarlier(to: TimelineWindow.initial)
+            await warmMarkdown()
         }
         .onChange(of: runtime.isRunning) { _, running in
             // Sending a message always brings the reader back to the conversation's end.
-            guard running else { return }
+            guard running else {
+                Task { await warmMarkdown() }
+                return
+            }
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
             withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
-        }
-        .onChange(of: visibleCount) {
-            // Older history lands above everything: every recorded top is stale
-            // until the rows lay out again.
-            tracking.clearTops()
         }
         .onChange(of: scrollState.jumpRequest) {
             tracking.isPinnedToBottom = true
@@ -270,11 +315,37 @@ struct ThreadTimeline: View, Equatable {
         .onChange(of: runtime.threadID) {
             // A new thread starts with a fresh window on its newest messages, and no
             // block from the old one is on screen any more.
-            visibleCount = TimelineWindow.initial
+            visibleCount = TimelineWindow.firstPaint
             anchorsBottomOnGrowth = true
             historyLoadPending = false
-            tracking.clearTops()
+            tracking.clearVisible()
         }
+    }
+
+    /// The content just moved under the pointer. Freezes hover and hit-testing on the
+    /// rows if they are not already, and (re)arms the watch that lifts the freeze once
+    /// no frame has moved for 150ms. The timestamp lives on the tracking object, so
+    /// noting a frame's movement writes no view state.
+    private func noteScrollMovement() {
+        tracking.lastMovementAt = CACurrentMediaTime()
+        guard !isReaderScrolling else { return }
+        isReaderScrolling = true
+        settleWatch?.cancel()
+        settleWatch = Task { @MainActor in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(80))
+                if CACurrentMediaTime() - tracking.lastMovementAt >= 0.15 {
+                    isReaderScrolling = false
+                    return
+                }
+            }
+        }
+    }
+
+    private func liftScrollFreeze() {
+        settleWatch?.cancel()
+        settleWatch = nil
+        if isReaderScrolling { isReaderScrolling = false }
     }
 
     private nonisolated static func visibleHeight(_ proxy: GeometryProxy) -> CGFloat {
@@ -292,46 +363,50 @@ final class TimelineScrollTracking {
     var isPinnedToBottom = true
     /// True while the reader drags or flicks the timeline, as opposed to it following new text.
     @ObservationIgnored var isUserScrolling = false
-    /// The message the reader is on, for the rail: the sent message whose section — from
-    /// its top down to the next sent message's top — holds the viewport's centre. Written
-    /// only when it changes, so the rail re-renders when the lit tick moves and never else.
+    /// When the content last moved, for lifting the scroll freeze.
+    @ObservationIgnored var lastMovementAt: CFTimeInterval = 0
+    /// True while a flick coasts or a programmatic scroll animates: movement that must
+    /// not freeze the rows, since a click may land any moment.
+    @ObservationIgnored var isCoasting = false
+    /// The message the reader is on, for the rail: the sent message at or above the block
+    /// in the middle of what is on screen. Written only when it changes, so the rail
+    /// re-renders when the lit tick moves and never else.
     private(set) var activeBlockID: String?
-    /// Where each laid-out block starts in the content, from its own layout pass.
-    @ObservationIgnored private var blockTops: [String: CGFloat] = [:]
-    /// The sent messages in order, as laid out.
-    @ObservationIgnored private var userBlockIDs: [String] = []
+    /// The blocks as laid out, in order, and which of them are sent messages.
+    @ObservationIgnored private var outlineIDs: [String] = []
+    @ObservationIgnored private var userBlockIDs: Set<String> = []
+    /// The blocks currently intersecting the viewport, from their own visibility callbacks.
+    @ObservationIgnored private var visibleIDs: Set<String> = []
 
-    /// The viewport centre last reported, so a block laying out late can be picked up.
-    @ObservationIgnored private var lastCenterY: CGFloat?
-
-    func setTop(_ id: String, _ top: CGFloat) {
-        guard blockTops[id] != top else { return }
-        blockTops[id] = top
-        if let lastCenterY { updateActive(centerY: lastCenterY) }
+    func setOutline(_ blocks: [(id: String, hasUserMessage: Bool)]) {
+        let ids = blocks.map(\.id)
+        guard ids != outlineIDs else { return }
+        outlineIDs = ids
+        userBlockIDs = Set(blocks.filter(\.hasUserMessage).map(\.id))
+        resolveActive()
     }
 
-    func setUserBlocks(_ ids: [String]) {
-        if ids != userBlockIDs { userBlockIDs = ids }
+    func setVisible(_ id: String, _ isVisible: Bool) {
+        if isVisible {
+            guard visibleIDs.insert(id).inserted else { return }
+        } else {
+            guard visibleIDs.remove(id) != nil else { return }
+        }
+        resolveActive()
     }
 
-    func clearTops() {
-        blockTops.removeAll()
+    func clearVisible() {
+        visibleIDs.removeAll()
         if activeBlockID != nil { activeBlockID = nil }
     }
 
-    /// Picks the message whose section holds `centerY`, the viewport's centre in the
-    /// content: the last sent message that starts above it. A message that never laid out
-    /// has no top and is skipped; the one holding the centre is on screen, so it always has.
-    func updateActive(centerY: CGFloat) {
-        lastCenterY = centerY
-        // Nothing laid out yet: leave the rail to its default (the newest message).
-        guard !blockTops.isEmpty else { return }
-        var active: String?
-        for id in userBlockIDs {
-            guard let top = blockTops[id] else { continue }
-            if top <= centerY { active = id } else { break }
-        }
-        let resolved = active ?? userBlockIDs.first
+    /// Takes the block in the middle of the on-screen run — a reply filling the viewport is
+    /// that block on its own — and lights the sent message at or above it.
+    private func resolveActive() {
+        let onScreen = outlineIDs.enumerated().filter { visibleIDs.contains($0.element) }
+        guard !onScreen.isEmpty else { return }
+        let middle = onScreen[onScreen.count / 2].offset
+        let resolved = outlineIDs[...middle].last { userBlockIDs.contains($0) }
         if resolved != activeBlockID { activeBlockID = resolved }
     }
 }
@@ -343,7 +418,7 @@ private struct ScrollMetrics: Equatable {
     var contentHeight: CGFloat
     var distanceFromBottom: CGFloat
     var travel: CGFloat
-    /// The viewport's vertical centre in the content, for the rail's lit tick.
+    /// The viewport's vertical centre in the content: the sign that it moved.
     var centerY: CGFloat
 
     init(geometry: ScrollGeometry) {
@@ -487,9 +562,14 @@ enum DisplayBlock: Identifiable, Equatable {
 
 /// Lazy-loading window for the timeline: only the newest groups are materialized, so
 /// the number of live views stays bounded even for very long threads.
+/// Opening a thread builds and lays out every block in the window before the first
+/// frame — the bottom anchor needs the content's full height, and a block costs several
+/// milliseconds — so the window opens with a handful, grows to its resting size a beat
+/// later, and then a page at a time as the reader scrolls back.
 enum TimelineWindow {
-    static let initial = 80
-    static let page = 100
+    static let firstPaint = 6
+    static let initial = 24
+    static let page = 24
 }
 
 /// Per-turn facts computed once per timeline pass, so rows never scan the thread to
