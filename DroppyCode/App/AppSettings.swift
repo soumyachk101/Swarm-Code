@@ -63,6 +63,7 @@ final class AppSettings {
         static let metaAPIKey = "metaAPIKey"
         static let hydraEnabled = "hydraEnabled"
         static let hydraQueueHeads = "hydraQueueHeads"
+        static let hydraAutoClearFinished = "hydraAutoClearFinished"
         static let hydraPairs = "hydraPairs"
     }
 
@@ -213,6 +214,12 @@ final class AppSettings {
         didSet { defaults.set(hydraQueueHeads, forKey: Key.hydraQueueHeads) }
     }
 
+    /// A head that finishes leaves the Hydra panel on its own, for the sidebar under its
+    /// lead, instead of waiting for "Clear finished heads".
+    var hydraAutoClearFinished: Bool {
+        didSet { defaults.set(hydraAutoClearFinished, forKey: Key.hydraAutoClearFinished) }
+    }
+
     /// The lead-and-heads pairings, in the order they were added.
     private(set) var hydraPairs: [HydraPair] {
         didSet { store(hydraPairs, forKey: Key.hydraPairs) }
@@ -254,6 +261,7 @@ final class AppSettings {
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
         hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
+        hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
     }
 

@@ -161,6 +161,16 @@ extension AppModel {
             $0.summary = summary ?? $0.summary
             $0.finishedAt = .now
         }
+        // Opt-in: a finished head leaves the panel on its own, for the sidebar under its
+        // lead, instead of waiting for "Clear finished heads". Running heads stay put.
+        if settings.hydraAutoClearFinished {
+            updateThread(id) { $0.isInPanel = false }
+            if let parentID = head.parentThreadID {
+                updateThread(parentID) { $0.foldsHelpers = false }
+                let leadRuntime = runtime(for: parentID)
+                if leadRuntime.hydraSelectedHeadID == id { leadRuntime.hydraSelectedHeadID = nil }
+            }
+        }
         guard let parentID = head.parentThreadID else { return }
         let leadRuntime = runtime(for: parentID)
         leadRuntime.hydraHeadFinished(head.id, info: info, status: outcome, summary: summary)
