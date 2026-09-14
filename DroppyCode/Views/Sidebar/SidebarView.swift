@@ -132,7 +132,7 @@ struct SidebarView: View {
     // MARK: Activity layout
 
     private var activityItems: [SidebarItem] {
-        let active = model.threads.filter { !$0.isArchived }
+        let active = model.threads.filter { !$0.isArchived && !$0.isSubagent }
         let attention = Self.placed(active.filter(needsAttention))
         var items: [SidebarItem] = []
         if !attention.isEmpty {

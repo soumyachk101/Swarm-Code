@@ -11,6 +11,15 @@ struct ChatView: View {
     /// Full column height. The timeline rail centres in this, so composer and
     /// queue growth never shifts it.
     @State private var columnHeight: CGFloat = 0
+    /// The conversation pane (the timeline with the chat box, above any terminal), which
+    /// the helper panel floats in.
+    @State private var paneSize: CGSize = .zero
+    /// The chat box with its tabs and cards, so a helper panel above it clears them.
+    @State private var composerAreaHeight: CGFloat = 0
+    /// The helper panel's corner while its handle is held: where it was grabbed, and where
+    /// it is now, moved without animation. Nil at rest.
+    @State private var panelGrab: CGPoint?
+    @State private var panelDrag: CGPoint?
 
     var body: some View {
         let thread = model.thread(runtime.threadID)
@@ -21,6 +30,13 @@ struct ChatView: View {
         let workingDirectory = thread.flatMap { $0.worktreePath ?? project?.path }
         let directory = workingDirectory ?? LoginEnvironment.homeDirectory
         let title = thread?.title ?? ""
+        // The helper this thread spawned, if it still has its panel open. Docked, it takes
+        // room from the chat box's row so the two sit centred together; dragged away, the
+        // box has the row to itself again.
+        let subagent = model.subagent(of: runtime.threadID)
+        let layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight)
+        let isDocked = subagent != nil && runtime.subagentPanelOrigin == nil
+        let composerReserve = isDocked ? layout.composerReserve : 0
         VStack(spacing: 0) {
             ThreadTimeline(
                 runtime: runtime,
@@ -35,20 +51,11 @@ struct ChatView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ComposerArea(runtime: runtime, workingDirectory: workingDirectory)
                     .overlay(alignment: .top) {
-                        if scrollState.showsJumpButton {
-                            ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
-                                scrollState.jumpToLatest()
-                            }
-                            .padding(.bottom, 10)
-                            .frame(height: 0, alignment: .bottom)
-                            .transition(
-                                .asymmetric(
-                                    insertion: .scale(scale: 0.6).combined(with: .opacity).combined(with: .offset(y: 10)),
-                                    removal: .scale(scale: 0.85).combined(with: .opacity).combined(with: .offset(y: 6))
-                                )
-                            )
-                        }
+                        JumpToLatestButton(scrollState: scrollState)
                     }
+                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerAreaHeight = $0 }
+                    .padding(.trailing, composerReserve)
+                    .animation(Chrome.panelSlide, value: composerReserve)
             }
             .overlay(alignment: .top) {
                 PaneTopVeil(model: scrollChrome)
@@ -63,6 +70,48 @@ struct ChatView: View {
                     git: git
                 )
             }
+            .overlay(alignment: .topLeading) {
+                // Not before the pane has a size: the panel's spot comes from it.
+                if let subagent, paneSize != .zero {
+                    let origin = panelDrag ?? runtime.subagentPanelOrigin.map(layout.clamped) ?? layout.dockedOrigin
+                    SubagentPanel(
+                        thread: subagent,
+                        size: layout.panelSize,
+                        // The helper works in the project folder, whatever this thread's worktree.
+                        workingDirectory: subagent.worktreePath ?? project?.path,
+                        projectName: project?.name,
+                        onDrag: { translation in
+                            let grab = panelGrab ?? origin
+                            if panelGrab == nil { panelGrab = grab }
+                            panelDrag = layout.clamped(CGPoint(x: grab.x + translation.width, y: grab.y + translation.height))
+                        },
+                        onDragEnd: {
+                            // Dropped near its corner, the panel snaps back into it; anywhere
+                            // else it stays put.
+                            let dropped = panelDrag ?? origin
+                            runtime.subagentPanelOrigin = layout.snapsToDock(dropped) ? nil : dropped
+                            panelGrab = nil
+                            panelDrag = nil
+                        },
+                        close: {
+                            model.closeSubagent(subagent.id)
+                            runtime.subagentPanelOrigin = nil
+                        }
+                    )
+                    // Inside the offset, so the panel grows in and fades out in place.
+                    .transition(
+                        .asymmetric(
+                            insertion: .scale(scale: 0.92).combined(with: .opacity),
+                            removal: .scale(scale: 0.96).combined(with: .opacity)
+                        )
+                    )
+                    .offset(x: origin.x, y: origin.y)
+                    // The handle moves it live; only a drop and a resize settle it with a slide.
+                    .animation(panelDrag == nil ? Chrome.panelSlide : nil, value: origin)
+                }
+            }
+            .animation(Chrome.panelSlide, value: subagent?.id)
+            .onGeometryChange(for: CGSize.self, of: { $0.size }) { paneSize = $0 }
 
             if runtime.isTerminalVisible {
                 TerminalPanel(runtime: runtime, directory: directory)
@@ -73,11 +122,37 @@ struct ChatView: View {
         .detailSheet()
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { columnHeight = $0 }
         .animation(Chrome.panelSlide, value: runtime.isTerminalVisible)
+        // A merge or pull request link in this chat can hand its request to a helper, which
+        // opens in the panel and lands it on the same provider and model as this thread.
+        .environment(\.mergeRequestTarget, MergeRequestTarget(chatID: runtime.threadID) { link in
+            model.spawnSubagent(from: runtime.threadID, title: link.title, prompt: link.prompt)
+        })
         .task(id: directory) {
             await git.refresh(directory, force: false)
         }
         .onChange(of: runtime.diffRevision) {
             Task { await git.refresh(directory) }
+        }
+    }
+}
+
+/// The "jump to latest" button floating above the chat box while the reader is scrolled up.
+struct JumpToLatestButton: View {
+    let scrollState: TimelineScrollState
+
+    var body: some View {
+        if scrollState.showsJumpButton {
+            ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
+                scrollState.jumpToLatest()
+            }
+            .padding(.bottom, 10)
+            .frame(height: 0, alignment: .bottom)
+            .transition(
+                .asymmetric(
+                    insertion: .scale(scale: 0.6).combined(with: .opacity).combined(with: .offset(y: 10)),
+                    removal: .scale(scale: 0.85).combined(with: .opacity).combined(with: .offset(y: 6))
+                )
+            )
         }
     }
 }
