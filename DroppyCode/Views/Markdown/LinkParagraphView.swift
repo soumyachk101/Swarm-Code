@@ -166,7 +166,7 @@ final class LinkTextView: NSTextView {
         // the chrome; the system accent for System/Light/Dark. Set per render
         // so a theme change recolours links already on screen.
         linkTextAttributes = [
-            .foregroundColor: ThemeManager.spec.accent.map { NSColor($0) } ?? NSColor.controlAccentColor,
+            .foregroundColor: Chrome.accentNSColor,
             .underlineStyle: 0,
             .cursor: NSCursor.pointingHand,
         ]

@@ -221,7 +221,6 @@ struct WorkGroup: View {
     var workingDirectory: String?
     var startsCollapsed = false
     @State private var isCollapsed: Bool
-    @State private var showsAll = false
 
     init(entries: [TimelineEntry], workingDirectory: String? = nil, startsCollapsed: Bool = false) {
         self.entries = entries
@@ -258,29 +257,7 @@ struct WorkGroup: View {
                 .help(isCollapsed ? "Show these steps" : "Hide these steps")
                 .accessibilityLabel(Text(isCollapsed ? "Show these steps" : "Hide these steps"))
                 if !isCollapsed {
-                    // Only the two latest steps show; the rest fold under one line.
-                    let hidden = showsAll ? 0 : max(0, entries.count - 2)
-                    if hidden > 0 {
-                        Button {
-                            withAnimation(.snappy) { showsAll = true }
-                        } label: {
-                            HStack(spacing: TimelineMetrics.iconSpacing) {
-                                Image(systemName: "ellipsis")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: TimelineMetrics.iconWidth)
-                                Text(hidden == 1 ? "1 earlier step" : "\(hidden) earlier steps")
-                                    .foregroundStyle(.secondary)
-                            }
-                            .font(.callout)
-                            .padding(.trailing, 12)
-                            .contentShape(.rect)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    ForEach(entries.suffix(entries.count - hidden)) { entry in
-                        ToolRow(entry: entry, workingDirectory: workingDirectory)
-                    }
+                    WorkSteps(entries: entries, workingDirectory: workingDirectory)
                 }
             }
             .onChange(of: startsCollapsed) { _, collapsed in
@@ -288,6 +265,40 @@ struct WorkGroup: View {
                 // the reader opened never snaps shut on its own.
                 if collapsed { isCollapsed = true }
             }
+        }
+    }
+}
+
+/// A tool group's rows: only the two latest steps show, the rest fold under
+/// one "N earlier steps" line until tapped. Shared by the expanded work group
+/// and the running turn's working line.
+struct WorkSteps: View {
+    let entries: [TimelineEntry]
+    var workingDirectory: String?
+    @State private var showsAll = false
+
+    var body: some View {
+        let hidden = showsAll ? 0 : max(0, entries.count - 2)
+        if hidden > 0 {
+            Button {
+                withAnimation(.snappy) { showsAll = true }
+            } label: {
+                HStack(spacing: TimelineMetrics.iconSpacing) {
+                    Image(systemName: "ellipsis")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: TimelineMetrics.iconWidth)
+                    Text(hidden == 1 ? "1 earlier step" : "\(hidden) earlier steps")
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout)
+                .padding(.trailing, 12)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+        }
+        ForEach(entries.suffix(entries.count - hidden)) { entry in
+            ToolRow(entry: entry, workingDirectory: workingDirectory)
         }
     }
 }

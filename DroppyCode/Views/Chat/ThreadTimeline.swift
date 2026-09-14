@@ -63,7 +63,16 @@ struct ThreadTimeline: View, Equatable {
         // Only the newest window of blocks is rendered. Older history loads on demand,
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
-        let visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
+        var visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
+        // The running turn's trailing tool run is not a block of its own: the working line
+        // carries it (its summary beside the spinner, its steps behind the chevron) until a
+        // reply follows, when it comes back as a collapsed group above the answer.
+        var liveWork: [TimelineEntry] = []
+        if runtime.isRunning, runtime.entries.last?.kind != .assistant,
+           case .group(.work(_, let entries, false), _, _) = visible.last {
+            liveWork = entries
+            visible.removeLast()
+        }
         // The turns a row may offer to revert. Read here, once, so a turn record changing
         // (checkpoints, diffs, anchors) re-runs this body alone; rows get a plain flag that
         // only changes when their own answer does.
@@ -72,7 +81,7 @@ struct ThreadTimeline: View, Equatable {
         // space, so the conversation stays centered exactly like the composer.
         // Ticks centre in the full column height, so the queue tab opening never moves them.
         return ZStack(alignment: .leading) {
-            timelineScroll(visible: visible, hidden: hidden, rewindable: rewindable)
+            timelineScroll(visible: visible, hidden: hidden, liveWork: liveWork, rewindable: rewindable)
             if blocks.count(where: \.hasUserMessage) > 1 {
                 TimelineMinimapColumn(
                     blocks: blocks,
@@ -120,7 +129,7 @@ struct ThreadTimeline: View, Equatable {
         }
     }
 
-    private func timelineScroll(visible: [DisplayBlock], hidden: Int, rewindable: Set<UUID>) -> some View {
+    private func timelineScroll(visible: [DisplayBlock], hidden: Int, liveWork: [TimelineEntry], rewindable: Set<UUID>) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
@@ -165,7 +174,12 @@ struct ThreadTimeline: View, Equatable {
                             .transition(.softAppear)
                     }
                     if runtime.isRunning {
-                        WorkingIndicatorSlot(runtime: runtime, showsThinking: model.settings.showReasoning)
+                        WorkingIndicatorSlot(
+                            runtime: runtime,
+                            liveWork: liveWork,
+                            workingDirectory: workingDirectory,
+                            showsThinking: model.settings.showReasoning
+                        )
                     }
                 }
                 // The end of the conversation. While it is on screen the reader is at the latest message.
@@ -535,30 +549,37 @@ struct TimelineGroupView: View {
     }
 }
 
-/// Zeron's gradient pulse with a word that changes every few seconds, and the elapsed time.
+/// The one line a running turn shows: Zeron's gradient pulse, what the agent is doing
+/// right now (the live tool run's summary, or a word that changes every few seconds
+/// before any tool starts) and the elapsed time. Collapsed by default; the chevron
+/// opens the thinking (when shown) and the run's steps beneath it.
 private struct WorkingIndicator: View {
     let startedAt: Date
     let seed: UInt64
     /// The running turn's thinking. When there is any, a chevron opens it beneath the indicator.
     let thinkingSteps: [ThinkingStep]
+    /// The tool run in progress, folded into this line while it runs.
+    let liveWork: [TimelineEntry]
+    var workingDirectory: String?
     @State private var now = Date.now
-    @State private var showsThinking = false
+    @State private var isExpanded = false
 
     var body: some View {
         let elapsed = now.timeIntervalSince(startedAt)
         let word = WorkingWords.word(seed: seed, elapsedSeconds: Int64(max(0, elapsed)))
-        let canExpand = !thinkingSteps.isEmpty
+        let label = liveWork.isEmpty ? "\(word)…" : WorkGroupSummary.text(for: liveWork)
+        let canExpand = !thinkingSteps.isEmpty || !liveWork.isEmpty
         VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             Button {
                 guard canExpand else { return }
-                withAnimation(.snappy(duration: 0.24)) { showsThinking.toggle() }
+                withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: TimelineMetrics.iconSpacing) {
                     WorkingSpinner(cellSize: 3.5)
                         .frame(width: TimelineMetrics.iconWidth)
-                    Text(verbatim: "\(word)…")
+                    Text(verbatim: label)
                         .foregroundStyle(.secondary)
-                        .id(word)
+                        .id(label)
                         .transition(.opacity.combined(with: .offset(y: 3)))
                     Text(RelativeTime.duration(elapsed))
                         .monospacedDigit()
@@ -566,32 +587,37 @@ private struct WorkingIndicator: View {
                     if canExpand {
                         Image(systemName: "chevron.right")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .rotationEffect(.degrees(showsThinking ? 90 : 0))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
                             .transition(.opacity)
                     }
                 }
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .help(canExpand ? (showsThinking ? "Hide thinking" : "Show thinking") : "")
-            .accessibilityHint(canExpand ? Text("Shows the agent's thinking") : Text(""))
+            .help(canExpand ? (isExpanded ? "Hide these steps" : "Show these steps") : "")
+            .accessibilityHint(canExpand ? Text("Shows what the agent is doing") : Text(""))
 
-            if showsThinking, canExpand {
-                VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
-                    ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
-                        MarkdownView(text: step.text, isStreaming: step.isStreaming).equatable()
+            if isExpanded, canExpand {
+                if !thinkingSteps.isEmpty {
+                    VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+                        ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
+                            MarkdownView(text: step.text, isStreaming: step.isStreaming).equatable()
+                        }
                     }
+                    .foregroundStyle(.secondary)
+                    .environment(\.markdownPointSize, 12)
+                    .environment(\.markdownDimmed, true)
+                    .padding(.leading, TimelineMetrics.iconWidth + TimelineMetrics.iconSpacing)
+                    .transition(.softAppear)
                 }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .environment(\.markdownPointSize, 12)
-                .environment(\.markdownDimmed, true)
-                .padding(.leading, TimelineMetrics.iconWidth + TimelineMetrics.iconSpacing)
-                .transition(.softAppear)
+                if !liveWork.isEmpty {
+                    WorkSteps(entries: liveWork, workingDirectory: workingDirectory)
+                        .transition(.softAppear)
+                }
             }
         }
-        .animation(.smooth(duration: 0.35), value: word)
+        .animation(.smooth(duration: 0.35), value: label)
         .animation(.smooth(duration: 0.2), value: canExpand)
         .font(.callout)
         .task {
@@ -629,6 +655,9 @@ final class TimelineScrollState {
 /// newest entry's kind is read here, which never changes while text streams, plus the turn's thinking.
 private struct WorkingIndicatorSlot: View {
     let runtime: ThreadRuntime
+    /// The tool run in progress, shown on the working line instead of as a group.
+    let liveWork: [TimelineEntry]
+    let workingDirectory: String?
     let showsThinking: Bool
 
     var body: some View {
@@ -638,7 +667,9 @@ private struct WorkingIndicatorSlot: View {
                 WorkingIndicator(
                     startedAt: runtime.turnStartedAt ?? .now,
                     seed: WorkingWords.seed(runtime.threadID.uuidString),
-                    thinkingSteps: showsThinking ? thinking : []
+                    thinkingSteps: showsThinking ? thinking : [],
+                    liveWork: liveWork,
+                    workingDirectory: workingDirectory
                 )
                 .transition(.asymmetric(
                     insertion: .softAppear,

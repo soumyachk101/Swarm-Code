@@ -155,6 +155,19 @@ struct ComposerView: View {
         .padding(.leading, 14)
         .padding(.trailing, 8)
         .padding(.vertical, 8)
+        // While a turn runs, accent dots flow along the pill's bottom two-fifths,
+        // behind the text and inside the glass.
+        .background {
+            if runtime.isRunning {
+                GeometryReader { proxy in
+                    ComposerWorkingDots()
+                        .frame(height: proxy.size.height * 0.4)
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                }
+                .clipShape(.rect(cornerRadius: 22, style: .continuous))
+                .transition(.opacity.animation(.easeInOut(duration: 0.4)))
+            }
+        }
         .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
         .onChange(of: suggestions) { _, new in
             if new.isVisible {
