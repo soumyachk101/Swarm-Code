@@ -145,4 +145,10 @@ private final class WindowHostingView: NSHostingView<AnyView> {
     @MainActor required dynamic init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
     }
+
+    /// Every window here holds focusable text (the composer, a search field), so the
+    /// answer is always yes. SwiftUI's own answer searches the whole view tree for a
+    /// navigable item, and AppKit asks on every display cycle while content scrolls
+    /// under the title bar to work out the window's drag region.
+    override var acceptsFirstResponder: Bool { true }
 }
