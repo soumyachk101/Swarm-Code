@@ -9,9 +9,18 @@ extension NSPopover {
     /// the arrow ends up floating well above the anchor. Sizing the hosting
     /// controller off (`sizingOptions = []`) leaves `contentSize` in charge,
     /// and framing the content to it keeps SwiftUI filling the panel.
+    ///
+    /// The panel hosts a SwiftUI tree of its own, outside the window's, so it
+    /// is given what the window root gives every view: capsule buttons and the
+    /// theme's tint. A Save button in it is then the same capsule as one in
+    /// Settings, not the stock rounded rectangle.
     @MainActor
     func setFixedContent<Content: View>(_ content: Content, size: NSSize) {
-        let host = NSHostingController(rootView: content.frame(width: size.width, height: size.height))
+        let root = content
+            .frame(width: size.width, height: size.height)
+            .buttonBorderShape(.capsule)
+            .tint(ThemeManager.spec.accent)
+        let host = NSHostingController(rootView: root)
         host.sizingOptions = []
         contentViewController = host
         contentSize = size
