@@ -10,7 +10,8 @@
     3. The phone notch menu, the skip link, the active nav link and the
        footer year.
     4. Footer wordmark parallax.
-    5. The button morph hover: the two content layers every button's
+    5. A guard against copying: selection, copy, drag and the context menu are off.
+    6. The button morph hover: the two content layers every button's
        shared hover needs, built at runtime (see "Morph hover" in site.css).
 */
 
@@ -216,12 +217,30 @@
     }, { rootMargin: "100% 0px", threshold: 0 }).observe(wrap);
   }
 
+  /* ---------------------------------------------------------------- */
+  /* 5. Nothing on the page is for taking                              */
+  /* ---------------------------------------------------------------- */
+
+  function initGuard() {
+    var swallow = function (event) { event.preventDefault(); };
+    ["contextmenu", "copy", "cut", "dragstart", "selectstart"].forEach(function (name) {
+      document.addEventListener(name, swallow);
+    });
+    // Save-as and view-source shortcuts.
+    document.addEventListener("keydown", function (event) {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      var key = (event.key || "").toLowerCase();
+      if (key === "s" || key === "u" || (key === "c" && !event.shiftKey)) event.preventDefault();
+    });
+  }
+
   function onReady(callback) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", callback);
     else callback();
   }
 
   onReady(function () {
+    initGuard();
     initSkipLink();
     initReveal();
     initFaq();

@@ -145,6 +145,21 @@ body {
 }
 
 img, video { max-width: 100%; display: block; }
+
+/* Nothing on the page is for taking: no text selection, no dragging a picture or a
+   film off the page, no long-press sheet on a phone. The scripts back this up by
+   swallowing copy, cut, drag and the context menu. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+img, video {
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+/* The theme picker's names are buttons and the FAQ questions are buttons: those keep
+   their pointer events; only the media itself is inert. */
 a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; cursor: pointer; }
 h1, h2, h3, h4, p { margin: 0; }
