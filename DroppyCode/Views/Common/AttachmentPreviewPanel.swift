@@ -1,5 +1,11 @@
 import AppKit
+import os
 import SwiftUI
+
+/// Temporary tap tracing for the strip saga. Remove once taps are proven.
+enum StripLog {
+    static let log = Logger(subsystem: "iordv.droppycode", category: "strip")
+}
 
 /// One attachment preview panel per thumbnail strip. A custom NSPopover (not
 /// SwiftUI's `.popover`) because SwiftUI resolves several sibling popovers to
@@ -43,6 +49,7 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     }
 
     func toggle(_ attachment: Attachment) {
+        StripLog.log.debug("toggle id=\(attachment.id) name=\(attachment.name, privacy: .public) shown=\(self.popover.isShown)")
         if currentID == attachment.id, popover.isShown {
             close()
         } else {
@@ -63,11 +70,16 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         if popover.isShown {
             // Already open: swap the content in place. Re-showing a shown
             // popover is unreliable, and the strip anchor never moves anyway.
+            StripLog.log.debug("show swap id=\(attachment.id)")
             popover.contentViewController = NSHostingController(rootView: content)
             popover.contentSize = size
             return
         }
-        guard let anchor = anchor?.value, anchor.window != nil else { return }
+        guard let anchor = anchor?.value, anchor.window != nil else {
+            StripLog.log.debug("show BLOCKED id=\(attachment.id) anchorNil=\(self.anchor?.value == nil)")
+            return
+        }
+        StripLog.log.debug("show open id=\(attachment.id) anchorFrame=\(anchor.frame.debugDescription, privacy: .public)")
         popover.contentViewController = NSHostingController(rootView: content)
         popover.contentSize = size
         startMonitors()

@@ -91,14 +91,19 @@ struct AttachmentStrip: View {
     @State private var preview = AttachmentPreviewCoordinator()
 
     var body: some View {
+        // Inner stack hugs the thumbnails so the panel arrow lands on them, not
+        // mid-row; the spacer keeps the pixels exactly where a plain stack puts them.
         HStack(spacing: 6) {
-            ForEach(attachments) { attachment in
-                AttachmentThumbnail(attachment: attachment, preview: preview)
-                    .help(attachment.name)
+            HStack(spacing: 6) {
+                ForEach(attachments) { attachment in
+                    AttachmentThumbnail(attachment: attachment, preview: preview)
+                        .help(attachment.name)
+                }
             }
-        }
-        .background {
-            AttachmentAnchorCapture { preview.setAnchor($0) }
+            .background {
+                AttachmentAnchorCapture { preview.setAnchor($0) }
+            }
+            Spacer(minLength: 0)
         }
         .onDisappear { preview.close() }
     }
@@ -113,6 +118,7 @@ struct AttachmentThumbnail: View {
 
     var body: some View {
         Button {
+            StripLog.log.debug("thumb tap id=\(attachment.id) name=\(attachment.name, privacy: .public)")
             preview.toggle(attachment)
         } label: {
             if attachment.isImage {
