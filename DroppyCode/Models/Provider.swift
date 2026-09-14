@@ -9,6 +9,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case deepseek
     case meta
     case devin
+    case antigravity
 
     var id: String { rawValue }
 
@@ -22,6 +23,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .deepseek: "DeepSeek"
         case .meta: "Meta"
         case .devin: "Devin"
+        case .antigravity: "Antigravity"
         }
     }
 
@@ -35,6 +37,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .deepseek: ""
         case .meta: ""
         case .devin: "devin"
+        case .antigravity: "agy"
         }
     }
 
@@ -50,6 +53,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .deepseek: "DEEPSEEK_API_KEY=sk-..."
         case .meta: "MODEL_API_KEY=..."
         case .devin: "devin auth login"
+        case .antigravity: "agy"
         }
     }
 
@@ -63,6 +67,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .deepseek: URL(string: "https://platform.deepseek.com/api_keys")!
         case .meta: URL(string: "https://dev.meta.ai/")!
         case .devin: URL(string: "https://cli.devin.ai")!
+        case .antigravity: URL(string: "https://antigravity.google/docs/cli/overview")!
         }
     }
 
@@ -99,7 +104,9 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     /// Whether the provider can drop later turns from its own conversation.
     var supportsRewind: Bool { self == .codex || self == .claude }
 
-    var supportsImages: Bool { self != .grok }
+    /// Headless stream-json only carries text: the TUI pastes images, but a
+    /// streaming session rejects non-text blocks, so image attachments stay off.
+    var supportsImages: Bool { self != .grok && self != .antigravity }
 
     var usesACP: Bool { self == .cursor || self == .opencode || self == .grok || self == .devin }
 }

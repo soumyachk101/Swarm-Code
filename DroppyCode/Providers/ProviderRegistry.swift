@@ -54,6 +54,27 @@ final class ProviderRegistry {
     static let metaSeed = ["muse-spark-1.3", "muse-spark-1.3-contributor", "muse-spark-1.2", "muse-spark-1.2-contributor", "muse-spark-1.1"]
         .compactMap(MetaAPI.option(for:))
 
+    /// From `agy models`: slug, display name. Every model takes the same
+    /// low/medium/high `--effort` values; the live fetch refines the default.
+    static let antigravitySeed: [ModelOption] = [
+        ("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"),
+        ("gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"),
+        ("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"),
+        ("gemini-3.7-flash-high", "Gemini 3.7 Flash (High)"),
+        ("gemini-3.7-flash-medium", "Gemini 3.7 Flash (Medium)"),
+        ("gemini-3.7-flash-low", "Gemini 3.7 Flash (Low)"),
+        ("gemini-3.6-flash-high", "Gemini 3.6 Flash (High)"),
+        ("gemini-3.6-flash-medium", "Gemini 3.6 Flash (Medium)"),
+        ("gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)"),
+        ("gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"),
+        ("gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)"),
+        ("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)"),
+        ("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)"),
+        ("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"),
+    ].enumerated().map { index, pair in
+        ModelOption(id: pair.0, name: pair.1, efforts: AntigravitySession.efforts, isDefault: index == 0)
+    }
+
     /// Every provider tries its live catalog at most once per launch unless forced, success or not,
     /// so views that ask on appear never re-spawn a CLI or re-hit an API while scrolling.
     @ObservationIgnored private var attemptedCatalogs: Set<ProviderKind> = []
@@ -69,6 +90,7 @@ final class ProviderRegistry {
         if catalogs[.claude]?.isEmpty ?? true { catalogs[.claude] = Self.claudeSeed }
         if catalogs[.deepseek]?.isEmpty ?? true { catalogs[.deepseek] = Self.deepseekSeed }
         if catalogs[.meta]?.isEmpty ?? true { catalogs[.meta] = Self.metaSeed }
+        if catalogs[.antigravity]?.isEmpty ?? true { catalogs[.antigravity] = Self.antigravitySeed }
     }
 
     var availableProviders: [ProviderKind] {
@@ -106,7 +128,7 @@ final class ProviderRegistry {
         defer { isRefreshing = false }
         await refreshAll()
         await withTaskGroup(of: Void.self) { group in
-            for provider in [ProviderKind.codex, .deepseek, .meta] where status(provider).isInstalled {
+            for provider in [ProviderKind.codex, .antigravity, .deepseek, .meta] where status(provider).isInstalled {
                 group.addTask { await self.loadCatalog(provider, force: true) }
             }
         }
@@ -197,6 +219,7 @@ final class ProviderRegistry {
         let environment = environment(for: provider)
         let list: [ModelOption]? = switch provider {
         case .codex: try? await CodexSession.listModels(executable: executable, environment: environment)
+        case .antigravity: try? await AntigravitySession.listModels(executable: executable, environment: environment)
         case .cursor, .opencode, .grok, .devin: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
         case .claude, .deepseek, .meta: nil
         }
@@ -294,6 +317,8 @@ final class ProviderRegistry {
             if text.localizedCaseInsensitiveContains("not logged in") { return .signedOut }
             guard text.localizedCaseInsensitiveContains("logged in") else { return .unknown }
             return .signedIn(Self.devinAccount(from: text))
+        case .antigravity:
+            return await AntigravitySession.authStatus(executable: executable, environment: environment)
         case .opencode, .grok, .deepseek, .meta:
             return .unknown
         }

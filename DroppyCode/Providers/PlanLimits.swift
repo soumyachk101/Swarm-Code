@@ -15,15 +15,17 @@ struct PlanLimits: Sendable, Equatable {
 
 @MainActor
 enum PlanLimitsReader {
-    /// Only Codex and Claude report plan limits. Cursor, OpenCode, Grok, DeepSeek, Meta and Devin expose none.
+    /// Codex, Claude and Antigravity report plan limits. Cursor, OpenCode, Grok,
+    /// DeepSeek, Meta and Devin expose none.
     static func exposesLimits(_ provider: ProviderKind) -> Bool {
-        provider == .codex || provider == .claude
+        provider == .codex || provider == .claude || provider == .antigravity
     }
 
     static func read(_ provider: ProviderKind, executable: URL, environment: [String: String]) async -> PlanLimits? {
         switch provider {
         case .codex: try? await CodexSession.readPlanLimits(executable: executable, environment: environment)
         case .claude: await readClaude(executable: executable, environment: environment)
+        case .antigravity: try? await AntigravitySession.readPlanLimits(executable: executable, environment: environment)
         case .cursor, .opencode, .grok, .deepseek, .meta, .devin: nil
         }
     }
