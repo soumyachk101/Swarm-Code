@@ -410,6 +410,51 @@ struct ChromeTextMenu<Content: View>: View {
     }
 }
 
+/// A text button shaped like a chrome capsule, such as the archive page's delete all. A
+/// destructive one reads as an ordinary chrome control at rest and turns red under the pointer.
+struct ChromeTextButton: View {
+    let symbol: String
+    let title: String
+    let help: String
+    var isEnabled = true
+    var isDestructive = false
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(Chrome.inlineIconFont)
+                Text(verbatim: title)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(foreground)
+            .padding(.horizontal, Chrome.capsuleHorizontalPadding)
+            .frame(height: Chrome.capsuleContentHeight)
+            .padding(.vertical, Chrome.capsuleVerticalPadding)
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .fixedSize()
+        .chromeGlassCapsule()
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .help(help)
+        .accessibilityLabel(Text(help))
+    }
+
+    private var foreground: Color {
+        guard isEnabled else { return Chrome.primaryText.opacity(0.32) }
+        if isDestructive { return Chrome.danger.opacity(isHovering ? 1 : 0.92) }
+        return Chrome.primaryText.opacity(isHovering ? 1 : 0.92)
+    }
+}
+
 // MARK: - Scroll morph
 
 /// Scroll progress for the sticky chrome. Only the veil and the compact title observe it,

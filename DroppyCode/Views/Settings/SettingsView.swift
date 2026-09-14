@@ -160,6 +160,9 @@ struct SettingsView: View {
                 if page == .providers {
                     ProvidersRefreshButton()
                 }
+                if page == .archive {
+                    ArchiveDeleteAllButton()
+                }
             }
             .frame(minHeight: Chrome.capsuleHeight)
             .padding(.horizontal, Chrome.chromeHorizontalPadding)
@@ -174,7 +177,7 @@ struct SettingsView: View {
     }
 
     private var pageHasChromeControls: Bool {
-        page == .providers || page == .models
+        page == .providers || page == .models || page == .archive
     }
 
     @ViewBuilder
@@ -504,6 +507,42 @@ private struct SourceControlSettingsPage: View {
                     EmptyView()
                 }
             }
+        }
+    }
+}
+
+/// Clears the whole archive from the page's chrome row, asking first the way a single
+/// delete does when the setting is on.
+private struct ArchiveDeleteAllButton: View {
+    @Environment(AppModel.self) private var model
+    @State private var isConfirming = false
+
+    var body: some View {
+        let count = model.archivedThreads.count
+        ChromeTextButton(
+            symbol: "trash",
+            title: "Delete all",
+            help: "Delete every archived thread",
+            isEnabled: count > 0,
+            isDestructive: true
+        ) {
+            if model.settings.confirmBeforeDeleting {
+                isConfirming = true
+            } else {
+                model.deleteArchivedThreads()
+            }
+        }
+        .confirmationDialog(
+            count == 1 ? "Delete the archived thread?" : "Delete all archived threads?",
+            isPresented: $isConfirming
+        ) {
+            Button(count == 1 ? "Delete thread" : "Delete \(count) threads", role: .destructive) {
+                model.deleteArchivedThreads()
+            }
+        } message: {
+            Text(count == 1
+                ? "Its history will be removed. Files in your project stay as they are."
+                : "The histories of all \(count) threads will be removed. Files in your projects stay as they are.")
         }
     }
 }
