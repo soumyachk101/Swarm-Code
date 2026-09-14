@@ -107,12 +107,26 @@ final class LinkTextView: NSTextView {
     private var lastLaidOutWidth: CGFloat = 0
     private var lastMeasuredHeight: CGFloat = 0
 
+    /// The view owns its text storage. `init(frame:textContainer:)` only takes a
+    /// container and holds it weakly; a bare container with no layout manager or
+    /// storage behind it is released on the spot, leaving the view with no
+    /// `textContainer` and no `textStorage`, so `render` had nothing to write into
+    /// and every link paragraph came out blank.
+    private let storage = NSTextStorage()
+
     init() {
+        let layoutManager = NSLayoutManager()
+        storage.addLayoutManager(layoutManager)
         let container = NSTextContainer(size: NSSize(width: 400, height: CGFloat.greatestFiniteMagnitude))
         container.widthTracksTextView = false
         container.heightTracksTextView = false
         container.lineFragmentPadding = 0
+        layoutManager.addTextContainer(container)
         super.init(frame: .zero, textContainer: container)
+        // Vertical sizing is driven by `height(forWidth:)`; never clamp the text to
+        // the zero frame this view starts with.
+        minSize = .zero
+        maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         isEditable = false
         isSelectable = true
         drawsBackground = false
@@ -176,6 +190,11 @@ final class LinkTextView: NSTextView {
     override func layout() {
         super.layout()
         let width = bounds.width
+        // SwiftUI probes at infinity before settling on a width; make sure the text wraps
+        // to the frame it was actually given, not the last probe.
+        if width > 0, let container = textContainer, container.containerSize.width != width {
+            container.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        }
         guard width > 0, abs(width - lastLaidOutWidth) > 0.5 else { return }
         lastLaidOutWidth = width
         let height = height(forWidth: width)

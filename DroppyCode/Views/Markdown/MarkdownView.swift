@@ -61,6 +61,8 @@ struct MarkdownView: View, Equatable {
 
 struct MarkdownBlockView: View, Equatable {
     let block: MarkdownBlock
+    @Environment(\.markdownDimmed) private var dimmed
+    @Environment(\.markdownListDepth) private var listDepth
 
     /// Blocks compare by content, so a finished block is skipped while the reply keeps streaming.
     nonisolated static func == (lhs: MarkdownBlockView, rhs: MarkdownBlockView) -> Bool {
@@ -88,6 +90,8 @@ struct MarkdownBlockView: View, Equatable {
                                 MarkdownBlockView(block: child)
                             }
                         }
+                        // Nested lists read one level deeper, so their dots turn into rings.
+                        .environment(\.markdownListDepth, listDepth + 1)
                     }
                 }
             }
@@ -130,11 +134,41 @@ struct MarkdownBlockView: View, Equatable {
         } else if ordered {
             Text("\(number).")
                 .monospacedDigit()
-                .foregroundStyle(.secondary)
+                .fontWeight(.medium)
+                .foregroundStyle(markerColor)
         } else {
+            // A hidden bullet glyph keeps the text baseline; the dot drawn over it is the
+            // marker, in the theme accent. Nested levels get a ring instead of a fill.
             Text("•")
-                .foregroundStyle(.tertiary)
+                .hidden()
+                .overlay {
+                    if listDepth == 0 {
+                        Circle()
+                            .fill(markerColor)
+                            .frame(width: 5, height: 5)
+                    } else {
+                        Circle()
+                            .strokeBorder(markerColor, lineWidth: 1.2)
+                            .frame(width: 5.5, height: 5.5)
+                    }
+                }
         }
+    }
+
+    private var markerColor: Color {
+        Chrome.accent.opacity(dimmed ? 0.55 : 0.9)
+    }
+}
+
+/// How many lists the block sits inside; the marker style follows it.
+private struct MarkdownListDepthKey: EnvironmentKey {
+    static let defaultValue = 0
+}
+
+extension EnvironmentValues {
+    var markdownListDepth: Int {
+        get { self[MarkdownListDepthKey.self] }
+        set { self[MarkdownListDepthKey.self] = newValue }
     }
 }
 

@@ -5,6 +5,14 @@ struct ModelsSettingsPage: View {
     @Environment(AppModel.self) private var model
     var query = ""
 
+    /// The live grip reorder of a chosen model (see `RowDrag`).
+    @State private var drag = RowDrag<ModelPin>()
+    /// Each row's height including its divider: one row's slot in the card.
+    @State private var rowHeights: [ModelPin: CGFloat] = [:]
+
+    /// Neighbours sliding out of the grabbed row's way.
+    private static let slide = Animation.spring(response: 0.28, dampingFraction: 0.82)
+
     var body: some View {
         let settings = model.settings
         let registry = model.providers
@@ -31,10 +39,23 @@ struct ModelsSettingsPage: View {
                             }
                         } else {
                             ForEach(Array(visiblePins.enumerated()), id: \.element.element) { position, item in
+                                let pin = item.element
+                                let isDragged = drag.id == pin
                                 VStack(spacing: 0) {
-                                    if position > 0 { ChromeRowDivider() }
-                                    PinnedModelRow(pin: item.element, index: item.offset, count: pins.count)
+                                    // The lifted row carries no divider, so nothing draws on top of it.
+                                    if position > 0 { ChromeRowDivider().opacity(isDragged ? 0 : 1) }
+                                    PinnedModelRow(
+                                        pin: pin,
+                                        isDragged: isDragged,
+                                        onDragChanged: { translation in
+                                            dragChanged(pin, translation: translation, order: visiblePins.map(\.element))
+                                        },
+                                        onDragEnded: { dragEnded() }
+                                    )
                                 }
+                                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[pin] = $0 }
+                                .offset(y: isDragged ? drag.visualOffset : 0)
+                                .zIndex(isDragged ? 1 : 0)
                             }
                         }
                     }
@@ -60,6 +81,38 @@ struct ModelsSettingsPage: View {
         }
     }
 
+    // MARK: - Reorder
+
+    /// The grabbed row follows the pointer and swaps past every visible
+    /// neighbour whose centre it has crossed. While a search filters the list
+    /// the swaps still happen against the visible neighbour, so hidden models
+    /// keep their place relative to it.
+    private func dragChanged(_ pin: ModelPin, translation: CGFloat, order: [ModelPin]) {
+        if drag.id != pin {
+            drag = RowDrag(id: pin)
+            NSCursor.closedHand.push()
+        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { drag.translation = translation }
+
+        let moved = drag.settle(order: order, heights: rowHeights, fallbackHeight: 54) { neighbour, placeAfter, slot in
+            withAnimation(Self.slide) {
+                model.settings.moveModel(pin, to: neighbour, placeAfter: placeAfter)
+                drag.settled += placeAfter ? slot : -slot
+            }
+        }
+        if moved {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+    }
+
+    private func dragEnded() {
+        guard drag.id != nil else { return }
+        NSCursor.pop()
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { drag = RowDrag() }
+    }
+
     /// Whether a model matches the search by name, description or provider.
     static func matches(_ option: ModelOption?, id: String, provider: ProviderKind, query: String) -> Bool {
         guard !query.isEmpty else { return true }
@@ -71,17 +124,48 @@ struct ModelsSettingsPage: View {
 private struct PinnedModelRow: View {
     @Environment(AppModel.self) private var model
     let pin: ModelPin
-    let index: Int
-    let count: Int
+    /// Lifted and following the pointer.
+    let isDragged: Bool
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: () -> Void
 
     @State private var isPresented = false
     @State private var isHovering = false
+    /// Whether the pointer is over the reorder grip, for the grab cursor.
+    @State private var isHoveringGrip = false
 
     var body: some View {
         let settings = model.settings
         let option = model.providers.model(pin.modelID, for: pin.provider)
         let preference = settings.preference(for: pin.provider, model: pin.modelID)
         HStack(spacing: 10) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Chrome.secondaryText.opacity(isHoveringGrip ? 1 : 0.7))
+                .frame(width: 24, height: 24)
+                .contentShape(.rect)
+                .onHover { hovering in
+                    isHoveringGrip = hovering
+                    // The grab cursor is the drag's while a drag is on.
+                    guard !isDragged else { return }
+                    if hovering { NSCursor.openHand.push() } else { NSCursor.pop() }
+                }
+                .onDisappear {
+                    if isHoveringGrip { NSCursor.pop() }
+                    isHoveringGrip = false
+                }
+                .onChange(of: isDragged) { _, dragging in
+                    // Released away from the grip: the hover's open hand is
+                    // still pushed with no leave to pop it.
+                    if !dragging, !isHoveringGrip { NSCursor.pop() }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { value in onDragChanged(value.translation.height) }
+                        .onEnded { _ in onDragEnded() }
+                )
+                .help("Drag to reorder")
+                .accessibilityLabel(Text("Drag to reorder"))
             Button {
                 isPresented = true
             } label: {
@@ -135,21 +219,24 @@ private struct PinnedModelRow: View {
                 .frame(width: 330)
             }
 
-            HStack(spacing: 2) {
-                RowControl(symbol: "chevron.up", help: "Move up", isEnabled: index > 0) {
-                    withAnimation(Chrome.panelSlide) { settings.moveModel(pin, by: -1) }
-                }
-                RowControl(symbol: "chevron.down", help: "Move down", isEnabled: index < count - 1) {
-                    withAnimation(Chrome.panelSlide) { settings.moveModel(pin, by: 1) }
-                }
-                RowControl(symbol: "minus.circle", help: "Remove from the picker", isEnabled: true) {
-                    withAnimation(Chrome.panelSlide) { settings.removeFromModelList(pin) }
-                }
+            RowControl(symbol: "minus.circle", help: "Remove from the picker", isEnabled: true) {
+                withAnimation(Chrome.panelSlide) { settings.removeFromModelList(pin) }
             }
         }
-        .padding(.leading, 16)
+        .padding(.leading, 10)
         .padding(.trailing, Chrome.rowControlTrailingPadding)
         .padding(.vertical, 9)
+        // Lifted: a touch larger with a shadow over an opaque fill, so the rows
+        // sliding underneath never show through.
+        .background {
+            if isDragged {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Chrome.overlay(0.12))
+                    .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
+            }
+        }
+        .scaleEffect(isDragged ? 1.02 : 1)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isDragged)
         .task { await model.providers.loadCatalog(pin.provider) }
     }
 
