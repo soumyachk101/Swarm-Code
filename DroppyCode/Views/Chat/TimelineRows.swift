@@ -375,27 +375,36 @@ struct ToolRow: View {
     /// text that was tapped. The row itself spans the column, and a popover anchored
     /// on it centred itself on the empty half with its arrow pointing at nothing.
     @State private var popoverAnchor = WeakView()
+    /// The image the agent looked at, in the same large preview a sent photo opens in.
+    @State private var imagePreview = AttachmentPreviewCoordinator()
 
     var body: some View {
         if case .tool(let call) = entry.item.content {
             // A row that carries a diff never unfolds: the diff opens in the changes
-            // popover, below the row's label. Only a row whose content is its own output
+            // popover, below the row's label. A read of an image opens the image itself
+            // the same way, whatever text came with it, and so does any other row with an
+            // image and nothing else to show. Only a row whose content is its own output
             // (a command's text, a tool's detail) still expands in place.
             let edits = call.edits.filter { !$0.path.isEmpty }
             let opensDiff = !edits.isEmpty
+            let imagePath = opensDiff ? nil : PreviewImages.resolveToolImagePath(for: call, workingDirectory: workingDirectory)
             let showsOutput = !opensDiff && (!call.output.isEmpty || !(call.detail ?? "").isEmpty)
+            let opensImage = imagePath != nil && (call.kind == .read || !showsOutput)
+            let opensPopover = opensDiff || opensImage
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 Button {
                     if opensDiff {
                         guard let view = popoverAnchor.value else { return }
                         runtime.showDiff(on: view, edge: .minY, turn: entry.turnID, focusEdits: edits)
+                    } else if opensImage, let imagePath {
+                        imagePreview.toggle(PreviewImages.attachment(for: imagePath), over: popoverAnchor.value, edge: .minY)
                     } else if showsOutput {
                         withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
                     }
                 } label: {
                     HStack(spacing: TimelineMetrics.iconSpacing) {
                         HStack(spacing: TimelineMetrics.iconSpacing) {
-                            ToolStatusIcon(call: call)
+                            ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)
                             // One text run after the icon, so the row reads as
                             // icon + space + text instead of three spaced items.
                             Text(ToolPresentation.label(for: call))
@@ -407,7 +416,7 @@ struct ToolRow: View {
                             }
                             // Beside the subject, not out at the trailing edge: the chevron
                             // belongs to the row's own text.
-                            if opensDiff {
+                            if opensPopover {
                                 Image(systemName: "chevron.down")
                                     .font(.caption2.weight(.semibold))
                                     .foregroundStyle(.tertiary)
@@ -419,8 +428,11 @@ struct ToolRow: View {
                             }
                         }
                         .background {
-                            if opensDiff {
-                                AttachmentAnchorCapture { popoverAnchor.value = $0 }
+                            if opensPopover {
+                                AttachmentAnchorCapture {
+                                    popoverAnchor.value = $0
+                                    imagePreview.setAnchor($0)
+                                }
                             }
                         }
                         Spacer(minLength: 8)
@@ -439,17 +451,19 @@ struct ToolRow: View {
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                .help(helpText(opensDiff: opensDiff, showsOutput: showsOutput))
-                if isExpanded, showsOutput {
+                .help(helpText(opensDiff: opensDiff, opensImage: opensImage, showsOutput: showsOutput))
+                if isExpanded, showsOutput, !opensImage {
                     ToolDetailView(call: call, workingDirectory: workingDirectory)
                         .padding(.trailing, 12)
                 }
             }
+            .onDisappear { imagePreview.close() }
         }
     }
 
-    private func helpText(opensDiff: Bool, showsOutput: Bool) -> String {
+    private func helpText(opensDiff: Bool, opensImage: Bool, showsOutput: Bool) -> String {
         if opensDiff { return "Show this change" }
+        if opensImage { return "Show the image" }
         guard showsOutput else { return "" }
         return isExpanded ? "Hide the output" : "Show the output"
     }
@@ -457,6 +471,8 @@ struct ToolRow: View {
 
 private struct ToolStatusIcon: View {
     let call: ToolCall
+    /// Stands in for the kind's symbol: a photo for a read that looked at one.
+    var symbol: String?
 
     var body: some View {
         Group {
@@ -471,7 +487,7 @@ private struct ToolStatusIcon: View {
                 Image(systemName: "hand.raised.slash")
                     .foregroundStyle(Chrome.warning)
             case .completed:
-                Image(systemName: ToolPresentation.symbol(for: call.kind))
+                Image(systemName: symbol ?? ToolPresentation.symbol(for: call.kind))
                     .foregroundStyle(.secondary)
             }
         }

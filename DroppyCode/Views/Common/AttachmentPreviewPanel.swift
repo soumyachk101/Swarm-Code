@@ -52,12 +52,14 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     /// `view` is the tapped thumbnail's own view when it has one. The panel aims
     /// at this click's tap point first, so the arrow lands on the photo even if
     /// a stored view went stale; the thumbnail and strip anchors are fallbacks.
-    func toggle(_ attachment: Attachment, over view: NSView? = nil) {
+    /// `edge` is where the panel opens: above the anchor for a photo in a message, below
+    /// a tool row whose chevron points down (`.minY` is below in these flipped views).
+    func toggle(_ attachment: Attachment, over view: NSView? = nil, edge: NSRectEdge = .maxY) {
         StripLog.log.notice("toggle id=\(attachment.id) name=\(attachment.name, privacy: .public) shown=\(self.popover.isShown)")
         if currentID == attachment.id, popover.isShown {
             close()
         } else {
-            show(attachment, over: view)
+            show(attachment, over: view, edge: edge)
         }
     }
 
@@ -67,12 +69,12 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         if popover.isShown { popover.performClose(nil) }
     }
 
-    private func show(_ attachment: Attachment, over view: NSView?) {
+    private func show(_ attachment: Attachment, over view: NSView?, edge: NSRectEdge) {
         let imageSize = attachment.isImage ? AttachmentLargePreview.imageDisplaySize(for: attachment) : nil
         let content = AttachmentLargePreview(attachment: attachment, imageSize: imageSize)
         let size = Self.contentSize(for: attachment, imageSize: imageSize)
         currentID = attachment.id
-        guard let (anchor, rect) = anchorTarget(thumbnailView: view) else {
+        guard let (anchor, rect) = anchorTarget(thumbnailView: view, edge: edge) else {
             StripLog.log.notice("show BLOCKED id=\(attachment.id) anchorNil=\(self.anchor?.value == nil)")
             return
         }
@@ -87,7 +89,7 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         StripLog.log.notice("show \(self.popover.isShown ? "swap" : "open", privacy: .public) id=\(attachment.id) size=\(size.debugDescription, privacy: .public)")
         popover.setFixedContent(content, size: size)
         if !popover.isShown { startMonitors() }
-        popover.show(relativeTo: rect, of: anchor, preferredEdge: .maxY)
+        popover.show(relativeTo: rect, of: anchor, preferredEdge: edge)
     }
 
     /// The view and rect to anchor the panel to, best proof first. A stored
@@ -96,14 +98,16 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     /// click's own tap point inside the strip anchor: exactly where the finger
     /// is. The thumbnail's own bounds and the strip's bounds stay as fallbacks
     /// (keyboard/VoiceOver activation carries no click), and nil blocks.
-    private func anchorTarget(thumbnailView: NSView?) -> (NSView, NSRect)? {
+    private func anchorTarget(thumbnailView: NSView?, edge: NSRectEdge) -> (NSView, NSRect)? {
         if let strip = anchor?.value, strip.window != nil,
            strip.bounds.width >= 8, strip.bounds.height >= 8,
            let event = NSApp.currentEvent, event.type == .leftMouseUp,
            event.window === strip.window {
             var point = strip.convert(event.locationInWindow, from: nil)
             point.x = min(max(point.x, strip.bounds.minX + 2), strip.bounds.maxX - 2)
-            let rect = NSRect(x: point.x - 1, y: strip.bounds.maxY - 1, width: 2, height: 1)
+            // A hairline on the edge the panel opens from, at the tap's x.
+            let y = edge == .minY ? strip.bounds.minY : strip.bounds.maxY - 1
+            let rect = NSRect(x: point.x - 1, y: y, width: 2, height: 1)
             StripLog.log.notice("show anchor=tap stripFrame=\(strip.frame.debugDescription, privacy: .public)")
             return (strip, rect)
         }
