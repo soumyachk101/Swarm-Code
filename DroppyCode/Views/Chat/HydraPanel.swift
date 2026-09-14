@@ -71,6 +71,9 @@ struct HydraPanel: View {
                 .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
                 .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
         }
+        .onGeometryChange(for: CGRect.self, of: {
+            $0.frame(in: .named(GenieAnimator.coordinateSpace))
+        }) { runtime.hydraPanelFrameInWindow = $0 }
         .onDisappear {
             if isDragging { NSCursor.pop() }
             if isHoveringHandle { NSCursor.pop() }

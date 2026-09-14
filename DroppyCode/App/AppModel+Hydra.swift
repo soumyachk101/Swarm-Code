@@ -21,8 +21,7 @@ extension AppModel {
         provider == .claude || provider == .codex || provider == .copilot
     }
 
-    /// The pair a chat leads with: the one picked when Hydra was switched on, or the best
-    /// fit for its provider and model now.
+    /// The pair a chat leads with: the best fit for its provider and model now.
     func hydraPair(for thread: ChatThread) -> HydraPair? {
         if let pair = settings.hydraPair(thread.hydraPairID), pair.provider == thread.provider { return pair }
         return settings.hydraPair(for: thread.provider, model: thread.model)
@@ -41,9 +40,8 @@ extension AppModel {
         )
     }
 
-    /// Switches Hydra on or off for a chat. Switching on applies the pair set up for the
-    /// chat's provider: a pair that names a lead model moves the chat onto it, so the
-    /// team the user set up is the team that runs.
+    /// Legacy per-chat switch, now unused. Kept so old callers still compile; Hydra is
+    /// app-wide (see `hydraIsOn`) and the button only shows or hides the panel.
     func setHydra(_ on: Bool, for id: UUID) {
         guard let thread = thread(id) else { return }
         guard on else {

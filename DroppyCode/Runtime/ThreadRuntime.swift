@@ -96,6 +96,9 @@ final class ThreadRuntime {
     /// The Hydra button's centre in window coordinates, for the genie flight's target.
     /// Unobserved: written on every layout, read only while hiding the panel.
     @ObservationIgnored var hydraButtonCenterInWindow: CGPoint?
+    /// The Hydra panel's frame in window coordinates, for the genie flight's source.
+    /// Unobserved: written on every layout, read only while hiding the panel.
+    @ObservationIgnored var hydraPanelFrameInWindow: CGRect?
     /// Heads by the tool row that stands for them in this timeline, so the row can show
     /// who was sent out.
     private(set) var hydraToolHeads: [String: UUID] = [:]
