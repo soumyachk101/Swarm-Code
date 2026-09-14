@@ -54,26 +54,17 @@ final class ProviderRegistry {
     static let metaSeed = ["muse-spark-1.3", "muse-spark-1.3-contributor", "muse-spark-1.2", "muse-spark-1.2-contributor", "muse-spark-1.1"]
         .compactMap(MetaAPI.option(for:))
 
-    /// From `agy models`: slug, display name. Every model takes the same
-    /// low/medium/high `--effort` values; the live fetch refines the default.
+    /// From `agy models`: base models with their supported effort levels.
+    /// Effort is adjusted via the effort slider, not separate duplicate rows.
     static let antigravitySeed: [ModelOption] = [
-        ("gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"),
-        ("gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"),
-        ("gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"),
-        ("gemini-3.7-flash-high", "Gemini 3.7 Flash (High)"),
-        ("gemini-3.7-flash-medium", "Gemini 3.7 Flash (Medium)"),
-        ("gemini-3.7-flash-low", "Gemini 3.7 Flash (Low)"),
-        ("gemini-3.6-flash-high", "Gemini 3.6 Flash (High)"),
-        ("gemini-3.6-flash-medium", "Gemini 3.6 Flash (Medium)"),
-        ("gemini-3.6-flash-low", "Gemini 3.6 Flash (Low)"),
-        ("gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"),
-        ("gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)"),
-        ("claude-sonnet-4-6", "Claude Sonnet 4.6 (Thinking)"),
-        ("claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)"),
-        ("gpt-oss-120b-medium", "GPT-OSS 120B (Medium)"),
-    ].enumerated().map { index, pair in
-        ModelOption(id: pair.0, name: pair.1, efforts: AntigravitySession.efforts, isDefault: index == 0)
-    }
+        ModelOption(id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", efforts: ["low", "medium", "high"], defaultEffort: "high", isDefault: true),
+        ModelOption(id: "gemini-3.7-flash", name: "Gemini 3.7 Flash", efforts: ["low", "medium", "high"], defaultEffort: "high"),
+        ModelOption(id: "gemini-3.6-flash", name: "Gemini 3.6 Flash", efforts: ["low", "medium", "high"], defaultEffort: "high"),
+        ModelOption(id: "gemini-3.1-pro", name: "Gemini 3.1 Pro", efforts: ["low", "high"], defaultEffort: "high"),
+        ModelOption(id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6 (Thinking)", efforts: []),
+        ModelOption(id: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)", efforts: []),
+        ModelOption(id: "gpt-oss-120b", name: "GPT-OSS 120B", efforts: ["medium"], defaultEffort: "medium"),
+    ]
 
     /// Every provider tries its live catalog at most once per launch unless forced, success or not,
     /// so views that ask on appear never re-spawn a CLI or re-hit an API while scrolling.
@@ -90,7 +81,9 @@ final class ProviderRegistry {
         if catalogs[.claude]?.isEmpty ?? true { catalogs[.claude] = Self.claudeSeed }
         if catalogs[.deepseek]?.isEmpty ?? true { catalogs[.deepseek] = Self.deepseekSeed }
         if catalogs[.meta]?.isEmpty ?? true { catalogs[.meta] = Self.metaSeed }
-        if catalogs[.antigravity]?.isEmpty ?? true { catalogs[.antigravity] = Self.antigravitySeed }
+        if catalogs[.antigravity]?.isEmpty ?? true || catalogs[.antigravity]?.contains(where: { $0.id.hasSuffix("-high") || $0.id.hasSuffix("-medium") || $0.id.hasSuffix("-low") }) == true {
+            catalogs[.antigravity] = Self.antigravitySeed
+        }
     }
 
     var availableProviders: [ProviderKind] {
