@@ -40,6 +40,11 @@ struct ThreadTimeline: View, Equatable {
     /// without end. `@State` applies the write first and re-renders after.
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var viewportHeight: CGFloat = 0
+    /// True while the reader drags or flicks the timeline. Rows neither hover nor hit-test
+    /// then: with the pointer resting over content that slides under it, SwiftUI otherwise
+    /// re-hit-tests every row's hover region each frame and the rows flip their hover state
+    /// (and animate it) as they pass — a fifth of the main thread's scroll-time work.
+    @State private var isReaderScrolling = false
     /// Lazy-loading window: only the newest groups are materialized, so opening a long
     /// thread and scrolling through it stays instant no matter how much history it holds.
     @State private var visibleCount = TimelineWindow.initial
@@ -182,6 +187,7 @@ struct ThreadTimeline: View, Equatable {
                         )
                     }
                 }
+                .allowsHitTesting(!isReaderScrolling)
                 // The end of the conversation. While it is on screen the reader is at the latest message.
                 Color.clear
                     .frame(height: 1)
@@ -206,7 +212,9 @@ struct ThreadTimeline: View, Equatable {
         .defaultScrollAnchor(.bottom)
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
         .onScrollPhaseChange { _, phase in
-            tracking.isUserScrolling = phase == .interacting || phase == .decelerating
+            let scrolling = phase == .interacting || phase == .decelerating
+            tracking.isUserScrolling = scrolling
+            if isReaderScrolling != scrolling { isReaderScrolling = scrolling }
         }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             scrollChrome.update(travel: new.travel)
