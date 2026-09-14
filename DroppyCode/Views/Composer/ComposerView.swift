@@ -31,6 +31,7 @@ struct ComposerArea: View {
                             stats: stats,
                             anchor: { diffPopover.setAnchor($0) }
                         ) {
+                            runtime.diffAnchor = nil
                             if runtime.diffSelection != nil { runtime.diffSelection = nil }
                             // Set last so a redundant write never restarts the diff load
                             // or steals the presentation.
@@ -43,10 +44,16 @@ struct ComposerArea: View {
                 // NB: no .animation(..., value: changeStats) here on purpose: the tab's
                 // insertion animates via its .softAppear transition, and opening the
                 // popover moves nothing, so there is nothing else to drive.
+                .background {
+                    AttachmentAnchorCapture { diffPopover.setFallbackAnchor($0) }
+                }
                 .task(id: runtime.diffRevision) { await runtime.refreshChangeStats() }
                 .onAppear { diffPopover.sync(isVisible: runtime.isDiffVisible, runtime: runtime) }
                 .onChange(of: runtime.isDiffVisible) { _, visible in
                     diffPopover.sync(isVisible: visible, runtime: runtime)
+                }
+                .onChange(of: runtime.diffOpenRequest) {
+                    diffPopover.reopen(runtime: runtime)
                 }
                 .onDisappear { diffPopover.close() }
             }
