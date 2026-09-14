@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// The context window and, where the provider reports them, the plan's usage limits.
+/// The context window and, where the provider reports them, the plan's usage limits or,
+/// for a pay-as-you-go API key, how much credit is left on it.
 struct UsagePanel: View {
     @Environment(AppModel.self) private var model
     let usage: ContextUsage?
@@ -9,6 +10,7 @@ struct UsagePanel: View {
     var body: some View {
         let registry = model.providers
         let showsLimits = PlanLimitsReader.exposesLimits(provider)
+        let showsCredits = CreditsReader.exposesCredits(provider)
         let showsContext = usage?.fraction != nil && usage?.windowTokens != nil
         VStack(alignment: .leading, spacing: 0) {
             if let usage, let fraction = usage.fraction, let window = usage.windowTokens {
@@ -52,11 +54,27 @@ struct UsagePanel: View {
                         .padding(.top, 8)
                 }
             }
+
+            if showsCredits {
+                if showsContext {
+                    Divider().padding(.vertical, 14)
+                }
+                CreditsSection(
+                    providerName: provider.displayName,
+                    credits: registry.credits[provider],
+                    isLoading: registry.loadingCredits.contains(provider),
+                    topUpURL: CreditsReader.topUpURL(provider)
+                )
+            }
         }
         .padding(16)
         .frame(width: 360)
         .animation(.easeOut(duration: 0.15), value: registry.planLimits[provider])
-        .onAppear { registry.refreshPlanLimits(provider) }
+        .animation(.easeOut(duration: 0.15), value: registry.credits[provider])
+        .onAppear {
+            registry.refreshPlanLimits(provider)
+            registry.refreshCredits(provider)
+        }
     }
 
     static func tokens(_ count: Int) -> String {
@@ -67,6 +85,64 @@ struct UsagePanel: View {
         if count >= 1_000_000 { return compact(Double(count) / 1_000_000, "M") }
         if count >= 1_000 { return compact(Double(count) / 1_000, "k") }
         return "\(count)"
+    }
+}
+
+/// A pay-as-you-go balance: what is left of the credit the API key is billed against.
+/// The number sits large because it is the whole answer, with the top-up split and the
+/// dashboard's own top-up page under it.
+private struct CreditsSection: View {
+    let providerName: String
+    let credits: ProviderCredits?
+    let isLoading: Bool
+    let topUpURL: URL?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(verbatim: "Remaining credits")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Chrome.secondaryText)
+                Spacer(minLength: 8)
+                if isLoading {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+            if let credits {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(verbatim: credits.amountText)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(credits.isDepleted ? Chrome.danger : Chrome.primaryText)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if let topUpURL {
+                        Link(destination: topUpURL) {
+                            Text(verbatim: "Top up")
+                                .font(.system(size: 12))
+                        }
+                    }
+                }
+                .padding(.top, 6)
+                if let breakdown = credits.breakdownText {
+                    Text(verbatim: breakdown)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .padding(.top, 5)
+                }
+                if credits.isDepleted {
+                    Text(verbatim: "\(providerName) rejects turns until the balance is topped up.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.danger)
+                        .padding(.top, 6)
+                }
+            } else if !isLoading {
+                Text(verbatim: "\(providerName) did not report a balance.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .padding(.top, 8)
+            }
+        }
     }
 }
 

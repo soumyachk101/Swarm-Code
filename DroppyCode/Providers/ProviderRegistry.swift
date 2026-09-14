@@ -41,6 +41,11 @@ final class ProviderRegistry {
     private(set) var loadingLimits: Set<ProviderKind> = []
     @ObservationIgnored private var limitsFetchedAt: [ProviderKind: Date] = [:]
 
+    /// Pay-as-you-go balances (DeepSeek's credit), shown where subscriptions show their windows.
+    private(set) var credits: [ProviderKind: ProviderCredits] = [:]
+    private(set) var loadingCredits: Set<ProviderKind> = []
+    @ObservationIgnored private var creditsFetchedAt: [ProviderKind: Date] = [:]
+
     private static let claudeEfforts = ["low", "medium", "high", "xhigh", "max"]
     private static let claudeSeed = [
         ModelOption(id: "default", name: "Default", detail: "Claude Code's recommended model", efforts: claudeEfforts, isDefault: true, fastTier: "fast"),
@@ -167,6 +172,14 @@ final class ProviderRegistry {
                 auth: valid ? .signedIn(nil) : .signedOut,
                 apiKeyConfigured: true
             )
+            // The key just proved itself, so read the balance behind it right away: the
+            // usage panel has it from launch, and a rejected key must not leave a stale one.
+            if valid {
+                refreshCredits(.deepseek, force: true)
+            } else {
+                credits[.deepseek] = nil
+                creditsFetchedAt[.deepseek] = nil
+            }
         } else if provider == .meta {
             let valid = await MetaAPI.validate(apiKey: apiKey)
             statuses[provider] = ProviderStatus(
@@ -256,6 +269,34 @@ final class ProviderRegistry {
             planLimits[provider] = limits
             limitsFetchedAt[provider] = .now
         }
+    }
+
+    /// Reads a pay-as-you-go provider's balance, at most once a minute after a successful
+    /// read unless forced. Like the plan limits, the read runs on its own task, so closing
+    /// the popover that asked for it cannot cancel it.
+    func refreshCredits(_ provider: ProviderKind, force: Bool = false) {
+        guard CreditsReader.exposesCredits(provider), !loadingCredits.contains(provider) else { return }
+        let apiKey = settings.apiKey(for: provider)
+        guard !apiKey.isEmpty else {
+            credits[provider] = nil
+            return
+        }
+        if !force, let fetched = creditsFetchedAt[provider], Date.now.timeIntervalSince(fetched) < 60 { return }
+        loadingCredits.insert(provider)
+        Task {
+            let balance = await CreditsReader.read(provider, apiKey: apiKey)
+            loadingCredits.remove(provider)
+            guard let balance else { return }
+            credits[provider] = balance
+            creditsFetchedAt[provider] = .now
+        }
+    }
+
+    /// A turn just spent tokens, so the cached balance is older than the spend. The next
+    /// look reads the API again instead of handing back the number from before the turn.
+    func invalidateCredits(_ provider: ProviderKind) {
+        guard CreditsReader.exposesCredits(provider) else { return }
+        creditsFetchedAt[provider] = nil
     }
 
     func updateCatalog(_ list: [ModelOption], for provider: ProviderKind) {
