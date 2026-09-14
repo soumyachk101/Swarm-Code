@@ -767,9 +767,11 @@ struct GlassPickerButton<Value: Hashable>: View {
             .frame(height: Chrome.capsuleContentHeight)
             .contentShape(Capsule(style: .continuous))
         }
-        .buttonStyle(.plain)
+        // Native Liquid Glass: the system draws blur, stroke and hover/pressed
+        // states, which also composes correctly inside a popover (the Pair
+        // editor) where a manual glassEffect falls back to a flat fill.
+        .buttonStyle(.glass)
         .fixedSize()
-        .chromeGlassCapsule()
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
