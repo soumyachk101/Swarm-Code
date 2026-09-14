@@ -45,6 +45,15 @@ struct ThreadTimeline: View, Equatable {
     /// re-hit-tests every row's hover region each frame and the rows flip their hover state
     /// (and animate it) as they pass — a fifth of the main thread's scroll-time work.
     @State private var isReaderScrolling = false
+    /// Which edge stays put when the content's height changes. At the conversation's end
+    /// it is the bottom, so streaming text and the working line grow in place. Once the
+    /// reader has scrolled up it is the top: a row expanded mid-thread then pushes what
+    /// follows down and stays under the pointer, instead of the whole timeline lurching
+    /// up by the expansion's height to keep the far-off bottom edge fixed.
+    @State private var anchorsBottomOnGrowth = true
+    /// Older history is about to be loaded above the viewport; that growth keeps the
+    /// bottom fixed whatever the reader is doing, so the messages in view stay put.
+    @State private var historyLoadPending = false
     /// Lazy-loading window: only the newest groups are materialized, so opening a long
     /// thread and scrolling through it stays instant no matter how much history it holds.
     @State private var visibleCount = TimelineWindow.initial
@@ -113,8 +122,10 @@ struct ThreadTimeline: View, Equatable {
             if index < firstVisible {
                 visibleCount = blocks.count - index
                 needsExpand = true
+                historyLoadPending = true
             }
             tracking.isPinnedToBottom = (id == blocks.last?.id)
+            anchorsBottomOnGrowth = tracking.isPinnedToBottom || needsExpand
         }
         let scroll = { position.scrollTo(id: id, anchor: .top) }
         if animated {
@@ -140,6 +151,8 @@ struct ThreadTimeline: View, Equatable {
                 Spacer(minLength: 0)
                 if hidden > 0 {
                     Button {
+                        historyLoadPending = true
+                        anchorsBottomOnGrowth = true
                         visibleCount += TimelineWindow.page
                     } label: {
                         Label("Show \(hidden) earlier messages", systemImage: "chevron.up")
@@ -209,7 +222,9 @@ struct ThreadTimeline: View, Equatable {
         .id(runtime.threadID)
         .scrollIndicators(.never)
         .scrollPosition($position)
-        .defaultScrollAnchor(.bottom)
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .defaultScrollAnchor(.bottom, for: .alignment)
+        .defaultScrollAnchor(anchorsBottomOnGrowth ? .bottom : .top, for: .sizeChanges)
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
         .onScrollPhaseChange { _, phase in
             let scrolling = phase == .interacting || phase == .decelerating
@@ -223,24 +238,37 @@ struct ThreadTimeline: View, Equatable {
                 // Guarded, so measuring the scroll position never touches anything a body reads.
                 let pinned = new.distanceFromBottom < 48
                 if pinned != tracking.isPinnedToBottom { tracking.isPinnedToBottom = pinned }
-            } else if new.contentHeight > old.contentHeight, tracking.isPinnedToBottom {
-                withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
+                if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
+            } else if new.contentHeight > old.contentHeight {
+                if historyLoadPending {
+                    // The history landed above the viewport with the bottom held; growth
+                    // anchors by the reader's position again from here.
+                    historyLoadPending = false
+                    let pinned = new.distanceFromBottom < 48
+                    if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
+                } else if tracking.isPinnedToBottom {
+                    withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
+                }
             }
         }
         .onChange(of: runtime.isRunning) { _, running in
             // Sending a message always brings the reader back to the conversation's end.
             guard running else { return }
             tracking.isPinnedToBottom = true
+            anchorsBottomOnGrowth = true
             withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
         }
         .onChange(of: scrollState.jumpRequest) {
             tracking.isPinnedToBottom = true
+            anchorsBottomOnGrowth = true
             withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
         }
         .onChange(of: runtime.threadID) {
             // A new thread starts with a fresh window on its newest messages, and no
             // block from the old one is on screen any more.
             visibleCount = TimelineWindow.initial
+            anchorsBottomOnGrowth = true
+            historyLoadPending = false
             tracking.clearOnScreen()
         }
     }
