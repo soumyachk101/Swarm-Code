@@ -21,6 +21,9 @@ struct ThreadTimeline: View {
     /// Ids of the blocks currently on screen, so the rail can light the block the reader is
     /// on. Rows write here only when they cross the viewport's edges, never per scroll frame.
     @State private var onScreenBlockIDs: Set<String> = []
+    /// Ids of the blocks whose top edge is on screen. A block that is on screen while its
+    /// top edge is not straddles the viewport's top — that is the section the reader is in.
+    @State private var topEdgeOnScreenBlockIDs: Set<String> = []
 
     var body: some View {
         let entries = runtime.entries
@@ -55,7 +58,7 @@ struct ThreadTimeline: View {
                 TimelineMinimapColumn(
                     blocks: railBlocks,
                     centerHeight: columnHeight,
-                    selectedID: activeMinimapID(blocks: railBlocks),
+                    selectedID: activeMinimapID(blocks: blocks),
                     onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
                 )
                 .frame(width: 30)
@@ -65,13 +68,20 @@ struct ThreadTimeline: View {
         }
     }
 
-    /// The block the reader is on: the newest one while the timeline is pinned to the bottom,
-    /// otherwise the topmost block still on screen. Rows announce themselves through
-    /// `onScreenBlockIDs`, so this follows the conversation as it is scrolled.
+    /// The block the reader is on: the newest message while the timeline is pinned to the
+    /// bottom, otherwise the message whose section straddles the viewport's top edge. A
+    /// block on screen whose top edge is not owns that edge — at most one can — so the lit
+    /// tick moves the moment the next message reaches the top, however tall blocks are.
+    /// Rows announce themselves through `onScreenBlockIDs`, so this follows the
+    /// conversation as it is scrolled.
     private func activeMinimapID(blocks: [DisplayBlock]) -> String? {
-        if isPinnedToBottom { return blocks.last?.id }
-        if let id = blocks.first(where: { onScreenBlockIDs.contains($0.id) })?.id { return id }
-        if let id = position.viewID as? String, blocks.contains(where: { $0.id == id }) { return id }
+        if isPinnedToBottom { return blocks.last(where: { $0.hasUserMessage })?.id }
+        if let top = blocks.firstIndex(where: { onScreenBlockIDs.contains($0.id) && !topEdgeOnScreenBlockIDs.contains($0.id) }),
+           let current = blocks[...top].last(where: { $0.hasUserMessage }) {
+            return current.id
+        }
+        if let id = blocks.first(where: { $0.hasUserMessage && onScreenBlockIDs.contains($0.id) })?.id { return id }
+        if let id = position.viewID as? String, blocks.contains(where: { $0.id == id && $0.hasUserMessage }) { return id }
         return nil
     }
 
@@ -138,6 +148,20 @@ struct ThreadTimeline: View {
                                     onScreenBlockIDs.remove(block.id)
                                 }
                             }
+                            // One point at the row's top edge: on screen means the block's
+                            // top is inside the viewport; off screen while the block still
+                            // shows means it owns the viewport's top edge.
+                            .overlay(alignment: .top) {
+                                Color.clear
+                                    .frame(height: 1)
+                                    .onScrollVisibilityChange { isVisible in
+                                        if isVisible {
+                                            topEdgeOnScreenBlockIDs.insert(block.id)
+                                        } else {
+                                            topEdgeOnScreenBlockIDs.remove(block.id)
+                                        }
+                                    }
+                            }
                             .transition(.softAppear)
                     }
                     if runtime.isRunning {
@@ -196,6 +220,7 @@ struct ThreadTimeline: View {
             // block from the old one is on screen any more.
             visibleCount = TimelineWindow.initial
             onScreenBlockIDs.removeAll()
+            topEdgeOnScreenBlockIDs.removeAll()
         }
     }
 
