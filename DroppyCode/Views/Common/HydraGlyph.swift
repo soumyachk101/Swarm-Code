@@ -21,13 +21,36 @@ struct HydraGlyph: View {
                 .fill(persona.color)
                 .frame(width: size, height: size)
             Text(verbatim: persona.initial)
-                .font(.system(size: size * 0.52, weight: .bold, design: .rounded))
+                .font(.system(size: initialFontSize, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
-                // The triangle's centre of mass sits low; the letter follows it.
-                .offset(y: persona.shape == .triangle ? size * 0.08 : 0)
+                // Pointed shapes carry their mass away from the frame centre; the
+                // letter sits on the optical centre so it never clips a slope.
+                .offset(y: initialYOffset)
         }
         .frame(width: size, height: size)
         .accessibilityLabel(Text(persona.name))
+    }
+
+    /// The initial shrinks where the interior narrows, so the whole letter stays
+    /// on the colour instead of spilling past a slope or point.
+    private var initialFontSize: CGFloat {
+        switch persona.shape {
+        case .star: size * 0.42
+        case .triangle: size * 0.44
+        case .drop: size * 0.46
+        case .diamond, .pentagon, .shield: size * 0.48
+        default: size * 0.52
+        }
+    }
+
+    private var initialYOffset: CGFloat {
+        switch persona.shape {
+        case .triangle: size * 0.12
+        case .drop: size * 0.10
+        case .star, .pentagon: size * 0.04
+        case .shield: -size * 0.02
+        default: 0
+        }
     }
 }
 
