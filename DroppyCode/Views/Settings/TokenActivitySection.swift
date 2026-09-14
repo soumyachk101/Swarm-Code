@@ -424,10 +424,16 @@ struct TokenActivitySection: View {
                 ForEach(TokenActivityMode.allCases, id: \.self) { option in
                     Button {
                         guard option != mode else { return }
+                        // The old mode's grid is the blend's starting point and stays until
+                        // the blend has settled; the canvas shows it as-is for the first frame
+                        // and the new grid as-is for the last.
                         previousGrid = TokenActivityGrid.build(daily: ledger.dailyTotals, mode: mode)
+                        let switchIndex = switchCount + 1
                         withAnimation(.smooth(duration: 0.45)) {
                             mode = option
-                            switchCount += 1
+                            switchCount = switchIndex
+                        } completion: {
+                            if switchCount == switchIndex { previousGrid = nil }
                         }
                     } label: {
                         Text(verbatim: option.title)
@@ -455,7 +461,7 @@ struct TokenActivitySection: View {
     /// every cell: as a stack of some 360 shape views this was the heaviest
     /// layout in Settings, felt each time General opened.
     private func heatmap(grid: TokenActivityGrid) -> some View {
-        HeatmapCanvas(grid: grid, previous: previousGrid, blend: Double(switchCount))
+        HeatmapCanvas(grid: grid, previous: previousGrid, blend: Double(switchCount), switchIndex: switchCount)
             .accessibilityHidden(true)
     }
 
@@ -502,54 +508,73 @@ struct TokenActivitySection: View {
 /// The heatmap's cells, drawn in one pass. The cell size follows the width the canvas is
 /// given; the height follows from that, so the grid stays square-celled at any width.
 ///
-/// Animatable over `blend`: a mode switch bumps it by one, and while it travels each cell
-/// mixes from the colour it had under the previous mode to its new one, so the grid
-/// melts between modes instead of snapping.
-private struct HeatmapCanvas: View, Animatable {
+/// A mode switch blends every cell from the colour it had under the previous mode to its
+/// new one, so the grid melts between modes instead of snapping. The blend runs on an
+/// animatable modifier (`HeatmapBlendModifier`): `switchIndex` lands at once, `blend`
+/// travels to it over the animation, and their difference is how far the melt has come.
+private struct HeatmapCanvas: View {
     let grid: TokenActivityGrid
     let previous: TokenActivityGrid?
     var blend: Double
+    var switchIndex: Int
 
     @State private var width: CGFloat = 0
-
-    var animatableData: Double {
-        get { blend }
-        set { blend = newValue }
-    }
 
     var body: some View {
         let columns = CGFloat(max(grid.columns.count, 1))
         let rows = CGFloat(TokenActivityGrid.rows)
         let gap = TokenActivityStyle.cellGap
         let cell = max(0, (width - gap * (columns - 1)) / columns)
-        // How far into the latest switch the animation is; 1 once it has settled.
-        let progress = blend - blend.rounded(.down)
-        let mixing = progress > 0 && progress < 1
-        Canvas { context, size in
-            let columns = grid.columns.count
-            guard columns > 0 else { return }
-            let cell = (size.width - gap * CGFloat(columns - 1)) / CGFloat(columns)
-            guard cell > 0 else { return }
-            let pitch = cell + gap
-            for c in 0..<columns {
-                for r in 0..<TokenActivityGrid.rows {
-                    guard let date = grid.columns[c][r] else { continue }
-                    let future = date >= grid.tomorrow
-                    var color = TokenActivityStyle.color(for: grid.values[c][r], maxValue: grid.maxValue, future: future)
-                    if mixing, let previous, c < previous.values.count {
-                        let old = TokenActivityStyle.color(for: previous.values[c][r], maxValue: previous.maxValue, future: future)
-                        color = old.mix(with: color, by: progress)
+        Color.clear
+            .modifier(HeatmapBlendModifier(grid: grid, previous: previous, blend: blend, base: Double(switchIndex - 1)))
+            .frame(maxWidth: .infinity)
+            .frame(height: max(1, cell * rows + gap * (rows - 1)))
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+    }
+}
+
+/// Draws the grid with each cell mixed `progress` of the way from the previous mode's
+/// colour to the current one. Animatable over `blend`, so SwiftUI redraws it every frame
+/// of a mode switch with the interpolated value.
+private struct HeatmapBlendModifier: ViewModifier, Animatable {
+    let grid: TokenActivityGrid
+    let previous: TokenActivityGrid?
+    var blend: Double
+    /// Where the latest switch started; `blend - base` is its progress, 0 to 1.
+    let base: Double
+
+    var animatableData: Double {
+        get { blend }
+        set { blend = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let progress = min(max(blend - base, 0), 1)
+        let gap = TokenActivityStyle.cellGap
+        content.overlay {
+            Canvas { context, size in
+                let columns = grid.columns.count
+                guard columns > 0 else { return }
+                let cell = (size.width - gap * CGFloat(columns - 1)) / CGFloat(columns)
+                guard cell > 0 else { return }
+                let pitch = cell + gap
+                for c in 0..<columns {
+                    for r in 0..<TokenActivityGrid.rows {
+                        guard let date = grid.columns[c][r] else { continue }
+                        let future = date >= grid.tomorrow
+                        var color = TokenActivityStyle.color(for: grid.values[c][r], maxValue: grid.maxValue, future: future)
+                        if let previous, progress < 1, c < previous.values.count {
+                            let old = TokenActivityStyle.color(for: previous.values[c][r], maxValue: previous.maxValue, future: future)
+                            color = progress <= 0 ? old : old.mix(with: color, by: progress)
+                        }
+                        let rect = CGRect(x: CGFloat(c) * pitch, y: CGFloat(r) * pitch, width: cell, height: cell)
+                        context.fill(
+                            Path(roundedRect: rect, cornerRadius: TokenActivityStyle.cellRadius, style: .continuous),
+                            with: .color(color)
+                        )
                     }
-                    let rect = CGRect(x: CGFloat(c) * pitch, y: CGFloat(r) * pitch, width: cell, height: cell)
-                    context.fill(
-                        Path(roundedRect: rect, cornerRadius: TokenActivityStyle.cellRadius, style: .continuous),
-                        with: .color(color)
-                    )
                 }
             }
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: max(1, cell * rows + gap * (rows - 1)))
-        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
     }
 }
