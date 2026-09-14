@@ -47,17 +47,17 @@ struct ModelEffortButton: View {
             isPresented.toggle()
         } label: {
             HStack(spacing: 5) {
-                ProviderIcon(provider: thread.provider, size: 13)
+                ProviderIcon(provider: thread.provider, size: 14)
                 if thread.fastMode, current?.supportsFast == true {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(Chrome.inlineIconFont)
                         .foregroundStyle(.yellow)
                 }
                 if isPresented {
                     Text("Select effort")
                         .lineLimit(1)
                 } else {
-                    Text(verbatim: current?.shortName ?? thread.model ?? thread.provider.displayName)
+                    Text(verbatim: current?.chipName ?? thread.model ?? thread.provider.displayName)
                         .foregroundStyle(Chrome.primaryText)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -69,7 +69,8 @@ struct ModelEffortButton: View {
                     }
                 }
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(Chrome.chevronFont)
+                    .foregroundStyle(Chrome.secondaryText)
             }
         }
         .buttonStyle(.chip)

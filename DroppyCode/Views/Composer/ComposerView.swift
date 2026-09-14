@@ -85,20 +85,11 @@ struct ComposerView: View {
         min(max(textHeight, Self.minComposerHeight), Self.maxComposerHeight)
     }
 
-    /// How far the controls bar reaches up under the text pill, the same overlap the changes
-    /// tab and the queue keep with its upper edge.
-    private static let barOverlap = ThreadChangesTab.overlap
-    /// The bar sits a little inside the pill's sides. The pill's corners curve in by this much
-    /// only in their last few points, so the bar's straight sides emerge right at the pill's
-    /// bottom edge instead of poking out beside its corners.
-    private static let barInset: CGFloat = 10
-
     var body: some View {
         let thread = model.thread(runtime.threadID)
-        // The text box is a pill of its own. The controls hang from its lower edge the way the
-        // changes tab and the queue hang from its upper one: a bar with rounded bottom corners
-        // that the pill draws over, so inside the glass container the two read as one piece.
-        VStack(spacing: -Self.barOverlap) {
+        // One pill: the text on the left, the controls tucked into its trailing end. The
+        // controls sit on the pill's bottom line, so they stay put while the text grows upward.
+        HStack(alignment: .bottom, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
                 if !runtime.draft.attachments.isEmpty {
                     DraftAttachments(attachments: $runtime.draft.attachments)
@@ -128,14 +119,10 @@ struct ComposerView: View {
                 .clipped()
                 .animation(.smooth(duration: 0.28), value: composerHeight)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
-            // Above the bar, so the pill's lower edge covers the bar's top rather than the reverse.
-            .zIndex(1)
+            // A single line of text is as tall as the send button, so an empty pill is 44 high.
+            .padding(.vertical, 4)
 
             if let thread {
-                let shape = UnevenRoundedRectangle(bottomLeadingRadius: 12, bottomTrailingRadius: 12, style: .continuous)
                 HStack(spacing: 2) {
                     Button {
                         if model.settings.recentDownloadsPicker {
@@ -145,6 +132,7 @@ struct ComposerView: View {
                         }
                     } label: {
                         Image(systemName: "paperclip")
+                            .font(Chrome.iconFont)
                     }
                     .buttonStyle(.chip(active: showingRecents))
                     .help("Attach files")
@@ -155,22 +143,19 @@ struct ComposerView: View {
                         )
                     }
                     ModelEffortButton(thread: thread, hasHistory: !runtime.turns.isEmpty)
-                    PlanToggle(thread: thread)
-                    PermissionMenu(thread: thread)
-                    Spacer(minLength: 8)
                     ContextMeter(
                         usage: runtime.usage,
                         provider: thread.provider
                     )
                     SendButton(runtime: runtime) { send() }
                 }
-                .padding(.horizontal, 8)
-                .padding(.top, 7 + Self.barOverlap)
-                .padding(.bottom, 7)
-                .glassEffect(.regular, in: shape)
-                .padding(.horizontal, Self.barInset)
+                .fixedSize()
             }
         }
+        .padding(.leading, 14)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
         .onChange(of: suggestions) { _, new in
             if new.isVisible {
                 controller.showSuggestions(AnyView(suggestionMenu()), itemCount: new.items.count)
@@ -401,40 +386,6 @@ struct ComposerView: View {
 
 // MARK: - Controls
 
-private struct PlanToggle: View {
-    @Environment(AppModel.self) private var model
-    let thread: ChatThread
-
-    var body: some View {
-        let isPlanning = thread.interactionMode == .plan
-        Button {
-            model.updateThread(thread.id) { $0.interactionMode = isPlanning ? .build : .plan }
-        } label: {
-            Label("Plan", systemImage: "list.bullet.clipboard")
-        }
-        .buttonStyle(.chip(active: isPlanning))
-        .help(isPlanning ? "Plan mode is on (⇧⌘P)" : "Plan before building (⇧⌘P)")
-    }
-}
-
-private struct PermissionMenu: View {
-    @Environment(AppModel.self) private var model
-    let thread: ChatThread
-
-    var body: some View {
-        ChipPopoverButton(help: thread.runtimeMode.summary) {
-            Label(thread.runtimeMode.title, systemImage: thread.runtimeMode.symbol)
-        } content: {
-            PopoverSectionHeader("Permissions")
-            ForEach(RuntimeMode.allCases) { mode in
-                PopoverItem(mode.title, symbol: mode.symbol, isChecked: thread.runtimeMode == mode) {
-                    model.updateThread(thread.id) { $0.runtimeMode = mode }
-                }
-            }
-        }
-    }
-}
-
 /// The context ring. Clicking it opens the context window and the plan's usage limits.
 private struct ContextMeter: View {
     let usage: ContextUsage?
@@ -481,7 +432,7 @@ private struct SendButton: View {
             if isRunning { runtime.interrupt() } else { send() }
         } label: {
             Image(systemName: isRunning ? "stop.fill" : "arrow.up")
-                .font(.system(size: 12, weight: .bold))
+                .font(Chrome.iconFont)
                 .foregroundStyle(.white)
                 .contentTransition(.symbolEffect(.replace))
                 .frame(width: 28, height: 28)

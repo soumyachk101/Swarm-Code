@@ -706,7 +706,7 @@ private struct ActivityViewToggle: View {
             withAnimation(Chrome.panelSlide) { isOn.toggle() }
         } label: {
             Image(systemName: "bell")
-                .font(.system(size: 13, weight: .medium))
+                .font(Chrome.iconFont)
                 .foregroundStyle(isOn ? Chrome.accent : Chrome.secondaryText)
                 .frame(width: 30, height: 30)
                 .background {

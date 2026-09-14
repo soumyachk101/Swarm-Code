@@ -35,6 +35,7 @@ struct TerminalPanel: View {
                     terminals.open(threadID: runtime.threadID, directory: directory)
                 } label: {
                     Image(systemName: "plus")
+                        .font(Chrome.iconFont)
                 }
                 .buttonStyle(.chip)
                 .help("New terminal")
@@ -43,6 +44,7 @@ struct TerminalPanel: View {
                     runtime.isTerminalVisible = false
                 } label: {
                     Image(systemName: "chevron.down")
+                        .font(Chrome.iconFont)
                 }
                 .buttonStyle(.chip)
                 .help("Hide terminal (⌘J)")

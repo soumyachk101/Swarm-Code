@@ -214,6 +214,26 @@ struct ModelOption: Codable, Hashable, Identifiable, Sendable {
         return trimmed.replacingOccurrences(of: "-", with: " ")
     }
 
+    /// The name at its shortest, for the composer chip, where the provider's icon already
+    /// says whose model it is: "Opus" for "Opus (1M context)", "3.8 Flash" for "Gemini 3.8
+    /// Flash", "V4.1 Flash" as is. Parentheticals and dashed or dotted descriptions go, then
+    /// the vendor's own name when it leads. The picker keeps `shortName` and `detail`.
+    var chipName: String {
+        var text = shortName
+        for separator in [" (", " · ", " — ", " – ", " - ", ": "] {
+            if let range = text.range(of: separator) { text = String(text[..<range.lowerBound]) }
+        }
+        let lowered = text.lowercased()
+        for vendor in ["claude ", "gpt ", "gemini ", "deepseek ", "openai ", "anthropic ", "google ", "meta ", "muse "] {
+            if lowered.hasPrefix(vendor), text.count > vendor.count {
+                text = String(text.dropFirst(vendor.count))
+                break
+            }
+        }
+        let cleaned = text.trimmingCharacters(in: .whitespaces)
+        return cleaned.isEmpty ? shortName : cleaned
+    }
+
     static func effortTitle(_ effort: String) -> String {
         switch effort {
         case "xhigh", "extra-high": "Extra High"
