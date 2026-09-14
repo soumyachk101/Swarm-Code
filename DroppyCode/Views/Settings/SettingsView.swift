@@ -50,7 +50,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var keywords: [String] {
         switch self {
-        case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative"]
+        case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "binary", "path", "sign in", "login", "api key"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
@@ -254,8 +254,49 @@ private struct GeneralSettingsPage: View {
                 ChromeRow(title: "Theme", detail: settings.theme.detail) {
                     ThemePickerButton(selection: $settings.theme)
                 }
+                ChromeRowDivider()
+                ChromeRow(title: "Transparency", detail: "How much of what is behind the window shows through") {
+                    BackdropOpacitySlider(value: $settings.backdropOpacity)
+                }
             }
         }
+    }
+}
+
+/// Clear glass on the left, a solid base on the right, the stock look in the middle,
+/// with a reset that shows only once the slider has left the stock look.
+private struct BackdropOpacitySlider: View {
+    @Binding var value: Double
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "circle.dotted")
+                .font(.system(size: 11))
+                .foregroundStyle(Chrome.secondaryText)
+                .help("Clear")
+            Slider(value: $value, in: 0...1)
+                .controlSize(.small)
+                .frame(width: 140)
+            Image(systemName: "circle.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Chrome.secondaryText)
+                .help("Solid")
+            Button {
+                value = AppSettings.defaultBackdropOpacity
+            } label: {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .frame(width: 22, height: 22)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .opacity(abs(value - AppSettings.defaultBackdropOpacity) < 0.005 ? 0 : 1)
+            .disabled(abs(value - AppSettings.defaultBackdropOpacity) < 0.005)
+            .help("Back to the stock look")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Window transparency"))
     }
 }
 

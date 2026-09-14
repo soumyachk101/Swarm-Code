@@ -45,6 +45,7 @@ final class AppSettings {
         static let showReasoning = "showReasoning"
         static let sidebarActivityView = "sidebarActivityView"
         static let appTheme = "appTheme"
+        static let backdropOpacity = "backdropOpacity"
         static let appearance = "appearance"
         static let binaryPaths = "providerBinaryPaths"
         static let disabledProviders = "disabledProviders"
@@ -100,6 +101,13 @@ final class AppSettings {
             ThemeManager.current = theme
         }
     }
+
+    /// How solid the window's backdrop is, 0 (clear glass, the desktop shows through) to
+    /// 1 (a solid base colour). The midpoint is the stock look.
+    var backdropOpacity: Double {
+        didSet { defaults.set(backdropOpacity, forKey: Key.backdropOpacity) }
+    }
+    static let defaultBackdropOpacity = 0.5
 
     var textGeneration: TextGenerationChoice {
         didSet { defaults.set(textGeneration.rawValue, forKey: Key.textGeneration) }
@@ -194,6 +202,7 @@ final class AppSettings {
         confirmBeforeDeleting = defaults.object(forKey: Key.confirmDelete) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
+        backdropOpacity = defaults.object(forKey: Key.backdropOpacity) as? Double ?? Self.defaultBackdropOpacity
         // The old System/Light/Dark choice maps straight onto the same themes.
         let initialTheme = AppTheme(rawValue: defaults.string(forKey: Key.appTheme) ?? "")
             ?? AppTheme(rawValue: defaults.string(forKey: Key.appearance) ?? "")
