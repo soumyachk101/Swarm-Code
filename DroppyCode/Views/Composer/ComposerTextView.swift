@@ -341,6 +341,13 @@ struct ComposerTextView: NSViewRepresentable {
             if let layoutManager = textView.textLayoutManager {
                 layoutManager.ensureLayout(for: layoutManager.documentRange)
                 contentHeight = layoutManager.usageBoundsForTextContainer.height
+            } else if let layoutManager = textView.layoutManager, let container = textView.textContainer {
+                // ComposerNSTextView overrides draw(_:) for the placeholder, and AppKit
+                // answers any draw override by falling back to TextKit 1. With no
+                // textLayoutManager the height stayed at the one-line default, so the
+                // pill never grew.
+                layoutManager.ensureLayout(for: container)
+                contentHeight = layoutManager.usedRect(for: container).height
             }
             let total = ceil(max(18, contentHeight) + textView.textContainerInset.height * 2)
             if abs(parent.height - total) > 0.5 { parent.height = total }

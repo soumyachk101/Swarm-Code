@@ -277,8 +277,13 @@ private struct ScrollMetrics: Equatable {
 
     init(geometry: ScrollGeometry) {
         contentHeight = geometry.contentSize.height
-        travel = geometry.contentOffset.y + geometry.contentInsets.top
         let insets = geometry.contentInsets.top + geometry.contentInsets.bottom
+        // Never more than the content can actually scroll. While the queue tab folds,
+        // the bottom inset shrinks a frame ahead of the filler that keeps a short
+        // conversation at the pane's bottom, so the bottom anchor briefly lifts empty
+        // space under the chrome; the veil would flash over nothing.
+        let excess = max(0, geometry.contentSize.height + insets - geometry.containerSize.height)
+        travel = min(max(0, geometry.contentOffset.y + geometry.contentInsets.top), excess)
         if geometry.contentSize.height + insets <= geometry.containerSize.height + 1 {
             distanceFromBottom = 0
         } else {

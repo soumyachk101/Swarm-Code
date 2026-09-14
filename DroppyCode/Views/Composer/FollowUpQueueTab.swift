@@ -14,8 +14,8 @@ struct FollowUpQueueTab: View {
     @State private var isCollapsed = false
 
     /// The live reorder: the grabbed prompt, the pointer's travel since the
-    /// grab, and how far its slot has already moved to meet it (see `QueueDrag`).
-    @State private var drag = QueueDrag()
+    /// grab, and how far its slot has already moved to meet it (see `RowDrag`).
+    @State private var drag = RowDrag<UUID>()
     /// Each row's height including its padding: one row's slot in the stack.
     @State private var rowHeights: [UUID: CGFloat] = [:]
     /// The rows' natural height, so the fold can animate to and from exactly it.
@@ -107,51 +107,24 @@ struct FollowUpQueueTab: View {
     private static let slide = Animation.spring(response: 0.28, dampingFraction: 0.82)
 
     /// The pointer has moved `translation` since the grab. The grabbed row
-    /// follows it exactly; whenever its centre passes a neighbour's centre the
-    /// prompt moves one slot and the neighbour slides across, with the row's
-    /// own slot shift folded into `settled` so it never jumps. Loops, so a
-    /// fast flick crosses several rows in one step.
+    /// follows it exactly and `RowDrag` swaps it past every neighbour whose
+    /// centre it has crossed.
     private func dragChanged(_ id: UUID, translation: CGFloat) {
         if drag.id != id {
-            drag = QueueDrag(id: id)
+            drag = RowDrag(id: id)
             NSCursor.closedHand.push()
         }
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { drag.translation = translation }
 
-        let prompts = runtime.followUps
-        guard let index = prompts.firstIndex(where: { $0.id == id }) else { return }
-        let own = rowHeights[id] ?? 44
-        var current = index
-        var moved = false
-        while true {
-            let offset = drag.visualOffset
-            if offset > 0, current + 1 < prompts.count {
-                let next = prompts[current + 1].id
-                let slot = rowHeights[next] ?? 44
-                guard offset > (own + slot) / 2 else { break }
-                // The neighbour slides and the grabbed row's slot moves in the
-                // same animation as its compensation, so it stays put under
-                // the pointer while the list flows around it.
-                withAnimation(Self.slide) {
-                    runtime.moveFollowUp(id, to: next, placeAfter: true)
-                    drag.settled += slot
-                }
-                current += 1
-                moved = true
-            } else if offset < 0, current > 0 {
-                let previous = prompts[current - 1].id
-                let slot = rowHeights[previous] ?? 44
-                guard -offset > (own + slot) / 2 else { break }
-                withAnimation(Self.slide) {
-                    runtime.moveFollowUp(id, to: previous, placeAfter: false)
-                    drag.settled -= slot
-                }
-                current -= 1
-                moved = true
-            } else {
-                break
+        let moved = drag.settle(order: runtime.followUps.map(\.id), heights: rowHeights, fallbackHeight: 44) { neighbour, placeAfter, slot in
+            // The neighbour slides and the grabbed row's slot moves in the
+            // same animation as its compensation, so it stays put under
+            // the pointer while the list flows around it.
+            withAnimation(Self.slide) {
+                runtime.moveFollowUp(id, to: neighbour, placeAfter: placeAfter)
+                drag.settled += placeAfter ? slot : -slot
             }
         }
         if moved {
@@ -164,20 +137,8 @@ struct FollowUpQueueTab: View {
         NSCursor.pop()
         // The offset animates from wherever the pointer let go to the row's
         // slot, so the row settles instead of snapping.
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { drag = QueueDrag() }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { drag = RowDrag() }
     }
-}
-
-/// One live reorder of a queued follow-up.
-private struct QueueDrag {
-    var id: UUID?
-    /// The pointer's travel since the grab.
-    var translation: CGFloat = 0
-    /// How far the row's slot has already moved toward the pointer through
-    /// reorders; subtracting it keeps the row pinned under the pointer.
-    var settled: CGFloat = 0
-
-    var visualOffset: CGFloat { translation - settled }
 }
 
 private struct FollowUpRow: View {
@@ -198,6 +159,13 @@ private struct FollowUpRow: View {
 
     /// Whether the pointer is over the reorder grip, for the grab cursor.
     @State private var isHoveringGrip = false
+
+    /// How far the prose is lifted to centre its x-height on the row's line: half the
+    /// gap between cap height and x-height of its 12 pt font, on the half point.
+    nonisolated private static let proseLift: CGFloat = {
+        let font = NSFont.systemFont(ofSize: 12)
+        return ((font.capHeight - font.xHeight) / 2 * 2).rounded() / 2
+    }()
 
     var body: some View {
         // One shared center line: the number, grip, thumbnails, text and
@@ -263,6 +231,9 @@ private struct FollowUpRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // The line box centres on cap height, which is right for the digit and the
+            // symbols, but prose is read by its x-height and sat a hair low beside them.
+            .alignmentGuide(VerticalAlignment.center) { $0[VerticalAlignment.center] + Self.proseLift }
             Spacer(minLength: 4)
             HStack(spacing: 0) {
                 QueueIconButton(symbol: "pencil", help: "Edit follow-up") {
