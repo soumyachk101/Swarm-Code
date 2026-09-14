@@ -54,8 +54,9 @@ final class AntigravitySession: ProviderSession {
             "--output-format", "stream-json",
             "--print-timeout", "30m",
         ]
-        if let model, !model.isEmpty { arguments += ["--model", model] }
-        if let effort, Self.efforts.contains(effort) { arguments += ["--effort", effort] }
+        let (resolvedModel, resolvedEffort) = Self.normalize(model: model, effort: effort)
+        if let resolvedModel, !resolvedModel.isEmpty { arguments += ["--model", resolvedModel] }
+        if let resolvedEffort, !resolvedEffort.isEmpty { arguments += ["--effort", resolvedEffort] }
         arguments += modeArguments(runtimeMode: configuration.runtimeMode, interaction: configuration.interactionMode)
         if let resumeID = configuration.resumeID, !resumeID.isEmpty {
             arguments += ["--conversation", resumeID]
@@ -267,11 +268,66 @@ final class AntigravitySession: ProviderSession {
         return "Antigravity is not signed in. Run `agy` once in Terminal to sign in."
     }
 
+    // MARK: - Model and Effort Normalization
+
+    struct ParsedModelRow {
+        let baseSlug: String
+        let baseName: String
+        let effort: String?
+    }
+
+    static func parseModelRow(slug: String, name: String) -> ParsedModelRow {
+        for effort in ["high", "medium", "low"] {
+            if slug.hasSuffix("-\(effort)") {
+                let baseSlug = String(slug.dropLast(effort.count + 1))
+                var baseName = name
+                let suffix = " (\(effort.capitalized))"
+                if baseName.hasSuffix(suffix) {
+                    baseName = String(baseName.dropLast(suffix.count))
+                }
+                return ParsedModelRow(baseSlug: baseSlug, baseName: baseName, effort: effort)
+            }
+        }
+        return ParsedModelRow(baseSlug: slug, baseName: name, effort: nil)
+    }
+
+    /// Normalizes model and effort flags for `agy`.
+    /// Strips any legacy effort suffixes from model slugs, resolves the effective effort level,
+    /// and ensures --effort is only passed for models that support it.
+    static func normalize(model: String?, effort: String?) -> (model: String?, effort: String?) {
+        guard let model, !model.isEmpty else { return (nil, nil) }
+        let parsed = parseModelRow(slug: model, name: "")
+        let baseSlug = parsed.baseSlug
+
+        // Models that do not take --effort (such as Claude models hosted on Antigravity)
+        if baseSlug.contains("claude") {
+            return (baseSlug, nil)
+        }
+
+        var resolvedEffort = effort
+        if resolvedEffort == nil || resolvedEffort?.isEmpty == true {
+            resolvedEffort = parsed.effort
+        }
+        if resolvedEffort == nil || resolvedEffort?.isEmpty == true {
+            resolvedEffort = baseSlug == "gpt-oss-120b" ? "medium" : "high"
+        }
+
+        // Validate effort against model constraints
+        if baseSlug == "gemini-3.1-pro" && resolvedEffort == "medium" {
+            resolvedEffort = "high"
+        } else if baseSlug == "gpt-oss-120b" {
+            resolvedEffort = "medium"
+        }
+
+        return (baseSlug, resolvedEffort)
+    }
+
     // MARK: - Catalog
 
     /// `agy models` prints `slug<TAB>Name` rows on stdout (progress goes to
-    /// stderr). The `/model` headless envelope reports the persisted default,
-    /// which becomes the catalog's default entry.
+    /// stderr). Rows with effort variants (-high, -medium, -low) are collapsed
+    /// into a single base model entry whose supported efforts are toggled via
+    /// the reasoning effort slider.
     static func listModels(executable: URL, environment: [String: String]) async throws -> [ModelOption] {
         async let modelsFetch: ShellResult = try Shell.run(executable, ["models"], environment: environment, timeout: 30)
         async let defaultFetch: ShellResult = try Shell.run(executable, ["-p", "/model", "--output-format", "json"], environment: environment, timeout: 30)
@@ -284,15 +340,51 @@ final class AntigravitySession: ProviderSession {
         guard let output = models?.stdout, let text = String(data: output, encoding: .utf8) else {
             throw ShellError("`agy models` produced no output.")
         }
-        var list: [ModelOption] = []
+
+        var grouped: [String: (name: String, efforts: [String], isDefault: Bool)] = [:]
+        var order: [String] = []
+
         for line in TextCleanup.stripANSI(text).components(separatedBy: .newlines) {
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { continue }
             let parts = trimmed.split(separator: "\t", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
             guard let slug = parts.first, Self.isSlug(slug) else { continue }
             let name = parts.count > 1 && !parts[1].isEmpty ? parts[1] : slug
-            list.append(ModelOption(id: slug, name: name, efforts: efforts, isDefault: slug == currentID))
+            let parsed = parseModelRow(slug: slug, name: name)
+
+            let isCurrent = slug == currentID || parsed.baseSlug == currentID || (currentID?.hasPrefix(parsed.baseSlug) == true)
+
+            if grouped[parsed.baseSlug] == nil {
+                order.append(parsed.baseSlug)
+                grouped[parsed.baseSlug] = (
+                    name: parsed.baseName,
+                    efforts: parsed.effort.map { [$0] } ?? [],
+                    isDefault: isCurrent
+                )
+            } else {
+                if let eff = parsed.effort, !grouped[parsed.baseSlug]!.efforts.contains(eff) {
+                    grouped[parsed.baseSlug]!.efforts.append(eff)
+                }
+                if isCurrent {
+                    grouped[parsed.baseSlug]!.isDefault = true
+                }
+            }
         }
+
+        var list: [ModelOption] = []
+        for baseSlug in order {
+            guard let data = grouped[baseSlug] else { continue }
+            let sortedEfforts = ["low", "medium", "high"].filter { data.efforts.contains($0) }
+            let defaultEffort = sortedEfforts.contains("high") ? "high" : sortedEfforts.last
+            list.append(ModelOption(
+                id: baseSlug,
+                name: data.name,
+                efforts: sortedEfforts,
+                defaultEffort: defaultEffort,
+                isDefault: data.isDefault
+            ))
+        }
+
         guard !list.isEmpty else { throw ShellError("`agy models` listed no models.") }
         if !list.contains(where: \.isDefault), let first = list.first {
             list[list.startIndex] = ModelOption(
