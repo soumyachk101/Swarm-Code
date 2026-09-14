@@ -123,7 +123,7 @@ struct CommandPalette: View {
 
         let matchingActions = needle.isEmpty ? actions : actions.filter { $0.title.lowercased().contains(needle) }
         let threads = model.threads
-            .filter { !$0.isArchived && !$0.isSubagent && (needle.isEmpty || $0.title.lowercased().contains(needle)) }
+            .filter { !$0.isArchived && !$0.isInPanel && (needle.isEmpty || $0.title.lowercased().contains(needle)) }
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(needle.isEmpty ? 6 : 10)
             .map { thread in

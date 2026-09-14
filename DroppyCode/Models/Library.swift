@@ -83,14 +83,18 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     /// The day that place was given; a thread active on a later day is newest first again.
     var activityOrderDay: Date?
     var lastStatus: TurnStatus?
-    /// The thread this one was spawned from, for a helper that runs in the parent's floating
-    /// panel (a merge, for now) instead of the sidebar. Cleared when the panel closes and the
-    /// helper is filed under the archive as a thread of its own.
+    /// The thread this one was spawned from, for a helper (a merge, for now). A helper opens
+    /// in its parent's floating panel and, once that closes, sits under its parent in the
+    /// sidebar as a smaller row for as long as the parent is there.
     var parentThreadID: UUID?
+    /// Whether the helper is showing in its parent's floating panel. While it is, it is kept
+    /// out of the sidebar, the palette, the recent picks and the unread count.
+    var isInPanel = false
+    /// Whether this thread's helpers are folded away under it in the sidebar.
+    var foldsHelpers = false
 
-    /// A helper spawned by another thread: kept out of the sidebar, the palette and the
-    /// unread count, and shown in its parent's floating panel instead.
-    var isSubagent: Bool { parentThreadID != nil }
+    /// Spawned from another thread, whichever side of the panel it is on.
+    var isHelper: Bool { parentThreadID != nil }
 
     init(projectID: UUID, provider: ProviderKind, model: String?, effort: String?, runtimeMode: RuntimeMode, fastMode: Bool = false) {
         id = UUID()
@@ -135,6 +139,8 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         activityOrderDay = container.value(.activityOrderDay, default: nil)
         lastStatus = container.value(.lastStatus, default: nil)
         parentThreadID = container.value(.parentThreadID, default: nil)
+        isInPanel = container.value(.isInPanel, default: false)
+        foldsHelpers = container.value(.foldsHelpers, default: false)
     }
 }
 

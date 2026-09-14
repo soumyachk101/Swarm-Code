@@ -109,7 +109,44 @@ struct SidebarView: View {
             ActivityHeader(title: title, isFirst: isFirst)
         case .thread(let thread, let projectName, let peers):
             reorderableRow(thread, projectName: projectName, peers: peers)
+        case .helper(let thread, let isLast):
+            SidebarHelperRow(
+                thread: thread,
+                isLast: isLast,
+                onFold: { fold(thread.parentThreadID) },
+                onRename: {
+                    renameText = thread.title
+                    renaming = thread
+                },
+                onDelete: {
+                    if model.settings.confirmBeforeDeleting {
+                        pendingDeletion = thread
+                    } else {
+                        model.delete(thread.id)
+                    }
+                }
+            )
+        case .helperStub(let parent, let count):
+            HelperStubRow(parent: parent, count: count) { fold(parent.id) }
         }
+    }
+
+    /// The helpers under a thread: one small row each, or a single line naming them while
+    /// they are folded away.
+    private func helperItems(under thread: ChatThread) -> [SidebarItem] {
+        let helpers = model.helpers(of: thread.id)
+        guard !helpers.isEmpty else { return [] }
+        if thread.foldsHelpers {
+            return [SidebarItem(id: "helpers-\(thread.id)", kind: .helperStub(parent: thread, count: helpers.count))]
+        }
+        return helpers.map { helper in
+            SidebarItem(id: helper.id.uuidString, kind: .helper(helper, isLast: helper.id == helpers.last?.id))
+        }
+    }
+
+    private func fold(_ parentID: UUID?) {
+        guard let parentID else { return }
+        withAnimation(Chrome.panelSlide) { model.toggleHelpersFold(parentID) }
     }
 
     // MARK: Project layout
@@ -124,6 +161,7 @@ struct SidebarView: View {
             guard project.isExpanded else { continue }
             for thread in model.threads(in: project) {
                 items.append(SidebarItem(id: thread.id.uuidString, kind: .thread(thread, projectName: nil, peers: nil)))
+                items.append(contentsOf: helperItems(under: thread))
             }
         }
         return items
@@ -132,7 +170,11 @@ struct SidebarView: View {
     // MARK: Activity layout
 
     private var activityItems: [SidebarItem] {
-        let active = model.threads.filter { !$0.isArchived && !$0.isSubagent }
+        let shown = model.threads.filter { !$0.isArchived && !$0.isInPanel }
+        // A helper whose parent is here sits under it (see helperItems); one whose parent is
+        // gone or archived stands on its own.
+        let shownIDs = Set(shown.map(\.id))
+        let active = shown.filter { $0.parentThreadID.map { !shownIDs.contains($0) } ?? true }
         let attention = Self.placed(active.filter(needsAttention))
         var items: [SidebarItem] = []
         if !attention.isEmpty {
@@ -147,14 +189,15 @@ struct SidebarView: View {
         return items
     }
 
-    /// Threads of one activity group. A thread can be dragged to another place within its own group.
+    /// Threads of one activity group, each with the helpers under it. A thread can be dragged
+    /// to another place within its own group; its helpers follow it.
     private func activityThreadItems(_ threads: [ChatThread]) -> [SidebarItem] {
         let peers = threads.map(\.id)
-        return threads.map { thread in
-            SidebarItem(
+        return threads.flatMap { thread in
+            [SidebarItem(
                 id: thread.id.uuidString,
                 kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: peers)
-            )
+            )] + helperItems(under: thread)
         }
     }
 
@@ -244,7 +287,7 @@ struct SidebarView: View {
 
     private var searchResults: [(project: Project, threads: [ChatThread])] {
         model.projects.compactMap { project in
-            let all = model.threads(in: project)
+            let all = model.threads(in: project).flatMap { [$0] + model.helpers(of: $0.id) }
             let threads = project.name.localizedCaseInsensitiveContains(query)
                 ? all
                 : all.filter { $0.title.localizedCaseInsensitiveContains(query) }
@@ -317,6 +360,10 @@ private struct SidebarItem: Identifiable {
         case header(String, isFirst: Bool)
         /// A thread, with its project's name in the activity layout and the threads it can be reordered among.
         case thread(ChatThread, projectName: String?, peers: [UUID]?)
+        /// A helper under its parent thread; the last one ends the connector.
+        case helper(ChatThread, isLast: Bool)
+        /// A parent's folded helpers, as one line that unfolds them.
+        case helperStub(parent: ChatThread, count: Int)
     }
 
     let id: String
@@ -342,7 +389,7 @@ private struct ProjectRow: View {
     @State private var isMenuPresented = false
 
     var body: some View {
-        let count = model.threads(in: project).count
+        let count = model.threads(in: project).reduce(0) { $0 + 1 + model.helpers(of: $1.id).count }
         SidebarRow(
             title: project.name,
             accessoryWidth: 40,
@@ -396,6 +443,172 @@ private enum ThreadRowMetrics {
     static let detailedVerticalPadding: CGFloat = 7
     /// A two-line activity row: title, project line and their padding.
     static let detailedHeight: CGFloat = 48
+    /// A helper's row under its parent: one small line, in either layout.
+    static let helperHeight: CGFloat = 24
+    /// The connector's column: the dotted line runs down it, under the parent's badge.
+    static let connectorWidth: CGFloat = 28
+    static let connectorLineX: CGFloat = 18
+}
+
+/// A helper under the thread it was spawned from: one small line, joined to its parent by a
+/// dotted connector that runs down the rows and ends at the last. The connector folds the
+/// helpers away; the folded line (HelperStubRow) unfolds them.
+private struct SidebarHelperRow: View {
+    @Environment(AppModel.self) private var model
+    let thread: ChatThread
+    /// The last helper under its parent: the connector ends at this row.
+    let isLast: Bool
+    let onFold: () -> Void
+    let onRename: () -> Void
+    let onDelete: () -> Void
+
+    @State private var isHovering = false
+    @State private var isMenuPresented = false
+
+    var body: some View {
+        let isSelected = model.selectedThreadID == thread.id
+        let showsActions = isHovering || isMenuPresented
+        let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
+        HStack(spacing: 0) {
+            HelperConnector(endsHere: isLast, action: onFold)
+                .frame(width: ThreadRowMetrics.connectorWidth, height: ThreadRowMetrics.helperHeight)
+            Button {
+                model.selectedThreadID = thread.id
+            } label: {
+                HStack(spacing: 6) {
+                    Text(verbatim: thread.title)
+                        .font(.system(size: 12, weight: isSelected || thread.hasUnread ? .medium : .regular))
+                        .foregroundStyle(Chrome.primaryText.opacity(isSelected ? 0.96 : 0.8))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Spacer(minLength: 4)
+                }
+                .padding(.leading, 6)
+                .padding(.trailing, Chrome.rowHorizontalPadding + (showsActions ? 26 : 18))
+                .frame(height: ThreadRowMetrics.helperHeight)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    shape
+                        .fill(isSelected ? Chrome.overlay(0.12) : (isHovering ? Chrome.overlay(0.06) : Color.clear))
+                        .animation(Chrome.hover, value: isSelected)
+                }
+                .contentShape(shape)
+            }
+            .buttonStyle(.plain)
+            .overlay(alignment: .trailing) {
+                Group {
+                    if showsActions {
+                        RowActionsButton(actions: makeActions(), isPresented: $isMenuPresented)
+                    } else {
+                        ActivityStatus(thread: thread)
+                    }
+                }
+                .padding(.trailing, 6)
+            }
+            .onHover { hovering in
+                withAnimation(Chrome.hover) { isHovering = hovering }
+                if hovering { model.warmDocuments([thread.id]) }
+            }
+            .contextMenu { RowActionMenuButtons(actions: makeActions()) }
+            .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+        }
+    }
+
+    private func makeActions() -> [RowAction] {
+        ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
+    }
+}
+
+/// A parent's folded helpers as one small line: the connector's stub, a chevron and their
+/// count, with a pulse when any of them is still working. Clicking it unfolds them.
+private struct HelperStubRow: View {
+    @Environment(AppModel.self) private var model
+    let parent: ChatThread
+    let count: Int
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        let working = model.helpers(of: parent.id).contains { model.existingRuntime(for: $0.id)?.isRunning == true }
+        let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
+        Button(action: action) {
+            HStack(spacing: 0) {
+                HelperConnectorShape(endsHere: true)
+                    .stroke(HelperConnector.color(hovering: isHovering), style: HelperConnector.style)
+                    .frame(width: ThreadRowMetrics.connectorWidth, height: ThreadRowMetrics.helperHeight)
+                HStack(spacing: 5) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 8, weight: .bold))
+                    Text(verbatim: count == 1 ? "1 helper" : "\(count) helpers")
+                        .font(.system(size: 11))
+                    Spacer(minLength: 4)
+                    if working {
+                        MiniSpinner(cellSize: 2.4)
+                            .padding(.trailing, 4)
+                    }
+                }
+                .foregroundStyle(Chrome.secondaryText.opacity(isHovering ? 1 : 0.85))
+                .padding(.leading, 6)
+                .padding(.trailing, Chrome.rowHorizontalPadding)
+                .frame(height: ThreadRowMetrics.helperHeight)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    shape.fill(isHovering ? Chrome.overlay(0.06) : Color.clear)
+                }
+                .contentShape(shape)
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .help(count == 1 ? "Show the helper" : "Show \(count) helpers")
+        .accessibilityLabel(Text(count == 1 ? "1 folded helper" : "\(count) folded helpers"))
+    }
+}
+
+/// The dotted connector beside a helper's row: down from the row above, and a tick to the
+/// row. Where the helpers end it stops at the tick. The whole column folds the helpers away.
+private struct HelperConnector: View {
+    let endsHere: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    static let style = StrokeStyle(lineWidth: 1, lineCap: .round, dash: [0.1, 3.6])
+
+    static func color(hovering: Bool) -> Color {
+        Chrome.secondaryText.opacity(hovering ? 0.9 : 0.45)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HelperConnectorShape(endsHere: endsHere)
+                .stroke(Self.color(hovering: isHovering), style: Self.style)
+                .animation(Chrome.hover, value: isHovering)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .help("Hide helpers")
+        .accessibilityLabel(Text("Hide helpers"))
+    }
+}
+
+private struct HelperConnectorShape: Shape {
+    let endsHere: Bool
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let x = ThreadRowMetrics.connectorLineX
+        let midY = rect.midY
+        path.move(to: CGPoint(x: x, y: rect.minY))
+        path.addLine(to: CGPoint(x: x, y: endsHere ? midY : rect.maxY))
+        path.move(to: CGPoint(x: x, y: midY))
+        path.addLine(to: CGPoint(x: rect.maxX - 2, y: midY))
+        return path
+    }
 }
 
 /// A thread in either sidebar layout. In the project layout it is one line with the thread's badge; in
@@ -666,14 +879,15 @@ private struct ThreadDropDelegate: DropDelegate {
 @MainActor
 private enum ThreadActions {
     static func make(model: AppModel, thread: ChatThread, onRename: @escaping () -> Void, onDelete: @escaping () -> Void) -> [RowAction] {
-        var items = [
-            RowAction(title: "Rename", symbol: "pencil") { onRename() },
-            RowAction(title: thread.isPinned ? "Unpin" : "Pin", symbol: thread.isPinned ? "pin.slash" : "pin") {
+        var items = [RowAction(title: "Rename", symbol: "pencil") { onRename() }]
+        // A helper keeps its place under its parent; pinning would pull it out of it.
+        if !thread.isHelper {
+            items.append(RowAction(title: thread.isPinned ? "Unpin" : "Pin", symbol: thread.isPinned ? "pin.slash" : "pin") {
                 withAnimation(Chrome.panelSlide) {
                     model.updateThread(thread.id) { $0.isPinned.toggle() }
                 }
-            },
-        ]
+            })
+        }
         if let path = thread.worktreePath {
             items.append(RowAction(title: "Reveal worktree in Finder", symbol: "folder") { Workspace.revealInFinder(path) })
         }

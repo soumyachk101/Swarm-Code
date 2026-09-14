@@ -94,8 +94,12 @@ struct ChatView: View {
                             panelDrag = nil
                         },
                         close: {
-                            model.closeSubagent(subagent.id)
-                            runtime.subagentPanelOrigin = nil
+                            // The helper moves to the sidebar under this thread; its row
+                            // opens with the same slide as the panel leaving.
+                            withAnimation(Chrome.panelSlide) {
+                                model.closeSubagent(subagent.id)
+                                runtime.subagentPanelOrigin = nil
+                            }
                         }
                     )
                     // Inside the offset, so the panel grows in and fades out in place.
