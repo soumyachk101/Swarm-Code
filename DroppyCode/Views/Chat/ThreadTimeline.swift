@@ -160,6 +160,13 @@ struct ThreadTimeline: View, Equatable {
         visibleCount = target
     }
 
+    /// A scroll that lands at once, for following growth the reader is already looking at.
+    private static var unanimated: Transaction {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        return transaction
+    }
+
     /// Parses every finished reply's markdown off the main thread, so rows scrolling into
     /// view for the first time never parse on the frame. Cached texts are skipped.
     private func warmMarkdown() async {
@@ -224,6 +231,7 @@ struct ThreadTimeline: View, Equatable {
                             workingDirectory: workingDirectory,
                             showsThinking: model.settings.showReasoning
                         )
+                        .transition(.opacity.animation(.easeOut(duration: 0.2)))
                     }
                 }
                 .allowsHitTesting(!isReaderScrolling)
@@ -285,7 +293,10 @@ struct ThreadTimeline: View, Equatable {
                 if pinned != tracking.isPinnedToBottom { tracking.isPinnedToBottom = pinned }
                 if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
             } else if new.contentHeight > old.contentHeight, tracking.isPinnedToBottom {
-                withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
+                // Growth at the end is followed with a snap, never a slide: a new row lands in
+                // place and fades in on its own. An animated follow slid the working line and
+                // every fresh row up from under the bottom edge while it was appearing.
+                withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
             }
         }
         .task(id: runtime.threadID) {
@@ -303,9 +314,15 @@ struct ThreadTimeline: View, Equatable {
                 Task { await warmMarkdown() }
                 return
             }
+            let wasAtEnd = tracking.isPinnedToBottom
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
-            withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+            if wasAtEnd {
+                // Already there: the message and the working line appear in place.
+                withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+            } else {
+                withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+            }
         }
         .onChange(of: scrollState.jumpRequest) {
             tracking.isPinnedToBottom = true
@@ -811,8 +828,9 @@ private struct WorkingIndicatorSlot: View {
                     liveWork: liveWork,
                     workingDirectory: workingDirectory
                 )
+                // A plain fade in place: the line's row never moves while it appears.
                 .transition(.asymmetric(
-                    insertion: .softAppear,
+                    insertion: .opacity.animation(.easeOut(duration: 0.2)),
                     removal: .opacity.animation(.easeOut(duration: 0.1))
                 ))
             }
