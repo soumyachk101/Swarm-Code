@@ -107,14 +107,18 @@ struct HydraReportRow: View {
                 withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
+                    // The hand takes a glyph's slot, so both rows sit the same in the pill.
+                    // (Only one or the other: an empty stack would still keep its spacing.)
                     if personas.isEmpty {
                         Image(systemName: "hand.raised.fill")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Chrome.secondaryText)
-                    }
-                    HStack(spacing: -4) {
-                        ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
-                            HydraGlyph(persona: persona, size: 18)
+                            .frame(width: 18, height: 18)
+                    } else {
+                        HStack(spacing: -4) {
+                            ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
+                                HydraGlyph(persona: persona, size: 18)
+                            }
                         }
                     }
                     Text(verbatim: title)
