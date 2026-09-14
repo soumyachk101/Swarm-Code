@@ -314,8 +314,9 @@ final class ThreadRuntime {
 
     /// Sends the next queued follow-up as a direct user message. Only runs when idle after a
     /// completed turn: an interrupted turn means the user hit stop, so the queue waits for them.
-    private func drainFollowUps(after status: TurnStatus) {
-        guard status == .completed, phase == .idle, !followUps.isEmpty else { return }
+    /// Returns whether a turn starts.
+    private func drainFollowUps(after status: TurnStatus) -> Bool {
+        guard status == .completed, phase == .idle, !followUps.isEmpty else { return false }
         var next = followUps.removeFirst()
         // Skip prompts that emptied while queued (an attachment file deleted on disk still counts,
         // so only the text+attachment check applies).
@@ -324,14 +325,14 @@ final class ThreadRuntime {
         }
         guard !next.isEmpty else {
             scheduleSave()
-            return
+            return false
         }
         scheduleSave()
         if handleLocalCommand(next.text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            drainFollowUps(after: status)
-            return
+            return drainFollowUps(after: status)
         }
         Task { await startTurn(text: next.text, attachments: next.attachments) }
+        return true
     }
 
     func implementPlan(_ entryID: String) {
@@ -894,30 +895,29 @@ final class ThreadRuntime {
         phase = .idle
         turnStartedAt = nil
         diffRevision += 1
-        app?.turnFinished(threadID, status: status)
         scheduleSave()
         // The Return-while-running message jumps the queue: it goes right away
-        // and anything queued waits for it.
-        if pendingSend != nil {
-            drainPendingSend()
-        } else {
-            drainFollowUps(after: status)
-        }
+        // and anything queued waits for it. Either way the app hears whether a
+        // next turn is on its way, so "finished" only sounds when nothing is.
+        let continues = pendingSend != nil ? drainPendingSend() : drainFollowUps(after: status)
+        app?.turnFinished(threadID, status: status, continues: continues)
     }
 
     /// Sends the message captured by Return while a turn ran, once the stop
     /// lands. Runs for any finish status: if the turn completed on its own in
-    /// the meantime, the message still goes right away.
-    private func drainPendingSend() {
-        guard phase == .idle, let pending = pendingSend else { return }
+    /// the meantime, the message still goes right away. Returns whether a turn starts.
+    @discardableResult
+    private func drainPendingSend() -> Bool {
+        guard phase == .idle, let pending = pendingSend else { return false }
         pendingSend = nil
         let text = pending.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !pending.attachments.isEmpty else {
             scheduleSave()
-            return
+            return false
         }
-        if handleLocalCommand(text) { return }
+        if handleLocalCommand(text) { return false }
         Task { await startTurn(text: pending.text, attachments: pending.attachments) }
+        return true
     }
 
     // MARK: - Timeline mutations

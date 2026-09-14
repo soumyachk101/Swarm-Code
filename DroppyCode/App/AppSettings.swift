@@ -41,6 +41,7 @@ final class AppSettings {
         static let runtimeMode = "defaultRuntimeMode"
         static let workspaceMode = "defaultWorkspaceMode"
         static let notify = "notifyWhenFinished"
+        static let chime = "chimeWhenFinished"
         static let confirmDelete = "confirmBeforeDeleting"
         static let showReasoning = "showReasoning"
         static let sidebarActivityView = "sidebarActivityView"
@@ -80,6 +81,11 @@ final class AppSettings {
 
     var notifyWhenFinished: Bool {
         didSet { defaults.set(notifyWhenFinished, forKey: Key.notify) }
+    }
+
+    /// A soft chime plays when a turn finishes, whether or not the thread is in view.
+    var chimeWhenFinished: Bool {
+        didSet { defaults.set(chimeWhenFinished, forKey: Key.chime) }
     }
 
     var confirmBeforeDeleting: Bool {
@@ -199,6 +205,7 @@ final class AppSettings {
         defaultRuntimeMode = RuntimeMode(rawValue: defaults.string(forKey: Key.runtimeMode) ?? "") ?? .fullAccess
         defaultWorkspaceMode = WorkspaceMode(rawValue: defaults.string(forKey: Key.workspaceMode) ?? "") ?? .local
         notifyWhenFinished = defaults.object(forKey: Key.notify) as? Bool ?? true
+        chimeWhenFinished = defaults.object(forKey: Key.chime) as? Bool ?? true
         confirmBeforeDeleting = defaults.object(forKey: Key.confirmDelete) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
