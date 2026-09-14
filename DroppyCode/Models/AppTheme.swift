@@ -140,6 +140,41 @@ enum AppTheme: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// The scheme the theme fixes; nil for the system look.
+    var scheme: ColorScheme? { palette.scheme }
+
+    /// The picker's badge: a circle running from the theme's surface into
+    /// its accent, so dark themes read dark and light themes light at a
+    /// glance. System splits into the Mac's light and dark halves.
+    @ViewBuilder
+    var swatch: some View {
+        let palette = palette
+        let rim = Circle().strokeBorder(Color.primary.opacity(0.22), lineWidth: 0.5)
+        if self == .system {
+            Circle()
+                .fill(LinearGradient(
+                    stops: [
+                        .init(color: Color(hex: "FFFFFF"), location: 0), .init(color: Color(hex: "FFFFFF"), location: 0.5),
+                        .init(color: Color(hex: "1E1E20"), location: 0.5), .init(color: Color(hex: "1E1E20"), location: 1),
+                    ],
+                    startPoint: .leading, endPoint: .trailing
+                ))
+                .overlay(rim)
+        } else {
+            let accent = palette.accent.map(Color.init(hex:)) ?? Color.accentColor
+            Circle()
+                .fill(LinearGradient(
+                    stops: [
+                        .init(color: Color(hex: palette.surface), location: 0),
+                        .init(color: Color(hex: palette.surface), location: 0.42),
+                        .init(color: accent, location: 1),
+                    ],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
+                .overlay(rim)
+        }
+    }
+
     var spec: ThemeSpec {
         let palette = palette
         let surfaceColor: Color

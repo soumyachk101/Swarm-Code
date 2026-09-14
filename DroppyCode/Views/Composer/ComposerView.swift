@@ -118,8 +118,15 @@ struct ComposerView: View {
                         if !controller.isClickInsideSuggestions() { suggestions = SuggestionState() }
                     }
                 )
+                // The text view itself takes its new height at once, so it lays out
+                // every line with nothing to scroll; only the clip around it grows
+                // and shrinks. Animating the scroll view's own frame made AppKit
+                // scroll the caret into a too-short view and then snap back.
                 .frame(height: composerHeight)
-                .animation(.easeOut(duration: 0.18), value: composerHeight)
+                .transaction { $0.animation = nil }
+                .frame(height: composerHeight, alignment: .top)
+                .clipped()
+                .animation(.smooth(duration: 0.28), value: composerHeight)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 12)

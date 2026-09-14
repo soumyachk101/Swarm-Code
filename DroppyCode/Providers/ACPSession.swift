@@ -544,26 +544,34 @@ final class ACPSession: ProviderSession {
         return "\(prefix)-\(counter)-\(UUID().uuidString.prefix(8))"
     }
 
+    /// Same row shapes as Claude's: the subject is the command, the path, the
+    /// pattern or the URL, and the detail only qualifies it. ACP agents title
+    /// calls freely ("Fetched https://…", "Search for 'x'", a bare "read"), so
+    /// the subject comes from `rawInput` and `locations` first and the title
+    /// is the fallback, with its leading verb dropped.
     private func makeToolCall(_ update: JSONValue) -> ToolCall {
         let kind = Self.kind(update["kind"]?.string)
         let raw = update["rawInput"] ?? .null
-        var title = Self.cleanTitle(update["title"]?.string)
-        if kind == .command, let command = raw["command"]?.string { title = command }
-        if title.isEmpty { title = raw["command"]?.string ?? "" }
-        var call = ToolCall(kind: kind, title: title)
-        if kind != .command, let path = update["locations"]?.array?.first?["path"]?.string {
-            let relative = ToolTitles.relativePath(path, to: workingDirectory)
-            if relative != workingDirectory {
-                // A generic title like "Edit file" names the tool, not the
-                // file — the row reads "Edited <title>", so the path wins.
-                if title.isEmpty || Self.isFallbackTitle(title) {
-                    call.title = relative
-                } else if relative != title {
-                    call.detail = relative
-                }
-            }
+        let location = update["locations"]?.array?.first?["path"]?.string.map { ToolTitles.relativePath($0, to: workingDirectory) }
+        let path = Self.string(in: raw, keys: Self.pathKeys).map { ToolTitles.relativePath($0, to: workingDirectory) } ?? location
+        let title = Self.subject(from: update["title"]?.string, kind: kind)
+        var call = ToolCall(kind: kind, title: "")
+        switch kind {
+        case .command:
+            call.title = raw["command"]?.string.map(ToolTitles.unwrapShell) ?? title
+        case .read, .edit:
+            call.title = path ?? title
+        case .search:
+            let pattern = Self.string(in: raw, keys: ["pattern", "query", "glob", "regex", "search"])
+            call.title = pattern ?? title.nilIfEmpty ?? path ?? ""
+            if pattern != nil || !title.isEmpty, let path, path != workingDirectory, path != call.title { call.detail = path }
+        case .web:
+            call.title = Self.string(in: raw, keys: ["url", "query", "prompt"]) ?? title
+        case .mcp, .agent, .other:
+            call.title = title
+            if let path, path != workingDirectory, path != call.title { call.detail = path }
         }
-        if call.title.isEmpty { call.title = Self.fallbackTitle(kind) }
+        if call.title.isEmpty { call.title = path ?? Self.fallbackTitle(kind) }
         call.edits = diffs(update["content"])
         if let status = update["status"]?.string { call.status = Self.status(status) }
         return call
@@ -572,10 +580,17 @@ final class ACPSession: ProviderSession {
     private func makeToolUpdate(_ update: JSONValue) -> ToolUpdate {
         var result = ToolUpdate()
         if let kind = update["kind"]?.string { result.kind = Self.kind(kind) }
-        let title = Self.cleanTitle(update["title"]?.string)
+        let kind = result.kind ?? .other
+        let title = Self.subject(from: update["title"]?.string, kind: kind)
         // A bare tool-name title ("Edit file") must not overwrite a real path.
         if !title.isEmpty, !Self.isFallbackTitle(title) { result.title = title }
-        if let command = update["rawInput"]?["command"]?.string { result.title = command }
+        if let command = update["rawInput"]?["command"]?.string { result.title = ToolTitles.unwrapShell(command) }
+        // A path that only arrives with the update still names the row.
+        if kind == .read || kind == .edit, result.title == nil,
+           let path = update["locations"]?.array?.first?["path"]?.string {
+            let relative = ToolTitles.relativePath(path, to: workingDirectory)
+            if relative != workingDirectory { result.title = relative }
+        }
         if let status = update["status"]?.string { result.status = Self.status(status) }
         let edits = diffs(update["content"])
         if !edits.isEmpty { result.edits = edits }
@@ -594,6 +609,68 @@ final class ACPSession: ProviderSession {
         if !output.isEmpty, output != "(no output)" { result.output = output }
         if let exitCode = result.exitCode, exitCode != 0, result.status == .completed { result.status = .failed }
         return result
+    }
+
+    private static let pathKeys = ["filePath", "file_path", "path", "file", "notebook_path", "target_file", "targetFile"]
+
+    private static func string(in value: JSONValue, keys: [String]) -> String? {
+        for key in keys {
+            if let text = value[key]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty { return text }
+        }
+        return nil
+    }
+
+    /// The title without the verb an agent prefixed it with, so the row reads
+    /// "Browsed https://…" rather than "Browsed Fetched https://…". Verbs are
+    /// only dropped when something remains; a bare tool name ("read", "glob")
+    /// becomes empty so a path or pattern takes its place.
+    private static func subject(from title: String?, kind: ToolCall.Kind) -> String {
+        var text = cleanTitle(title)
+        guard !text.isEmpty else { return "" }
+        if isBareToolName(text) { return "" }
+        let phrases = [
+            "searched web for", "search web for", "searching web for", "searched the web for", "search the web for",
+            "searched for", "searching for", "search for", "reading file", "read file", "listed directory",
+            "listing directory", "list directory", "listed files in", "list files in", "listing files in",
+        ]
+        let verbs = [
+            "read", "reading", "viewed", "viewing", "view", "fetched", "fetching", "fetch", "browsed", "browsing",
+            "searched", "searching", "search", "grep", "glob", "listed", "listing", "list", "wrote", "writing",
+            "write", "edited", "editing", "edit", "modified", "modifying", "modify", "updated", "updating", "update",
+            "created", "creating", "create", "deleted", "deleting", "delete", "ran", "running", "run", "executed",
+            "executing", "execute", "called", "calling", "call", "opened", "opening", "open",
+        ]
+        let lowered = text.lowercased()
+        var stripped = false
+        for phrase in phrases where [.read, .edit, .search, .web].contains(kind) && lowered.hasPrefix(phrase + " ") {
+            text = String(text.dropFirst(phrase.count + 1))
+            stripped = true
+            break
+        }
+        let rowHasVerb = [.read, .edit, .search, .web].contains(kind)
+        if !stripped, rowHasVerb, let head = lowered.split(separator: " ", maxSplits: 1).first, verbs.contains(String(head)) {
+            let rest = text.dropFirst(head.count).trimmingCharacters(in: .whitespaces)
+            if !rest.isEmpty { text = rest }
+        }
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // "'devin'" / "“x”" → x
+        for (open, close) in [("'", "'"), ("\"", "\""), ("“", "”"), ("`", "`")]
+        where text.count >= 2 && text.hasPrefix(open) && text.hasSuffix(close) {
+            text = String(text.dropFirst().dropLast())
+        }
+        return text
+    }
+
+    /// A title that is just the tool's identifier: one lowercase token like
+    /// "read", "webfetch" or "todowrite".
+    private static func isBareToolName(_ title: String) -> Bool {
+        let bare: Set<String> = [
+            "read", "write", "edit", "multiedit", "patch", "bash", "shell", "list", "ls", "glob", "grep", "search",
+            "webfetch", "websearch", "fetch", "todowrite", "todoread", "task", "tool", "apply_patch", "read_file",
+            "write_file", "edit_file", "list_files", "search_files", "run_command", "run_terminal_cmd", "web_search",
+            "web_fetch", "codebase_search", "file_search", "grep_search", "list_dir", "view_file", "replace_file_content",
+        ]
+        return bare.contains(title.lowercased())
     }
 
     private func diffs(_ content: JSONValue?) -> [FileEdit] {
@@ -637,11 +714,11 @@ final class ACPSession: ProviderSession {
 
     /// True when a call's title is just the tool's display name — no subject.
     private static func isFallbackTitle(_ title: String) -> Bool {
-        switch title {
-        case "Run command", "Read file", "Edit file", "Search", "Fetch", "Tool", "Agent":
+        switch title.lowercased() {
+        case "run command", "read file", "edit file", "write file", "search", "fetch", "tool", "agent", "file", "files":
             true
         default:
-            false
+            isBareToolName(title)
         }
     }
 

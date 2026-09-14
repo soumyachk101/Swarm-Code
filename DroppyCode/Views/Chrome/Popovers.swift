@@ -1,6 +1,23 @@
 import AppKit
 import SwiftUI
 
+extension NSPopover {
+    /// Installs SwiftUI content at a fixed size and makes that size the only
+    /// one the panel ever has. A hosting controller normally publishes its
+    /// own `preferredContentSize` a moment after `show(relativeTo:)`, and
+    /// AppKit applies it by resizing the shown panel from its top edge, so
+    /// the arrow ends up floating well above the anchor. Sizing the hosting
+    /// controller off (`sizingOptions = []`) leaves `contentSize` in charge,
+    /// and framing the content to it keeps SwiftUI filling the panel.
+    @MainActor
+    func setFixedContent<Content: View>(_ content: Content, size: NSSize) {
+        let host = NSHostingController(rootView: content.frame(width: size.width, height: size.height))
+        host.sizingOptions = []
+        contentViewController = host
+        contentSize = size
+    }
+}
+
 /// The native popover every chrome and composer button opens, in place of a pull-down menu.
 struct PopoverMenu<Content: View>: View {
     var maxHeight: CGFloat = 460
@@ -73,6 +90,8 @@ struct PopoverItem: View {
     var symbol: String?
     var image: NSImage?
     var asset: String?
+    /// A custom 16pt leading view (a colour swatch, say) in place of an icon.
+    var leading: AnyView?
     var isChecked: Bool?
     var isEnabled = true
     var isDestructive = false
@@ -87,6 +106,7 @@ struct PopoverItem: View {
         symbol: String? = nil,
         image: NSImage? = nil,
         asset: String? = nil,
+        leading: AnyView? = nil,
         isChecked: Bool? = nil,
         isEnabled: Bool = true,
         isDestructive: Bool = false,
@@ -97,6 +117,7 @@ struct PopoverItem: View {
         self.symbol = symbol
         self.image = image
         self.asset = asset
+        self.leading = leading
         self.isChecked = isChecked
         self.isEnabled = isEnabled
         self.isDestructive = isDestructive
@@ -116,7 +137,10 @@ struct PopoverItem: View {
                         .opacity(isChecked ? 1 : 0)
                         .frame(width: 14)
                 }
-                if let asset {
+                if let leading {
+                    leading
+                        .frame(width: 16, height: 16)
+                } else if let asset {
                     Image(asset)
                         .resizable()
                         .aspectRatio(contentMode: .fit)

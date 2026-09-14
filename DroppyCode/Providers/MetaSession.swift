@@ -430,7 +430,8 @@ final class MetaSession: ProviderSession {
             }
         case "list_files":
             let path = args["path"]?.string ?? ""
-            let call = ToolCall(kind: .search, title: path.isEmpty ? "List files" : "List \(displayPath(path))")
+            // Same shape as Claude's LS row: the folder is the subject.
+            let call = ToolCall(kind: .search, title: path.isEmpty ? (workingDirectory as NSString).lastPathComponent : displayPath(path))
             onEvent?(.toolStarted(id: callID, call: call))
             guard await approveIfNeeded(kind: .search, title: call.title, detail: path, toolItemID: nil) else {
                 return declined(callID)
@@ -446,7 +447,7 @@ final class MetaSession: ProviderSession {
         case "search_text":
             let pattern = args["pattern"]?.string ?? ""
             let path = args["path"]?.string ?? ""
-            let call = ToolCall(kind: .search, title: pattern.isEmpty ? "Search" : pattern)
+            let call = ToolCall(kind: .search, title: pattern.isEmpty ? "Search" : pattern, detail: path.isEmpty ? nil : displayPath(path))
             onEvent?(.toolStarted(id: callID, call: call))
             guard await approveIfNeeded(kind: .search, title: "Search for “\(pattern)”", detail: path.isEmpty ? nil : path, toolItemID: nil) else {
                 return declined(callID)
@@ -506,7 +507,7 @@ final class MetaSession: ProviderSession {
             }
             let result = await runCommand(command)
             var update = ToolUpdate()
-            update.output = result.output.isEmpty ? "(no output)" : summary(result.output, limit: 12_000)
+            update.output = result.output.isEmpty ? "" : summary(result.output, limit: 12_000)
             update.exitCode = Int(result.exitCode)
             update.status = result.exitCode == 0 ? .completed : .failed
             onEvent?(.toolUpdated(id: callID, update: update))

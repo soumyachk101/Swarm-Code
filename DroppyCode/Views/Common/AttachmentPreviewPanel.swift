@@ -68,27 +68,25 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     }
 
     private func show(_ attachment: Attachment, over view: NSView?) {
-        let content = AttachmentLargePreview(attachment: attachment)
-        let size = Self.contentSize(for: attachment)
+        let imageSize = attachment.isImage ? AttachmentLargePreview.imageDisplaySize(for: attachment) : nil
+        let content = AttachmentLargePreview(attachment: attachment, imageSize: imageSize)
+        let size = Self.contentSize(for: attachment, imageSize: imageSize)
         currentID = attachment.id
         guard let (anchor, rect) = anchorTarget(thumbnailView: view) else {
             StripLog.log.notice("show BLOCKED id=\(attachment.id) anchorNil=\(self.anchor?.value == nil)")
             return
         }
-        if popover.isShown {
-            // Already open for another photo: swap the content and ask AppKit
-            // to move the panel above the tapped photo. Re-showing a shown
-            // popover repositions it; the swap stays as the backstop, so even
-            // if a reposition were ever ignored the new photo still shows.
-            StripLog.log.notice("show swap id=\(attachment.id)")
-            popover.contentViewController = NSHostingController(rootView: content)
-            popover.contentSize = size
-            popover.show(relativeTo: rect, of: anchor, preferredEdge: .maxY)
-            return
-        }
-        popover.contentViewController = NSHostingController(rootView: content)
-        popover.contentSize = size
-        startMonitors()
+        // The panel is sized here, once, and the hosting controller never
+        // publishes a size of its own (see setFixedContent): the only size
+        // AppKit ever positions against is this one, so the arrow stays on the
+        // tapped photo instead of drifting when the content settles.
+        //
+        // Already open for another photo: re-showing a shown popover moves it
+        // above the tapped photo, and the content swap is the backstop so the
+        // new photo shows even if a reposition were ever ignored.
+        StripLog.log.notice("show \(self.popover.isShown ? "swap" : "open", privacy: .public) id=\(attachment.id) size=\(size.debugDescription, privacy: .public)")
+        popover.setFixedContent(content, size: size)
+        if !popover.isShown { startMonitors() }
         popover.show(relativeTo: rect, of: anchor, preferredEdge: .maxY)
     }
 
@@ -166,19 +164,14 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         monitors.removeAll()
     }
 
-    /// Generous fixed size per attachment kind. The large preview loads its
-    /// image asynchronously, so the panel cannot size itself to content after
-    /// it appears; sizing up front also keeps it from jumping when it loads.
-    private static func contentSize(for attachment: Attachment) -> NSSize {
+    /// Fixed size per attachment kind. The large preview loads its image
+    /// asynchronously, so the panel cannot size itself to content after it
+    /// appears; sizing up front from the same numbers the content lays out
+    /// with keeps it from ever resizing once shown.
+    private static func contentSize(for attachment: Attachment, imageSize: CGSize?) -> NSSize {
         let chrome: CGFloat = 60 // outer padding + name/footer row + spacing
-        if attachment.isImage {
-            var display = NSSize(width: 480, height: 300)
-            if let image = NSImage(contentsOfFile: attachment.path),
-               image.size.width > 0, image.size.height > 0 {
-                let scale = min(480 / image.size.width, 360 / image.size.height)
-                display = NSSize(width: floor(image.size.width * scale), height: floor(image.size.height * scale))
-            }
-            return NSSize(width: 504, height: ceil(display.height) + chrome)
+        if let imageSize {
+            return NSSize(width: AttachmentLargePreview.imageBounds.width + 24, height: ceil(imageSize.height) + chrome)
         }
         if let text = textSample(for: attachment) {
             // Measured overhead: outer padding (24) + spacing (10) + footer (~18).

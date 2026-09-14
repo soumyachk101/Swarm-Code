@@ -386,33 +386,36 @@ struct PaneTopVeil: View {
     var body: some View {
         let progress = Double(model.progress)
         let isDark = colorScheme == .dark
-        let fade = 0.08 + 0.92 * progress
-        let scrim = (isDark ? 0.42 + 0.28 * progress : 0.48 + 0.30 * progress) * fade
-        let tint = (isDark ? 0.22 : 0.16) * fade
+        let scrim = isDark ? 0.42 + 0.28 * progress : 0.48 + 0.30 * progress
         ZStack {
             // Only once content has scrolled under the chrome; at rest there is nothing to sample.
-            // The fade-out lives in the gradients themselves rather than in a mask, so the veil
-            // is two plain fills and never an offscreen pass while the page scrolls under it.
             if progress > 0 {
-                Self.fade(isDark ? Color.black : Color.white, opacity: scrim)
-                Self.fade(Chrome.glassTint, opacity: tint)
+                // The liquid glass is the veil: it samples and refracts the
+                // content sliding under the chrome. The scrim settles it toward
+                // the scheme's base, and the theme's tint colours it lightly.
+                Rectangle()
+                    .fill(.clear)
+                    .glassEffect(.regular, in: Rectangle())
+                Rectangle()
+                    .fill((isDark ? Color.black : Color.white).opacity(scrim))
+                Rectangle()
+                    .fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
             }
         }
+        .opacity(0.08 + 0.92 * progress)
+        .mask(
+            LinearGradient(
+                stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: 0.38),
+                    .init(color: .clear, location: 1),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
         .frame(height: Chrome.veilHeight)
         .allowsHitTesting(false)
-    }
-
-    /// Solid over the top 38%, then falling away to nothing at the bottom edge.
-    private static func fade(_ color: Color, opacity: Double) -> LinearGradient {
-        LinearGradient(
-            stops: [
-                .init(color: color.opacity(opacity), location: 0),
-                .init(color: color.opacity(opacity), location: 0.38),
-                .init(color: color.opacity(0), location: 1),
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
     }
 }
 

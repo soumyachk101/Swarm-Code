@@ -476,9 +476,7 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
         guard let runtime, let anchor = anchor?.value, anchor.window != nil else { return }
         session += 1
         guard !popover.isShown else { return }
-        popover.contentViewController = NSHostingController(rootView: DiffInspector(runtime: runtime)
-            .frame(width: Self.width, height: Self.height))
-        popover.contentSize = NSSize(width: Self.width, height: Self.height)
+        popover.setFixedContent(DiffInspector(runtime: runtime), size: NSSize(width: Self.width, height: Self.height))
         startMonitors()
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }

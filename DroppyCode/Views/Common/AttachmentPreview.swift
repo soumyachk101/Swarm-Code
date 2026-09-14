@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 
 /// Shared helpers for showing large image previews of attachments and files the agent read.
@@ -43,26 +44,55 @@ enum PreviewImages {
 }
 
 /// A large preview shown in a popover when an attachment thumbnail is clicked.
+///
+/// The photo slot is sized up front (`imageSize`, see `imageDisplaySize`), so
+/// the spinner and the loaded photo take exactly the same room: the panel is
+/// sized once before it opens and never reflows under the arrow.
 struct AttachmentLargePreview: View {
     let attachment: Attachment
+    /// The photo's display size, precomputed by the panel. Nil for non-images.
+    var imageSize: CGSize?
 
     @State private var image: CGImage?
     @State private var textPreview: String?
 
+    /// The largest a photo is shown at inside the panel.
+    static let imageBounds = CGSize(width: 480, height: 360)
+
+    /// The photo aspect-fitted into `imageBounds`, from the file's pixel size
+    /// (orientation applied). Only the aspect matters, so this reads the
+    /// header through ImageIO rather than decoding the image.
+    static func imageDisplaySize(for attachment: Attachment) -> CGSize {
+        var pixels = CGSize(width: 4, height: 3)
+        if let source = CGImageSourceCreateWithURL(attachment.url as CFURL, nil),
+           let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let width = properties[kCGImagePropertyPixelWidth] as? CGFloat,
+           let height = properties[kCGImagePropertyPixelHeight] as? CGFloat,
+           width > 0, height > 0 {
+            let orientation = properties[kCGImagePropertyOrientation] as? UInt32 ?? 1
+            pixels = orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+        }
+        let scale = min(imageBounds.width / pixels.width, imageBounds.height / pixels.height)
+        return CGSize(width: floor(pixels.width * scale), height: floor(pixels.height * scale))
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if attachment.isImage {
-                if let image {
-                    Image(decorative: image, scale: 2)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(maxWidth: 480, maxHeight: 360)
-                        .clipShape(.rect(cornerRadius: 12, style: .continuous))
-                        .frame(maxWidth: .infinity, alignment: .center)
-                } else {
-                    ProgressView()
-                        .frame(width: 480, height: 200)
+                let slot = imageSize ?? Self.imageBounds
+                ZStack {
+                    if let image {
+                        Image(decorative: image, scale: 2)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .clipShape(.rect(cornerRadius: 12, style: .continuous))
+                            .transition(.opacity)
+                    } else {
+                        ProgressView()
+                    }
                 }
+                .frame(width: slot.width, height: slot.height)
+                .frame(maxWidth: .infinity, alignment: .center)
             } else if let textPreview {
                 ScrollView {
                     Text(textPreview)
@@ -115,7 +145,8 @@ struct AttachmentLargePreview: View {
         .frame(maxWidth: 504)
         .task(id: attachment.path) {
             if attachment.isImage {
-                image = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: 640)?.image
+                let loaded = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: Self.imageBounds.width)?.image
+                withAnimation(.easeOut(duration: 0.15)) { image = loaded }
             } else {
                 textPreview = Self.textPreview(for: attachment)
             }
