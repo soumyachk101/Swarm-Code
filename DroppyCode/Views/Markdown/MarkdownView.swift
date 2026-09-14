@@ -448,8 +448,16 @@ struct InlineText: View {
         // faviconRevision read so loaded favicons rebuild the text.
         let _ = faviconRevision
         if RichLink.containsLinks(in: source, streaming: streaming) {
+            // An AppKit view has no text baseline of its own, so a list's marker sat on the
+            // paragraph's top edge and the text started a line below it. The first line's
+            // baseline is the base font's ascender from the top; the last is one line up
+            // from the bottom.
+            let font = NSFont.systemFont(ofSize: pointSize)
+            let lineHeight = ceil(font.ascender - font.descender + font.leading)
             LinkParagraphView(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming, revision: faviconRevision)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .alignmentGuide(.firstTextBaseline) { _ in ceil(font.ascender) }
+                .alignmentGuide(.lastTextBaseline) { $0.height - lineHeight + ceil(font.ascender) }
                 .task(id: source) { await fetchFavicons() }
         } else {
             RichInlineBuilder.text(for: source, streaming: streaming)
