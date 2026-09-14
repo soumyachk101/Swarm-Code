@@ -664,6 +664,8 @@ private struct AboutSettingsPage: View {
                     ChromeRow(title: "Terminal", detail: "SwiftTerm by Miguel de Icaza, MIT License.") {
                         CreditLink(title: "SwiftTerm", url: URL(string: "https://github.com/migueldeicaza/SwiftTerm")!)
                     }
+                    ChromeRowDivider()
+                    LicensesRow()
                 }
             }
         }
@@ -701,6 +703,51 @@ private struct AboutSettingsPage: View {
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
         }
+    }
+}
+
+/// The license, the third-party notices and the trademark policy, as shipped in the bundle,
+/// read in a popover: every copy of the app carries the notices for what it builds on.
+private struct LicensesRow: View {
+    @State private var isPresented = false
+
+    private static let files: [(title: String, resource: String)] = [
+        ("Droppy Code", "LICENSE"),
+        ("Third-party notices", "THIRD_PARTY_NOTICES"),
+        ("Trademarks", "TRADEMARK"),
+    ]
+
+    var body: some View {
+        ChromeRow(title: "Licenses", detail: "MIT, with the notices for what the app builds on.") {
+            Button("Show") { isPresented = true }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 18) {
+                            ForEach(Self.files, id: \.resource) { file in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(verbatim: file.title)
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text(verbatim: Self.text(of: file.resource))
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Chrome.secondaryText)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                        }
+                        .padding(18)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(width: 480, height: 440)
+                }
+        }
+    }
+
+    private static func text(of resource: String) -> String {
+        let url = Bundle.main.url(forResource: resource, withExtension: resource == "LICENSE" ? nil : "md")
+        return url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? "The \(resource) file is missing from this copy of the app."
     }
 }
 

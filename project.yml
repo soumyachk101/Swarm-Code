@@ -25,6 +25,14 @@ targets:
     sources:
       - path: DroppyCode
         type: syncedFolder
+      # The license, the third-party notices and the trademark policy travel with every copy of
+      # the app; About shows them under Licenses.
+      - path: LICENSE
+        buildPhase: resources
+      - path: THIRD_PARTY_NOTICES.md
+        buildPhase: resources
+      - path: TRADEMARK.md
+        buildPhase: resources
     dependencies:
       - package: SwiftTerm
     settings:
