@@ -57,6 +57,11 @@ extension TimelineItem {
 struct UserMessage: Codable, Hashable, Sendable {
     var text: String
     var attachments: [Attachment] = []
+    /// Set when the message is heads reporting back to their lead rather than the user's
+    /// own words: the roster places of the heads that reported.
+    var hydraHeads: [Int]?
+
+    var isHydraReport: Bool { !(hydraHeads ?? []).isEmpty }
 }
 
 /// One queued follow-up prompt. Sent as a direct user chat message once the

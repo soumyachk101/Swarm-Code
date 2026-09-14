@@ -29,7 +29,9 @@ struct UserMessageRow: View {
     @State private var isConfirmingRevert = false
 
     var body: some View {
-        if case .user(let message) = entry.item.content {
+        if case .user(let message) = entry.item.content, message.isHydraReport {
+            HydraReportRow(message: message)
+        } else if case .user(let message) = entry.item.content {
             VStack(alignment: .trailing, spacing: 6) {
                 if !message.attachments.isEmpty {
                     AttachmentStrip(attachments: message.attachments)
@@ -80,6 +82,58 @@ struct UserMessageRow: View {
     private func revert(restoreFiles: Bool) {
         guard let turnID = entry.turnID else { return }
         Task { await runtime.revert(to: turnID, restoreFiles: restoreFiles) }
+    }
+}
+
+/// Heads reporting back to their lead: their glyphs and names on a line, and their reports
+/// folded under it. It sits on the user's side, since that is where the lead reads it from,
+/// but reads as the team's, not the user's.
+struct HydraReportRow: View {
+    let message: UserMessage
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        let personas = (message.hydraHeads ?? []).map(HydraRoster.persona(at:))
+        let names = personas.map(\.name)
+        let who = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+        VStack(alignment: .trailing, spacing: 6) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
+            } label: {
+                HStack(spacing: 8) {
+                    HStack(spacing: -4) {
+                        ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
+                            HydraGlyph(persona: persona, size: 18)
+                        }
+                    }
+                    Text(verbatim: "\(who) reported back")
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 14)
+                .padding(.vertical, 8)
+                .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Hide the reports" : "Show the reports")
+            if isExpanded {
+                MarkdownView(text: message.text)
+                    .padding(14)
+                    .background(Chrome.overlay(0.05), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .transition(.softAppear)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, 96)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("\(who) reported back"))
     }
 }
 
@@ -414,6 +468,7 @@ enum WorkGroupSummary {
 }
 
 struct ToolRow: View {
+    @Environment(AppModel.self) private var model
     let entry: TimelineEntry
     let runtime: ThreadRuntime
     var workingDirectory: String?
@@ -451,10 +506,17 @@ struct ToolRow: View {
                 } label: {
                     HStack(spacing: TimelineMetrics.iconSpacing) {
                         HStack(spacing: TimelineMetrics.iconSpacing) {
-                            ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)
+                            // A row that sent out a head wears the head's glyph and name.
+                            let head = call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
+                            if let head {
+                                HydraGlyph(persona: head.persona, size: 14, isRunning: call.status == .running && head.status == .running)
+                                    .frame(width: TimelineMetrics.iconWidth)
+                            } else {
+                                ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)
+                            }
                             // One text run after the icon, so the row reads as
                             // icon + space + text instead of three spaced items.
-                            Text(ToolPresentation.label(for: call))
+                            Text(head.map { "\(call.status == .running ? "Sending out" : "Sent out") \($0.persona.name): \(call.title)" } ?? ToolPresentation.label(for: call))
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)

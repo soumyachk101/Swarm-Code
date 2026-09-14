@@ -20,6 +20,9 @@ struct ChatView: View {
     /// it is now, moved without animation. Nil at rest.
     @State private var panelGrab: CGPoint?
     @State private var panelDrag: CGPoint?
+    /// The same for the Hydra panel.
+    @State private var hydraGrab: CGPoint?
+    @State private var hydraDrag: CGPoint?
 
     var body: some View {
         let thread = model.thread(runtime.threadID)
@@ -36,7 +39,12 @@ struct ChatView: View {
         let subagent = model.subagent(of: runtime.threadID)
         let layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight)
         let isDocked = subagent != nil && runtime.subagentPanelOrigin == nil
-        let composerReserve = isDocked ? layout.composerReserve : 0
+        // The team, in its own panel: docked in the same corner, above the helper panel
+        // when both are there.
+        let heads = runtime.isHydraPanelHidden ? [] : model.hydraHeads(of: runtime.threadID)
+        let showsHydra = !heads.isEmpty && paneSize != .zero
+        let isHydraDocked = showsHydra && runtime.hydraPanelOrigin == nil
+        let composerReserve = isDocked || isHydraDocked ? layout.composerReserve : 0
         VStack(spacing: 0) {
             ThreadTimeline(
                 runtime: runtime,
@@ -115,6 +123,49 @@ struct ChatView: View {
                 }
             }
             .animation(Chrome.panelSlide, value: subagent?.id)
+            .overlay(alignment: .topLeading) {
+                if showsHydra {
+                    // Docked above the helper panel when that one is docked too.
+                    let dock = isDocked
+                        ? CGPoint(x: layout.dockedOrigin.x, y: max(8, layout.dockedOrigin.y - layout.panelHeight - SubagentPanelLayout.gap))
+                        : layout.dockedOrigin
+                    let origin = hydraDrag ?? runtime.hydraPanelOrigin.map(layout.clamped) ?? dock
+                    HydraPanel(
+                        runtime: runtime,
+                        heads: heads,
+                        size: layout.panelSize,
+                        workingDirectory: workingDirectory,
+                        projectName: project?.name,
+                        onDrag: { translation in
+                            let grab = hydraGrab ?? origin
+                            if hydraGrab == nil { hydraGrab = grab }
+                            hydraDrag = layout.clamped(CGPoint(x: grab.x + translation.width, y: grab.y + translation.height))
+                        },
+                        onDragEnd: {
+                            let dropped = hydraDrag ?? origin
+                            let snaps = abs(dropped.x - dock.x) < SubagentPanelLayout.snapDistance && abs(dropped.y - dock.y) < SubagentPanelLayout.snapDistance
+                            runtime.hydraPanelOrigin = snaps ? nil : dropped
+                            hydraGrab = nil
+                            hydraDrag = nil
+                        },
+                        dismiss: {
+                            withAnimation(Chrome.panelSlide) {
+                                model.dismissHydraHeads(of: runtime.threadID)
+                                runtime.hydraPanelOrigin = nil
+                            }
+                        }
+                    )
+                    .transition(
+                        .asymmetric(
+                            insertion: .scale(scale: 0.92).combined(with: .opacity),
+                            removal: .scale(scale: 0.96).combined(with: .opacity)
+                        )
+                    )
+                    .offset(x: origin.x, y: origin.y)
+                    .animation(hydraDrag == nil ? Chrome.panelSlide : nil, value: origin)
+                }
+            }
+            .animation(Chrome.panelSlide, value: showsHydra)
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { paneSize = $0 }
 
             if runtime.isTerminalVisible {
@@ -190,6 +241,11 @@ private struct ChatChromeRow: View {
                     model.newThread(in: project)
                 }
                 if let thread = model.thread(runtime.threadID) {
+                    // The team switch, once Hydra is on in Settings. A head leads no team of its own.
+                    if model.settings.hydraEnabled, !thread.isHelper {
+                        HydraButton(thread: thread)
+                            .transition(.softAppear)
+                    }
                     PermissionMenu(thread: thread)
                 }
                 if git.isRepository {

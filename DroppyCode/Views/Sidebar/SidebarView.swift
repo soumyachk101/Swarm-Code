@@ -558,6 +558,10 @@ private struct SidebarHelperRow: View {
                 model.selectedThreadID = thread.id
             } label: {
                 HStack(spacing: 6) {
+                    // A head keeps its glyph, so the team reads at a glance under its lead.
+                    if let head = thread.hydra {
+                        HydraGlyph(persona: head.persona, size: 12)
+                    }
                     Text(verbatim: thread.title)
                         .font(.system(size: 12, weight: isSelected || thread.hasUnread ? .medium : .regular))
                         .foregroundStyle(Chrome.primaryText.opacity(isSelected ? 0.96 : 0.8))
@@ -612,7 +616,10 @@ private struct HelperStubRow: View {
     @State private var isHovering = false
 
     var body: some View {
-        let working = model.helpers(of: parent.id).contains { model.existingRuntime(for: $0.id)?.isRunning == true }
+        let helpers = model.helpers(of: parent.id)
+        let working = helpers.contains { model.existingRuntime(for: $0.id)?.isRunning == true }
+        // A team of heads is called that; a mix, or merges alone, stays "helpers".
+        let noun = helpers.allSatisfy(\.isHydraHead) ? "head" : "helper"
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         Button(action: action) {
             HStack(spacing: 0) {
@@ -622,7 +629,7 @@ private struct HelperStubRow: View {
                 HStack(spacing: 5) {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 8, weight: .bold))
-                    Text(verbatim: count == 1 ? "1 helper" : "\(count) helpers")
+                    Text(verbatim: count == 1 ? "1 \(noun)" : "\(count) \(noun)s")
                         .font(.system(size: 11))
                     Spacer(minLength: 4)
                     if working {
@@ -645,8 +652,8 @@ private struct HelperStubRow: View {
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
-        .help(count == 1 ? "Show the helper" : "Show \(count) helpers")
-        .accessibilityLabel(Text(count == 1 ? "1 folded helper" : "\(count) folded helpers"))
+        .help(count == 1 ? "Show the \(noun)" : "Show \(count) \(noun)s")
+        .accessibilityLabel(Text(count == 1 ? "1 folded \(noun)" : "\(count) folded \(noun)s"))
     }
 }
 

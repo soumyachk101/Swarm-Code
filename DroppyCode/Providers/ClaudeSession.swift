@@ -1,6 +1,13 @@
 import Foundation
 
 /// Drives Claude Code in headless stream-json mode, routing permission prompts to the app.
+///
+/// With Hydra on, the session defines the heads as session agents (`--agents`), steers the
+/// lead towards them with an appended system prompt, and asks for the heads' own text and
+/// thinking (`--forward-subagent-text`). A head's messages carry the spawning tool call in
+/// `parent_tool_use_id`; each such stream keeps its own block bookkeeping, and its events go
+/// out wrapped in `agentEvent`. The `task_started`, `task_progress` and `task_notification`
+/// system messages bracket a head's life.
 @MainActor
 final class ClaudeSession: ProviderSession {
     var onEvent: ((ProviderEvent) -> Void)?
@@ -9,6 +16,14 @@ final class ClaudeSession: ProviderSession {
         var name: String
         var input: JSONValue
         var suggestions: JSONValue?
+    }
+
+    /// The open blocks of one streamed transcript: the lead's, or one head's.
+    private struct StreamState {
+        var currentMessageID: String?
+        var blockIDs: [Int: String] = [:]
+        var openText: [String: [String]] = [:]
+        var openThinking: [String: [String]] = [:]
     }
 
     private let configuration: SessionConfiguration
@@ -22,10 +37,12 @@ final class ClaudeSession: ProviderSession {
     private var pendingControl: [String: CheckedContinuation<JSONValue, Error>] = [:]
     private var pendingTools: [String: PendingTool] = [:]
     private var toolNames: [String: String] = [:]
-    private var openText: [String: [String]] = [:]
-    private var openThinking: [String: [String]] = [:]
-    private var blockIDs: [Int: String] = [:]
-    private var currentMessageID: String?
+    private var mainStream = StreamState()
+    /// Each head's stream, by the tool call that spawned it.
+    private var agentStreams: [String: StreamState] = [:]
+    /// Heads by their task id, for progress and completion, and their task ids by head, for stopping.
+    private var agentsByTask: [String: String] = [:]
+    private var tasksByAgent: [String: String] = [:]
     private var turnActive = false
     private var interruptRequested = false
     private var isStopping = false
@@ -55,6 +72,19 @@ final class ClaudeSession: ProviderSession {
         if let model = configuration.model, model != "default" { arguments += ["--model", model] }
         if let effort = configuration.effort, !effort.isEmpty { arguments += ["--effort", effort] }
         if configuration.fastMode { arguments += ["--settings", #"{"fastMode":true}"#] }
+        var environment = configuration.environment
+        if let hydra = configuration.hydra {
+            // The heads and the lead's brief. The system prompt is rendered fresh rather
+            // than replayed from the conversation's first request, so switching Hydra on
+            // for an existing chat reaches the model.
+            arguments += [
+                "--agents", HydraPrompts.claudeAgents(hydra).compactString,
+                "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads),
+                "--system-prompt-snapshot", "off",
+                "--forward-subagent-text",
+            ]
+            environment["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] = String(hydra.maxHeads)
+        }
         if let resumeID = configuration.resumeID {
             arguments += ["--resume", resumeID]
             if let anchor = configuration.resumeAt { arguments += ["--resume-session-at", anchor] }
@@ -66,7 +96,7 @@ final class ClaudeSession: ProviderSession {
             executable: executable,
             arguments: arguments,
             directory: configuration.workingDirectory,
-            environment: configuration.environment
+            environment: environment
         )
         self.process = process
         try process.start()
@@ -80,7 +110,13 @@ final class ClaudeSession: ProviderSession {
         }
 
         sessionID = id
-        let initialization = try await control(["subtype": "initialize", "hooks": .null])
+        var initialize: [String: JSONValue] = ["subtype": "initialize", "hooks": .null]
+        if configuration.hydra != nil {
+            // One-line progress notes for the heads, on task_progress.
+            initialize["agentProgressSummaries"] = true
+            initialize["forwardSubagentText"] = true
+        }
+        let initialization = try await control(.object(initialize))
         let models = (initialization["models"]?.array ?? []).compactMap { entry -> ModelOption? in
             guard let value = entry["value"]?.string else { return nil }
             return ModelOption(
@@ -182,6 +218,11 @@ final class ClaudeSession: ProviderSession {
         process?.terminate()
     }
 
+    func stopAgent(_ id: String) async -> Bool {
+        guard let taskID = tasksByAgent[id] else { return false }
+        return (try? await control(["subtype": "stop_task", "task_id": .string(taskID)])) != nil
+    }
+
     // MARK: - Wire
 
     private func control(_ request: JSONValue) async throws -> JSONValue {
@@ -214,7 +255,8 @@ final class ClaudeSession: ProviderSession {
     }
 
     private func handle(_ message: JSONValue) {
-        let isTopLevel = message["parent_tool_use_id"]?.isNull ?? true
+        // A head's message names the tool call that spawned it; the lead's carries null.
+        let parent = message["parent_tool_use_id"]?.string
         switch message["type"]?.string {
         case "control_response":
             let response = message["response"] ?? .null
@@ -234,11 +276,19 @@ final class ClaudeSession: ProviderSession {
         case "system":
             handleSystem(message)
         case "stream_event":
-            if isTopLevel { handleStreamEvent(message["event"] ?? .null) }
+            if let parent {
+                handleStreamEvent(message["event"] ?? .null, stream: &agentStreams[parent, default: StreamState()], sink: agentSink(parent))
+            } else {
+                handleStreamEvent(message["event"] ?? .null, stream: &mainStream, sink: leadSink)
+            }
         case "assistant":
-            if isTopLevel { handleAssistant(message) }
+            if let parent {
+                handleAssistant(message, stream: &agentStreams[parent, default: StreamState()], sink: agentSink(parent))
+            } else {
+                handleAssistant(message, stream: &mainStream, sink: leadSink)
+            }
         case "user":
-            if isTopLevel { handleToolResults(message) }
+            handleToolResults(message, sink: parent.map(agentSink) ?? leadSink)
         case "result":
             handleResult(message)
         case "rate_limit_event":
@@ -259,45 +309,95 @@ final class ClaudeSession: ProviderSession {
             }
         case "compact_boundary":
             onEvent?(.notice(Notice(level: .info, message: "Context compacted.")))
+        case "task_started":
+            handleTaskStarted(message)
+        case "task_progress":
+            guard let taskID = message["task_id"]?.string, let agentID = agentsByTask[taskID] else { return }
+            let usage = message["usage"]
+            onEvent?(.agentProgress(
+                agentID: agentID,
+                summary: message["summary"]?.string,
+                lastTool: message["last_tool_name"]?.string,
+                tokens: usage?["total_tokens"]?.int,
+                toolCalls: usage?["tool_uses"]?.int
+            ))
+        case "task_notification":
+            guard let taskID = message["task_id"]?.string, let agentID = agentsByTask[taskID] else { return }
+            let status: TurnStatus = switch message["status"]?.string {
+            case "failed": .failed
+            case "stopped": .interrupted
+            default: .completed
+            }
+            onEvent?(.agentFinished(agentID: agentID, status: status, summary: message["summary"]?.string))
         default:
             break
         }
     }
 
-    private func handleStreamEvent(_ event: JSONValue) {
+    /// A subagent task: the head it stands for is keyed by the spawning tool call, which
+    /// its transcript messages carry. Background shell commands are tasks too and pass.
+    private func handleTaskStarted(_ message: JSONValue) {
+        guard let taskID = message["task_id"]?.string, message["skip_transcript"]?.bool != true else { return }
+        let isAgent = message["subagent_type"]?.string != nil || message["task_type"]?.string == "local_agent"
+        guard isAgent else { return }
+        let toolUseID = message["tool_use_id"]?.string
+        let agentID = toolUseID ?? taskID
+        agentsByTask[taskID] = agentID
+        tasksByAgent[agentID] = taskID
+        onEvent?(.agentStarted(AgentSpawn(
+            id: agentID,
+            taskID: taskID,
+            toolUseID: toolUseID,
+            description: message["description"]?.string ?? "Subagent",
+            prompt: message["prompt"]?.string,
+            model: nil,
+            isBackground: message["is_backgrounded"]?.bool ?? false
+        )))
+    }
+
+    /// Where a stream's events go: straight out for the lead, wrapped for a head.
+    private var leadSink: (ProviderEvent) -> Void {
+        { [weak self] event in self?.onEvent?(event) }
+    }
+
+    private func agentSink(_ agentID: String) -> (ProviderEvent) -> Void {
+        { [weak self] event in self?.onEvent?(.agentEvent(agentID: agentID, event)) }
+    }
+
+    private func handleStreamEvent(_ event: JSONValue, stream: inout StreamState, sink: (ProviderEvent) -> Void) {
         switch event["type"]?.string {
         case "message_start":
-            currentMessageID = event["message"]?["id"]?.string ?? UUID().uuidString
-            blockIDs.removeAll()
+            stream.currentMessageID = event["message"]?["id"]?.string ?? UUID().uuidString
+            stream.blockIDs.removeAll()
         case "content_block_start":
             guard let index = event["index"]?.int, let block = event["content_block"] else { return }
-            let messageID = currentMessageID ?? "message"
+            let messageID = stream.currentMessageID ?? "message"
             let id = "\(messageID)-\(index)"
             switch block["type"]?.string {
             case "text":
-                blockIDs[index] = id
-                openText[messageID, default: []].append(id)
-                onEvent?(.messageDelta(id: id, text: block["text"]?.string ?? ""))
+                stream.blockIDs[index] = id
+                stream.openText[messageID, default: []].append(id)
+                sink(.messageDelta(id: id, text: block["text"]?.string ?? ""))
             case "thinking":
-                blockIDs[index] = id
-                openThinking[messageID, default: []].append(id)
-                onEvent?(.reasoningDelta(id: id, text: block["thinking"]?.string ?? ""))
+                stream.blockIDs[index] = id
+                stream.openThinking[messageID, default: []].append(id)
+                sink(.reasoningDelta(id: id, text: block["thinking"]?.string ?? ""))
             case "tool_use":
                 guard let toolID = block["id"]?.string, let name = block["name"]?.string else { return }
                 toolNames[toolID] = name
                 if let call = toolCall(name: name, input: [:]) {
-                    onEvent?(.toolStarted(id: toolID, call: call))
+                    sink(.toolStarted(id: toolID, call: call))
                 }
             default:
                 break
             }
         case "content_block_delta":
-            guard let index = event["index"]?.int, let id = blockIDs[index], let delta = event["delta"] else { return }
+            guard let index = event["index"]?.int, let id = stream.blockIDs[index], let delta = event["delta"] else { return }
             switch delta["type"]?.string {
             case "text_delta":
-                if let text = delta["text"]?.string { onEvent?(.messageDelta(id: id, text: text)) }
+                if let text = delta["text"]?.string { sink(.messageDelta(id: id, text: text)) }
             case "thinking_delta":
-                if let text = delta["thinking"]?.string { onEvent?(.reasoningDelta(id: id, text: text)) }
+                if let text = delta["thinking"]?.string { sink(.reasoningDelta(id: id, text: text)) }
             default:
                 break
             }
@@ -306,29 +406,29 @@ final class ClaudeSession: ProviderSession {
         }
     }
 
-    private func handleAssistant(_ message: JSONValue) {
+    private func handleAssistant(_ message: JSONValue, stream: inout StreamState, sink: (ProviderEvent) -> Void) {
         guard let body = message["message"], let content = body["content"]?.array else { return }
         let messageID = body["id"]?.string ?? UUID().uuidString
-        if let uuid = message["uuid"]?.string { onEvent?(.assistantMessageID(uuid)) }
+        if let uuid = message["uuid"]?.string { sink(.assistantMessageID(uuid)) }
         for block in content {
             switch block["type"]?.string {
             case "text":
                 let text = block["text"]?.string ?? ""
-                let id = openText[messageID]?.isEmpty == false ? openText[messageID]!.removeFirst() : "\(messageID)-text-\(UUID().uuidString)"
-                onEvent?(.messageCompleted(id: id, text: text))
+                let id = stream.openText[messageID]?.isEmpty == false ? stream.openText[messageID]!.removeFirst() : "\(messageID)-text-\(UUID().uuidString)"
+                sink(.messageCompleted(id: id, text: text))
             case "thinking":
                 let text = block["thinking"]?.string ?? ""
-                let id = openThinking[messageID]?.isEmpty == false ? openThinking[messageID]!.removeFirst() : "\(messageID)-thinking-\(UUID().uuidString)"
-                onEvent?(.reasoningCompleted(id: id, text: text))
+                let id = stream.openThinking[messageID]?.isEmpty == false ? stream.openThinking[messageID]!.removeFirst() : "\(messageID)-thinking-\(UUID().uuidString)"
+                sink(.reasoningCompleted(id: id, text: text))
             case "tool_use":
                 guard let toolID = block["id"]?.string, let name = block["name"]?.string else { continue }
                 let input = block["input"] ?? [:]
                 toolNames[toolID] = name
                 if name == "TodoWrite" {
-                    onEvent?(.todos(Self.todos(from: input)))
+                    sink(.todos(Self.todos(from: input)))
                 } else if let call = toolCall(name: name, input: input) {
-                    onEvent?(.toolStarted(id: toolID, call: call))
-                    onEvent?(.toolUpdated(id: toolID, update: ToolUpdate(title: call.title, detail: call.detail, edits: call.edits, kind: call.kind)))
+                    sink(.toolStarted(id: toolID, call: call))
+                    sink(.toolUpdated(id: toolID, update: ToolUpdate(title: call.title, detail: call.detail, edits: call.edits, kind: call.kind)))
                 }
             default:
                 break
@@ -336,7 +436,7 @@ final class ClaudeSession: ProviderSession {
         }
     }
 
-    private func handleToolResults(_ message: JSONValue) {
+    private func handleToolResults(_ message: JSONValue, sink: (ProviderEvent) -> Void) {
         for block in message["message"]?["content"]?.array ?? [] where block["type"]?.string == "tool_result" {
             guard let toolID = block["tool_use_id"]?.string else { continue }
             let name = toolNames[toolID] ?? ""
@@ -347,7 +447,7 @@ final class ClaudeSession: ProviderSession {
             if isError, output.localizedCaseInsensitiveContains("declined") || output.localizedCaseInsensitiveContains("doesn't want") {
                 status = .declined
             }
-            onEvent?(.toolUpdated(id: toolID, update: ToolUpdate(output: output, status: status)))
+            sink(.toolUpdated(id: toolID, update: ToolUpdate(output: output, status: status)))
         }
     }
 
@@ -362,8 +462,8 @@ final class ClaudeSession: ProviderSession {
         }
         for requestID in pendingTools.keys { onEvent?(.requestResolved(id: requestID)) }
         pendingTools.removeAll()
-        openText.removeAll()
-        openThinking.removeAll()
+        mainStream = StreamState()
+        agentStreams.removeAll()
         let isError = message["is_error"]?.bool ?? (message["subtype"]?.string != "success")
         if interruptRequested {
             onEvent?(.turnCompleted(status: .interrupted, error: nil))
