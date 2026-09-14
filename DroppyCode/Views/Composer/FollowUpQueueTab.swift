@@ -429,72 +429,78 @@ private struct FollowUpEditor: View {
             }
             .frame(minHeight: 110)
             .background(Chrome.overlay(0.05), in: .rect(cornerRadius: 12, style: .continuous))
-            ScrollView(.horizontal, showsIndicators: false) {
-                // The delete badge straddles the thumbnail's far top-right
-                // corner. The cell's own top/trailing padding reserves that
-                // overhang, so the badge sits inside its own cell — never in
-                // the gap where a later sibling could cover it.
-                HStack(spacing: 0) {
-                    ForEach(attachments) { attachment in
-                        AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
-                            .overlay(alignment: .topTrailing) {
-                                Button {
-                                    StripLog.log.notice("sheet X tap id=\(attachment.id) name=\(attachment.name, privacy: .public) countBefore=\(attachments.count)")
-                                    attachments.removeAll { $0.id == attachment.id }
-                                    StripLog.log.notice("sheet X removed countAfter=\(attachments.count)")
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .symbolRenderingMode(.palette)
-                                        .foregroundStyle(.white, .black.opacity(0.6))
-                                        .padding(4)
+            // The files and the buttons share one line, the buttons sitting on the
+            // files' bottom edge. Many files scroll sideways in their own strip; the
+            // buttons never move.
+            HStack(alignment: .bottom, spacing: 12) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    // The delete badge straddles the thumbnail's far top-right
+                    // corner. The cell's own top/trailing padding reserves that
+                    // overhang, so the badge sits inside its own cell — never in
+                    // the gap where a later sibling could cover it.
+                    HStack(spacing: 0) {
+                        ForEach(attachments) { attachment in
+                            AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
+                                .overlay(alignment: .topTrailing) {
+                                    Button {
+                                        StripLog.log.notice("sheet X tap id=\(attachment.id) name=\(attachment.name, privacy: .public) countBefore=\(attachments.count)")
+                                        attachments.removeAll { $0.id == attachment.id }
+                                        StripLog.log.notice("sheet X removed countAfter=\(attachments.count)")
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .symbolRenderingMode(.palette)
+                                            .foregroundStyle(.white, .black.opacity(0.6))
+                                            .padding(4)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .offset(x: 6, y: -6)
+                                    .accessibilityLabel(Text("Remove \(attachment.name)"))
                                 }
-                                .buttonStyle(.plain)
-                                .offset(x: 6, y: -6)
-                                .accessibilityLabel(Text("Remove \(attachment.name)"))
-                            }
-                            .padding(.top, 8)
-                            .padding(.trailing, 8)
+                                .padding(.top, 8)
+                                .padding(.trailing, 8)
+                        }
+                        // The add tile: a file chip with a plus that opens the same
+                        // recent-downloads popover as the composer's paperclip.
+                        Button {
+                            showingFiles.toggle()
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 16, weight: .medium))
+                                .foregroundStyle(Chrome.secondaryText)
+                                .frame(width: 48, height: 48)
+                                .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 12, style: .continuous))
+                                .contentShape(.rect(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Add files")
+                        .accessibilityLabel(Text("Add files"))
+                        .disabled(attachments.count >= 8)
+                        .opacity(attachments.count >= 8 ? 0.4 : 1)
+                        .padding(.top, 8)
+                        .padding(.trailing, 8)
+                        .popover(isPresented: $showingFiles, arrowEdge: .bottom) {
+                            DownloadsPopover(
+                                pick: { importURL($0) },
+                                chooseOther: { showingFiles = false; chooseFiles() }
+                            )
+                        }
                     }
-                    // The add tile: a file chip with a plus that opens the same
-                    // recent-downloads popover as the composer's paperclip.
-                    Button {
-                        showingFiles.toggle()
-                    } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 16, weight: .medium))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .frame(width: 48, height: 48)
-                            .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 12, style: .continuous))
-                            .contentShape(.rect(cornerRadius: 12, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Add files")
-                    .accessibilityLabel(Text("Add files"))
-                    .disabled(attachments.count >= 8)
-                    .opacity(attachments.count >= 8 ? 0.4 : 1)
-                    .padding(.top, 8)
-                    .padding(.trailing, 8)
-                    .popover(isPresented: $showingFiles, arrowEdge: .bottom) {
-                        DownloadsPopover(
-                            pick: { importURL($0) },
-                            chooseOther: { showingFiles = false; chooseFiles() }
-                        )
+                    .background {
+                        AttachmentAnchorCapture { preview.setAnchor($0) }
                     }
                 }
-                .background {
-                    AttachmentAnchorCapture { preview.setAnchor($0) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 8) {
+                    Button("Cancel", role: .cancel) { onDone() }
+                        .buttonStyle(.glass)
+                    Button("Save") {
+                        runtime.updateFollowUp(prompt.id, text: text, attachments: attachments)
+                        onDone()
+                    }
+                    .buttonStyle(.glassProminent)
+                    .disabled(isEmpty)
                 }
-            }
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { onDone() }
-                    .buttonStyle(.glass)
-                Button("Save") {
-                    runtime.updateFollowUp(prompt.id, text: text, attachments: attachments)
-                    onDone()
-                }
-                .buttonStyle(.glassProminent)
-                .disabled(isEmpty)
+                .fixedSize()
             }
         }
         .padding(20)
