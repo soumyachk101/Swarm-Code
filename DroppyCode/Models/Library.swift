@@ -74,6 +74,11 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     var providerSessionID: String?
     var isPinned: Bool
     var isArchived: Bool
+    /// Finished, as far as the sidebar is concerned: the thread sits at the bottom of its
+    /// list as a small grey row until it is reopened, by hand or by a new turn.
+    var isSettled = false
+    /// When it settled; the latest settled thread sits first among them.
+    var settledAt: Date?
     var hasUnread: Bool
     var hasCustomTitle: Bool
     /// The thread's place once its project has been reordered by dragging; nil keeps newest first.
@@ -144,6 +149,8 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         providerSessionID = container.value(.providerSessionID, default: nil)
         isPinned = container.value(.isPinned, default: false)
         isArchived = container.value(.isArchived, default: false)
+        isSettled = container.value(.isSettled, default: false)
+        settledAt = container.value(.settledAt, default: nil)
         hasUnread = container.value(.hasUnread, default: false)
         hasCustomTitle = container.value(.hasCustomTitle, default: false)
         sortOrder = container.value(.sortOrder, default: nil)

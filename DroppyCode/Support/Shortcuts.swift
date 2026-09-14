@@ -115,7 +115,9 @@ enum AppShortcut: String, CaseIterable, Identifiable {
     case togglePlanMode
     case previousThread
     case nextThread
-    case archiveThread
+    /// Settles or archives the selected thread, as Settings chose. Stored under its old
+    /// name, so a chord recorded for "Archive thread" still applies.
+    case finishThread = "archiveThread"
     case commandPalette
     case toggleSidebar
     case toggleTerminal
@@ -160,7 +162,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
 
     var section: Section {
         switch self {
-        case .newThread, .newWorktreeThread, .addProject, .stopTurn, .queueChat, .togglePlanMode, .previousThread, .nextThread, .archiveThread:
+        case .newThread, .newWorktreeThread, .addProject, .stopTurn, .queueChat, .togglePlanMode, .previousThread, .nextThread, .finishThread:
             .threads
         case .commandPalette, .toggleSidebar, .toggleTerminal, .toggleChanges, .toggleActivityView, .showMainWindow, .openSettings:
             .window
@@ -177,7 +179,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .togglePlanMode: "Plan mode"
         case .previousThread: "Previous thread"
         case .nextThread: "Next thread"
-        case .archiveThread: "Archive thread"
+        case .finishThread: "Finish thread"
         case .commandPalette: "Command palette"
         case .toggleSidebar: "Toggle sidebar"
         case .toggleTerminal: "Toggle terminal"
@@ -198,7 +200,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .togglePlanMode: "Plans before building."
         case .previousThread: "Selects the thread above in the sidebar."
         case .nextThread: "Selects the thread below in the sidebar."
-        case .archiveThread: "Moves the selected thread to the archive."
+        case .finishThread: "Settles the selected thread, or archives it, whichever General chose. Reopens a settled one."
         case .commandPalette: "Searches threads, projects and actions."
         case .toggleSidebar: "Shows or hides the sidebar."
         case .toggleTerminal: "Shows or hides the thread's terminal."
@@ -219,7 +221,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .togglePlanMode: KeyChord(keyCode: 35, modifiers: [.shift, .command])
         case .previousThread: KeyChord(keyCode: 126, modifiers: [.option, .command])
         case .nextThread: KeyChord(keyCode: 125, modifiers: [.option, .command])
-        case .archiveThread: KeyChord(keyCode: 51, modifiers: [.shift, .command])
+        case .finishThread: KeyChord(keyCode: 51, modifiers: [.shift, .command])
         case .commandPalette: KeyChord(keyCode: 40, modifiers: .command)
         case .toggleSidebar: KeyChord(keyCode: 1, modifiers: [.control, .command])
         case .toggleTerminal: KeyChord(keyCode: 38, modifiers: .command)

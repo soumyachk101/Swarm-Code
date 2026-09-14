@@ -451,6 +451,8 @@ final class ThreadRuntime {
             $0.updatedAt = .now
             $0.lastStatus = .running
         }
+        // A settled thread put back to work is open again.
+        app.reopenIfSettled(threadID)
         scheduleSave()
         let isFirstTurn = turns.count == 1
 
