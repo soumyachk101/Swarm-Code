@@ -388,7 +388,7 @@ struct ToolRow: View {
                 Button {
                     if opensDiff {
                         guard let view = popoverAnchor.value else { return }
-                        runtime.showDiff(on: view, edge: .minY, turn: entry.turnID, focusPaths: edits.map(\.path))
+                        runtime.showDiff(on: view, edge: .minY, turn: entry.turnID, focusEdits: edits)
                     } else if showsOutput {
                         withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
                     }

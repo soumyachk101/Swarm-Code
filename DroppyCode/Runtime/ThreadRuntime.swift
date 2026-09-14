@@ -93,29 +93,42 @@ final class ThreadRuntime {
     /// views, so `.minY` is below (a tool row, as its chevron promises) and `.maxY` is
     /// above (a Review button, at the foot of its turn).
     @ObservationIgnored var diffAnchorEdge: NSRectEdge = .maxY
-    /// Bumped by `showDiff(on:edge:turn:focusPaths:)`, so the popover moves to the new
+    /// Bumped by `showDiff(on:edge:turn:focusEdits:)`, so the popover moves to the new
     /// anchor even when it is already open somewhere else.
     private(set) var diffOpenRequest = 0
-    /// The files a tapped tool row asked to see. The popover leaves these cards
-    /// expanded and scrolls to the first of them; empty for the tab and the Review
-    /// button, which open the whole selection.
-    private(set) var diffFocusPaths: [String] = []
+    /// The edits a tapped tool row asked to see, patches included. The popover leaves
+    /// their cards expanded and scrolls to the first of them, and falls back to a patch
+    /// when the turn's diff has nothing for it; empty for the tab and the Review button,
+    /// which open the whole selection.
+    private(set) var diffFocusEdits: [FileEdit] = []
+    /// Bumped whenever `diffFocusEdits` changes, so the popover reloads its file list
+    /// even when a second row names the same file with a different patch.
+    private(set) var diffFocusRevision = 0
 
     /// Opens the changes popover on `anchor` (a tool row or a Review button), hanging
     /// from its `edge`, showing `turn`'s changes, or the whole thread's for nil.
-    func showDiff(on anchor: NSView, edge: NSRectEdge = .maxY, turn: UUID?, focusPaths: [String] = []) {
+    /// `focusEdits` are the tapped row's own edits, so the file it reports is what the
+    /// popover opens on even when the turn's diff cannot show it yet.
+    func showDiff(on anchor: NSView, edge: NSRectEdge = .maxY, turn: UUID?, focusEdits: [FileEdit] = []) {
         diffAnchor = WeakView(anchor)
         diffAnchorEdge = edge
         if diffSelection != turn { diffSelection = turn }
-        if diffFocusPaths != focusPaths { diffFocusPaths = focusPaths }
+        setDiffFocus(focusEdits)
         if !isDiffVisible { isDiffVisible = true }
         diffOpenRequest += 1
     }
 
-    /// Drops the file a tapped tool row focused, so the openers that show a whole
+    /// Drops the edits a tapped tool row focused, so the openers that show a whole
     /// selection (the changes tab, ⌘D) never open on some earlier row's file.
     func clearDiffFocus() {
-        if !diffFocusPaths.isEmpty { diffFocusPaths = [] }
+        setDiffFocus([])
+    }
+
+    private func setDiffFocus(_ edits: [FileEdit]) {
+        let focus = edits.filter { !$0.path.isEmpty }
+        guard focus != diffFocusEdits else { return }
+        diffFocusEdits = focus
+        diffFocusRevision += 1
     }
 
     /// The changes tab, the toolbar button, ⌘D and the palette: they show the whole

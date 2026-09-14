@@ -19,7 +19,7 @@ struct DiffInspector: View {
     }
 
     private var loadKey: String {
-        "\(runtime.diffRevision)-\(runtime.diffSelection?.uuidString ?? "all")-\(runtime.diffFocusPaths.joined(separator: "|"))"
+        "\(runtime.diffRevision)-\(runtime.diffSelection?.uuidString ?? "all")-\(runtime.diffFocusRevision)"
     }
 
     var body: some View {
@@ -35,10 +35,12 @@ struct DiffInspector: View {
                         help: "Choose which changes to show"
                     ) {
                         PopoverItem("All changes", isChecked: runtime.diffSelection == nil) {
+                            runtime.clearDiffFocus()
                             runtime.diffSelection = nil
                         }
                         ForEach(changedTurns) { turn in
                             PopoverItem("Turn \(turn.index + 1)", isChecked: runtime.diffSelection == turn.id) {
+                                runtime.clearDiffFocus()
                                 runtime.diffSelection = turn.id
                             }
                         }
@@ -148,11 +150,15 @@ struct DiffInspector: View {
         let parsed = await runtime.parsedDiff(selection: selection)
         guard !Task.isCancelled else { return }
         let filtered = filtersToThread ? parsed.filter { TouchedPaths.matches($0, touched: touched) } : parsed
-        files = Array(filtered.prefix(120))
+        // The tapped row's own patches carry any file the turn's diff cannot show:
+        // a running turn has no end checkpoint yet, and work that was reverted or
+        // moved into a worktree leaves its checkpoint diff empty.
+        let missing = focusedFiles(runtime.diffFocusEdits, missingFrom: filtered)
+        files = Array((missing + filtered).prefix(120))
         // The files a tapped tool row asked to see open on arrival, and the view
         // scrolls to the first of them. Everything else keeps the "first file open,
         // the rest collapsed" rule, so opening with a hundred files stays cheap.
-        let focus = Set(runtime.diffFocusPaths)
+        let focus = Set(runtime.diffFocusEdits.map(\.path))
         let focused = focus.isEmpty ? [] : files.filter { TouchedPaths.matches($0, touched: focus) }.map(\.id)
         if !focused.isEmpty {
             collapsed = Set(files.map(\.id)).subtracting(focused)
@@ -164,6 +170,22 @@ struct DiffInspector: View {
             collapsed = collapsed.intersection(files.map(\.id))
         }
     }
+}
+
+/// The patches of the edits a tapped tool row asked for, for every path the selection's
+/// diff does not already cover. The row's own patch is the only copy of the change while
+/// its turn runs, and it is what a turn's checkpoint diff no longer has when the agent
+/// reverted the work or moved it into a worktree, so tapping a row that reports an edit
+/// always opens that edit instead of "No changes yet".
+private func focusedFiles(_ edits: [FileEdit], missingFrom files: [DiffFile]) -> [DiffFile] {
+    var missing: [DiffFile] = []
+    for edit in edits {
+        guard !edit.path.isEmpty, let patch = edit.diff, !patch.isEmpty else { continue }
+        guard !(files + missing).contains(where: { TouchedPaths.matches($0, touched: [edit.path]) }) else { continue }
+        let file = DiffParser.parseHunks(patch, path: edit.path)
+        if !file.hunks.isEmpty { missing.append(file) }
+    }
+    return missing
 }
 
 private struct DiffFileCard: View {
