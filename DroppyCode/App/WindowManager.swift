@@ -26,7 +26,8 @@ final class WindowManager {
         present(window)
     }
 
-    func showSettings() {
+    func showSettings(page: SettingsPage? = nil) {
+        if let page { SettingsNavigation.shared.requestedPage = page }
         let window = settingsWindow ?? makeSettingsWindow()
         settingsWindow = window
         centerOverMainWindow(window)

@@ -61,6 +61,15 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     }
 }
 
+/// A page asked for from outside the window: the update notification and the relaunch after
+/// an install both open About. Read once by the view, then cleared.
+@MainActor
+@Observable
+final class SettingsNavigation {
+    static let shared = SettingsNavigation()
+    var requestedPage: SettingsPage?
+}
+
 struct SettingsView: View {
     @State private var page: SettingsPage = .general
     @State private var search = ""
@@ -89,6 +98,11 @@ struct SettingsView: View {
         .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
         .ignoresSafeArea()
         .frame(width: 780, height: 580)
+        .onChange(of: SettingsNavigation.shared.requestedPage, initial: true) { _, requested in
+            guard let requested else { return }
+            page = requested
+            SettingsNavigation.shared.requestedPage = nil
+        }
     }
 
     private var sidebar: some View {
@@ -107,6 +121,11 @@ struct SettingsView: View {
                         SidebarRow(title: item.title, isSelected: page == item, action: { page = item }) {
                             SidebarIconBadge {
                                 SidebarSymbol(item.symbol, scale: item == .general ? 1.15 : 1)
+                            }
+                            .overlay(alignment: .topTrailing) {
+                                if item == .about, UpdateChecker.shared.updateAvailable {
+                                    UpdateAvailableDot()
+                                }
                             }
                         }
                     }
@@ -163,6 +182,9 @@ struct SettingsView: View {
                 if page == .archive {
                     ArchiveDeleteAllButton()
                 }
+                if page == .about {
+                    AboutUpdateChromeAccessory()
+                }
             }
             .frame(minHeight: Chrome.capsuleHeight)
             .padding(.horizontal, Chrome.chromeHorizontalPadding)
@@ -177,7 +199,7 @@ struct SettingsView: View {
     }
 
     private var pageHasChromeControls: Bool {
-        page == .providers || page == .models || page == .archive
+        page == .providers || page == .models || page == .archive || page == .about
     }
 
     @ViewBuilder
@@ -618,6 +640,7 @@ private struct AboutSettingsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+            AboutSoftwareUpdateSection()
             appCard
             ChromeSection(title: "Credits") {
                 ChromeCard {
@@ -651,6 +674,8 @@ private struct AboutSettingsPage: View {
                 Spacer()
             }
             .padding(16)
+            ChromeRowDivider()
+            AboutUpdateCheckRow()
             ChromeRowDivider()
             Text("The coding app by Droppy: a native home for your coding agents, built in Swift with Liquid Glass.")
                 .font(.system(size: 13))
