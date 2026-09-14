@@ -38,9 +38,10 @@ struct PlanLimitsView: View {
     }
 }
 
-/// A pay-as-you-go balance: what is left of the credit the API key is billed against.
-/// The number sits large because it is the whole answer, with the top-up split and the
-/// dashboard's own top-up page under it. Shared by the usage popover and Settings, Providers.
+/// A pay-as-you-go balance: what is left of the credit the API key is billed against, as one
+/// settings row. The title and its note on the left, the amount and the dashboard's top-up
+/// page on the right; a balance that is gone reads in the danger colour and says so in the
+/// note. Shared by the usage popover and Settings, Providers.
 struct CreditsView: View {
     @Environment(AppModel.self) private var model
     let provider: ProviderKind
@@ -49,52 +50,50 @@ struct CreditsView: View {
         let registry = model.providers
         let credits = registry.credits[provider]
         let isLoading = registry.loadingCredits.contains(provider)
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
+        HStack(alignment: .center, spacing: 16) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: "Remaining credits")
                     .font(.system(size: 13))
-                    .foregroundStyle(Chrome.secondaryText)
-                Spacer(minLength: 8)
+                    .foregroundStyle(Chrome.primaryText)
+                if let note = note(for: credits, isLoading: isLoading) {
+                    Text(verbatim: note)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 12)
+            HStack(spacing: 10) {
                 if isLoading {
                     ProgressView().controlSize(.mini)
                 }
-            }
-            if let credits {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if let credits {
                     Text(verbatim: credits.amountText)
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(credits.isDepleted ? Chrome.danger : Chrome.primaryText)
+                        .font(.system(size: 13, weight: .semibold))
                         .monospacedDigit()
+                        .foregroundStyle(credits.isDepleted ? Chrome.danger : Chrome.primaryText)
                         .lineLimit(1)
-                    Spacer(minLength: 0)
-                    if let topUpURL = CreditsReader.topUpURL(provider) {
-                        Link(destination: topUpURL) {
-                            Text(verbatim: "Top up")
-                                .font(.system(size: 12))
-                        }
-                    }
                 }
-                .padding(.top, 6)
-                if let breakdown = credits.breakdownText {
-                    Text(verbatim: breakdown)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Chrome.secondaryText)
-                        .padding(.top, 5)
+                if let topUpURL = CreditsReader.topUpURL(provider) {
+                    Link("Top up", destination: topUpURL)
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
                 }
-                if credits.isDepleted {
-                    Text(verbatim: "\(provider.displayName) rejects turns until the balance is topped up.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Chrome.danger)
-                        .padding(.top, 6)
-                }
-            } else if !isLoading {
-                Text(verbatim: "\(provider.displayName) did not report a balance.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Chrome.secondaryText)
-                    .padding(.top, 8)
             }
         }
         .animation(.easeOut(duration: 0.15), value: credits)
+    }
+
+    /// The line under the title: the top-up and grant split while there is credit, the
+    /// consequence once there is none, and what happened when nothing came back.
+    private func note(for credits: ProviderCredits?, isLoading: Bool) -> String? {
+        guard let credits else {
+            return isLoading ? nil : "\(provider.displayName) did not report a balance."
+        }
+        if credits.isDepleted {
+            return "\(provider.displayName) declines turns until the balance is topped up."
+        }
+        return credits.breakdownText
     }
 }
 
