@@ -6,9 +6,11 @@ import Foundation
 // timelines fill from the session's events; Droppy-run heads have sessions of their own.
 
 extension AppModel {
-    /// Whether a chat leads a team right now: Hydra on for the app and for the chat.
+    /// Whether a chat leads a team right now: Hydra on for the app. A chat keeps no
+    /// switch of its own: with Hydra on in Settings it stays on in every chat until it
+    /// is switched off there.
     func hydraIsOn(_ thread: ChatThread) -> Bool {
-        settings.hydraEnabled && thread.hydraEnabled && !thread.isHelper
+        settings.hydraEnabled && !thread.isHelper
     }
 
     /// Whether the provider runs heads inside its own session, with the pair's model and

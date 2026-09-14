@@ -37,6 +37,9 @@ struct ModelEffortButton: View {
     @Environment(AppModel.self) private var model
     let thread: ChatThread
     let hasHistory: Bool
+    /// Floating panels are narrow: the chip collapses to the provider's icon so the
+    /// text field keeps its room. The full name stays in the tooltip and VoiceOver.
+    var compact: Bool = false
 
     @State private var isPresented = false
 
@@ -53,28 +56,31 @@ struct ModelEffortButton: View {
                         .font(Chrome.inlineIconFont)
                         .foregroundStyle(.yellow)
                 }
-                if isPresented {
-                    Text("Select effort")
-                        .lineLimit(1)
-                } else {
-                    Text(verbatim: current?.chipName ?? thread.model ?? thread.provider.displayName)
-                        .foregroundStyle(Chrome.primaryText)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if let current, !current.efforts.isEmpty {
-                        Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
-                            .foregroundStyle(Chrome.primaryText.opacity(0.72))
+                if !compact {
+                    if isPresented {
+                        Text("Select effort")
                             .lineLimit(1)
-                            .fixedSize()
+                    } else {
+                        Text(verbatim: current?.chipName ?? thread.model ?? thread.provider.displayName)
+                            .foregroundStyle(Chrome.primaryText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if let current, !current.efforts.isEmpty {
+                            Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
+                                .foregroundStyle(Chrome.primaryText.opacity(0.72))
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
                     }
+                    Image(systemName: "chevron.down")
+                        .font(Chrome.chevronFont)
+                        .foregroundStyle(Chrome.secondaryText)
                 }
-                Image(systemName: "chevron.down")
-                    .font(Chrome.chevronFont)
-                    .foregroundStyle(Chrome.secondaryText)
             }
         }
         .buttonStyle(.chip)
-        .help("Model and reasoning effort")
+        .help(helpText(current: current))
+        .accessibilityLabel(Text(helpText(current: current)))
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ModelEffortPanel(threadID: thread.id, hasHistory: hasHistory)
         }
@@ -85,6 +91,14 @@ struct ModelEffortButton: View {
             }
         }
         .task(id: thread.provider) { await registry.loadCatalog(thread.provider) }
+    }
+
+    /// The full model and effort, for the tooltip and VoiceOver when the chip shows only the icon.
+    private func helpText(current: ModelOption?) -> String {
+        let name = current?.shortName ?? thread.model ?? thread.provider.displayName
+        guard let current, !current.efforts.isEmpty else { return name }
+        let effort = ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? "")
+        return "\(name) · \(effort)"
     }
 }
 
