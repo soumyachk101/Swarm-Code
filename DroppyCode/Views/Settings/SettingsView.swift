@@ -255,7 +255,7 @@ private struct GeneralSettingsPage: View {
                     ThemePickerButton(selection: $settings.theme)
                 }
                 ChromeRowDivider()
-                ChromeRow(title: "Transparency", detail: "How much of what is behind the window shows through") {
+                ChromeRow(title: "Transparency", detail: "How much shows through the window") {
                     BackdropOpacitySlider(value: $settings.backdropOpacity)
                 }
             }
