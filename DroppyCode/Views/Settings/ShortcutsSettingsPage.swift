@@ -68,6 +68,7 @@ private struct FixedShortcutsCard: View {
     private let rows: [(title: String, detail: String, chord: String)] = [
         ("Send", "Sends the message in the composer.", "Return"),
         ("New line", "Adds a line without sending.", "⇧ Return"),
+        ("Steer a chat", "While a turn runs, stops it and sends right away.", "Return"),
         ("Recall an earlier prompt", "Works in an empty composer.", "↑"),
         ("Approve a request", "Allows what the agent asked for.", "⌘ Return"),
         ("Jump to a thread", "Selects one of the first nine threads.", "⌘ 1–9"),

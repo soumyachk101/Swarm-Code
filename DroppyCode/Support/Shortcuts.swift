@@ -111,6 +111,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
     case newWorktreeThread
     case addProject
     case stopTurn
+    case queueChat
     case togglePlanMode
     case previousThread
     case nextThread
@@ -159,7 +160,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
 
     var section: Section {
         switch self {
-        case .newThread, .newWorktreeThread, .addProject, .stopTurn, .togglePlanMode, .previousThread, .nextThread, .archiveThread:
+        case .newThread, .newWorktreeThread, .addProject, .stopTurn, .queueChat, .togglePlanMode, .previousThread, .nextThread, .archiveThread:
             .threads
         case .commandPalette, .toggleSidebar, .toggleTerminal, .toggleChanges, .toggleActivityView, .showMainWindow, .openSettings:
             .window
@@ -172,6 +173,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .newWorktreeThread: "New thread in worktree"
         case .addProject: "Add project"
         case .stopTurn: "Stop the running turn"
+        case .queueChat: "Queue a chat"
         case .togglePlanMode: "Plan mode"
         case .previousThread: "Previous thread"
         case .nextThread: "Next thread"
@@ -192,6 +194,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .newWorktreeThread: "Starts a thread in its own git worktree."
         case .addProject: "Opens a folder as a project."
         case .stopTurn: "Interrupts the agent while it works."
+        case .queueChat: "While a turn runs, lines the draft up behind it."
         case .togglePlanMode: "Plans before building."
         case .previousThread: "Selects the thread above in the sidebar."
         case .nextThread: "Selects the thread below in the sidebar."
@@ -212,6 +215,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .newWorktreeThread: KeyChord(keyCode: 45, modifiers: [.shift, .command])
         case .addProject: KeyChord(keyCode: 31, modifiers: .command)
         case .stopTurn: KeyChord(keyCode: 47, modifiers: .command)
+        case .queueChat: KeyChord(keyCode: 36, modifiers: .command)
         case .togglePlanMode: KeyChord(keyCode: 35, modifiers: [.shift, .command])
         case .previousThread: KeyChord(keyCode: 126, modifiers: [.option, .command])
         case .nextThread: KeyChord(keyCode: 125, modifiers: [.option, .command])
