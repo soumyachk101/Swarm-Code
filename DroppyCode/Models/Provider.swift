@@ -10,6 +10,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case meta
     case devin
     case antigravity
+    case copilot
 
     var id: String { rawValue }
 
@@ -24,6 +25,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .meta: "Meta"
         case .devin: "Devin"
         case .antigravity: "Antigravity"
+        case .copilot: "Copilot"
         }
     }
 
@@ -38,6 +40,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .meta: ""
         case .devin: "devin"
         case .antigravity: "agy"
+        case .copilot: "copilot"
         }
     }
 
@@ -54,6 +57,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .meta: "MODEL_API_KEY=..."
         case .devin: "devin auth login"
         case .antigravity: "agy"
+        case .copilot: "copilot login"
         }
     }
 
@@ -68,6 +72,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .meta: URL(string: "https://dev.meta.ai/")!
         case .devin: URL(string: "https://cli.devin.ai")!
         case .antigravity: URL(string: "https://antigravity.google/docs/cli/overview")!
+        case .copilot: URL(string: "https://github.com/github/copilot-cli")!
         }
     }
 
@@ -102,7 +107,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 
     /// Whether the provider can drop later turns from its own conversation.
-    var supportsRewind: Bool { self == .codex || self == .claude }
+    var supportsRewind: Bool { self == .codex || self == .claude || self == .copilot }
 
     /// Headless stream-json only carries text: the TUI pastes images, but a
     /// streaming session rejects non-text blocks, so image attachments stay off.

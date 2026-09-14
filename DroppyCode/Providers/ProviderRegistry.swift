@@ -71,6 +71,10 @@ final class ProviderRegistry {
         ModelOption(id: "gpt-oss-120b", name: "GPT-OSS 120B", efforts: ["medium"], defaultEffort: "medium"),
     ]
 
+    /// Copilot's own choice of model, which the CLI accepts as `auto`. The live catalog lists
+    /// the account's models behind it; a fresh install starts with just this row.
+    static let copilotAuto = ModelOption(id: "auto", name: "Auto", detail: "Copilot picks the model for each request", isDefault: true)
+
     /// Every provider tries its live catalog at most once per launch unless forced, success or not,
     /// so views that ask on appear never re-spawn a CLI or re-hit an API while scrolling.
     @ObservationIgnored private var attemptedCatalogs: Set<ProviderKind> = []
@@ -90,6 +94,7 @@ final class ProviderRegistry {
         if catalogs[.antigravity]?.isEmpty ?? true || catalogs[.antigravity]?.contains(where: { $0.id.hasSuffix("-high") || $0.id.hasSuffix("-medium") || $0.id.hasSuffix("-low") }) == true {
             catalogs[.antigravity] = Self.antigravitySeed
         }
+        if catalogs[.copilot]?.isEmpty ?? true { catalogs[.copilot] = [Self.copilotAuto] }
     }
 
     var availableProviders: [ProviderKind] {
@@ -104,7 +109,24 @@ final class ProviderRegistry {
         guard !provider.isAPIKeyBased else { return nil }
         let custom = settings.binaryPath(for: provider)
         guard !custom.isEmpty || !provider.executableName.isEmpty else { return nil }
-        return LoginEnvironment.which(custom.isEmpty ? provider.executableName : custom)
+        if let found = LoginEnvironment.which(custom.isEmpty ? provider.executableName : custom) { return found }
+        guard custom.isEmpty else { return nil }
+        return Self.fallbackExecutables(for: provider).first { FileManager.default.isExecutableFile(atPath: $0.path) }
+    }
+
+    /// Where a provider lands when its installer keeps it off the PATH: `gh copilot`
+    /// downloads the Copilot CLI into gh's data directory.
+    private static func fallbackExecutables(for provider: ProviderKind) -> [URL] {
+        switch provider {
+        case .copilot:
+            let environment = LoginEnvironment.current
+            let dataDirectory = environment["GH_DATA_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+                ?? environment["XDG_DATA_HOME"].flatMap { $0.isEmpty ? nil : ($0 as NSString).appendingPathComponent("gh") }
+                ?? (LoginEnvironment.homeDirectory as NSString).appendingPathComponent(".local/share/gh")
+            return [URL(fileURLWithPath: dataDirectory).appendingPathComponent("copilot/copilot")]
+        default:
+            return []
+        }
     }
 
     func environment(for provider: ProviderKind) -> [String: String] {
@@ -132,7 +154,7 @@ final class ProviderRegistry {
             refreshPlanLimits(provider, force: true)
         }
         await withTaskGroup(of: Void.self) { group in
-            for provider in [ProviderKind.codex, .antigravity, .deepseek, .meta] where status(provider).isInstalled {
+            for provider in [ProviderKind.codex, .antigravity, .copilot, .deepseek, .meta] where status(provider).isInstalled {
                 group.addTask { await self.loadCatalog(provider, force: true) }
             }
         }
@@ -224,7 +246,9 @@ final class ProviderRegistry {
             await loadAPICatalog(provider, force: force)
             return
         }
-        guard force || models(for: provider).isEmpty, let executable = executable(for: provider) else { return }
+        // Copilot's seed is only its Auto row, so the account's models are fetched on first use.
+        let seeded = provider == .copilot && models(for: provider) == [Self.copilotAuto]
+        guard force || seeded || models(for: provider).isEmpty, let executable = executable(for: provider) else { return }
         attemptedCatalogs.insert(provider)
         loadingCatalogs.insert(provider)
         defer { loadingCatalogs.remove(provider) }
@@ -232,6 +256,7 @@ final class ProviderRegistry {
         let list: [ModelOption]? = switch provider {
         case .codex: try? await CodexSession.listModels(executable: executable, environment: environment)
         case .antigravity: try? await AntigravitySession.listModels(executable: executable, environment: environment)
+        case .copilot: try? await CopilotSession.listModels(executable: executable, environment: environment)
         case .cursor, .opencode, .grok, .devin: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
         case .claude, .deepseek, .meta: nil
         }
@@ -360,6 +385,8 @@ final class ProviderRegistry {
             return .signedIn(Self.devinAccount(from: text))
         case .antigravity:
             return await AntigravitySession.authStatus(executable: executable, environment: environment)
+        case .copilot:
+            return await CopilotSession.authStatus(executable: executable, environment: environment)
         case .opencode, .grok, .deepseek, .meta:
             return .unknown
         }
