@@ -64,6 +64,7 @@ final class AppSettings {
         static let hydraEnabled = "hydraEnabled"
         static let hydraQueueHeads = "hydraQueueHeads"
         static let hydraIsolateHeads = "hydraIsolateHeads"
+        static let hydraAutoMerge = "hydraAutoMerge"
         static let hydraPairs = "hydraPairs"
     }
 
@@ -221,6 +222,12 @@ final class AppSettings {
         didSet { defaults.set(hydraIsolateHeads, forKey: Key.hydraIsolateHeads) }
     }
 
+    /// Once the lead has finished and every head is back, the team's work goes out as a
+    /// merge request and lands, and the checkout is brought up to date. Off unless asked.
+    var hydraAutoMerge: Bool {
+        didSet { defaults.set(hydraAutoMerge, forKey: Key.hydraAutoMerge) }
+    }
+
     /// The lead-and-heads pairings, in the order they were added.
     private(set) var hydraPairs: [HydraPair] {
         didSet { store(hydraPairs, forKey: Key.hydraPairs) }
@@ -263,6 +270,7 @@ final class AppSettings {
         hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
         hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
+        hydraAutoMerge = defaults.object(forKey: Key.hydraAutoMerge) as? Bool ?? false
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
     }
 

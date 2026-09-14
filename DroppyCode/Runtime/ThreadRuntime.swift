@@ -112,6 +112,11 @@ final class ThreadRuntime {
     @ObservationIgnored private var headBudget: Task<Void, Never>?
     @ObservationIgnored private var headBudgetSpent = false
     @ObservationIgnored private var headReportsNext = false
+    /// Heads that have reported for the user's current request, native or not: a job the
+    /// team took part in is one that lands by itself once done, when the setting says so.
+    @ObservationIgnored private var hydraReportsThisRequest = 0
+    /// The team's finished work is on its way to the remote (see `AppModel.autoMergeHydraWork`).
+    @ObservationIgnored var isHydraMerging = false
 
     private struct HydraBatch {
         var pending: Set<UUID>
@@ -461,7 +466,10 @@ final class ThreadRuntime {
             $0.updatedAt = .now
             $0.lastStatus = .running
         }
-        if hydraHeads == nil { hydraDelegationRounds = 0 }
+        if hydraHeads == nil {
+            hydraDelegationRounds = 0
+            hydraReportsThisRequest = 0
+        }
         // A finished head told more from the panel is at work again: its lead's team
         // counts it, and its next report goes out as a fresh one.
         if let info = initialThread.hydra, info.kind == .droppy, info.isFinished {
@@ -1131,6 +1139,14 @@ final class ThreadRuntime {
             }
         }
         app?.turnFinished(threadID, status: status, continues: continues)
+        // The team's job is done: the lead has answered, every head is back and nothing is
+        // waiting. With the setting on, the work goes out and lands by itself.
+        if !continues, status == .completed, hydraReportsThisRequest > 0,
+           hydraPendingReports.isEmpty, hydraBatches.isEmpty, hydraWaiting.isEmpty,
+           let app, let thread, app.hydraIsOn(thread), app.settings.hydraAutoMerge {
+            hydraReportsThisRequest = 0
+            Task { await app.autoMergeHydraWork(of: threadID) }
+        }
     }
 
     /// Sends the message captured by Return while a turn ran, once the stop
@@ -1221,6 +1237,7 @@ final class ThreadRuntime {
     /// sent it out completes if the provider left it running in the background.
     private func hydraAgentFinished(_ agentID: String, status: TurnStatus, summary: String?) {
         guard let app, let headID = hydraNativeHeads[agentID] else { return }
+        if app.thread(headID)?.hydra?.isFinished == false { hydraReportsThisRequest += 1 }
         app.finishHydraHead(headID, status: status, summary: summary)
         if let headRuntime = app.existingRuntime(for: headID), headRuntime.isRunning {
             headRuntime.rehearse(.turnCompleted(status: status, error: nil))
@@ -1322,6 +1339,7 @@ final class ThreadRuntime {
         hydraPendingReports.removeAll()
         let stillWorking = app.workingHydraHeadNames(of: threadID, excluding: Set(reports.map(\.headIndex)))
         let text = HydraPrompts.reportMessage(reports, stillWorking: stillWorking)
+        hydraReportsThisRequest += reports.count
         Task { await startTurn(text: text, attachments: [], hydraHeads: reports.map(\.headIndex)) }
         return true
     }
@@ -1373,6 +1391,14 @@ final class ThreadRuntime {
     }
 
     // MARK: - Timeline mutations
+
+    /// A note from Hydra in the timeline, with no turn behind it: what it merged, what it
+    /// could not. Its first line is its title.
+    func appendHydraNote(_ text: String) {
+        append(TimelineItem(turnID: nil, content: .user(UserMessage(text: text, hydraHeads: []))))
+        app?.updateThread(threadID) { $0.updatedAt = .now }
+        scheduleSave()
+    }
 
     private func append(_ item: TimelineItem) {
         for entry in entries.suffix(6) { endStreaming(entry) }

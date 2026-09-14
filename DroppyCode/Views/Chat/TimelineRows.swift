@@ -98,7 +98,10 @@ struct HydraReportRow: View {
         let personas = (message.hydraHeads ?? []).map(HydraRoster.persona(at:))
         let names = personas.map(\.name)
         let who = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
-        let title = personas.isEmpty ? "Hydra held back more heads" : "\(who) reported back"
+        // A note from Hydra itself says what it is on its first line; the rest folds under.
+        let parts = message.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
+        let title = personas.isEmpty ? String(parts.first ?? "Hydra") : "\(who) reported back"
+        let body = personas.isEmpty ? String(parts.count > 1 ? parts[1] : "").trimmingCharacters(in: .whitespacesAndNewlines) : message.text
         VStack(alignment: .trailing, spacing: 6) {
             Button {
                 withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
@@ -117,10 +120,12 @@ struct HydraReportRow: View {
                     Text(verbatim: title)
                         .font(.callout.weight(.medium))
                         .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    if !body.isEmpty {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                    }
                 }
                 .padding(.leading, 12)
                 .padding(.trailing, 14)
@@ -129,9 +134,10 @@ struct HydraReportRow: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .disabled(body.isEmpty)
             .help(isExpanded ? "Hide the message" : "Show the message")
-            if isExpanded {
-                MarkdownView(text: message.text)
+            if isExpanded, !body.isEmpty {
+                MarkdownView(text: body)
                     .padding(14)
                     .background(Chrome.overlay(0.05), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .transition(.softAppear)

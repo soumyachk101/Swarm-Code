@@ -671,7 +671,7 @@ final class AppModel {
         }
     }
 
-    private func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
+    func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
         guard !WebsiteCaptures.isEnabled else { return }
         requestNotificationPermission()
         let content = UNMutableNotificationContent()
@@ -683,7 +683,7 @@ final class AppModel {
         Task { try? await UNUserNotificationCenter.current().add(request) }
     }
 
-    private func updateDockBadge() {
+    func updateDockBadge() {
         let unread = threads.count { $0.hasUnread && !$0.isArchived && !$0.isInPanel }
         NSApp.dockTile.badgeLabel = unread > 0 ? String(unread) : nil
     }

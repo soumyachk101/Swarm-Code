@@ -38,6 +38,12 @@ struct HydraSettingsPage: View {
                 }
                 .disabled(!settings.hydraEnabled)
                 .opacity(settings.hydraEnabled ? 1 : 0.5)
+                ChromeRowDivider()
+                ChromeRow(title: "Merge when the team is done", detail: "Once the lead has finished and every head is back, the files the team changed go out as a merge request on a branch of their own, land through glab, gh or tea, and the checkout is brought up to date, all without the checkout ever changing branch. Off, the work stays in the checkout for you.") {
+                    SettingsSwitch(isOn: $settings.hydraAutoMerge)
+                }
+                .disabled(!settings.hydraEnabled)
+                .opacity(settings.hydraEnabled ? 1 : 0.5)
             }
         }
         ChromeSection(title: "Pairs") {

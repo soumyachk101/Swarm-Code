@@ -531,7 +531,10 @@ enum HydraPrompts {
     /// What the lead hears when its delegation block is refused: the request has had its
     /// rounds of heads, and the rest is the lead's own.
     static func heldBackMessage(count: Int) -> String {
-        "Hydra sent out none of the \(count == 1 ? "head" : "\(count) heads") you asked for: this request has had its \(maxDelegationRounds) rounds of heads already. Do the rest yourself now, without git status or git diff on the heads' work, and answer the user."
+        """
+        Hydra held back \(count == 1 ? "a head" : "\(count) heads").
+        None of the heads you asked for went out: this request has had its \(maxDelegationRounds) rounds of heads already. Do the rest yourself now, without git status or git diff on the heads' work, and answer the user.
+        """
     }
 
     /// The delegation block at the end of a reply, if the lead wrote one.
