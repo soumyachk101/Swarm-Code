@@ -504,13 +504,13 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
     /// The view the open popover is anchored to.
     private weak var shownOn: NSView?
 
-    /// A Review button asked for the popover: opens it there, moving it if it is
-    /// already open on another view.
+    /// A tool row or a Review button asked for the popover: opens it there, moving it
+    /// if it is already open on another view.
     func reopen(runtime: ThreadRuntime) {
         self.runtime = runtime
         desiredVisible = true
         if popover.isShown {
-            if shownOn === resolvedAnchor() { return }
+            if shownOn === resolvedAnchor()?.view { return }
             stopMonitors()
             session += 1
             pendingSession = session
@@ -519,21 +519,27 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
         show()
     }
 
-    /// A Review button opens the popover on itself; the tab and ⌘D open it on
-    /// the tab, or on the composer while the queue has the tab's slot.
-    private func resolvedAnchor() -> NSView? {
-        let candidates = [runtime?.diffAnchor?.value, anchor?.value, fallback?.value]
-        return candidates.compactMap { $0 }.first { $0.window != nil }
+    /// A tool row or a Review button opens the popover on itself, on the side it asked
+    /// for (below a row, above a button); the tab and ⌘D open it above the tab, or
+    /// above the composer while the queue has the tab's slot.
+    private func resolvedAnchor() -> (view: NSView, edge: NSRectEdge)? {
+        if let runtime, let view = runtime.diffAnchor?.value, view.window != nil {
+            return (view, runtime.diffAnchorEdge)
+        }
+        guard let view = [anchor?.value, fallback?.value].compactMap({ $0 }).first(where: { $0.window != nil }) else {
+            return nil
+        }
+        return (view, .maxY)
     }
 
     private func show() {
-        guard let runtime, let anchor = resolvedAnchor() else { return }
+        guard let runtime, let target = resolvedAnchor() else { return }
         session += 1
         guard !popover.isShown else { return }
         popover.setFixedContent(DiffInspector(runtime: runtime), size: NSSize(width: Self.width, height: Self.height))
         startMonitors()
-        shownOn = anchor
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+        shownOn = target.view
+        popover.show(relativeTo: target.view.bounds, of: target.view, preferredEdge: target.edge)
     }
 
     // MARK: - Dismissal
