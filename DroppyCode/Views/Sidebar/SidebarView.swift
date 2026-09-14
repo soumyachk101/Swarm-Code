@@ -19,6 +19,10 @@ struct SidebarView: View {
     /// Every row's height by its item id. A thread's slot is its own row plus the helper
     /// rows under it, so a dragged row crosses a neighbour with helpers in one go.
     @State private var rowHeights: [String: CGFloat] = [:]
+    /// The list's frame in the window, for a settling row's glide: it is clipped to the
+    /// list and heads for its edge when its new place is out of view. Kept out of
+    /// observation the way a row's frame is: resizing updates it, only a settle reads it.
+    @State private var listFrame = FrameHolder()
 
     private var query: String {
         search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -67,6 +71,7 @@ struct SidebarView: View {
                 .padding(.bottom, 8)
             }
             .scrollIndicators(.never)
+            .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { listFrame.frame = $0 }
 
             VStack(alignment: .leading, spacing: 1) {
                 SidebarRow(title: "Add project", action: { model.chooseProjectFolder() }) {
@@ -118,8 +123,8 @@ struct SidebarView: View {
     @ViewBuilder
     private func itemView(_ item: SidebarItem) -> some View {
         switch item.kind {
-        case .gap:
-            Color.clear.frame(height: Chrome.groupGap)
+        case .gap(let height):
+            Color.clear.frame(height: height)
         case .project(let project):
             ProjectRow(project: project)
         case .header(let title, let isFirst):
@@ -156,6 +161,8 @@ struct SidebarView: View {
     /// The helpers under a thread: one small row each, or a single line naming them while
     /// they are folded away.
     private func helperItems(under thread: ChatThread) -> [SidebarItem] {
+        // A settled thread is one small line; what it spawned comes back when it reopens.
+        guard !thread.isSettled else { return [] }
         let helpers = model.helpers(of: thread.id)
         guard !helpers.isEmpty else { return [] }
         if thread.foldsHelpers {
@@ -171,18 +178,33 @@ struct SidebarView: View {
         withAnimation(Chrome.panelSlide) { model.toggleHelpersFold(parentID) }
     }
 
+    private nonisolated static func windowFrame(_ proxy: GeometryProxy) -> CGRect {
+        proxy.frame(in: .named(GenieAnimator.coordinateSpace))
+    }
+
     // MARK: Project layout
 
     private var projectItems: [SidebarItem] {
         var items: [SidebarItem] = []
         for (index, project) in model.projects.enumerated() {
             if index > 0 {
-                items.append(SidebarItem(id: "gap-\(project.id)", kind: .gap))
+                items.append(SidebarItem(id: "gap-\(project.id)", kind: .gap(Chrome.groupGap)))
             }
             items.append(SidebarItem(id: "project-\(project.id)", kind: .project(project)))
             guard project.isExpanded else { continue }
+            // The settled threads close the project's list (see `threads(in:)`), a small
+            // step below the ones still open.
+            var hasOpen = false
+            var reachedSettled = false
             for thread in model.threads(in: project) {
-                items.append(SidebarItem(id: thread.id.uuidString, kind: .thread(thread, projectName: nil, peers: nil)))
+                if thread.isSettled, !reachedSettled {
+                    reachedSettled = true
+                    if hasOpen {
+                        items.append(SidebarItem(id: "settled-gap-\(project.id)", kind: .gap(ThreadRowMetrics.settledGap)))
+                    }
+                }
+                hasOpen = hasOpen || !thread.isSettled
+                items.append(SidebarItem(id: SidebarItem.id(for: thread), kind: .thread(thread, projectName: nil, peers: nil)))
                 items.append(contentsOf: helperItems(under: thread))
             }
         }
@@ -197,16 +219,30 @@ struct SidebarView: View {
         // gone or archived stands on its own.
         let shownIDs = Set(shown.map(\.id))
         let active = shown.filter { $0.parentThreadID.map { !shownIDs.contains($0) } ?? true }
-        let attention = Self.placed(active.filter(needsAttention))
+        // A settled thread stays among the settled whatever it is up to.
+        let attention = Self.placed(active.filter { needsAttention($0) && !$0.isSettled })
+        let rest = active.filter { !needsAttention($0) || $0.isSettled }
         var items: [SidebarItem] = []
         if !attention.isEmpty {
             items.append(SidebarItem(id: "attention", kind: .header("Needs attention", isFirst: true)))
             items.append(contentsOf: activityThreadItems(attention))
         }
-        for group in Self.activityGroups(active.filter { !needsAttention($0) }) {
+        for group in Self.activityGroups(rest.filter { !$0.isSettled }) {
             // Without an attention section the day header is the first row, so it takes the tighter top padding.
             items.append(SidebarItem(id: "day-\(group.title)", kind: .header(group.title, isFirst: items.isEmpty)))
             items.append(contentsOf: activityThreadItems(group.threads))
+        }
+        // The settled threads sit under everything, whatever day they were last active,
+        // latest settled first. They keep their place: no dragging among them.
+        let settled = rest.filter(\.isSettled).sorted(by: AppModel.settledFirst)
+        if !settled.isEmpty {
+            items.append(SidebarItem(id: "settled", kind: .header("Settled", isFirst: items.isEmpty)))
+            for thread in settled {
+                items.append(SidebarItem(
+                    id: SidebarItem.id(for: thread),
+                    kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: nil)
+                ))
+            }
         }
         return items
     }
@@ -300,7 +336,8 @@ struct SidebarView: View {
                     Color.clear.frame(height: Chrome.groupGap)
                 }
                 ProjectRow(project: result.project, togglesExpansion: false)
-                ForEach(result.threads) { thread in
+                // Keyed like the main list, so a thread settled from here changes rows too.
+                ForEach(result.threads, id: \.sidebarItemID) { thread in
                     threadRow(thread, projectName: nil)
                 }
             }
@@ -330,7 +367,9 @@ struct SidebarView: View {
             .highPriorityGesture(
                 DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { value in dragChanged(thread.id, translation: value.translation.height) }
-                    .onEnded { _ in dragEnded() }
+                    .onEnded { _ in dragEnded() },
+                // A settled row keeps its place among the settled; there is nothing to reorder.
+                isEnabled: !thread.isSettled
             )
     }
 
@@ -390,7 +429,7 @@ struct SidebarView: View {
             return ([], nil)
         }
         guard let thread = model.thread(id), let project = model.project(thread.projectID) else { return ([], nil) }
-        return (model.threads(in: project).map(\.id), nil)
+        return (model.threads(in: project).filter { !$0.isSettled }.map(\.id), nil)
     }
 
     /// Each peer's slot: its row, the helper rows or folded line under it, and the list's
@@ -419,6 +458,8 @@ struct SidebarView: View {
             thread: thread,
             projectName: projectName,
             isDragged: isDragged,
+            // The popover is another window: no glide can cross into the main one from it.
+            listFrame: inPopover ? nil : listFrame,
             onRename: {
                 renameText = thread.title
                 renaming = thread
@@ -434,10 +475,12 @@ struct SidebarView: View {
     }
 }
 
-/// One entry of the sidebar list. Thread entries use the thread's id in both layouts.
+/// One entry of the sidebar list. Thread entries use the thread's id in both layouts, and a
+/// settled thread's row is an entry of its own: the open row leaves and the settled one
+/// arrives, with a ghost gliding between them, instead of one row morphing on the spot.
 private struct SidebarItem: Identifiable {
     enum Kind {
-        case gap
+        case gap(CGFloat)
         case project(Project)
         case header(String, isFirst: Bool)
         /// A thread, with its project's name in the activity layout and the threads it can be reordered among.
@@ -450,6 +493,16 @@ private struct SidebarItem: Identifiable {
 
     let id: String
     let kind: Kind
+
+    static func id(for thread: ChatThread) -> String {
+        thread.sidebarItemID
+    }
+}
+
+private extension ChatThread {
+    var sidebarItemID: String {
+        isSettled ? "settled-\(id.uuidString)" : id.uuidString
+    }
 }
 
 private extension AnyTransition {
@@ -527,6 +580,15 @@ private enum ThreadRowMetrics {
     static let detailedHeight: CGFloat = 48
     /// A helper's row under its parent: one small line, in either layout.
     static let helperHeight: CGFloat = 24
+    /// A settled thread's row: one small grey line, in either layout.
+    static let settledHeight: CGFloat = 24
+    /// The step between a project's last open thread and its settled ones.
+    static let settledGap: CGFloat = 4
+    /// Where the check sits: at the front of a settled row, and beside the ellipsis at the
+    /// trailing end of an open one. The settled title starts past the check.
+    static let settledCheckInset: CGFloat = 6
+    static let openCheckInset: CGFloat = 26
+    static let settledTitleInset: CGFloat = 22
     /// The connector's column: the dotted line runs down it, under the parent's badge.
     static let connectorWidth: CGFloat = 28
     static let connectorLineX: CGFloat = 18
@@ -717,6 +779,8 @@ private struct HelperConnectorShape: Shape {
 /// A thread in either sidebar layout. In the project layout it is one line with the thread's badge; in
 /// the activity layout the project it belongs to shows underneath. It is the same row in both, so
 /// switching layouts animates its height and contents rather than swapping one row for another.
+/// Settled, it is one small grey line with a green check at the front in either layout: a row of its
+/// own that the open row's ghost glides down to (see RowGlideAnimator).
 private struct SidebarThreadRow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -725,75 +789,75 @@ private struct SidebarThreadRow: View {
     let projectName: String?
     /// Lifted and following the pointer in a reorder.
     var isDragged = false
+    /// The list's frame in the window, for the glide; nil where no glide can show.
+    var listFrame: FrameHolder?
     let onRename: () -> Void
     let onDelete: () -> Void
 
     @State private var isHovering = false
     @State private var isMenuPresented = false
+    /// The check was just clicked: it pops green for a beat before the row takes off.
+    @State private var isSettling = false
     @State private var windowFrame = FrameHolder()
 
     var body: some View {
         let isSelected = model.selectedThreadID == thread.id
-        let isDetailed = projectName != nil
+        let isSettled = thread.isSettled
+        let isDetailed = projectName != nil && !isSettled
         let showsActions = (isHovering || isMenuPresented) && !isDragged
+        let settles = model.settings.threadFinishAction == .settle
+        // The check shows at the trailing end while the thread is open (beside the ellipsis,
+        // on hover) and sits at the front once it has settled.
+        let showsCheck = isSettled || (settles && (showsActions || isSettling))
+        // While the row's ghost is in the air the row itself stays out of sight, and shows
+        // again just as the ghost lands on it.
+        let isHidden = RowGlideAnimator.shared.isHiding(thread.id)
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         Button {
             model.selectedThreadID = thread.id
         } label: {
-            HStack(spacing: 8) {
-                if !isDetailed {
-                    ThreadBadge(thread: thread)
-                        .frame(width: Chrome.iconSize)
-                        .transition(.opacity)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(verbatim: thread.title)
-                        .font(.system(size: 13, weight: isSelected || thread.hasUnread ? .medium : .regular))
-                        .foregroundStyle(Chrome.primaryText.opacity(isSelected ? 1 : 0.92))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if let projectName {
-                        HStack(spacing: 4) {
-                            Image(systemName: thread.worktreePath == nil ? "folder" : "arrow.triangle.branch")
-                                .font(.system(size: 10))
-                            Text(verbatim: projectName)
-                                .font(.system(size: 12))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(Chrome.secondaryText)
-                        .transition(.opacity)
-                    }
-                }
-                Spacer(minLength: 4)
+            ThreadRowFace(
+                thread: thread,
+                projectName: projectName,
+                isSelected: isSelected,
+                trailingClearance: Self.trailingClearance(isSettled: isSettled, isDetailed: isDetailed, showsActions: showsActions || isSettling)
+            ) {
+                ThreadBadge(thread: thread)
             }
-            .padding(.leading, Chrome.rowHorizontalPadding)
-            .padding(.trailing, Chrome.rowHorizontalPadding + (isDetailed && !showsActions ? 18 : 52))
-            .padding(.vertical, isDetailed ? ThreadRowMetrics.detailedVerticalPadding : 0)
-            .frame(minHeight: Chrome.rowHeight)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background {
                 // Only the fill animates with selection; the row's place is never animated from here.
                 shape
-                    .fill(isSelected ? Chrome.overlay(0.12) : (isHovering ? Chrome.overlay(0.06) : Color.clear))
+                    .fill(Chrome.overlay(Self.fill(isSelected: isSelected, isHovering: isHovering)))
                     .animation(Chrome.hover, value: isSelected)
             }
             .contentShape(shape)
         }
         .buttonStyle(.plain)
+        .overlay(alignment: isSettled ? .leading : .trailing) {
+            if showsCheck {
+                SettleCheck(isSettled: isSettled, isPopping: isSettling) {
+                    if isSettled { reopen() } else { settle() }
+                }
+                .padding(.leading, isSettled ? ThreadRowMetrics.settledCheckInset : 0)
+                .padding(.trailing, isSettled ? 0 : ThreadRowMetrics.openCheckInset)
+            }
+        }
         .overlay(alignment: .trailing) {
             Group {
                 if showsActions {
                     HStack(spacing: 0) {
-                        Button {
-                            archiveWithGenie()
-                        } label: {
-                            RowAccessoryIcon("archivebox")
+                        if !settles, !isSettled {
+                            Button {
+                                archiveWithGenie()
+                            } label: {
+                                RowAccessoryIcon("archivebox")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Archive thread")
                         }
-                        .buttonStyle(.plain)
-                        .help("Archive thread")
                         RowActionsButton(actions: makeActions(), isPresented: $isMenuPresented)
                     }
-                } else if isDetailed {
+                } else if isDetailed || isSettled {
                     ActivityStatus(thread: thread)
                 } else {
                     Text(verbatim: RelativeTime.short(thread.updatedAt))
@@ -809,7 +873,13 @@ private struct SidebarThreadRow: View {
             // The pointer resting on a row usually means a click is coming: decode its history now.
             if hovering { model.warmDocuments([thread.id]) }
         }
-        .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame.frame = $0 }
+        .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { frame in
+            windowFrame.frame = frame
+            // A row that has just arrived where a ghost of it is headed tells the ghost where to land.
+            RowGlideAnimator.shared.land(threadID: thread.id, at: frame)
+        }
+        .opacity(isHidden ? 0 : 1)
+        .animation(.easeOut(duration: 0.12), value: isHidden)
         // Lifted: a touch larger with a shadow, over an opaque fill so the rows sliding
         // underneath never show through. The queue's rows lift the same way.
         .background {
@@ -822,80 +892,241 @@ private struct SidebarThreadRow: View {
         .scaleEffect(isDragged ? 1.02 : 1)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isDragged)
         .contextMenu { RowActionMenuButtons(actions: makeActions()) }
+        // A settle or reopen asked for from the menu, the shortcut or the palette lands here,
+        // so it looks the same as a click on the check.
+        .onChange(of: model.finishRequest) { _, request in
+            guard let request, request.threadID == thread.id, request.reopens == isSettled else { return }
+            model.finishRequest = nil
+            if request.reopens { reopen() } else { settle() }
+        }
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+        .accessibilityValue(Text(isSettled ? "Settled" : ""))
+    }
+
+    private static func fill(isSelected: Bool, isHovering: Bool) -> Double {
+        if isSelected { return 0.12 }
+        return isHovering ? 0.06 : 0
+    }
+
+    /// The room the title leaves for what sits at the row's trailing end: the check and the
+    /// ellipsis on hover, the status or the time otherwise.
+    private static func trailingClearance(isSettled: Bool, isDetailed: Bool, showsActions: Bool) -> CGFloat {
+        if showsActions { return isSettled ? 30 : 52 }
+        return isDetailed || isSettled ? 18 : 52
     }
 
     /// Built when the ellipsis shows or the context menu opens, never on a plain render.
     private func makeActions() -> [RowAction] {
-        ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
+        ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete, onSettle: settle, onReopen: reopen)
     }
 
     private nonisolated static func windowFrame(_ proxy: GeometryProxy) -> CGRect {
         proxy.frame(in: .named(GenieAnimator.coordinateSpace))
     }
 
-    private func archiveWithGenie() {
-        let title = thread.title
-        let projectName = projectName
-        let provider = thread.provider
-        let symbol = thread.worktreePath == nil ? "folder" : "arrow.triangle.branch"
+    // MARK: Settling
+
+    /// The check pops green and the note sounds on the click; the row takes off a beat
+    /// later, so the pop lands before the flight starts.
+    private func settle() {
+        guard !isSettling, !thread.isSettled else { return }
+        if model.settings.settleSound { SettleChime.play() }
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.45)) { isSettling = true }
+        Task {
+            try? await Task.sleep(for: .milliseconds(260))
+            glide(.settle)
+            model.settleAnimated(thread.id, sounds: false)
+        }
+    }
+
+    private func reopen() {
+        guard thread.isSettled else { return }
+        glide(.reopen)
+        model.reopenAnimated(thread.id)
+    }
+
+    /// Sends the row's ghost on its way: from this row's frame, looking like this row, to
+    /// where the thread's other row will be (or the list's edge, when that is out of view),
+    /// looking like that one. Launched just before the thread changes, so the new row can
+    /// report its frame to the ghost as it arrives.
+    private func glide(_ direction: RowGlideAnimator.Glide.Direction) {
+        guard let listFrame else { return }
+        let from = windowFrame.frame
+        let bounds = listFrame.frame
         let isSelected = model.selectedThreadID == thread.id
-        let isDetailed = projectName != nil
-        let isPinned = thread.isPinned
-        let hasUnread = thread.hasUnread
-        let runtime = model.existingRuntime(for: thread.id)
-        let needsInput = !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true)
-        let isRunning = runtime?.isRunning == true
-        let weight: Font.Weight = isSelected || hasUnread ? .medium : .regular
+        let settled = direction == .settle
+        // The thread as its other row will show it: the settled one keeps its place at the
+        // bottom unpinned and read; the reopened one is open again.
+        var arriving = thread
+        arriving.isSettled = settled
+        if settled {
+            arriving.isPinned = false
+            arriving.hasUnread = false
+        }
+        let arrivalHeight = settled ? ThreadRowMetrics.settledHeight : (projectName != nil ? ThreadRowMetrics.detailedHeight : Chrome.rowHeight)
+        let fallback = CGRect(
+            x: from.minX,
+            y: settled ? bounds.maxY : bounds.minY - arrivalHeight,
+            width: from.width,
+            height: arrivalHeight
+        )
+        let animator = RowGlideAnimator.shared
+        let badge = ThreadGhostBadge(thread: thread, runtime: model.existingRuntime(for: thread.id))
+        // The faces leave the same room at the trailing end as the rows they stand in for: the
+        // departing row is hovered, with its buttons out; the arriving one shows its status.
+        let departureClearance = Self.trailingClearance(isSettled: thread.isSettled, isDetailed: projectName != nil, showsActions: true)
+        let arrivalClearance = Self.trailingClearance(isSettled: settled, isDetailed: !settled && projectName != nil, showsActions: false)
+        guard let departure = animator.render(
+            ThreadRowFace(thread: thread, projectName: projectName, isSelected: isSelected, trailingClearance: departureClearance) { badge },
+            size: from.size, colorScheme: colorScheme
+        ), let arrival = animator.render(
+            ThreadRowFace(thread: arriving, projectName: projectName, isSelected: isSelected, trailingClearance: arrivalClearance) { badge },
+            size: CGSize(width: from.width, height: arrivalHeight), colorScheme: colorScheme
+        ) else { return }
+        animator.launch(
+            threadID: thread.id,
+            direction: direction,
+            from: from,
+            fallback: fallback,
+            bounds: bounds,
+            departure: departure,
+            arrival: arrival,
+            departureFill: Self.fill(isSelected: isSelected, isHovering: isHovering),
+            arrivalFill: Self.fill(isSelected: isSelected, isHovering: false)
+        )
+    }
+
+    // MARK: Archiving
+
+    private func archiveWithGenie() {
+        let isSelected = model.selectedThreadID == thread.id
         // The ghost mirrors the row's label — same text, badge, padding and
         // translucent fill — so the row hands over to it without a visible change.
-        let fill = isSelected ? Chrome.overlay(0.12) : Chrome.overlay(0.06)
+        let fill = Chrome.overlay(isSelected ? 0.12 : 0.06)
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
+        let badge = ThreadGhostBadge(thread: thread, runtime: model.existingRuntime(for: thread.id))
         GenieAnimator.shared.launch(frame: windowFrame.frame, colorScheme: colorScheme) {
-            HStack(spacing: 8) {
-                if !isDetailed {
-                    SidebarIconBadge {
-                        if needsInput {
-                            SidebarSymbol("hand.raised.fill")
-                                .foregroundStyle(Chrome.orange)
-                        } else if isRunning {
-                            // The ghost is an image: the spinner's layers cannot be captured, its shapes can.
-                            MiniSpinner(cellSize: 2.4, isStill: true)
-                        } else if isPinned {
-                            SidebarSymbol("pin.fill", scale: 0.9)
-                        } else {
-                            ProviderIcon(provider: provider, size: 14)
-                        }
-                    }
-                    .frame(width: Chrome.iconSize)
-                }
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(verbatim: title)
-                        .font(.system(size: 13, weight: weight))
-                        .foregroundStyle(Chrome.primaryText.opacity(isSelected ? 1 : 0.92))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    if let projectName {
-                        HStack(spacing: 4) {
-                            Image(systemName: symbol)
-                                .font(.system(size: 10))
-                            Text(verbatim: projectName)
-                                .font(.system(size: 12))
-                                .lineLimit(1)
-                        }
-                        .foregroundStyle(Chrome.secondaryText)
-                    }
-                }
-                Spacer(minLength: 4)
-            }
-            .padding(.leading, Chrome.rowHorizontalPadding)
-            .padding(.trailing, Chrome.rowHorizontalPadding + 52)
-            .padding(.vertical, isDetailed ? ThreadRowMetrics.detailedVerticalPadding : 0)
-            .frame(minHeight: Chrome.rowHeight)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background { shape.fill(fill) }
+            ThreadRowFace(thread: thread, projectName: projectName, isSelected: isSelected, trailingClearance: 52) { badge }
+                .background { shape.fill(fill) }
         }
         withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
+    }
+}
+
+/// What a thread row shows: the badge, title and project line while the thread is open, one
+/// small grey title with room for the check once it has settled. The live row and its ghosts
+/// draw the same face, so a ghost takes over from the row without a visible change.
+private struct ThreadRowFace<Badge: View>: View {
+    let thread: ChatThread
+    /// The project under the title in the activity layout; nil in the project layout.
+    let projectName: String?
+    let isSelected: Bool
+    /// The room left at the trailing end for the row's status, time or buttons.
+    let trailingClearance: CGFloat
+    /// The badge at the front of an open row in the project layout.
+    @ViewBuilder let badge: Badge
+
+    var body: some View {
+        let isSettled = thread.isSettled
+        let isDetailed = projectName != nil && !isSettled
+        HStack(spacing: 8) {
+            if !isDetailed, !isSettled {
+                badge
+                    .frame(width: Chrome.iconSize)
+                    .transition(.opacity)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verbatim: thread.title)
+                    .font(.system(size: isSettled ? 12 : 13, weight: !isSettled && (isSelected || thread.hasUnread) ? .medium : .regular))
+                    .foregroundStyle(Chrome.primaryText.opacity(Self.titleOpacity(isSettled: isSettled, isSelected: isSelected)))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let projectName, !isSettled {
+                    HStack(spacing: 4) {
+                        Image(systemName: thread.worktreePath == nil ? "folder" : "arrow.triangle.branch")
+                            .font(.system(size: 10))
+                        Text(verbatim: projectName)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(Chrome.secondaryText)
+                    .transition(.opacity)
+                }
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(.leading, Chrome.rowHorizontalPadding + (isSettled ? ThreadRowMetrics.settledTitleInset : 0))
+        .padding(.trailing, Chrome.rowHorizontalPadding + trailingClearance)
+        .padding(.vertical, isDetailed ? ThreadRowMetrics.detailedVerticalPadding : 0)
+        .frame(minHeight: isSettled ? ThreadRowMetrics.settledHeight : Chrome.rowHeight)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// A settled title is grey; selected, it comes up a little so the selection reads.
+    private static func titleOpacity(isSettled: Bool, isSelected: Bool) -> Double {
+        if isSettled { return isSelected ? 0.75 : 0.55 }
+        return isSelected ? 1 : 0.92
+    }
+}
+
+/// The badge as a ghost carries it: the same marks as ThreadBadge, from a snapshot of the
+/// runtime, with the spinner held still because a ghost is an image and cannot animate.
+private struct ThreadGhostBadge: View {
+    let thread: ChatThread
+    let needsInput: Bool
+    let isRunning: Bool
+
+    init(thread: ChatThread, runtime: ThreadRuntime?) {
+        self.thread = thread
+        needsInput = !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true)
+        isRunning = runtime?.isRunning == true
+    }
+
+    var body: some View {
+        SidebarIconBadge {
+            if needsInput {
+                SidebarSymbol("hand.raised.fill")
+                    .foregroundStyle(Chrome.orange)
+            } else if isRunning {
+                MiniSpinner(cellSize: 2.4, isStill: true)
+            } else if thread.isPinned {
+                SidebarSymbol("pin.fill", scale: 0.9)
+            } else {
+                ProviderIcon(provider: thread.provider, size: 14)
+            }
+        }
+    }
+}
+
+/// The check on a thread row. Open, it shows on hover at the trailing end and settles the
+/// thread; settled, it is the green mark at the front of the row, and clicking it reopens
+/// the thread. Hovering a settled one outlines it, the way a box about to be unticked would.
+private struct SettleCheck: View {
+    let isSettled: Bool
+    /// Just clicked: filled green and popped, while the thread is about to settle.
+    let isPopping: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        let isDone = isSettled || isPopping
+        let filled = isPopping || (isSettled && !isHovering)
+        Button(action: action) {
+            Image(systemName: filled ? "checkmark.circle.fill" : "checkmark.circle")
+                .font(Chrome.inlineIconFont)
+                .foregroundStyle(isDone || isHovering ? Chrome.success.opacity(isSettled && !isHovering ? 0.8 : 1) : Chrome.secondaryText)
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 20, height: 20)
+                .contentShape(.rect)
+                .scaleEffect(isPopping ? 1.35 : 1)
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .help(isSettled ? "Reopen thread" : "Settle thread")
+        .accessibilityLabel(Text(isSettled ? "Reopen thread" : "Settle thread"))
     }
 }
 
@@ -933,10 +1164,18 @@ private struct ThreadBadge: View {
 /// What a thread row offers from its ellipsis popover and its context menu, in both sidebar layouts.
 @MainActor
 private enum ThreadActions {
-    static func make(model: AppModel, thread: ChatThread, onRename: @escaping () -> Void, onDelete: @escaping () -> Void) -> [RowAction] {
+    static func make(
+        model: AppModel,
+        thread: ChatThread,
+        onRename: @escaping () -> Void,
+        onDelete: @escaping () -> Void,
+        onSettle: (() -> Void)? = nil,
+        onReopen: (() -> Void)? = nil
+    ) -> [RowAction] {
         var items = [RowAction(title: "Rename", symbol: "pencil") { onRename() }]
-        // A helper keeps its place under its parent; pinning would pull it out of it.
-        if !thread.isHelper {
+        // A helper keeps its place under its parent, and a settled thread its place at the
+        // bottom; pinning would pull either out of it.
+        if !thread.isHelper, !thread.isSettled {
             items.append(RowAction(title: thread.isPinned ? "Unpin" : "Pin", symbol: thread.isPinned ? "pin.slash" : "pin") {
                 withAnimation(Chrome.panelSlide) {
                     model.updateThread(thread.id) { $0.isPinned.toggle() }
@@ -946,9 +1185,31 @@ private enum ThreadActions {
         if let path = thread.worktreePath {
             items.append(RowAction(title: "Reveal worktree in Finder", symbol: "folder") { Workspace.revealInFinder(path) })
         }
-        items.append(RowAction(title: "Archive", symbol: "archivebox", startsGroup: true) {
+        // A helper has no place of its own to settle into: it only archives, with its parent
+        // or on its own. A thread offers both, the one Settings chose first.
+        let settleFirst = !thread.isHelper && model.settings.threadFinishAction == .settle
+        let archive = RowAction(title: "Archive", symbol: "archivebox", startsGroup: !settleFirst) {
             withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
-        })
+        }
+        if thread.isHelper {
+            items.append(archive)
+        } else {
+            let settle = RowAction(
+                title: thread.isSettled ? "Reopen" : "Settle",
+                symbol: thread.isSettled ? "arrow.uturn.backward" : "checkmark.circle",
+                startsGroup: settleFirst
+            ) {
+                // The row's own handlers fly the ghost; without them the thread just moves.
+                if thread.isSettled {
+                    if let onReopen { onReopen() } else { model.reopenAnimated(thread.id) }
+                } else if let onSettle {
+                    onSettle()
+                } else {
+                    model.settleAnimated(thread.id)
+                }
+            }
+            items += settleFirst ? [settle, archive] : [archive, settle]
+        }
         items.append(RowAction(title: "Delete…", symbol: "trash", isDestructive: true) { onDelete() })
         return items
     }

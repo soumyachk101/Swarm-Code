@@ -45,6 +45,7 @@ struct RootView: View {
         .ignoresSafeArea()
         .coordinateSpace(.named(GenieAnimator.coordinateSpace))
         .overlay { GenieLayer() }
+        .overlay { RowGlideLayer() }
         .overlay {
             if model.isCommandPalettePresented {
                 CommandPalette()

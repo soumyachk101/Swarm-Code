@@ -20,7 +20,7 @@ It drives the coding agents you already have installed and signed in, on your ow
 
 ## What it does
 
-- Projects and threads in a glass sidebar with search, pinning, archiving and drag to resize.
+- Projects and threads in a glass sidebar with search, pinning, settling (or archiving), and drag to resize. A settled thread drops to the bottom, small and grey, until you reopen it.
 - Streaming conversations with reasoning, tool calls, plans, to-do lists and errors.
 - Approvals and questions from the agent, answered inline.
 - Plan mode, model and reasoning selection, and four permission modes per thread.

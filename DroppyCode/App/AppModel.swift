@@ -157,15 +157,17 @@ final class AppModel {
         if settings.lastProjectID != id { settings.lastProjectID = id }
     }
 
-    /// The project's top-level threads, in sidebar order. A helper whose parent is among
-    /// them sits under that parent instead (see `helpers(of:)`); one whose parent is gone
-    /// or archived stands on its own.
+    /// The project's top-level threads, in sidebar order: the settled ones last, latest
+    /// settled first. A helper whose parent is among them sits under that parent instead
+    /// (see `helpers(of:)`); one whose parent is gone or archived stands on its own.
     func threads(in project: Project) -> [ChatThread] {
         let shown = threads.filter { $0.projectID == project.id && !$0.isArchived && !$0.isInPanel }
         let shownIDs = Set(shown.map(\.id))
         return shown
             .filter { $0.parentThreadID.map { !shownIDs.contains($0) } ?? true }
             .sorted { lhs, rhs in
+                if lhs.isSettled != rhs.isSettled { return rhs.isSettled }
+                if lhs.isSettled { return Self.settledFirst(lhs, rhs) }
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
                 switch (lhs.sortOrder, rhs.sortOrder) {
                 case let (left?, right?) where left != right: return left < right
@@ -183,8 +185,9 @@ final class AppModel {
     @discardableResult
     func moveThread(_ id: UUID, to targetID: UUID, placeAfter: Bool) -> Bool {
         guard id != targetID, let moving = thread(id), let target = thread(targetID),
-              moving.projectID == target.projectID, let project = project(moving.projectID) else { return false }
-        let before = threads(in: project).map(\.id)
+              moving.projectID == target.projectID, let project = project(moving.projectID),
+              !moving.isSettled, !target.isSettled else { return false }
+        let before = threads(in: project).filter { !$0.isSettled }.map(\.id)
         var order = before
         order.removeAll { $0 == id }
         guard let index = order.firstIndex(of: targetID) else { return false }
@@ -223,12 +226,17 @@ final class AppModel {
         threads.filter(\.isArchived).sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    /// The order among settled threads: the one settled last comes first.
+    nonisolated static func settledFirst(_ lhs: ChatThread, _ rhs: ChatThread) -> Bool {
+        (lhs.settledAt ?? lhs.updatedAt) > (rhs.settledAt ?? rhs.updatedAt)
+    }
+
     /// Threads in the order the sidebar shows them, for keyboard navigation: each thread
     /// followed by the helpers under it, unless they are folded away.
     var sidebarThreads: [ChatThread] {
         projects.filter(\.isExpanded).flatMap { project in
             threads(in: project).flatMap { thread in
-                thread.foldsHelpers ? [thread] : [thread] + helpers(of: thread.id)
+                thread.foldsHelpers || thread.isSettled ? [thread] : [thread] + helpers(of: thread.id)
             }
         }
     }
@@ -410,6 +418,9 @@ final class AppModel {
         updateThread(id) {
             $0.isArchived = true
             $0.isPinned = false
+            // Restored, it is a thread again, not a settled one.
+            $0.isSettled = false
+            $0.settledAt = nil
         }
     }
 
@@ -419,6 +430,108 @@ final class AppModel {
             updateThread(helper.id) { $0.isArchived = false }
         }
     }
+
+    /// Marks a thread finished: it drops to the bottom of its list as a small grey row,
+    /// its helpers folded away with it, and stays a click away until it is reopened. Its
+    /// session keeps running if it is; only the sidebar's view of it changes. The settle
+    /// note sounds here unless the caller already played it on the click.
+    func settle(_ id: UUID, sounds: Bool = true) {
+        guard let thread = thread(id), !thread.isSettled, !thread.isHelper else { return }
+        let now = Date.now
+        updateThread(id) {
+            $0.isSettled = true
+            $0.settledAt = now
+            $0.isPinned = false
+            // Done with it means read.
+            $0.hasUnread = false
+        }
+        for helper in helpers(of: id) {
+            updateThread(helper.id) {
+                $0.isSettled = true
+                $0.settledAt = now
+            }
+        }
+        updateDockBadge()
+        if sounds, settings.settleSound { SettleChime.play() }
+    }
+
+    /// Brings a settled thread back among the others, on top: reopened counts as activity.
+    func reopen(_ id: UUID) {
+        guard let thread = thread(id), thread.isSettled else { return }
+        let now = Date.now
+        updateThread(id) {
+            $0.isSettled = false
+            $0.settledAt = nil
+            $0.updatedAt = now
+            // A place dragged into before it settled no longer applies.
+            $0.activityOrder = nil
+            $0.activityOrderDay = nil
+        }
+        for helper in threads where helper.parentThreadID == id && helper.isSettled {
+            updateThread(helper.id) {
+                $0.isSettled = false
+                $0.settledAt = nil
+            }
+        }
+    }
+
+    /// Settles the thread with the sidebar's motion: the rows around it make room as it goes.
+    func settleAnimated(_ id: UUID, sounds: Bool = true) {
+        withAnimation(Chrome.settleFlight) { settle(id, sounds: sounds) }
+    }
+
+    /// Reopens the thread with the sidebar's motion.
+    func reopenAnimated(_ id: UUID) {
+        withAnimation(Chrome.settleFlight) { reopen(id) }
+    }
+
+    /// A settled thread that starts a turn is at work again, so it comes back up the list.
+    func reopenIfSettled(_ id: UUID) {
+        guard thread(id)?.isSettled == true else { return }
+        reopenAnimated(id)
+    }
+
+    /// What the menu's, the shortcut's and the palette's finish command does to the selected
+    /// thread: settles or archives it as Settings chose, and reopens a settled one.
+    var finishActionTitle: String {
+        if settings.threadFinishAction == .settle, selectedThread?.isSettled == true { return "Reopen thread" }
+        return "\(settings.threadFinishAction.title) thread"
+    }
+
+    var finishActionSymbol: String {
+        if settings.threadFinishAction == .settle, selectedThread?.isSettled == true { return "arrow.uturn.backward" }
+        return settings.threadFinishAction == .settle ? "checkmark.circle" : "archivebox"
+    }
+
+    func finishSelectedThread() {
+        guard let id = selectedThreadID, let thread = thread(id) else { return }
+        switch settings.threadFinishAction {
+        // A helper has no place of its own to settle into; it goes the archive's way.
+        case .settle where thread.isHelper, .archive:
+            withAnimation(Chrome.panelSlide) { archive(id) }
+        case .settle:
+            let request = FinishRequest(threadID: id, reopens: thread.isSettled)
+            finishRequest = request
+            Task {
+                // No row took it up (the sidebar is hidden, say): the thread just moves.
+                try? await Task.sleep(for: .milliseconds(80))
+                guard finishRequest == request else { return }
+                finishRequest = nil
+                if request.reopens { reopenAnimated(id) } else { settleAnimated(id) }
+            }
+        }
+    }
+
+    /// A settle or reopen asked for away from the row: the menu, the shortcut, the palette.
+    /// The thread's row takes it up and settles the way a click on its check does, pop, note
+    /// and glide included.
+    struct FinishRequest: Equatable {
+        let id = UUID()
+        let threadID: UUID
+        let reopens: Bool
+    }
+
+    var finishRequest: FinishRequest?
 
     func delete(_ id: UUID, removeWorktree: Bool = false) {
         guard let thread = thread(id) else { return }

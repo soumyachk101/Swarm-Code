@@ -95,6 +95,14 @@ enum Chrome {
             : .spring(response: 0.32, dampingFraction: 0.9)
     }
 
+    /// The rows making room as a thread settles to the bottom of the sidebar or comes back
+    /// up: the glide's own spring, so the ghost and the rows land together.
+    static var settleFlight: Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? .easeOut(duration: 0.2)
+            : .spring(RowGlideAnimator.spring)
+    }
+
     static let gray = Color(red: 0.556, green: 0.557, blue: 0.576)
     static let blue = Color(red: 0.040, green: 0.478, blue: 1.000)
     static let orange = Color(red: 1.000, green: 0.584, blue: 0.000)
@@ -767,9 +775,11 @@ struct GlassPickerButton<Value: Hashable>: View {
             .frame(height: Chrome.capsuleContentHeight)
             .contentShape(Capsule(style: .continuous))
         }
-        .buttonStyle(.plain)
+        // Native Liquid Glass: the system draws blur, stroke and hover/pressed
+        // states, which also composes correctly inside a popover (the Pair
+        // editor) where a manual glassEffect falls back to a flat fill.
+        .buttonStyle(.glass)
         .fixedSize()
-        .chromeGlassCapsule()
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }

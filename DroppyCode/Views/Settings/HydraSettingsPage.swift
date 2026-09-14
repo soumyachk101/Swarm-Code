@@ -44,6 +44,12 @@ struct HydraSettingsPage: View {
                 }
                 .disabled(!settings.hydraEnabled)
                 .opacity(settings.hydraEnabled ? 1 : 0.5)
+                ChromeRowDivider()
+                ChromeRow(title: "Clear finished heads automatically", detail: "A head that finishes leaves the panel on its own, for the sidebar under its lead, instead of waiting for “Clear finished heads”") {
+                    SettingsSwitch(isOn: $settings.hydraAutoClearFinished)
+                }
+                .disabled(!settings.hydraEnabled)
+                .opacity(settings.hydraEnabled ? 1 : 0.5)
             }
         }
         ChromeSection(title: "Pairs") {
@@ -73,10 +79,12 @@ struct HydraSettingsPage: View {
         ChromeSection(title: "Where heads run") {
             ChromeCard {
                 ChromeRow(title: "Claude, Codex and Copilot", detail: "Inside the provider's own session: the heads are defined at launch on the pair's model and effort, and the lead sends them out with its own agent tools. Their transcripts show in the Hydra panel.") {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .center, spacing: 6) {
                         ProviderIcon(provider: .claude, size: 14)
                         ProviderIcon(provider: .codex, size: 14)
-                        ProviderIcon(provider: .copilot, size: 14)
+                        // Copilot's mark is wider than tall, so it fills less of a
+                        // square frame; size it up to share the same optical height.
+                        ProviderIcon(provider: .copilot, size: 16.75)
                     }
                     .foregroundStyle(Chrome.secondaryText)
                 }

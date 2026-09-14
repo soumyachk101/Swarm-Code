@@ -54,7 +54,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var keywords: [String] {
         switch self {
-        case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative"]
+        case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative", "settle", "settled", "finish", "finished", "done", "sound", "chime"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .hydra: ["hydra", "heads", "subagents", "sub-agents", "agents", "team", "orchestrator", "worker", "pair", "pairs", "parallel", "delegate", "queue"]
         case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "copilot", "github", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
@@ -302,6 +302,26 @@ private struct GeneralSettingsPage: View {
                 ChromeRow(title: "Confirm before deleting threads") {
                     SettingsSwitch(isOn: $settings.confirmBeforeDeleting)
                 }
+            }
+        }
+        ChromeSection(title: "Finished threads") {
+            ChromeCard {
+                ChromeRow(title: "Done with a thread", detail: settings.threadFinishAction.detail) {
+                    GlassPickerButton(
+                        options: ThreadFinishAction.allCases.map { ($0, $0.title) },
+                        selection: $settings.threadFinishAction
+                    )
+                }
+                ChromeRowDivider()
+                ChromeRow(title: "Sound when settling", detail: "A small note as the thread settles") {
+                    SettingsSwitch(isOn: $settings.settleSound)
+                }
+                // Switching it on plays the note once, so you hear what you are getting.
+                .onChange(of: settings.settleSound) { _, isOn in
+                    if isOn { SettleChime.play() }
+                }
+                .disabled(settings.threadFinishAction != .settle)
+                .opacity(settings.threadFinishAction == .settle ? 1 : 0.5)
             }
         }
         ChromeSection(title: "Appearance") {

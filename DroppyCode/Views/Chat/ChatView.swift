@@ -285,19 +285,122 @@ private struct ChatChromeRow: View {
 }
 
 /// The sidebar's list in a popover, for a hidden sidebar: the same search, the same rows,
-/// the same footer, at the sidebar's own width. Picking a thread closes it.
+/// the same footer, at the sidebar's own width. Resting the pointer on the button opens
+/// it, so the list is a glance away rather than a click, and it goes again once the pointer
+/// has left both the button and the list. A click on the button opens it to stay, or closes
+/// it; a press anywhere in the list (a row's menu, the search field, a drag) keeps it open
+/// until a thread is picked or a click lands elsewhere, so working in it never has it slip
+/// away. Picking a thread closes it.
 private struct ThreadsButton: View {
     @Environment(AppModel.self) private var model
     @State private var isPresented = false
+    /// Open until dismissed, not only while hovered.
+    @State private var isPinned = false
+    @State private var isOverButton = false
+    @State private var isOverList = false
+    /// When the list last closed, to tell a click that closed it from one that should open it.
+    @State private var closedAt: ContinuousClock.Instant?
+    /// The wait before a hover opens the list, or a leave closes it.
+    @State private var hoverWait: Task<Void, Never>?
+    /// Sees the presses inside the list while it is open.
+    @State private var pressMonitor: Any?
+
+    /// Long enough that passing over the button on the way along the row opens nothing.
+    private static let openDelay: Duration = .milliseconds(280)
+    /// Long enough to cross from the button into the list, over the arrow, without it going.
+    private static let closeDelay: Duration = .milliseconds(420)
 
     var body: some View {
         ChromeCircleButton(symbol: "list.bullet", help: "Threads") {
-            isPresented.toggle()
+            if isPresented {
+                isPresented = false
+            } else if let closedAt, closedAt.duration(to: .now) < .milliseconds(300) {
+                // A press outside the list closes it before the button acts: this click did.
+            } else {
+                hoverWait?.cancel()
+                isPinned = true
+                isPresented = true
+            }
+        }
+        .onHover { hovering in
+            isOverButton = hovering
+            if !hovering {
+                closeOnceLeft()
+            } else if isPresented {
+                hoverWait?.cancel()
+            } else {
+                openOnceRested()
+            }
         }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             SidebarView(inPopover: true, dismiss: { isPresented = false })
                 .frame(width: model.sidebar.width, height: 560)
+                .onHover { hovering in
+                    isOverList = hovering
+                    if hovering { hoverWait?.cancel() } else { closeOnceLeft() }
+                }
         }
+        .onChange(of: isPresented) { _, shown in
+            if shown {
+                watchPresses()
+            } else {
+                stopWatchingPresses()
+                closedAt = .now
+                isPinned = false
+                isOverList = false
+            }
+        }
+        .onDisappear {
+            hoverWait?.cancel()
+            stopWatchingPresses()
+        }
+    }
+
+    /// Opens the list once the pointer has rested on the button for a moment. Not while
+    /// another popover of the row's (a menu, a picker) has the keyboard, or a sheet is up:
+    /// that is what is being used, and the list would only open under it. The button still
+    /// opens it with a click.
+    private func openOnceRested() {
+        hoverWait?.cancel()
+        hoverWait = Task { @MainActor in
+            try? await Task.sleep(for: Self.openDelay)
+            guard !Task.isCancelled, isOverButton, !isPresented else { return }
+            if let window = NSApp.mainWindow {
+                guard window.attachedSheet == nil, !(window.childWindows ?? []).contains(where: \.isKeyWindow) else { return }
+            }
+            isPresented = true
+        }
+    }
+
+    /// Closes an unpinned list once the pointer has been off both it and the button for a
+    /// moment. Coming back to either in that time keeps it.
+    private func closeOnceLeft() {
+        hoverWait?.cancel()
+        guard isPresented, !isPinned else { return }
+        hoverWait = Task { @MainActor in
+            try? await Task.sleep(for: Self.closeDelay)
+            guard !Task.isCancelled, isPresented, !isPinned, !isOverButton, !isOverList else { return }
+            isPresented = false
+        }
+    }
+
+    /// The list is a window of its own, as is anything it opens in turn (a rename, a
+    /// confirmation), so a press anywhere but the chat's window is work inside the list. A
+    /// press in the chat's window closes the list by itself.
+    private func watchPresses() {
+        guard pressMonitor == nil else { return }
+        let pinned = $isPinned
+        pressMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { event in
+            if let window = event.window, window !== NSApp.mainWindow {
+                pinned.wrappedValue = true
+            }
+            return event
+        }
+    }
+
+    private func stopWatchingPresses() {
+        if let pressMonitor { NSEvent.removeMonitor(pressMonitor) }
+        pressMonitor = nil
     }
 }
 

@@ -18,6 +18,30 @@ enum TextGenerationChoice: String, CaseIterable, Identifiable {
     }
 }
 
+/// What the check on a thread row does once you are done with the thread.
+enum ThreadFinishAction: String, CaseIterable, Identifiable {
+    /// The thread stays in the sidebar, small and grey at the bottom of its list.
+    case settle
+    /// The thread leaves the sidebar for the Archive page.
+    case archive
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .settle: "Settle"
+        case .archive: "Archive"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .settle: "A settled thread drops to the bottom of the sidebar, small and grey, until you reopen it"
+        case .archive: "An archived thread leaves the sidebar for the Archive page"
+        }
+    }
+}
+
 /// A model the composer's picker offers.
 struct ModelPin: Codable, Hashable, Identifiable, Sendable {
     var provider: ProviderKind
@@ -43,6 +67,8 @@ final class AppSettings {
         static let notify = "notifyWhenFinished"
         static let chime = "chimeWhenFinished"
         static let confirmDelete = "confirmBeforeDeleting"
+        static let threadFinishAction = "threadFinishAction"
+        static let settleSound = "settleSound"
         static let showReasoning = "showReasoning"
         static let sidebarActivityView = "sidebarActivityView"
         static let appTheme = "appTheme"
@@ -65,6 +91,7 @@ final class AppSettings {
         static let hydraQueueHeads = "hydraQueueHeads"
         static let hydraIsolateHeads = "hydraIsolateHeads"
         static let hydraAutoMerge = "hydraAutoMerge"
+        static let hydraAutoClearFinished = "hydraAutoClearFinished"
         static let hydraPairs = "hydraPairs"
     }
 
@@ -95,6 +122,16 @@ final class AppSettings {
 
     var confirmBeforeDeleting: Bool {
         didSet { defaults.set(confirmBeforeDeleting, forKey: Key.confirmDelete) }
+    }
+
+    /// What the check on a thread row, ⇧⌘⌫ and the palette's finish action do.
+    var threadFinishAction: ThreadFinishAction {
+        didSet { defaults.set(threadFinishAction.rawValue, forKey: Key.threadFinishAction) }
+    }
+
+    /// A soft note plays as a thread settles.
+    var settleSound: Bool {
+        didSet { defaults.set(settleSound, forKey: Key.settleSound) }
     }
 
     var showReasoning: Bool {
@@ -228,6 +265,12 @@ final class AppSettings {
         didSet { defaults.set(hydraAutoMerge, forKey: Key.hydraAutoMerge) }
     }
 
+    /// A head that finishes leaves the Hydra panel on its own, for the sidebar under its
+    /// lead, instead of waiting for "Clear finished heads".
+    var hydraAutoClearFinished: Bool {
+        didSet { defaults.set(hydraAutoClearFinished, forKey: Key.hydraAutoClearFinished) }
+    }
+
     /// The lead-and-heads pairings, in the order they were added.
     private(set) var hydraPairs: [HydraPair] {
         didSet { store(hydraPairs, forKey: Key.hydraPairs) }
@@ -241,6 +284,8 @@ final class AppSettings {
         notifyWhenFinished = defaults.object(forKey: Key.notify) as? Bool ?? true
         chimeWhenFinished = defaults.object(forKey: Key.chime) as? Bool ?? true
         confirmBeforeDeleting = defaults.object(forKey: Key.confirmDelete) as? Bool ?? true
+        threadFinishAction = ThreadFinishAction(rawValue: defaults.string(forKey: Key.threadFinishAction) ?? "") ?? .settle
+        settleSound = defaults.object(forKey: Key.settleSound) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
         backdropOpacity = defaults.object(forKey: Key.backdropOpacity) as? Double ?? Self.defaultBackdropOpacity
@@ -271,6 +316,7 @@ final class AppSettings {
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
         hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
         hydraAutoMerge = defaults.object(forKey: Key.hydraAutoMerge) as? Bool ?? false
+        hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
     }
 

@@ -8,9 +8,11 @@ import Foundation
 // the moment they report.
 
 extension AppModel {
-    /// Whether a chat leads a team right now: Hydra on for the app and for the chat.
+    /// Whether a chat leads a team right now: Hydra on for the app. A chat keeps no
+    /// switch of its own: with Hydra on in Settings it stays on in every chat until it
+    /// is switched off there.
     func hydraIsOn(_ thread: ChatThread) -> Bool {
-        settings.hydraEnabled && thread.hydraEnabled && !thread.isHelper
+        settings.hydraEnabled && !thread.isHelper
     }
 
     /// Whether the provider runs heads inside its own session, with the pair's model and
@@ -249,6 +251,18 @@ extension AppModel {
                 if let activity = live.hydraActivity { $0.activity = activity }
                 $0.toolCalls = max($0.toolCalls, live.hydraToolCalls)
                 $0.tokens = max($0.tokens, live.hydraTokens)
+            }
+        }
+        // Opt-in: a finished head leaves the panel on its own, for the sidebar under its
+        // lead, instead of waiting for "Clear finished heads", and gives its copy of the
+        // checkout back with it. Running heads stay put.
+        if settings.hydraAutoClearFinished {
+            updateThread(id) { $0.isInPanel = false }
+            releaseHydraCopy(of: id)
+            if let parentID = head.parentThreadID {
+                updateThread(parentID) { $0.foldsHelpers = false }
+                let leadRuntime = runtime(for: parentID)
+                if leadRuntime.hydraSelectedHeadID == id { leadRuntime.hydraSelectedHeadID = nil }
             }
         }
         guard let parentID = head.parentThreadID, let finished = thread(id)?.hydra else { return }

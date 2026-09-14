@@ -112,7 +112,7 @@ struct SubagentPanel: View {
         )
         .equatable()
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ComposerArea(runtime: runtime, workingDirectory: workingDirectory)
+            ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true)
                 .overlay(alignment: .top) {
                     JumpToLatestButton(scrollState: scrollState)
                 }
