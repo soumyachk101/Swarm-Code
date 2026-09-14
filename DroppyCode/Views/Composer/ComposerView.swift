@@ -10,8 +10,16 @@ struct ComposerArea: View {
     /// The changes popover presented from the tab. Driven by
     /// `runtime.isDiffVisible`, so every opener (tab, Review, ⌘D) shares it.
     @State private var diffPopover = DiffPopoverCoordinator()
+    /// Whether the working tab's steps are open. Held here rather than in the tab, so they
+    /// stay open when the tab moves from one edge of the box to the other.
+    @State private var isWorkingExpanded = false
 
     var body: some View {
+        // The top of the box is the tabs' slot: the queue while any follow-ups are queued,
+        // else the changes. The working line takes it while it is free; while it is not, the
+        // line hangs from the bottom of the box instead, and the box moves up to make room.
+        let topSlotTaken = !runtime.followUps.isEmpty || runtime.changeStats != nil
+        let workingEdge: WorkingTab.Edge? = runtime.isRunning ? (topSlotTaken ? .bottom : .top) : nil
         GlassEffectContainer(spacing: 8) {
             VStack(spacing: 12) {
                 ForEach(runtime.approvals) { request in
@@ -39,12 +47,27 @@ struct ComposerArea: View {
                             if !runtime.isDiffVisible { runtime.isDiffVisible = true }
                         }
                         .transition(.softAppear)
+                    } else if workingEdge == .top {
+                        WorkingTab(runtime: runtime, edge: .top, workingDirectory: workingDirectory, isExpanded: $isWorkingExpanded)
+                            .transition(.softAppear)
                     }
                     ComposerView(runtime: runtime, workingDirectory: workingDirectory)
+                        // Over both tabs' hidden edges, the one below it included.
+                        .zIndex(1)
+                    if workingEdge == .bottom {
+                        WorkingTab(runtime: runtime, edge: .bottom, workingDirectory: workingDirectory, isExpanded: $isWorkingExpanded)
+                            .transition(.softAppear)
+                    }
                 }
                 // NB: no .animation(..., value: changeStats) here on purpose: the tab's
                 // insertion animates via its .softAppear transition, and opening the
-                // popover moves nothing, so there is nothing else to drive.
+                // popover moves nothing, so there is nothing else to drive. The working
+                // tab is the exception: hanging from the bottom it moves the box itself.
+                .animation(Chrome.panelSlide, value: workingEdge)
+                // Every turn's steps start closed, as the working line's always did.
+                .onChange(of: runtime.isRunning) { _, running in
+                    if !running { isWorkingExpanded = false }
+                }
                 .background {
                     AttachmentAnchorCapture { diffPopover.setFallbackAnchor($0) }
                 }
