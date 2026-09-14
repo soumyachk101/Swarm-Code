@@ -3,6 +3,8 @@ import os
 import SwiftUI
 
 /// Temporary tap tracing for the strip saga. Remove once taps are proven.
+/// `.notice` on purpose: debug/info never hit the persisted log store, so
+/// `log show` after a live run would come back empty.
 enum StripLog {
     static let log = Logger(subsystem: "iordv.droppycode", category: "strip")
 }
@@ -48,12 +50,15 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         if let currentID, !ids.contains(currentID) { close() }
     }
 
-    func toggle(_ attachment: Attachment) {
-        StripLog.log.debug("toggle id=\(attachment.id) name=\(attachment.name, privacy: .public) shown=\(self.popover.isShown)")
+    /// `view` is the tapped thumbnail's own view when it has one. Anchoring the
+    /// panel to the tapped thumbnail puts the arrow on the photo every time —
+    /// a strip-wide anchor can only aim at the strip's middle.
+    func toggle(_ attachment: Attachment, over view: NSView? = nil) {
+        StripLog.log.notice("toggle id=\(attachment.id) name=\(attachment.name, privacy: .public) shown=\(self.popover.isShown)")
         if currentID == attachment.id, popover.isShown {
             close()
         } else {
-            show(attachment)
+            show(attachment, over: view)
         }
     }
 
@@ -63,23 +68,25 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         if popover.isShown { popover.performClose(nil) }
     }
 
-    private func show(_ attachment: Attachment) {
+    private func show(_ attachment: Attachment, over view: NSView?) {
         let content = AttachmentLargePreview(attachment: attachment)
         let size = Self.contentSize(for: attachment)
         currentID = attachment.id
+        // The tapped thumbnail's view is the anchor when it exists; it was just
+        // tapped, so it is provably in the window and never a stale recycled row.
+        guard let anchor = view ?? anchor?.value, anchor.window != nil else {
+            StripLog.log.notice("show BLOCKED id=\(attachment.id) anchorNil=\(self.anchor?.value == nil)")
+            return
+        }
         if popover.isShown {
             // Already open: swap the content in place. Re-showing a shown
-            // popover is unreliable, and the strip anchor never moves anyway.
-            StripLog.log.debug("show swap id=\(attachment.id)")
+            // popover is unreliable, and AppKit offers no way to move one.
+            StripLog.log.notice("show swap id=\(attachment.id)")
             popover.contentViewController = NSHostingController(rootView: content)
             popover.contentSize = size
             return
         }
-        guard let anchor = anchor?.value, anchor.window != nil else {
-            StripLog.log.debug("show BLOCKED id=\(attachment.id) anchorNil=\(self.anchor?.value == nil)")
-            return
-        }
-        StripLog.log.debug("show open id=\(attachment.id) anchorFrame=\(anchor.frame.debugDescription, privacy: .public)")
+        StripLog.log.notice("show open id=\(attachment.id) anchorFrame=\(anchor.frame.debugDescription, privacy: .public)")
         popover.contentViewController = NSHostingController(rootView: content)
         popover.contentSize = size
         startMonitors()
@@ -163,7 +170,7 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
 /// A weak box for an NSView anchor, so coordinators never keep views alive.
 final class WeakView {
     weak var value: NSView?
-    init(_ value: NSView) { self.value = value }
+    init(_ value: NSView? = nil) { self.value = value }
 }
 
 /// Captures the strip's own NSView so the preview panel can anchor to it.
