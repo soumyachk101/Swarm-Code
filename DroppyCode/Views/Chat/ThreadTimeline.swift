@@ -81,14 +81,20 @@ struct ThreadTimeline: View, Equatable {
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
         var visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
-        // The running turn's trailing tool run is not a block of its own: the working line
-        // carries it (its summary beside the spinner, its steps behind the chevron) until a
-        // reply follows, when it comes back as a collapsed group above the answer.
-        var liveWork: [TimelineEntry] = []
-        if runtime.isRunning, runtime.entries.last?.kind != .assistant,
-           case .group(.work(_, let entries, false), _, _) = visible.last {
-            liveWork = entries
-            visible.removeLast()
+        // While a turn runs and no reply has started, the working line is the last block, one
+        // row like any other, so it arrives and leaves the way every row does. The moment the
+        // reply it is waiting on arrives, the block goes and the reply takes its line; it comes
+        // back below when the agent moves on to another step. The turn's trailing tool run is
+        // not a block of its own meanwhile: the working line carries it (its summary beside the
+        // spinner, its steps behind the chevron) until a reply follows, when it comes back as a
+        // collapsed group above the answer.
+        if runtime.isRunning, runtime.entries.last?.kind != .assistant {
+            var liveWork: [TimelineEntry] = []
+            if case .group(.work(_, let entries, false), _, _) = visible.last {
+                liveWork = entries
+                visible.removeLast()
+            }
+            visible.append(.working(turnID: runtime.entries.last?.turnID, liveWork: liveWork))
         }
         // The turns a row may offer to revert. Read here, once, so a turn record changing
         // (checkpoints, diffs, anchors) re-runs this body alone; rows get a plain flag that
@@ -98,7 +104,7 @@ struct ThreadTimeline: View, Equatable {
         // space, so the conversation stays centered exactly like the composer.
         // Ticks centre in the full column height, so the queue tab opening never moves them.
         return ZStack(alignment: .leading) {
-            timelineScroll(visible: visible, hidden: hidden, liveWork: liveWork, rewindable: rewindable)
+            timelineScroll(visible: visible, hidden: hidden, rewindable: rewindable)
             if blocks.count(where: \.hasUserMessage) > 1 {
                 TimelineMinimapColumn(
                     blocks: blocks,
@@ -179,7 +185,7 @@ struct ThreadTimeline: View, Equatable {
         await MarkdownView.warm(texts)
     }
 
-    private func timelineScroll(visible: [DisplayBlock], hidden: Int, liveWork: [TimelineEntry], rewindable: Set<UUID>) -> some View {
+    private func timelineScroll(visible: [DisplayBlock], hidden: Int, rewindable: Set<UUID>) -> some View {
         // The outline the rail resolves against, kept in step with what is laid out.
         tracking.setOutline(visible.map { ($0.id, $0.hasUserMessage) })
         return ScrollView {
@@ -223,15 +229,6 @@ struct ThreadTimeline: View, Equatable {
                                 tracking.setVisible(block.id, isVisible)
                             }
                             .transition(.softAppear)
-                    }
-                    if runtime.isRunning {
-                        WorkingIndicatorSlot(
-                            runtime: runtime,
-                            liveWork: liveWork,
-                            workingDirectory: workingDirectory,
-                            showsThinking: model.settings.showReasoning
-                        )
-                        .transition(.opacity.animation(.easeOut(duration: 0.2)))
                     }
                 }
                 .allowsHitTesting(!isReaderScrolling)
@@ -522,11 +519,15 @@ enum DisplayBlock: Identifiable, Equatable {
     /// A plain group, with the facts its row needs from the turn it belongs to: the turn's
     /// summary on the turn's last reply, and whether the turn produced a reply on its end marker.
     case group(TimelineGroup, summary: TurnSummary?, hasReply: Bool)
+    /// The running turn's working line, with the tool run in progress it carries. Never built
+    /// from the entries: the timeline appends it while the turn is waiting on a reply.
+    case working(turnID: UUID?, liveWork: [TimelineEntry])
 
     var id: String {
         switch self {
         case .turn(let id, _, _, _, _): id
         case .group(let group, _, _): group.id
+        case .working(let turnID, _): "working-\(turnID?.uuidString ?? "")"
         }
     }
 
@@ -535,7 +536,7 @@ enum DisplayBlock: Identifiable, Equatable {
         switch self {
         case .turn(_, let turnID, _, _, _): turnID
         case .group(.single(let entry), _, _): entry.turnID
-        case .group(.work, _, _): nil
+        case .group(.work, _, _), .working: nil
         }
     }
 
@@ -545,7 +546,7 @@ enum DisplayBlock: Identifiable, Equatable {
         switch self {
         case .turn(_, _, let userEntries, _, _): !userEntries.isEmpty
         case .group(.single(let entry), _, _): entry.kind == .user
-        case .group(.work, _, _): false
+        case .group(.work, _, _), .working: false
         }
     }
 
@@ -669,6 +670,8 @@ private struct DisplayBlockView: View, Equatable {
                 workingDirectory: context.workingDirectory,
                 canUndo: context.canRewind
             )
+        case .working(_, let liveWork):
+            WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
         }
     }
 }
@@ -803,38 +806,26 @@ final class TimelineScrollState {
     }
 }
 
-/// Where the working indicator sits while a turn runs. The moment the reply it is waiting on
-/// arrives, the indicator steps aside and the reply takes its line, so the answer begins exactly
-/// where the indicator was instead of pushing it down. It comes back below when the agent moves on
-/// to another step. Indicator and reply are both one row tall — replies keep their hover line
-/// inside the gap below them, never in their height — so the handover moves nothing. Only the
-/// newest entry's kind is read here, which never changes while text streams, plus the turn's thinking.
-private struct WorkingIndicatorSlot: View {
+/// The working block's row: the indicator with the running turn's thinking behind its
+/// chevron. The timeline appends and drops the block, so this holds no condition of its own
+/// and no transition: the row arrives and leaves exactly like every other block. The indicator
+/// is one row tall, like a reply, so the reply that takes its line begins where its text was.
+private struct WorkingBlockView: View {
+    @Environment(AppModel.self) private var model
     let runtime: ThreadRuntime
     /// The tool run in progress, shown on the working line instead of as a group.
     let liveWork: [TimelineEntry]
     let workingDirectory: String?
-    let showsThinking: Bool
 
     var body: some View {
-        let replyTookOver = runtime.entries.last?.kind == .assistant
-        ZStack(alignment: .topLeading) {
-            if !replyTookOver {
-                WorkingIndicator(
-                    runtime: runtime,
-                    startedAt: runtime.turnStartedAt ?? .now,
-                    seed: WorkingWords.seed(runtime.threadID.uuidString),
-                    thinkingSteps: showsThinking ? thinking : [],
-                    liveWork: liveWork,
-                    workingDirectory: workingDirectory
-                )
-                // A plain fade in place: the line's row never moves while it appears.
-                .transition(.asymmetric(
-                    insertion: .opacity.animation(.easeOut(duration: 0.2)),
-                    removal: .opacity.animation(.easeOut(duration: 0.1))
-                ))
-            }
-        }
+        WorkingIndicator(
+            runtime: runtime,
+            startedAt: runtime.turnStartedAt ?? .now,
+            seed: WorkingWords.seed(runtime.threadID.uuidString),
+            thinkingSteps: model.settings.showReasoning ? thinking : [],
+            liveWork: liveWork,
+            workingDirectory: workingDirectory
+        )
     }
 
     /// The running turn's thinking. Kind and turn are fixed at creation, so they are checked before
