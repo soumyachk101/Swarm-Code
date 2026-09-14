@@ -145,8 +145,13 @@ struct ThreadTimeline: View, Equatable {
         }
     }
 
+    /// The content's coordinate space, in which blocks report their tops.
+    private static let contentSpace = "timeline-content"
+
     private func timelineScroll(visible: [DisplayBlock], hidden: Int, liveWork: [TimelineEntry], rewindable: Set<UUID>) -> some View {
-        ScrollView {
+        // The rail's order of messages, kept in step with what is laid out.
+        tracking.setUserBlocks(visible.filter(\.hasUserMessage).map(\.id))
+        return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
                 if hidden > 0 {
@@ -176,18 +181,10 @@ struct ThreadTimeline: View, Equatable {
                         DisplayBlockView(block: block, runtime: runtime, context: context)
                             .equatable()
                             .id(block.id)
-                            .onScrollVisibilityChange(threshold: 0.05) { isVisible in
-                                tracking.setOnScreen(block.id, isVisible)
-                            }
-                            // One point at the row's top edge: on screen means the block's
-                            // top is inside the viewport; off screen while the block still
-                            // shows means it owns the viewport's top edge.
-                            .overlay(alignment: .top) {
-                                Color.clear
-                                    .frame(height: 1)
-                                    .onScrollVisibilityChange { isVisible in
-                                        tracking.setTopEdgeOnScreen(block.id, isVisible)
-                                    }
+                            // Where the block starts in the content, for the rail. Reported
+                            // on layout only, never per scroll frame.
+                            .onGeometryChange(for: CGFloat.self, of: { $0.frame(in: .named(Self.contentSpace)).minY }) { top in
+                                tracking.setTop(block.id, top)
                             }
                             .transition(.softAppear)
                     }
@@ -218,6 +215,7 @@ struct ThreadTimeline: View, Equatable {
             .padding(.bottom, 18)
             // A short conversation still fills the pane, with its messages resting at the bottom.
             .frame(maxWidth: .infinity, minHeight: viewportHeight, alignment: .top)
+            .coordinateSpace(.named(Self.contentSpace))
         }
         .id(runtime.threadID)
         .scrollIndicators(.never)
@@ -233,6 +231,7 @@ struct ThreadTimeline: View, Equatable {
         }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             scrollChrome.update(travel: new.travel)
+            tracking.updateActive(centerY: new.centerY)
             if tracking.isUserScrolling {
                 // Only the reader's own scrolling decides whether the timeline follows new text.
                 // Guarded, so measuring the scroll position never touches anything a body reads.
@@ -258,6 +257,11 @@ struct ThreadTimeline: View, Equatable {
             anchorsBottomOnGrowth = true
             withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
         }
+        .onChange(of: visibleCount) {
+            // Older history lands above everything: every recorded top is stale
+            // until the rows lay out again.
+            tracking.clearTops()
+        }
         .onChange(of: scrollState.jumpRequest) {
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
@@ -269,7 +273,7 @@ struct ThreadTimeline: View, Equatable {
             visibleCount = TimelineWindow.initial
             anchorsBottomOnGrowth = true
             historyLoadPending = false
-            tracking.clearOnScreen()
+            tracking.clearTops()
         }
     }
 
@@ -288,32 +292,47 @@ final class TimelineScrollTracking {
     var isPinnedToBottom = true
     /// True while the reader drags or flicks the timeline, as opposed to it following new text.
     @ObservationIgnored var isUserScrolling = false
-    /// Ids of the blocks currently on screen, so the rail can light the block the reader is
-    /// on. Rows write here only when they cross the viewport's edges, never per scroll frame.
-    private(set) var onScreenBlockIDs: Set<String> = []
-    /// Ids of the blocks whose top edge is on screen. A block that is on screen while its
-    /// top edge is not straddles the viewport's top — that is the section the reader is in.
-    private(set) var topEdgeOnScreenBlockIDs: Set<String> = []
+    /// The message the reader is on, for the rail: the sent message whose section — from
+    /// its top down to the next sent message's top — holds the viewport's centre. Written
+    /// only when it changes, so the rail re-renders when the lit tick moves and never else.
+    private(set) var activeBlockID: String?
+    /// Where each laid-out block starts in the content, from its own layout pass.
+    @ObservationIgnored private var blockTops: [String: CGFloat] = [:]
+    /// The sent messages in order, as laid out.
+    @ObservationIgnored private var userBlockIDs: [String] = []
 
-    func setOnScreen(_ id: String, _ isOnScreen: Bool) {
-        if isOnScreen {
-            if !onScreenBlockIDs.contains(id) { onScreenBlockIDs.insert(id) }
-        } else if onScreenBlockIDs.contains(id) {
-            onScreenBlockIDs.remove(id)
-        }
+    /// The viewport centre last reported, so a block laying out late can be picked up.
+    @ObservationIgnored private var lastCenterY: CGFloat?
+
+    func setTop(_ id: String, _ top: CGFloat) {
+        guard blockTops[id] != top else { return }
+        blockTops[id] = top
+        if let lastCenterY { updateActive(centerY: lastCenterY) }
     }
 
-    func setTopEdgeOnScreen(_ id: String, _ isOnScreen: Bool) {
-        if isOnScreen {
-            if !topEdgeOnScreenBlockIDs.contains(id) { topEdgeOnScreenBlockIDs.insert(id) }
-        } else if topEdgeOnScreenBlockIDs.contains(id) {
-            topEdgeOnScreenBlockIDs.remove(id)
-        }
+    func setUserBlocks(_ ids: [String]) {
+        if ids != userBlockIDs { userBlockIDs = ids }
     }
 
-    func clearOnScreen() {
-        if !onScreenBlockIDs.isEmpty { onScreenBlockIDs.removeAll() }
-        if !topEdgeOnScreenBlockIDs.isEmpty { topEdgeOnScreenBlockIDs.removeAll() }
+    func clearTops() {
+        blockTops.removeAll()
+        if activeBlockID != nil { activeBlockID = nil }
+    }
+
+    /// Picks the message whose section holds `centerY`, the viewport's centre in the
+    /// content: the last sent message that starts above it. A message that never laid out
+    /// has no top and is skipped; the one holding the centre is on screen, so it always has.
+    func updateActive(centerY: CGFloat) {
+        lastCenterY = centerY
+        // Nothing laid out yet: leave the rail to its default (the newest message).
+        guard !blockTops.isEmpty else { return }
+        var active: String?
+        for id in userBlockIDs {
+            guard let top = blockTops[id] else { continue }
+            if top <= centerY { active = id } else { break }
+        }
+        let resolved = active ?? userBlockIDs.first
+        if resolved != activeBlockID { activeBlockID = resolved }
     }
 }
 
@@ -324,8 +343,11 @@ private struct ScrollMetrics: Equatable {
     var contentHeight: CGFloat
     var distanceFromBottom: CGFloat
     var travel: CGFloat
+    /// The viewport's vertical centre in the content, for the rail's lit tick.
+    var centerY: CGFloat
 
     init(geometry: ScrollGeometry) {
+        centerY = geometry.visibleRect.midY
         contentHeight = geometry.contentSize.height
         let insets = geometry.contentInsets.top + geometry.contentInsets.bottom
         // Never more than the content can actually scroll. While the queue tab folds,

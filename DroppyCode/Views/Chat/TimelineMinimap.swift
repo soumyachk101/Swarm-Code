@@ -140,19 +140,9 @@ private struct MinimapSelection: View {
         .equatable()
     }
 
-    /// The block the reader is on: the newest message while the timeline is pinned to the
-    /// bottom, otherwise the message whose section straddles the viewport's top edge. A
-    /// block on screen whose top edge is not owns that edge — at most one can — so the lit
-    /// tick moves the moment the next message reaches the top, however tall blocks are.
+    /// The block the reader is on, resolved by the timeline from its scroll geometry.
     private var activeID: String? {
-        if tracking.isPinnedToBottom { return outline.last(where: \.hasUserMessage)?.id }
-        let onScreen = tracking.onScreenBlockIDs
-        let topEdgeOnScreen = tracking.topEdgeOnScreenBlockIDs
-        if let top = outline.firstIndex(where: { onScreen.contains($0.id) && !topEdgeOnScreen.contains($0.id) }),
-           let current = outline[...top].last(where: \.hasUserMessage) {
-            return current.id
-        }
-        return outline.first { $0.hasUserMessage && onScreen.contains($0.id) }?.id
+        tracking.activeBlockID ?? outline.last(where: \.hasUserMessage)?.id
     }
 }
 
