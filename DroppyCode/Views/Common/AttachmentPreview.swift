@@ -1,6 +1,7 @@
 import AppKit
 import ImageIO
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Shared helpers for showing large image previews of attachments and files the agent read.
 enum PreviewImages {
@@ -13,18 +14,31 @@ enum PreviewImages {
         extensions.contains((path as NSString).pathExtension.lowercased())
     }
 
-    /// Finds an image file a read tool looked at. Checks the title first, then the detail,
-    /// resolving relative paths against the thread's working directory.
+    /// Finds an image file a tool looked at or made. A read's title (and detail) is the
+    /// path itself, spaces included; any other tool's title and detail are searched for a
+    /// path among their words, so a screenshot a command took shows too. Relative paths
+    /// resolve against the thread's working directory; only a file that exists counts.
     static func resolveToolImagePath(for call: ToolCall, workingDirectory: String?) -> String? {
-        guard call.kind == .read else { return nil }
-        var candidates: [String] = [call.title]
-        if let detail = call.detail, !detail.isEmpty { candidates.append(detail) }
+        var candidates: [String] = []
+        if call.kind == .read {
+            candidates.append(call.title)
+            if let detail = call.detail, !detail.isEmpty { candidates.append(detail) }
+        } else {
+            for text in [call.title, call.detail ?? ""] where !text.isEmpty {
+                let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'`()<>,;"))
+                candidates.append(contentsOf: text.components(separatedBy: separators))
+            }
+        }
         for candidate in candidates {
             let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, isImagePath(trimmed) else { continue }
             let absolute: String
-            if trimmed.hasPrefix("/") || trimmed.hasPrefix("file://") {
+            if trimmed.hasPrefix("/") {
+                absolute = trimmed
+            } else if trimmed.hasPrefix("file://") {
                 absolute = URL(string: trimmed)?.path ?? trimmed
+            } else if trimmed.hasPrefix("~/") {
+                absolute = (trimmed as NSString).expandingTildeInPath
             } else if let workingDirectory {
                 absolute = (workingDirectory as NSString).appendingPathComponent(trimmed)
             } else {
@@ -33,6 +47,21 @@ enum PreviewImages {
             if FileManager.default.fileExists(atPath: absolute) { return absolute }
         }
         return nil
+    }
+
+    /// One attachment value per file, so the preview panel's toggle recognises the same
+    /// image on a second tap and closes instead of reopening.
+    @MainActor private static var attachments: [String: Attachment] = [:]
+
+    /// The file as an attachment, for the same large preview a sent photo opens in.
+    @MainActor
+    static func attachment(for path: String) -> Attachment {
+        if let known = attachments[path] { return known }
+        let name = (path as NSString).lastPathComponent
+        let mimeType = UTType(filenameExtension: (path as NSString).pathExtension.lowercased())?.preferredMIMEType ?? "image/*"
+        let attachment = Attachment(name: name, path: path, mimeType: mimeType.hasPrefix("image/") ? mimeType : "image/*")
+        attachments[path] = attachment
+        return attachment
     }
 
     static func fileSize(_ path: String) -> String? {
