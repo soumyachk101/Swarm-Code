@@ -1,0 +1,44 @@
+# Droppy Code marketing site. Static, no build step: Netlify publishes the
+# website/ folder as-is. Deploy with `netlify deploy --prod --dir website`
+# from the repository root so this file's redirects and headers ride along.
+[build]
+  publish = "website"
+
+# The download button everywhere on the page points here, so a new release
+# is a one-line change: update the target and nothing in the HTML moves.
+# The disk image is the asset attached to the GitLab release; the project
+# has to be public (or the DMG hosted elsewhere) for visitors to reach it.
+[[redirects]]
+  from = "/download/latest"
+  to = "https://gitlab.com/droppyformac1/droppy-code/-/releases/v1.0.0/downloads/Droppy-Code-1.0.0.dmg"
+  status = 302
+  force = true
+
+[[redirects]]
+  from = "/download"
+  to = "/download/latest"
+  status = 301
+
+[[redirects]]
+  from = "/releases"
+  to = "https://gitlab.com/droppyformac1/droppy-code/-/releases"
+  status = 302
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+
+# Assets are cached for a week (CSS/JS carry ?v= for instant busting); the HTML must not be.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
