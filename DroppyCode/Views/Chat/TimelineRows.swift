@@ -803,7 +803,13 @@ struct TurnFinishedBlock: View {
     /// Everything the body derives from the turn's content, gathered in one pass per
     /// render instead of a filter per use.
     private struct Derived {
+        /// Every reply with something to read, narration included, in order.
         var assistantEntries: [TimelineEntry] = []
+        /// The turn's conclusive answer: the replies that follow its last tool call.
+        /// Prose between tool calls narrates work the collapsed turn doesn't show, and
+        /// stays with the steps behind the chevron. A turn that ended on a tool (stopped
+        /// or failed mid-work) keeps the last words it said rather than showing nothing.
+        var answerEntries: [TimelineEntry] = []
         var collapsedPlans: [TimelineEntry] = []
         /// Errors and warnings stay visible even when collapsed, so a failed turn
         /// never hides what went wrong. Plain info notices stay in the expanded view.
@@ -821,11 +827,12 @@ struct TurnFinishedBlock: View {
             for entry in content {
                 switch entry.kind {
                 case .assistant:
+                    // A message still streaming when its turn failed can be blank.
+                    guard case .assistant(let message) = entry.item.content,
+                          !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
                     assistantEntries.append(entry)
-                    if !hasResponse, case .assistant(let message) = entry.item.content,
-                       !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        hasResponse = true
-                    }
+                    answerEntries.append(entry)
+                    hasResponse = true
                 case .plan:
                     collapsedPlans.append(entry)
                 case .notice:
@@ -833,6 +840,10 @@ struct TurnFinishedBlock: View {
                         collapsedNotices.append(entry)
                     }
                 case .tool:
+                    // Reaching for a tool ends the answer so far: whatever the model says
+                    // next is about the work, until it stops calling tools and concludes.
+                    // Plans, notices and checklists don't interrupt it.
+                    answerEntries.removeAll(keepingCapacity: true)
                     guard case .tool(let call) = entry.item.content else { continue }
                     for edit in call.edits where !edit.path.isEmpty {
                         var stat = totals[edit.path] ?? FileStat(path: edit.path, additions: 0, deletions: 0)
@@ -844,6 +855,7 @@ struct TurnFinishedBlock: View {
                     break
                 }
             }
+            if answerEntries.isEmpty, let last = assistantEntries.last { answerEntries = [last] }
             if !collapsedPlans.isEmpty || !collapsedNotices.isEmpty { hasResponse = true }
             fileStats = totals.values.sorted { $0.path < $1.path }
             if expanded { detailGroups = TimelineGroup.build(content, showReasoning: false) }
@@ -912,7 +924,7 @@ struct TurnFinishedBlock: View {
                 .padding(.bottom, derived.hasResponse ? TimelineMetrics.rowSpacing : 0)
             } else if derived.hasResponse {
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
-                    ForEach(derived.assistantEntries) { entry in
+                    ForEach(derived.answerEntries) { entry in
                         if case .assistant(let message) = entry.item.content, !message.text.isEmpty {
                             MarkdownView(text: message.text).equatable()
                         }
