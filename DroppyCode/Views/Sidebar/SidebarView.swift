@@ -107,14 +107,6 @@ struct SidebarView: View {
             ProjectRow(project: project)
         case .header(let title, let isFirst):
             ActivityHeader(title: title, isFirst: isFirst)
-        case .note(let text):
-            Text(verbatim: text)
-                .font(.system(size: 12))
-                .foregroundStyle(Chrome.secondaryText.opacity(0.7))
-                .padding(.horizontal, Chrome.rowHorizontalPadding)
-                .padding(.top, 2)
-                .padding(.bottom, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
         case .thread(let thread, let projectName, let peers):
             reorderableRow(thread, projectName: projectName, peers: peers)
         }
@@ -143,14 +135,13 @@ struct SidebarView: View {
         let active = model.threads.filter { !$0.isArchived }
         let attention = Self.placed(active.filter(needsAttention))
         var items: [SidebarItem] = []
-        if attention.isEmpty {
-            items.append(SidebarItem(id: "attention-none", kind: .note("Nothing needs attention")))
-        } else {
+        if !attention.isEmpty {
             items.append(SidebarItem(id: "attention", kind: .header("Needs attention", isFirst: true)))
             items.append(contentsOf: activityThreadItems(attention))
         }
         for group in Self.activityGroups(active.filter { !needsAttention($0) }) {
-            items.append(SidebarItem(id: "day-\(group.title)", kind: .header(group.title, isFirst: false)))
+            // Without an attention section the day header is the first row, so it takes the tighter top padding.
+            items.append(SidebarItem(id: "day-\(group.title)", kind: .header(group.title, isFirst: items.isEmpty)))
             items.append(contentsOf: activityThreadItems(group.threads))
         }
         return items
@@ -324,7 +315,6 @@ private struct SidebarItem: Identifiable {
         case gap
         case project(Project)
         case header(String, isFirst: Bool)
-        case note(String)
         /// A thread, with its project's name in the activity layout and the threads it can be reordered among.
         case thread(ChatThread, projectName: String?, peers: [UUID]?)
     }

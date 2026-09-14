@@ -38,7 +38,7 @@ struct AppCommands: Commands {
             Button("Toggle terminal") { runtime?.isTerminalVisible.toggle() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .toggleTerminal))
                 .disabled(model.selectedThreadID == nil)
-            Button("Toggle changes") { runtime?.isDiffVisible.toggle() }
+            Button("Toggle changes") { runtime?.toggleDiff() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .toggleChanges))
                 .disabled(model.selectedThreadID == nil)
             Button("Toggle activity view") {

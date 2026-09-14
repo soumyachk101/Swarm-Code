@@ -113,7 +113,7 @@ struct CommandPalette: View {
                 runtime.isTerminalVisible.toggle()
             })
             actions.append(Item(id: "changes", title: "Toggle changes", symbol: "plusminus", shortcut: "⌘D") {
-                runtime.isDiffVisible.toggle()
+                runtime.toggleDiff()
             })
             actions.append(Item(id: "archive", title: "Archive thread", symbol: "archivebox", shortcut: "⇧⌘⌫") {
                 model.archive(threadID)

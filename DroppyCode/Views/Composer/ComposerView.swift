@@ -31,6 +31,7 @@ struct ComposerArea: View {
                             stats: stats,
                             anchor: { diffPopover.setAnchor($0) }
                         ) {
+                            runtime.clearDiffFocus()
                             runtime.diffAnchor = nil
                             if runtime.diffSelection != nil { runtime.diffSelection = nil }
                             // Set last so a redundant write never restarts the diff load

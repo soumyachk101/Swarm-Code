@@ -31,6 +31,29 @@ struct TimelineItem: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+extension TimelineItem {
+    /// Model-written prose with its long dashes flattened, for threads stored by a
+    /// build that cleaned text only as it arrived. The user's own words, tool output
+    /// and notices are not the model's writing and are left exactly as they were.
+    var cleanedOfEmDashes: TimelineItem {
+        var item = self
+        switch item.content {
+        case .assistant(var message):
+            message.text = TextCleanup.withoutEmDashes(message.text)
+            item.content = .assistant(message)
+        case .reasoning(var block):
+            block.text = TextCleanup.withoutEmDashes(block.text)
+            item.content = .reasoning(block)
+        case .plan(var plan):
+            plan.markdown = TextCleanup.withoutEmDashes(plan.markdown)
+            item.content = .plan(plan)
+        default:
+            break
+        }
+        return item
+    }
+}
+
 struct UserMessage: Codable, Hashable, Sendable {
     var text: String
     var attachments: [Attachment] = []
