@@ -178,6 +178,15 @@ private struct DetailSheetModifier: ViewModifier {
 /// One Liquid Glass surface for the whole window, with a legibility tint and a hairline.
 struct WindowBackdrop: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(AppModel.self) private var model
+
+    /// The scrim over the glass for a backdrop setting: the stock scrim at the
+    /// midpoint, none at 0, a solid base at 1, linear either side.
+    static func scrim(for opacity: Double, isDark: Bool) -> Double {
+        let stock = isDark ? 0.26 : 0.18
+        let t = min(max(opacity, 0), 1)
+        return t <= 0.5 ? stock * (t / 0.5) : stock + (1 - stock) * ((t - 0.5) / 0.5)
+    }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous)
@@ -188,7 +197,7 @@ struct WindowBackdrop: View {
             .overlay {
                 shape
                     .fill(isDark ? Color.black : Color.white)
-                    .opacity(isDark ? 0.26 : 0.18)
+                    .opacity(Self.scrim(for: model.settings.backdropOpacity, isDark: isDark))
             }
             .overlay {
                 shape.fill(Chrome.glassTint.opacity(0.12))
