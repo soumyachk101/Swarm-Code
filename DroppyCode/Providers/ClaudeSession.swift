@@ -79,11 +79,12 @@ final class ClaudeSession: ProviderSession {
             // for an existing chat reaches the model.
             arguments += [
                 "--agents", HydraPrompts.claudeAgents(hydra).compactString,
-                "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads),
+                "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges),
                 "--system-prompt-snapshot", "off",
                 "--forward-subagent-text",
             ]
-            environment["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] = String(hydra.maxHeads)
+            // Uncapped, the CLI keeps its own limit on heads at once.
+            if let cap = hydra.maxHeads { environment["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] = String(cap) }
         }
         if let resumeID = configuration.resumeID {
             arguments += ["--resume", resumeID]

@@ -84,33 +84,28 @@ final class ThreadRuntime {
     var draft = ComposerDraft()
     var isTerminalVisible = false
     var isDiffVisible = false
-    /// Where the helper panel this thread spawned was dragged to, as its top-left corner in
-    /// the chat pane; nil while it sits docked in a corner beside the chat column.
-    var subagentPanelOrigin: CGPoint?
-    /// Which corner the helper panel docks in.
+    /// Which corner of the chat pane the helper panel this thread spawned sits in.
     var subagentPanelDock: PanelDockCorner = .bottomTrailing
-    /// Where the Hydra panel was dragged to, the same way; nil while docked.
-    var hydraPanelOrigin: CGPoint?
+    /// The same for the Hydra panel.
     var hydraPanelDock: PanelDockCorner = .bottomTrailing
     /// The head whose timeline the Hydra panel shows.
     var hydraSelectedHeadID: UUID?
     /// The head popped out of the Hydra panel into a second panel of its own, if any, and
-    /// where that panel was dragged to; nil while docked.
+    /// the corner that panel sits in.
     var hydraPoppedHeadID: UUID?
-    var hydraPoppedPanelOrigin: CGPoint?
     var hydraPoppedPanelDock: PanelDockCorner = .bottomLeading
     /// The Hydra panel was dismissed; the next head to start brings it back.
     var isHydraPanelHidden = false
-    /// The Hydra button's centre in window coordinates, for the genie flight's target.
-    /// Unobserved: written on every layout, read only while hiding the panel.
-    @ObservationIgnored var hydraButtonCenterInWindow: CGPoint?
-    /// The Hydra panel's frame in window coordinates, for the genie flight's source.
+    /// The Hydra button's frame in window coordinates: the shape the panel morphs out of
+    /// and back into. Unobserved: written on every layout, read only as the panel toggles.
+    @ObservationIgnored var hydraButtonFrameInWindow: CGRect?
+    /// The Hydra panel's frame in window coordinates, the morph's other shape.
     /// Unobserved: written on every layout, read only while hiding the panel.
     @ObservationIgnored var hydraPanelFrameInWindow: CGRect?
-    /// The Hydra panel's next appearance or departure is a genie flight to or from the
-    /// button: a ghost does the moving, so the panel itself comes and goes with no
-    /// transition of its own. Set by the button as it toggles the panel, cleared by the
-    /// panel once it has appeared or gone.
+    /// The Hydra panel's next appearance or departure is a morph out of or into the
+    /// button: a ghost surface does the moving, so the panel itself only crossfades with
+    /// it. Set by the button as it toggles the panel, cleared by the panel once it has
+    /// appeared or gone.
     @ObservationIgnored var hydraPanelMorphs = false
     /// Heads by the tool row that stands for them in this timeline, so the row can show
     /// who was sent out.
@@ -137,9 +132,6 @@ final class ThreadRuntime {
     @ObservationIgnored private var headBudget: Task<Void, Never>?
     @ObservationIgnored private var headBudgetSpent = false
     @ObservationIgnored private var headReportsNext = false
-    /// Heads that have reported for the user's current request, native or not: a job the
-    /// team took part in is one that lands by itself once done, when the setting says so.
-    @ObservationIgnored private var hydraReportsThisRequest = 0
     /// The team's finished work is on its way to the remote (see `AppModel.autoMergeHydraWork`).
     @ObservationIgnored var isHydraMerging = false
     /// A native head's progress while it runs (its provider's note, its tool count, its
@@ -413,7 +405,7 @@ final class ThreadRuntime {
     /// that it is idle. Returns whether the head went out.
     private func dispatchHead(_ prompt: FollowUpPrompt, origin: HydraHeadInfo.Origin) -> Bool {
         guard let app, let thread, let launch = app.hydraLaunch(for: thread),
-              app.runningDroppyHeads(of: threadID) < launch.maxHeads else { return false }
+              launch.hasRoom(running: app.runningDroppyHeads(of: threadID)) else { return false }
         let task = TextCleanup.singleLine(prompt.text, limit: 60)
         let context = app.hydraChatContext(for: threadID)
         let leadIsWorking = phase != .idle
@@ -537,10 +529,7 @@ final class ThreadRuntime {
         }
         // A settled thread put back to work is open again.
         app.reopenIfSettled(threadID)
-        if hydraHeads == nil {
-            hydraDelegationRounds = 0
-            hydraReportsThisRequest = 0
-        }
+        if hydraHeads == nil { hydraDelegationRounds = 0 }
         // A finished head told more from the panel is at work again: its lead's team
         // counts it, and its next report goes out as a fresh one.
         if let info = initialThread.hydra, info.kind == .droppy, info.isFinished {
@@ -606,9 +595,9 @@ final class ThreadRuntime {
                 if thread.provider.isAPIKeyBased {
                     prompt = (hydraHeads == nil ? HydraPrompts.fallbackTurnNote(team: team) : HydraPrompts.fallbackReportNote(team: team, canDelegate: canDelegate)) + prompt
                 } else if hydraHeads == nil {
-                    prompt = HydraPrompts.fallbackPreamble(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, team: team) + prompt
+                    prompt = HydraPrompts.fallbackPreamble(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, team: team) + prompt
                 } else {
-                    prompt = HydraPrompts.fallbackReportPreamble(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, team: team, canDelegate: canDelegate) + prompt
+                    prompt = HydraPrompts.fallbackReportPreamble(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, team: team, canDelegate: canDelegate) + prompt
                 }
             }
             phase = .running
@@ -1210,12 +1199,12 @@ final class ThreadRuntime {
             }
         }
         app?.turnFinished(threadID, status: status, continues: continues)
-        // The team's job is done: the lead has answered, every head is back and nothing is
-        // waiting. With the setting on, the work goes out and lands by itself.
-        if !continues, status == .completed, hydraReportsThisRequest > 0,
+        // The job is done: the lead has answered, every head is back and nothing is
+        // waiting. With the setting on, the work goes out and lands by itself, whether
+        // heads took part or the lead did it all; a job that changed no file is let be.
+        if !continues, status == .completed,
            hydraPendingReports.isEmpty, hydraBatches.isEmpty, hydraWaiting.isEmpty,
            let app, let thread, app.hydraIsOn(thread), app.settings.hydraAutoMerge {
-            hydraReportsThisRequest = 0
             Task { await app.autoMergeHydraWork(of: threadID) }
         }
     }
@@ -1306,7 +1295,6 @@ final class ThreadRuntime {
     /// sent it out completes if the provider left it running in the background.
     private func hydraAgentFinished(_ agentID: String, status: TurnStatus, summary: String?) {
         guard let app, let headID = hydraNativeHeads[agentID] else { return }
-        if app.thread(headID)?.hydra?.isFinished == false { hydraReportsThisRequest += 1 }
         app.finishHydraHead(headID, status: status, summary: summary)
         if let headRuntime = app.existingRuntime(for: headID), headRuntime.isRunning {
             headRuntime.rehearse(.turnCompleted(status: status, error: nil))
@@ -1420,7 +1408,6 @@ final class ThreadRuntime {
         hydraPendingReports.removeAll()
         let stillWorking = app.workingHydraHeadNames(of: threadID, excluding: Set(reports.map(\.headIndex)))
         let text = HydraPrompts.reportMessage(reports, stillWorking: stillWorking)
-        hydraReportsThisRequest += reports.count
         await startTurn(text: text, attachments: [], hydraHeads: reports.map(\.headIndex))
     }
 
@@ -1450,17 +1437,18 @@ final class ThreadRuntime {
         let batchID = UUID()
         hydraBatches[batchID] = HydraBatch(pending: [])
         hydraWaiting += delegations.prefix(HydraPair.maxHeadsRange.upperBound * 2).map { (delegation: $0, batchID: batchID) }
-        spawnWaitingHeads(limit: launch.maxHeads)
+        spawnWaitingHeads(launch: launch)
         settleBatches()
         scheduleSave()
         return !hydraBatches.isEmpty || !hydraWaiting.isEmpty
     }
 
-    /// Sends out delegated tasks still waiting, as far as the pair's limit allows.
-    private func spawnWaitingHeads(limit: Int? = nil) {
+    /// Sends out delegated tasks still waiting, as far as the pair's cap allows; without
+    /// a pair, or an uncapped one, all of them.
+    private func spawnWaitingHeads(launch: HydraLaunch? = nil) {
         guard let app, let thread, !hydraWaiting.isEmpty else { return }
-        let maxHeads = limit ?? app.hydraLaunch(for: thread)?.maxHeads ?? HydraPair.defaultMaxHeads
-        while !hydraWaiting.isEmpty, app.runningDroppyHeads(of: threadID) < maxHeads {
+        let launch = launch ?? app.hydraLaunch(for: thread)
+        while !hydraWaiting.isEmpty, launch?.hasRoom(running: app.runningDroppyHeads(of: threadID)) ?? true {
             let next = hydraWaiting.removeFirst()
             let delegation = next.delegation
             guard let head = app.spawnDroppyHead(from: threadID, task: delegation.task, origin: .delegated, batchID: next.batchID, brief: { persona, workplace in

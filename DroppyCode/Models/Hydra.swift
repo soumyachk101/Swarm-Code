@@ -17,16 +17,14 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
     var orchestratorEffort: String?
     var workerModel: String?
     var workerEffort: String?
-    /// How many heads may work at once.
-    var maxHeads: Int
+    /// How many heads may work at once; nil puts no cap on them, as with no pair at all.
+    var maxHeads: Int?
 
-    static let defaultMaxHeads = 4
     static let maxHeadsRange = 1...8
 
     init(provider: ProviderKind) {
         id = UUID()
         self.provider = provider
-        maxHeads = Self.defaultMaxHeads
     }
 
     init(from decoder: Decoder) throws {
@@ -37,7 +35,12 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
         orchestratorEffort = container.value(.orchestratorEffort, default: nil)
         workerModel = container.value(.workerModel, default: nil)
         workerEffort = container.value(.workerEffort, default: nil)
-        maxHeads = min(max(container.value(.maxHeads, default: Self.defaultMaxHeads), Self.maxHeadsRange.lowerBound), Self.maxHeadsRange.upperBound)
+        maxHeads = Self.clampedCap(container.value(.maxHeads, default: nil))
+    }
+
+    /// A cap kept inside the range, or none.
+    static func clampedCap(_ cap: Int?) -> Int? {
+        cap.map { min(max($0, maxHeadsRange.lowerBound), maxHeadsRange.upperBound) }
     }
 }
 
@@ -47,9 +50,19 @@ struct HydraLaunch: Hashable, Sendable {
     /// The provider's own model id for the heads, or nil to inherit the lead's model.
     var workerModel: String?
     var workerEffort: String?
-    var maxHeads: Int
+    /// The pair's cap on heads at work at once; nil, with no pair or an uncapped one,
+    /// lets as many out as the work asks for.
+    var maxHeads: Int?
     /// Whether Droppy-run heads get copies of the checkout of their own.
     var isolatesHeads = true
+    /// Whether Droppy Code lands the team's finished work itself (see
+    /// `AppModel.autoMergeHydraWork`); the lead is told so it never merges by hand.
+    var autoMerges = false
+
+    /// Whether one more head may go out with `running` already at work.
+    func hasRoom(running: Int) -> Bool {
+        maxHeads.map { running < $0 } ?? true
+    }
 }
 
 /// How much a Droppy-run head gets for one turn, on any provider: a nudge when it only
@@ -328,24 +341,29 @@ enum HydraPrompts {
 
     private static let howToReport = "Reply with a short report the lead can act on: what you did, the files you changed, how you checked it, and anything the lead must know. No preamble, no logs."
 
+    /// What a lead is told when the setting has Droppy Code land the work: the merge is
+    /// the app's, not the lead's, whatever else it has been told about merging, and asking
+    /// for one is a job it finishes by replying.
+    private static let autoMergeRule = "Droppy Code merges your finished work itself: the moment you answer and every head is back, the files the team changed go out as a merge request on a branch of their own, it is merged, and the checkout is brought up to date. So never commit, push, make a branch, or open or merge a merge request yourself, and never send out a head to, whatever the project's guidelines or the user's standing instructions say about merging. When the user asks you to merge, there is nothing to run: make sure the work is complete, reply that it lands by itself as soon as you finish, and stop."
+
     /// Appended to the lead's system prompt on providers that run heads natively: when to
     /// delegate, how to split the work and what to do with the reports.
-    static func policy(for provider: ProviderKind, maxHeads: Int) -> String {
+    static func policy(for provider: ProviderKind, maxHeads: Int?, autoMerges: Bool = false) -> String {
         let howToSpawn: String
         let howToWait: String
         switch provider {
         case .claude:
             howToSpawn = "Two agent types are yours: `\(workerAgentName)` (edits files, runs commands, verifies) and `\(scoutAgentName)` (read-only research). Spawn them with the Agent tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads."
-            howToWait = "Launch every head for a job in one message so they run in parallel, in the foreground, and run at most \(maxHeads) at once."
+            howToWait = "Launch every head for a job in one message so they run in parallel, in the foreground" + (maxHeads.map { ", and run at most \($0) at once." } ?? ".")
         case .codex:
             howToSpawn = "Spawn heads with `spawn_agent`: the `worker` agent for anything that edits files or runs commands, the `explorer` agent for read-only research."
-            howToWait = "Spawn every head for a job before waiting, so they run in parallel, and collect them with `wait_agent`; never leave a head running when you answer. Run at most \(maxHeads) at once."
+            howToWait = "Spawn every head for a job before waiting, so they run in parallel, and collect them with `wait_agent`; never leave a head running when you answer." + (maxHeads.map { " Run at most \($0) at once." } ?? "")
         case .copilot:
             howToSpawn = "Two agents are yours: `\(workerAgentName)` (edits files, runs commands, verifies) and `\(scoutAgentName)` (read-only research). Start them with the task tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads."
-            howToWait = "Start every head for a job at once so they run in parallel, and run at most \(maxHeads) at a time."
+            howToWait = "Start every head for a job at once so they run in parallel" + (maxHeads.map { ", and run at most \($0) at a time." } ?? ".")
         default:
             howToSpawn = ""
-            howToWait = "Run at most \(maxHeads) heads at once."
+            howToWait = maxHeads.map { "Run at most \($0) heads at once." } ?? "Send every head for a job out at once so they run in parallel."
         }
         return """
         # Hydra
@@ -364,6 +382,7 @@ enum HydraPrompts {
         - The checkout changes under you while heads work, and the user may be editing too. Never use git status or git diff to check on a head, and never reconcile, revert, stash or move changes you did not make.
         - Take a report as done work: read the files it names if something matters, but do not redo the task and do not start it over because the tree looks different from what you expected. A head that failed leaves its part to you: do it or send it out again. A head the user stopped leaves its part alone unless the user asks.
         - Then finish the job: integrate, run one verification if it matters, and answer the user.
+        \(autoMerges ? "\n" + autoMergeRule + "\n" : "")
         """
     }
 
@@ -441,11 +460,10 @@ enum HydraPrompts {
     }
 
     /// Codex's config overrides for the thread: the heads' model and effort, and how many
-    /// may run at once.
+    /// may run at once; uncapped, Codex keeps its own limit.
     static func codexConfig(_ launch: HydraLaunch) -> [String: JSONValue] {
-        var agents: [String: JSONValue] = [
-            "max_concurrent_threads_per_session": .int(launch.maxHeads),
-        ]
+        var agents: [String: JSONValue] = [:]
+        if let cap = launch.maxHeads { agents["max_concurrent_threads_per_session"] = .int(cap) }
         if let model = launch.workerModel, !model.isEmpty { agents["default_subagent_model"] = .string(model) }
         if let effort = launch.workerEffort, !effort.isEmpty { agents["default_subagent_reasoning_effort"] = .string(effort) }
         return ["agents": .object(agents), "features": ["multi_agent": true]]
@@ -486,18 +504,19 @@ enum HydraPrompts {
     /// The standing rules for a lead on a provider that runs no heads of its own: when to
     /// delegate, how, and what the reports mean. An API session keeps this in its system
     /// prompt, once; a CLI session gets it in front of every message.
-    static func fallbackPolicy(maxHeads: Int, isolated: Bool) -> String {
+    static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false) -> String {
         let whereHeadsWork = isolated
             ? "Each head works in a copy of the project of its own and Droppy Code lands its changes in your checkout when it reports"
             : "The heads work in your checkout"
+        let team = maxHeads.map { "a team of up to \($0) helper agents" } ?? "a team of helper agents"
         return """
-        [Hydra is on] You lead a team of up to \(maxHeads) helper agents ("heads"). For a simple or single-focus request, just do it yourself. If a request bundles several independent tasks or needs research across many files, delegate: finish your reply with one fenced block
+        [Hydra is on] You lead \(team) ("heads"). For a simple or single-focus request, just do it yourself. If a request bundles several independent tasks or needs research across many files, delegate: finish your reply with one fenced block
 
         ```hydra
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, and give no two heads the same file. The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.
+        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, and give no two heads the same file. The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(autoMerges ? " " + autoMergeRule : "")
         """
     }
 
@@ -519,12 +538,12 @@ enum HydraPrompts {
 
     /// Policy and note together, for a CLI provider with no system prompt to keep the
     /// policy in.
-    static func fallbackPreamble(maxHeads: Int, isolated: Bool, team: String?) -> String {
-        fallbackPolicy(maxHeads: maxHeads, isolated: isolated) + "\n\n" + (fallbackTurnNote(team: team).isEmpty ? "---\n\n" : fallbackTurnNote(team: team))
+    static func fallbackPreamble(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, team: String?) -> String {
+        fallbackPolicy(maxHeads: maxHeads, isolated: isolated, autoMerges: autoMerges) + "\n\n" + (fallbackTurnNote(team: team).isEmpty ? "---\n\n" : fallbackTurnNote(team: team))
     }
 
-    static func fallbackReportPreamble(maxHeads: Int, isolated: Bool, team: String?, canDelegate: Bool) -> String {
-        fallbackPolicy(maxHeads: maxHeads, isolated: isolated) + "\n\n" + fallbackReportNote(team: team, canDelegate: canDelegate)
+    static func fallbackReportPreamble(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, team: String?, canDelegate: Bool) -> String {
+        fallbackPolicy(maxHeads: maxHeads, isolated: isolated, autoMerges: autoMerges) + "\n\n" + fallbackReportNote(team: team, canDelegate: canDelegate)
     }
 
     /// What the lead hears when its delegation block is refused: the request has had its

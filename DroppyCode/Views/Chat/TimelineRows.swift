@@ -86,71 +86,82 @@ struct UserMessageRow: View {
 }
 
 /// Heads reporting back to their lead: their glyphs and names on a line, and their reports
-/// folded under it. It sits on the user's side, since that is where the lead reads it from,
+/// in a popover off it. It sits on the user's side, since that is where the lead reads it from,
 /// but reads as the team's, not the user's. A note from Hydra itself (heads held back)
 /// takes the same row without the glyphs.
 struct HydraReportRow: View {
     let message: UserMessage
 
-    @State private var isExpanded = false
+    @State private var isShowingReport = false
 
     var body: some View {
         let personas = (message.hydraHeads ?? []).map(HydraRoster.persona(at:))
         let names = personas.map(\.name)
         let who = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
-        // A note from Hydra itself says what it is on its first line; the rest folds under.
+        // A note from Hydra itself says what it is on its first line; the rest is the message.
         let parts = message.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
         let title = personas.isEmpty ? String(parts.first ?? "Hydra") : "\(who) reported back"
         let body = personas.isEmpty ? String(parts.count > 1 ? parts[1] : "").trimmingCharacters(in: .whitespacesAndNewlines) : message.text
-        VStack(alignment: .trailing, spacing: 6) {
-            Button {
-                withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
-            } label: {
-                HStack(spacing: 8) {
-                    // The hand takes a glyph's slot, so both rows sit the same in the pill.
-                    // (Only one or the other: an empty stack would still keep its spacing.)
-                    if personas.isEmpty {
-                        Image(systemName: "hand.raised.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .frame(width: 18, height: 18)
-                    } else {
-                        HStack(spacing: -4) {
-                            ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
-                                HydraGlyph(persona: persona, size: 18)
-                            }
+        Button {
+            isShowingReport.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                // The hand takes a glyph's slot, so both rows sit the same in the pill.
+                // (Only one or the other: an empty stack would still keep its spacing.)
+                if personas.isEmpty {
+                    Image(systemName: "hand.raised.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .frame(width: 18, height: 18)
+                } else {
+                    HStack(spacing: -4) {
+                        ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
+                            HydraGlyph(persona: persona, size: 18)
                         }
                     }
-                    Text(verbatim: title)
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                    if !body.isEmpty {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                    }
                 }
-                .padding(.leading, 12)
-                .padding(.trailing, 14)
-                .padding(.vertical, 8)
-                .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .contentShape(.rect)
+                Text(verbatim: title)
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                if !body.isEmpty {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
             }
-            .buttonStyle(.plain)
-            .disabled(body.isEmpty)
-            .help(isExpanded ? "Hide the message" : "Show the message")
-            if isExpanded, !body.isEmpty {
-                MarkdownView(text: body)
-                    .padding(14)
-                    .background(Chrome.overlay(0.05), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .transition(.softAppear)
-            }
+            .padding(.leading, 12)
+            .padding(.trailing, 14)
+            .padding(.vertical, 8)
+            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(body.isEmpty)
+        .help("Show the message")
+        .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
+            HydraReportPopover(text: body)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 96)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(title))
+    }
+}
+
+/// A head's report in the popover its pill opens: the markdown at reading width, scrolling
+/// past the panel's height rather than pushing the timeline apart.
+private struct HydraReportPopover: View {
+    let text: String
+
+    var body: some View {
+        ScrollView {
+            MarkdownView(text: text)
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: 440)
+        .frame(idealHeight: 320, maxHeight: 460)
     }
 }
 

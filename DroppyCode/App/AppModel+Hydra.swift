@@ -28,15 +28,16 @@ extension AppModel {
     }
 
     /// What the heads run on while the chat leads, or nil with Hydra off. Without a pair
-    /// the heads inherit the chat's own model and effort.
+    /// the heads inherit the chat's own model and effort, and go out without a cap.
     func hydraLaunch(for thread: ChatThread) -> HydraLaunch? {
         guard hydraIsOn(thread) else { return nil }
         let pair = hydraPair(for: thread)
         return HydraLaunch(
             workerModel: pair?.workerModel,
             workerEffort: pair?.workerEffort,
-            maxHeads: pair?.maxHeads ?? HydraPair.defaultMaxHeads,
-            isolatesHeads: settings.hydraIsolateHeads
+            maxHeads: pair?.maxHeads,
+            isolatesHeads: settings.hydraIsolateHeads,
+            autoMerges: settings.hydraAutoMerge
         )
     }
 

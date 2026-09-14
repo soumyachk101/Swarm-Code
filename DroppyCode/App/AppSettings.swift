@@ -347,7 +347,7 @@ final class AppSettings {
         guard let index = hydraPairs.firstIndex(where: { $0.id == id }) else { return }
         var pair = hydraPairs[index]
         change(&pair)
-        pair.maxHeads = min(max(pair.maxHeads, HydraPair.maxHeadsRange.lowerBound), HydraPair.maxHeadsRange.upperBound)
+        pair.maxHeads = HydraPair.clampedCap(pair.maxHeads)
         guard pair != hydraPairs[index] else { return }
         hydraPairs[index] = pair
     }

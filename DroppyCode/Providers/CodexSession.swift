@@ -79,7 +79,7 @@ final class CodexSession: ProviderSession {
         if let model = configuration.model { params["model"] = .string(model) }
         if let hydra = configuration.hydra {
             params["config"] = .object(HydraPrompts.codexConfig(hydra))
-            params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads))
+            params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges))
         }
 
         if let resumeID = configuration.resumeID {

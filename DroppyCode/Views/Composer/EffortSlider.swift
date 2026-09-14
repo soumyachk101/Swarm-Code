@@ -549,18 +549,25 @@ struct EffortSlider: View {
                 }
                 // The knob is a Liquid Glass lens: it refracts the fill's edge, the stops and
                 // the particles as it slides over them, lit white just enough to read as the
-                // knob on the dark track. The charged fills keep their glow under it.
-                Circle()
-                    .fill(.clear)
-                    .frame(width: Self.thumbSize, height: Self.thumbSize)
-                    .glassEffect(.regular.tint(Color.white.opacity(look.isLightFill ? 0.55 : 0.32)).interactive(), in: Circle())
-                    // On a white fill the lens needs an edge to read against it.
-                    .overlay {
-                        Circle().strokeBorder(Color.black.opacity(look.isLightFill ? 0.14 : 0), lineWidth: 1)
-                    }
-                    .shadow(color: look.glow, radius: look.kind == .plain ? 4 : 8, y: 1)
-                    .scaleEffect(dragX == nil ? 1 : 1.06)
-                    .position(x: x, y: Self.trackHeight / 2)
+                // knob on the dark track. The charged fills keep their glow under it: a blurred
+                // disc beneath the lens rather than a shadow on it, because a shadow that
+                // changes colour and radius on glass makes the lens flash as the look changes.
+                ZStack {
+                    Circle()
+                        .fill(look.glow)
+                        .blur(radius: look.kind == .plain ? 4 : 8)
+                        .offset(y: 1)
+                    Circle()
+                        .fill(.clear)
+                        .glassEffect(.regular.tint(Color.white.opacity(look.isLightFill ? 0.55 : 0.32)).interactive(), in: Circle())
+                        // On a white fill the lens needs an edge to read against it.
+                        .overlay {
+                            Circle().strokeBorder(Color.black.opacity(look.isLightFill ? 0.14 : 0), lineWidth: 1)
+                        }
+                }
+                .frame(width: Self.thumbSize, height: Self.thumbSize)
+                .scaleEffect(dragX == nil ? 1 : 1.06)
+                .position(x: x, y: Self.trackHeight / 2)
             }
             .frame(height: Self.trackHeight)
             .frame(maxHeight: .infinity)

@@ -15,6 +15,8 @@ struct ThreadTimeline: View, Equatable {
     /// Full chat-column height, so the rail stays centred when the composer
     /// or queue tab grows.
     let columnHeight: CGFloat
+    /// Whether the rail is shown at all; a panel docked on the left takes its edge.
+    var showsMinimap = true
 
     /// The chat re-renders whenever its thread changes (a title, the effort, a mode); the
     /// timeline only follows when what it was handed changed.
@@ -26,6 +28,7 @@ struct ThreadTimeline: View, Equatable {
             && lhs.workingDirectory == rhs.workingDirectory
             && lhs.supportsRewind == rhs.supportsRewind
             && lhs.columnHeight == rhs.columnHeight
+            && lhs.showsMinimap == rhs.showsMinimap
     }
 
     /// Everything the scroll view and the rows report while the reader scrolls: which blocks
@@ -95,18 +98,23 @@ struct ThreadTimeline: View, Equatable {
         // Ticks centre in the full column height, so the queue tab opening never moves them.
         return ZStack(alignment: .leading) {
             timelineScroll(visible: visible, hidden: hidden, rewindable: rewindable)
-            if blocks.count(where: \.hasUserMessage) > 1 {
-                TimelineMinimapColumn(
-                    blocks: blocks,
-                    tracking: tracking,
-                    centerHeight: columnHeight,
-                    onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
-                )
-                .equatable()
-                .frame(width: 30)
-                .frame(maxHeight: .infinity)
-                // The hover card reaches over the conversation instead of being painted under it.
+            // The rail fades with the slide of the panel that takes its edge.
+            ZStack {
+                if showsMinimap, blocks.count(where: \.hasUserMessage) > 1 {
+                    TimelineMinimapColumn(
+                        blocks: blocks,
+                        tracking: tracking,
+                        centerHeight: columnHeight,
+                        onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
+                    )
+                    .equatable()
+                    .frame(width: 30)
+                    .frame(maxHeight: .infinity)
+                    // The hover card reaches over the conversation instead of being painted under it.
+                    .transition(.opacity)
+                }
             }
+            .animation(Chrome.panelSlide, value: showsMinimap)
         }
     }
 
