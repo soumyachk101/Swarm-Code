@@ -15,7 +15,11 @@ struct ChatView: View {
     var body: some View {
         let thread = model.thread(runtime.threadID)
         let project = thread.flatMap { model.project($0.projectID) }
-        let directory = thread?.worktreePath ?? project?.path ?? LoginEnvironment.homeDirectory
+        // The thread and project are read here, once, and passed down as values: the timeline
+        // rows and the composer never observe them, so a change to either re-renders this
+        // body alone and the children only where what they were handed changed.
+        let workingDirectory = thread.flatMap { $0.worktreePath ?? project?.path }
+        let directory = workingDirectory ?? LoginEnvironment.homeDirectory
         let title = thread?.title ?? ""
         VStack(spacing: 0) {
             ThreadTimeline(
@@ -23,10 +27,13 @@ struct ChatView: View {
                 scrollChrome: scrollChrome,
                 scrollState: scrollState,
                 projectName: project?.name,
+                workingDirectory: workingDirectory,
+                supportsRewind: thread?.provider.supportsRewind ?? false,
                 columnHeight: columnHeight
             )
+            .equatable()
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                ComposerArea(runtime: runtime)
+                ComposerArea(runtime: runtime, workingDirectory: workingDirectory)
                     .overlay(alignment: .top) {
                         if scrollState.showsJumpButton {
                             ChromeCircleButton(symbol: "arrow.down", help: "Jump to latest") {
@@ -87,33 +94,38 @@ private struct ChatChromeRow: View {
 
     var body: some View {
         let sidebarVisible = model.sidebar.isVisible
-        HStack(alignment: .center, spacing: 10) {
-            ChromeCircleButton(symbol: "square.and.pencil", help: "New thread (⌘N)") {
-                model.newThread(in: project)
-            }
-            if git.isRepository {
-                BranchMenu(runtime: runtime, directory: directory, git: git)
-            }
-            ChromeCompactTitle(title: title, model: scrollChrome)
-            HStack(spacing: 8) {
-                ChromeCapsule {
-                    OpenInMenu(directory: directory)
-                    if let project {
-                        ChromeDivider()
-                        ScriptsMenu(project: project, runtime: runtime, directory: directory)
-                    }
-                    if git.isRepository {
-                        ChromeDivider()
-                        GitActionsMenu(runtime: runtime, directory: directory, git: git)
-                    }
+        // One glass pass for the whole row. The row floats over the conversation, so its
+        // capsules sample fresh content on every scrolled frame; drawn separately, each was
+        // a pass of its own. The spacing is well under the gaps, so nothing morphs together.
+        GlassEffectContainer(spacing: 2) {
+            HStack(alignment: .center, spacing: 10) {
+                ChromeCircleButton(symbol: "square.and.pencil", help: "New thread (⌘N)") {
+                    model.newThread(in: project)
                 }
-                ChromeCapsule {
-                    ChromeIconButton(symbol: "terminal", isActive: runtime.isTerminalVisible, help: "Terminal (⌘J)") {
-                        runtime.isTerminalVisible.toggle()
+                if git.isRepository {
+                    BranchMenu(runtime: runtime, directory: directory, git: git)
+                }
+                ChromeCompactTitle(title: title, model: scrollChrome)
+                HStack(spacing: 8) {
+                    ChromeCapsule {
+                        OpenInMenu(directory: directory)
+                        if let project {
+                            ChromeDivider()
+                            ScriptsMenu(project: project, runtime: runtime, directory: directory)
+                        }
+                        if git.isRepository {
+                            ChromeDivider()
+                            GitActionsMenu(runtime: runtime, directory: directory, git: git)
+                        }
                     }
-                    ChromeDivider()
-                    ChromeIconButton(symbol: "plusminus", isActive: runtime.isDiffVisible, help: "Changes (⌘D)") {
-                        runtime.isDiffVisible.toggle()
+                    ChromeCapsule {
+                        ChromeIconButton(symbol: "terminal", isActive: runtime.isTerminalVisible, help: "Terminal (⌘J)") {
+                            runtime.isTerminalVisible.toggle()
+                        }
+                        ChromeDivider()
+                        ChromeIconButton(symbol: "plusminus", isActive: runtime.isDiffVisible, help: "Changes (⌘D)") {
+                            runtime.isDiffVisible.toggle()
+                        }
                     }
                 }
             }
@@ -259,7 +271,7 @@ private struct OpenInMenu: View {
     var body: some View {
         ChromeMenuButton(symbol: "arrow.up.forward.app", help: "Open in another app") {
             PopoverSectionHeader("Open in")
-            PopoverItem("Finder", image: NSWorkspace.shared.icon(forFile: "/System/Library/CoreServices/Finder.app")) {
+            PopoverItem("Finder", image: Workspace.finderIcon) {
                 NSWorkspace.shared.open(URL(fileURLWithPath: directory))
             }
             ForEach(Workspace.installedEditors) { editor in

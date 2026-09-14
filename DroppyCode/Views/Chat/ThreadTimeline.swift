@@ -1,29 +1,42 @@
 import SwiftUI
 
-struct ThreadTimeline: View {
+struct ThreadTimeline: View, Equatable {
     @Environment(AppModel.self) private var model
     let runtime: ThreadRuntime
     let scrollChrome: ChromeScrollModel
     let scrollState: TimelineScrollState
     let projectName: String?
+    /// The folder the thread works in, for tool rows that resolve paths. Read once by the
+    /// chat and handed down as a value, so rows never look the thread up themselves.
+    let workingDirectory: String?
+    /// Whether the thread's provider can rewind a conversation, for the revert controls.
+    let supportsRewind: Bool
     /// Full chat-column height, so the rail stays centred when the composer
     /// or queue tab grows.
     let columnHeight: CGFloat
 
-    @State private var position = ScrollPosition(edge: .bottom)
-    @State private var isPinnedToBottom = true
-    /// True while the reader drags or flicks the timeline, as opposed to it following new text.
-    @State private var isUserScrolling = false
+    /// The chat re-renders whenever its thread changes (a title, the effort, a mode); the
+    /// timeline only follows when what it was handed changed.
+    nonisolated static func == (lhs: ThreadTimeline, rhs: ThreadTimeline) -> Bool {
+        lhs.runtime === rhs.runtime
+            && lhs.scrollChrome === rhs.scrollChrome
+            && lhs.scrollState === rhs.scrollState
+            && lhs.projectName == rhs.projectName
+            && lhs.workingDirectory == rhs.workingDirectory
+            && lhs.supportsRewind == rhs.supportsRewind
+            && lhs.columnHeight == rhs.columnHeight
+    }
+
+    /// Everything the scroll view and the rows report while the reader scrolls: which blocks
+    /// are on screen, whether the timeline follows new text, and the scroll position itself.
+    /// It lives in an object rather than in view state on purpose. Rows write to it as they
+    /// cross the viewport's edges and the scroll view writes to it as content grows, and only
+    /// the rail reads it, so none of that ever re-runs this body.
+    @State private var tracking = TimelineScrollTracking()
     @State private var viewportHeight: CGFloat = 0
     /// Lazy-loading window: only the newest groups are materialized, so opening a long
     /// thread and scrolling through it stays instant no matter how much history it holds.
     @State private var visibleCount = TimelineWindow.initial
-    /// Ids of the blocks currently on screen, so the rail can light the block the reader is
-    /// on. Rows write here only when they cross the viewport's edges, never per scroll frame.
-    @State private var onScreenBlockIDs: Set<String> = []
-    /// Ids of the blocks whose top edge is on screen. A block that is on screen while its
-    /// top edge is not straddles the viewport's top — that is the section the reader is in.
-    @State private var topEdgeOnScreenBlockIDs: Set<String> = []
 
     var body: some View {
         let entries = runtime.entries
@@ -36,53 +49,37 @@ struct ThreadTimeline: View {
                     scrollState.showsJumpButton = false
                 }
         } else {
-            timeline(blocks, meta: meta)
+            timeline(blocks)
         }
     }
 
-    private func timeline(_ blocks: [DisplayBlock], meta: TimelineMeta) -> some View {
+    private func timeline(_ blocks: [DisplayBlock]) -> some View {
         // Only the newest window of blocks is rendered. Older history loads on demand,
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
         let visible = hidden == 0 ? blocks : Array(blocks.suffix(visibleCount))
-        // One tick per message the user sent, so the rail's size and selection come
-        // from those block ids alone; the column reads the text itself, which keeps
-        // streaming out of this body.
+        // The turns a row may offer to revert. Read here, once, so a turn record changing
+        // (checkpoints, diffs, anchors) re-runs this body alone; rows get a plain flag that
+        // only changes when their own answer does.
+        let rewindable: Set<UUID> = supportsRewind && !runtime.isRunning ? Set(runtime.turns.map(\.id)) : []
         // The rail floats over the timeline's leading gutter instead of taking layout
         // space, so the conversation stays centered exactly like the composer.
         // Ticks centre in the full column height, so the queue tab opening never moves them.
-        let railBlocks = blocks.filter { $0.hasUserMessage }
         return ZStack(alignment: .leading) {
-            timelineScroll(visible: visible, hidden: hidden, meta: meta)
-            if railBlocks.count > 1 {
+            timelineScroll(visible: visible, hidden: hidden, rewindable: rewindable)
+            if blocks.count(where: \.hasUserMessage) > 1 {
                 TimelineMinimapColumn(
-                    blocks: railBlocks,
+                    blocks: blocks,
+                    tracking: tracking,
                     centerHeight: columnHeight,
-                    selectedID: activeMinimapID(blocks: blocks),
                     onNavigate: { id, animated in jump(to: id, in: blocks, animated: animated) }
                 )
+                .equatable()
                 .frame(width: 30)
                 .frame(maxHeight: .infinity)
                 // The hover card reaches over the conversation instead of being painted under it.
             }
         }
-    }
-
-    /// The block the reader is on: the newest message while the timeline is pinned to the
-    /// bottom, otherwise the message whose section straddles the viewport's top edge. A
-    /// block on screen whose top edge is not owns that edge — at most one can — so the lit
-    /// tick moves the moment the next message reaches the top, however tall blocks are.
-    /// Rows announce themselves through `onScreenBlockIDs`, so this follows the
-    /// conversation as it is scrolled.
-    private func activeMinimapID(blocks: [DisplayBlock]) -> String? {
-        if isPinnedToBottom { return blocks.last(where: { $0.hasUserMessage })?.id }
-        if let top = blocks.firstIndex(where: { onScreenBlockIDs.contains($0.id) && !topEdgeOnScreenBlockIDs.contains($0.id) }),
-           let current = blocks[...top].last(where: { $0.hasUserMessage }) {
-            return current.id
-        }
-        if let id = blocks.first(where: { $0.hasUserMessage && onScreenBlockIDs.contains($0.id) })?.id { return id }
-        if let id = position.viewID as? String, blocks.contains(where: { $0.id == id && $0.hasUserMessage }) { return id }
-        return nil
     }
 
     /// Jump the timeline to a minimap block. A target above the loaded
@@ -97,9 +94,10 @@ struct ThreadTimeline: View {
                 visibleCount = blocks.count - index
                 needsExpand = true
             }
-            isPinnedToBottom = (id == blocks.last?.id)
+            tracking.isPinnedToBottom = (id == blocks.last?.id)
         }
-        let scroll = { position.scrollTo(id: id, anchor: .top) }
+        let tracking = tracking
+        let scroll = { tracking.position.scrollTo(id: id, anchor: .top) }
         if animated {
             if needsExpand {
                 DispatchQueue.main.async { withAnimation(.smooth(duration: 0.35)) { scroll() } }
@@ -117,8 +115,9 @@ struct ThreadTimeline: View {
         }
     }
 
-    private func timelineScroll(visible: [DisplayBlock], hidden: Int, meta: TimelineMeta) -> some View {
-        ScrollView {
+    private func timelineScroll(visible: [DisplayBlock], hidden: Int, rewindable: Set<UUID>) -> some View {
+        @Bindable var tracking = tracking
+        return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
                 if hidden > 0 {
@@ -139,14 +138,15 @@ struct ThreadTimeline: View {
                 }
                 LazyVStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(visible) { block in
-                        DisplayBlockView(block: block, runtime: runtime, meta: meta)
+                        let context = RowContext(
+                            workingDirectory: workingDirectory,
+                            canRewind: block.turnID.map(rewindable.contains) ?? false
+                        )
+                        DisplayBlockView(block: block, runtime: runtime, context: context)
+                            .equatable()
                             .id(block.id)
                             .onScrollVisibilityChange(threshold: 0.05) { isVisible in
-                                if isVisible {
-                                    onScreenBlockIDs.insert(block.id)
-                                } else {
-                                    onScreenBlockIDs.remove(block.id)
-                                }
+                                tracking.setOnScreen(block.id, isVisible)
                             }
                             // One point at the row's top edge: on screen means the block's
                             // top is inside the viewport; off screen while the block still
@@ -155,11 +155,7 @@ struct ThreadTimeline: View {
                                 Color.clear
                                     .frame(height: 1)
                                     .onScrollVisibilityChange { isVisible in
-                                        if isVisible {
-                                            topEdgeOnScreenBlockIDs.insert(block.id)
-                                        } else {
-                                            topEdgeOnScreenBlockIDs.remove(block.id)
-                                        }
+                                        tracking.setTopEdgeOnScreen(block.id, isVisible)
                                     }
                             }
                             .transition(.softAppear)
@@ -188,45 +184,85 @@ struct ThreadTimeline: View {
         }
         .id(runtime.threadID)
         .scrollIndicators(.never)
-        .scrollPosition($position)
+        .scrollPosition($tracking.position)
         .defaultScrollAnchor(.bottom)
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
         .onScrollPhaseChange { _, phase in
-            isUserScrolling = phase == .interacting || phase == .decelerating
+            tracking.isUserScrolling = phase == .interacting || phase == .decelerating
         }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             scrollChrome.update(travel: new.travel)
-            if isUserScrolling {
+            if tracking.isUserScrolling {
                 // Only the reader's own scrolling decides whether the timeline follows new text.
-                // Guarded, so measuring the scroll position never re-renders the timeline itself.
+                // Guarded, so measuring the scroll position never touches anything a body reads.
                 let pinned = new.distanceFromBottom < 48
-                if pinned != isPinnedToBottom { isPinnedToBottom = pinned }
-            } else if new.contentHeight > old.contentHeight, isPinnedToBottom {
-                withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
+                if pinned != tracking.isPinnedToBottom { tracking.isPinnedToBottom = pinned }
+            } else if new.contentHeight > old.contentHeight, tracking.isPinnedToBottom {
+                withAnimation(.easeOut(duration: 0.2)) { tracking.position.scrollTo(edge: .bottom) }
             }
         }
         .onChange(of: runtime.isRunning) { _, running in
             // Sending a message always brings the reader back to the conversation's end.
             guard running else { return }
-            isPinnedToBottom = true
-            withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+            tracking.isPinnedToBottom = true
+            withAnimation(.easeOut(duration: 0.25)) { tracking.position.scrollTo(edge: .bottom) }
         }
         .onChange(of: scrollState.jumpRequest) {
-            isPinnedToBottom = true
-            withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
+            tracking.isPinnedToBottom = true
+            withAnimation(.smooth(duration: 0.35)) { tracking.position.scrollTo(edge: .bottom) }
         }
         .onChange(of: runtime.threadID) {
             // A new thread starts with a fresh window on its newest messages, and no
             // block from the old one is on screen any more.
             visibleCount = TimelineWindow.initial
-            onScreenBlockIDs.removeAll()
-            topEdgeOnScreenBlockIDs.removeAll()
+            tracking.clearOnScreen()
         }
     }
 
-    /// The running turn's thinking, for the working indicator to reveal.
     private nonisolated static func visibleHeight(_ proxy: GeometryProxy) -> CGFloat {
         max(0, proxy.size.height - proxy.safeAreaInsets.top - proxy.safeAreaInsets.bottom)
+    }
+}
+
+/// Scroll-driven facts about the timeline, kept out of view state so reporting them never
+/// re-renders the conversation. Every write is guarded against no-ops: an observable write
+/// notifies its readers whether or not the value moved.
+@MainActor
+@Observable
+final class TimelineScrollTracking {
+    /// Where the scroll view is. Written by the scroll view as it scrolls and by the
+    /// follow-along and jump code; nothing reads it in a body.
+    var position = ScrollPosition(edge: .bottom)
+    /// Whether new text keeps the timeline at the conversation's end.
+    var isPinnedToBottom = true
+    /// True while the reader drags or flicks the timeline, as opposed to it following new text.
+    @ObservationIgnored var isUserScrolling = false
+    /// Ids of the blocks currently on screen, so the rail can light the block the reader is
+    /// on. Rows write here only when they cross the viewport's edges, never per scroll frame.
+    private(set) var onScreenBlockIDs: Set<String> = []
+    /// Ids of the blocks whose top edge is on screen. A block that is on screen while its
+    /// top edge is not straddles the viewport's top — that is the section the reader is in.
+    private(set) var topEdgeOnScreenBlockIDs: Set<String> = []
+
+    func setOnScreen(_ id: String, _ isOnScreen: Bool) {
+        if isOnScreen {
+            if !onScreenBlockIDs.contains(id) { onScreenBlockIDs.insert(id) }
+        } else if onScreenBlockIDs.contains(id) {
+            onScreenBlockIDs.remove(id)
+        }
+    }
+
+    func setTopEdgeOnScreen(_ id: String, _ isOnScreen: Bool) {
+        if isOnScreen {
+            if !topEdgeOnScreenBlockIDs.contains(id) { topEdgeOnScreenBlockIDs.insert(id) }
+        } else if topEdgeOnScreenBlockIDs.contains(id) {
+            topEdgeOnScreenBlockIDs.remove(id)
+        }
+    }
+
+    func clearOnScreen() {
+        if !onScreenBlockIDs.isEmpty { onScreenBlockIDs.removeAll() }
+        if !topEdgeOnScreenBlockIDs.isEmpty { topEdgeOnScreenBlockIDs.removeAll() }
     }
 }
 
@@ -251,7 +287,7 @@ private struct ScrollMetrics: Equatable {
     }
 }
 
-enum TimelineGroup: Identifiable {
+enum TimelineGroup: Identifiable, Equatable {
     case single(TimelineEntry)
     /// A run of tool entries. `startsCollapsed` is true when reply text follows
     /// the run, so past work renders as one tappable summary line above the answer.
@@ -307,14 +343,29 @@ enum TimelineGroup: Identifiable {
 /// A finished turn collapses to its final response plus its file summary, so the
 /// chat stays clean. The chevron re-opens the turn's full steps. Running turns
 /// and entries without a turn render as plain groups, exactly as before.
-enum DisplayBlock: Identifiable {
+///
+/// Equatable, so a rebuilt timeline can tell an unchanged block from a changed one and
+/// skip its row. Entries compare by identity: what a row shows of an entry it observes
+/// itself, so the same entry object always means the same row.
+enum DisplayBlock: Identifiable, Equatable {
     case turn(id: String, turnID: UUID, userEntries: [TimelineEntry], content: [TimelineEntry], summary: TurnSummary)
-    case group(TimelineGroup)
+    /// A plain group, with the facts its row needs from the turn it belongs to: the turn's
+    /// summary on the turn's last reply, and whether the turn produced a reply on its end marker.
+    case group(TimelineGroup, summary: TurnSummary?, hasReply: Bool)
 
     var id: String {
         switch self {
         case .turn(let id, _, _, _, _): id
-        case .group(let group): group.id
+        case .group(let group, _, _): group.id
+        }
+    }
+
+    /// The turn the block belongs to, for the revert controls.
+    var turnID: UUID? {
+        switch self {
+        case .turn(_, let turnID, _, _, _): turnID
+        case .group(.single(let entry), _, _): entry.turnID
+        case .group(.work, _, _): nil
         }
     }
 
@@ -323,8 +374,8 @@ enum DisplayBlock: Identifiable {
     var hasUserMessage: Bool {
         switch self {
         case .turn(_, _, let userEntries, _, _): !userEntries.isEmpty
-        case .group(.single(let entry)): entry.kind == .user
-        case .group(.work): false
+        case .group(.single(let entry), _, _): entry.kind == .user
+        case .group(.work, _, _): false
         }
     }
 
@@ -348,7 +399,7 @@ enum DisplayBlock: Identifiable {
                 blocks.append(.turn(id: "turn-\(turnID.uuidString)", turnID: turnID, userEntries: users, content: content, summary: summary))
             } else {
                 for group in TimelineGroup.build(run.entries, showReasoning: showReasoning) {
-                    blocks.append(.group(group))
+                    blocks.append(.group(group, summary: meta.summary(for: group), hasReply: meta.hasReply(for: group)))
                 }
             }
         }
@@ -392,61 +443,89 @@ struct TimelineMeta {
         }
         return meta
     }
+
+    /// The turn's summary, shown on the turn's last reply only. A dictionary lookup,
+    /// so rows never scan the thread.
+    @MainActor
+    func summary(for group: TimelineGroup) -> TurnSummary? {
+        guard case .single(let entry) = group, entry.kind == .assistant,
+              let turnID = entry.turnID, lastAssistantIDByTurn[turnID] == entry.id else { return nil }
+        return summaryByTurn[turnID]
+    }
+
+    /// Whether a turn-end marker's turn produced a reply; when it did, the duration lives
+    /// on the reply's hover line instead.
+    @MainActor
+    func hasReply(for group: TimelineGroup) -> Bool {
+        guard case .single(let entry) = group, entry.kind == .turnEnd, let turnID = entry.turnID else { return false }
+        return turnsWithReply.contains(turnID)
+    }
 }
 
-private struct DisplayBlockView: View {
+/// What a row needs from outside its block, as plain values. Rows never read the app
+/// model or the runtime's turn list themselves, so a change anywhere else in the app
+/// never re-renders them; only a change to these values does.
+struct RowContext: Equatable {
+    var workingDirectory: String?
+    /// Whether the block's turn can be reverted right now.
+    var canRewind: Bool
+}
+
+private struct DisplayBlockView: View, Equatable {
     let block: DisplayBlock
     let runtime: ThreadRuntime
-    let meta: TimelineMeta
+    let context: RowContext
+
+    nonisolated static func == (lhs: DisplayBlockView, rhs: DisplayBlockView) -> Bool {
+        lhs.block == rhs.block && lhs.runtime === rhs.runtime && lhs.context == rhs.context
+    }
 
     var body: some View {
         switch block {
-        case .group(let group):
-            TimelineGroupView(group: group, runtime: runtime, meta: meta)
+        case .group(let group, let summary, let hasReply):
+            TimelineGroupView(group: group, runtime: runtime, summary: summary, hasReply: hasReply, context: context)
         case .turn(_, let turnID, let userEntries, let content, let summary):
-            TurnFinishedBlock(runtime: runtime, turnID: turnID, summary: summary, userEntries: userEntries, content: content)
+            TurnFinishedBlock(
+                runtime: runtime,
+                turnID: turnID,
+                summary: summary,
+                userEntries: userEntries,
+                content: content,
+                workingDirectory: context.workingDirectory,
+                canUndo: context.canRewind
+            )
         }
     }
 }
 
 struct TimelineGroupView: View {
-    @Environment(AppModel.self) private var model
     let group: TimelineGroup
     let runtime: ThreadRuntime
-    let meta: TimelineMeta
+    /// The turn's summary, when this group is the turn's last reply.
+    let summary: TurnSummary?
+    /// Whether the turn produced a reply, for a turn-end marker.
+    let hasReply: Bool
+    let context: RowContext
 
     var body: some View {
         switch group {
         case .single(let entry):
             switch entry.kind {
-            case .user: UserMessageRow(entry: entry, runtime: runtime)
-            case .assistant: AssistantMessageRow(entry: entry, summary: assistantSummary(for: entry))
+            case .user: UserMessageRow(entry: entry, runtime: runtime, canRevert: context.canRewind)
+            case .assistant: AssistantMessageRow(entry: entry, summary: summary)
             case .reasoning: EmptyView()
-            case .tool: WorkGroup(entries: [entry], workingDirectory: workingDirectory)
+            case .tool: WorkGroup(entries: [entry], workingDirectory: context.workingDirectory)
             case .plan: PlanCard(entry: entry, runtime: runtime)
             case .todos: TodoListRow(entry: entry)
             case .notice: NoticeRow(entry: entry)
             case .turnEnd:
                 if case .turnEnd(let summary) = entry.item.content {
-                    TurnEndRow(summary: summary, hasReply: meta.turnsWithReply.contains(summary.turnID))
+                    TurnEndRow(summary: summary, hasReply: hasReply)
                 }
             }
         case .work(_, let entries, let startsCollapsed):
-            WorkGroup(entries: entries, workingDirectory: workingDirectory, startsCollapsed: startsCollapsed)
+            WorkGroup(entries: entries, workingDirectory: context.workingDirectory, startsCollapsed: startsCollapsed)
         }
-    }
-
-    /// The turn's summary, shown on the turn's last reply only. A dictionary lookup,
-    /// so rows never scan the thread.
-    private func assistantSummary(for entry: TimelineEntry) -> TurnSummary? {
-        guard let turnID = entry.turnID, meta.lastAssistantIDByTurn[turnID] == entry.id else { return nil }
-        return meta.summaryByTurn[turnID]
-    }
-
-    private var workingDirectory: String? {
-        guard let thread = model.thread(runtime.threadID) else { return nil }
-        if let worktree = thread.worktreePath { return worktree }
-        return model.project(thread.projectID)?.path
     }
 }
 
@@ -455,7 +534,7 @@ private struct WorkingIndicator: View {
     let startedAt: Date
     let seed: UInt64
     /// The running turn's thinking. When there is any, a chevron opens it beneath the indicator.
-    let thinkingSteps: [String]
+    let thinkingSteps: [ThinkingStep]
     @State private var now = Date.now
     @State private var showsThinking = false
 
@@ -495,7 +574,7 @@ private struct WorkingIndicator: View {
             if showsThinking, canExpand {
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
-                        MarkdownView(text: step).equatable()
+                        MarkdownView(text: step.text, isStreaming: step.isStreaming).equatable()
                     }
                 }
                 .font(.callout)
@@ -516,6 +595,12 @@ private struct WorkingIndicator: View {
             }
         }
     }
+}
+
+/// One piece of the running turn's thinking, and whether it is still arriving.
+struct ThinkingStep: Equatable {
+    var text: String
+    var isStreaming: Bool
 }
 
 /// Whether the reader has scrolled away from the latest message, shared with the composer that shows the jump button.
@@ -559,15 +644,15 @@ private struct WorkingIndicatorSlot: View {
 
     /// The running turn's thinking. Kind and turn are fixed at creation, so they are checked before
     /// any content is read.
-    private var thinking: [String] {
+    private var thinking: [ThinkingStep] {
         guard let turnID = runtime.entries.last.flatMap(\.turnID) else { return [] }
         // Walks back from the end and stops at the previous turn, so streamed thinking never rescans the thread.
-        var steps: [String] = []
+        var steps: [ThinkingStep] = []
         for entry in runtime.entries.reversed() {
             guard let entryTurn = entry.turnID else { continue }
             guard entryTurn == turnID else { break }
             guard entry.kind == .reasoning, case .reasoning(let block) = entry.item.content, !block.text.isEmpty else { continue }
-            steps.append(block.text)
+            steps.append(ThinkingStep(text: block.text, isStreaming: block.isStreaming))
         }
         return steps.reversed()
     }

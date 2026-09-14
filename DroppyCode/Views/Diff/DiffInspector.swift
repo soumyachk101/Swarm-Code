@@ -20,47 +20,49 @@ struct DiffInspector: View {
     var body: some View {
         @Bindable var runtime = runtime
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                ChromeTextMenu(
-                    symbol: "plusminus",
-                    title: runtime.diffSelection
-                        .flatMap { id in runtime.turns.first { $0.id == id } }
-                        .map { "Turn \($0.index + 1)" } ?? "All changes",
-                    help: "Choose which changes to show"
-                ) {
-                    PopoverItem("All changes", isChecked: runtime.diffSelection == nil) {
-                        runtime.diffSelection = nil
-                    }
-                    ForEach(changedTurns) { turn in
-                        PopoverItem("Turn \(turn.index + 1)", isChecked: runtime.diffSelection == turn.id) {
-                            runtime.diffSelection = turn.id
+            GlassEffectContainer(spacing: 2) {
+                HStack(spacing: 10) {
+                    ChromeTextMenu(
+                        symbol: "plusminus",
+                        title: runtime.diffSelection
+                            .flatMap { id in runtime.turns.first { $0.id == id } }
+                            .map { "Turn \($0.index + 1)" } ?? "All changes",
+                        help: "Choose which changes to show"
+                    ) {
+                        PopoverItem("All changes", isChecked: runtime.diffSelection == nil) {
+                            runtime.diffSelection = nil
                         }
-                    }
-                }
-                Spacer(minLength: 8)
-                if !files.isEmpty {
-                    Text(files.count == 1 ? "1 file" : "\(files.count) files")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.secondaryText)
-                    DiffStatLabel(
-                        additions: files.reduce(0) { $0 + $1.additions },
-                        deletions: files.reduce(0) { $0 + $1.deletions }
-                    )
-                }
-                ChromeCapsule {
-                    ChromeMenuButton(symbol: "ellipsis", help: "More") {
-                        PopoverItem("Expand all", symbol: "arrow.down.right.and.arrow.up.left") { collapsed.removeAll() }
-                        PopoverItem("Collapse all", symbol: "arrow.up.left.and.arrow.down.right") { collapsed = Set(files.map(\.id)) }
-                        if canRevertSelection {
-                            PopoverDivider()
-                            PopoverItem("Revert this turn…", symbol: "arrow.uturn.backward", isDestructive: true) {
-                                isConfirmingRevert = true
+                        ForEach(changedTurns) { turn in
+                            PopoverItem("Turn \(turn.index + 1)", isChecked: runtime.diffSelection == turn.id) {
+                                runtime.diffSelection = turn.id
                             }
                         }
                     }
-                    ChromeDivider()
-                    ChromeIconButton(symbol: "xmark", help: "Hide changes (⌘D)") {
-                        runtime.isDiffVisible = false
+                    Spacer(minLength: 8)
+                    if !files.isEmpty {
+                        Text(files.count == 1 ? "1 file" : "\(files.count) files")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText)
+                        DiffStatLabel(
+                            additions: files.reduce(0) { $0 + $1.additions },
+                            deletions: files.reduce(0) { $0 + $1.deletions }
+                        )
+                    }
+                    ChromeCapsule {
+                        ChromeMenuButton(symbol: "ellipsis", help: "More") {
+                            PopoverItem("Expand all", symbol: "arrow.down.right.and.arrow.up.left") { collapsed.removeAll() }
+                            PopoverItem("Collapse all", symbol: "arrow.up.left.and.arrow.down.right") { collapsed = Set(files.map(\.id)) }
+                            if canRevertSelection {
+                                PopoverDivider()
+                                PopoverItem("Revert this turn…", symbol: "arrow.uturn.backward", isDestructive: true) {
+                                    isConfirmingRevert = true
+                                }
+                            }
+                        }
+                        ChromeDivider()
+                        ChromeIconButton(symbol: "xmark", help: "Hide changes (⌘D)") {
+                            runtime.isDiffVisible = false
+                        }
                     }
                 }
             }

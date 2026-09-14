@@ -4,7 +4,13 @@
 // gradient-spin-pulse: a 3×3 cell grid with per-row "sunrise" tints; each cell pulses once per
 // 750ms with phase = distance from bottom-center, so the wave travels upward. The mini variant
 // (2×3) snakes clockwise around the perimeter and marks working threads in the sidebar.
+//
+// The pulse is a repeating Core Animation keyframe on each cell's opacity. Once a spinner is on
+// screen the render server plays it on its own: no timer, no view update and no layout on the
+// main thread for as long as it runs, however many threads are working at once.
 
+import AppKit
+import QuartzCore
 import SwiftUI
 
 enum GradientSpin {
@@ -13,6 +19,12 @@ enum GradientSpin {
         Color(red: 0xB6 / 255, green: 0xD3 / 255, blue: 0xEF / 255),
         Color(red: 0xED / 255, green: 0xB1 / 255, blue: 0x85 / 255),
         Color(red: 0xF8 / 255, green: 0x88 / 255, blue: 0xA0 / 255),
+    ]
+    /// The same tints for the cell layers.
+    static let rowTintColors: [CGColor] = [
+        CGColor(srgbRed: 0xB6 / 255, green: 0xD3 / 255, blue: 0xEF / 255, alpha: 1),
+        CGColor(srgbRed: 0xED / 255, green: 0xB1 / 255, blue: 0x85 / 255, alpha: 1),
+        CGColor(srgbRed: 0xF8 / 255, green: 0x88 / 255, blue: 0xA0 / 255, alpha: 1),
     ]
     static let dim = 0.1
     static let period: Double = 0.75
@@ -31,30 +43,82 @@ enum GradientSpin {
     }
 }
 
+/// One cell of a spinner: its row (for the tint) and how far behind the wave it pulses,
+/// as a fraction of the period.
+struct SpinnerCell {
+    var row: Int
+    var column: Int
+    var lag: Double
+}
+
 /// The 3×3 working indicator shown while a reply is being written.
 struct WorkingSpinner: View {
     var cellSize: CGFloat = 3.5
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
-            grid(time: timeline.date.timeIntervalSinceReferenceDate / GradientSpin.period)
+    /// Phase = distance from bottom-center, so the wave travels upward.
+    static let cells: [SpinnerCell] = (0..<3).flatMap { row in
+        (0..<3).map { column in
+            let dx = Double(column - 1)
+            let dy = Double(2 - row)
+            return SpinnerCell(row: row, column: column, lag: (dx * dx + dy * dy).squareRoot() / 2.5)
         }
-        .accessibilityHidden(true)
     }
 
-    private func grid(time: Double) -> some View {
+    var body: some View {
+        SpinnerCells(cells: Self.cells, columns: 3, cellSize: cellSize, animated: !reduceMotion)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The 2×3 mini indicator whose cells snake clockwise, for working threads in lists.
+struct MiniSpinner: View {
+    var cellSize: CGFloat = 2.4
+    /// Draws one still frame with plain shapes instead of hosting a layer view. For image
+    /// renderers, which cannot capture AppKit views: the archive ghost is rendered this way.
+    var isStill = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let ring: [(row: Int, column: Int)] = [
+        (0, 0), (0, 1), (1, 1), (2, 1), (2, 0), (1, 0),
+    ]
+
+    static let cells: [SpinnerCell] = (0..<3).flatMap { row in
+        (0..<2).map { column in
+            let index = ring.firstIndex { $0.row == row && $0.column == column } ?? 0
+            return SpinnerCell(row: row, column: column, lag: Double(index) / Double(ring.count))
+        }
+    }
+
+    var body: some View {
+        Group {
+            if isStill {
+                StillSpinnerCells(cells: Self.cells, columns: 2, cellSize: cellSize)
+            } else {
+                SpinnerCells(cells: Self.cells, columns: 2, cellSize: cellSize, animated: !reduceMotion)
+            }
+        }
+        .accessibilityLabel(Text("Working"))
+    }
+}
+
+/// A spinner's cells as plain shapes, frozen at the start of the wave.
+private struct StillSpinnerCells: View {
+    let cells: [SpinnerCell]
+    let columns: Int
+    let cellSize: CGFloat
+
+    var body: some View {
+        let rows = (cells.map(\.row).max() ?? 0) + 1
         VStack(spacing: cellSize * 0.8) {
-            ForEach(0..<3, id: \.self) { row in
+            ForEach(0..<rows, id: \.self) { row in
                 HStack(spacing: cellSize * 0.8) {
-                    ForEach(0..<3, id: \.self) { column in
-                        let dx = Double(column - 1)
-                        let dy = Double(2 - row)
-                        let distance = (dx * dx + dy * dy).squareRoot() / 2.5
+                    ForEach(0..<columns, id: \.self) { column in
+                        let lag = cells.first { $0.row == row && $0.column == column }?.lag ?? 0
                         Rectangle()
                             .fill(GradientSpin.rowTints[row])
                             .frame(width: cellSize, height: cellSize)
-                            .opacity(GradientSpin.opacity(phase: time - distance))
+                            .opacity(GradientSpin.opacity(phase: -lag))
                     }
                 }
             }
@@ -62,35 +126,138 @@ struct WorkingSpinner: View {
     }
 }
 
-/// The 2×3 mini indicator whose cells snake clockwise, for working threads in lists.
-struct MiniSpinner: View {
-    var cellSize: CGFloat = 2.4
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+/// The cells as layers, each pulsing on a repeating keyframe animation.
+private struct SpinnerCells: NSViewRepresentable {
+    let cells: [SpinnerCell]
+    let columns: Int
+    let cellSize: CGFloat
+    let animated: Bool
 
-    private static let ring: [(row: Int, column: Int)] = [
-        (0, 0), (0, 1), (1, 1), (2, 1), (2, 0), (1, 0),
-    ]
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { timeline in
-            grid(time: timeline.date.timeIntervalSinceReferenceDate / GradientSpin.period)
-        }
-        .accessibilityLabel(Text("Working"))
+    func makeNSView(context: Context) -> SpinnerLayerView {
+        let view = SpinnerLayerView()
+        view.configure(cells: cells, columns: columns, cellSize: cellSize, animated: animated)
+        return view
     }
 
-    private func grid(time: Double) -> some View {
-        VStack(spacing: cellSize * 0.8) {
-            ForEach(0..<3, id: \.self) { row in
-                HStack(spacing: cellSize * 0.8) {
-                    ForEach(0..<2, id: \.self) { column in
-                        let index = Self.ring.firstIndex { $0.row == row && $0.column == column } ?? 0
-                        Rectangle()
-                            .fill(GradientSpin.rowTints[row])
-                            .frame(width: cellSize, height: cellSize)
-                            .opacity(GradientSpin.opacity(phase: time - Double(index) / Double(Self.ring.count)))
-                    }
-                }
+    func updateNSView(_ view: SpinnerLayerView, context: Context) {
+        view.configure(cells: cells, columns: columns, cellSize: cellSize, animated: animated)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: SpinnerLayerView, context: Context) -> CGSize? {
+        nsView.contentSize
+    }
+}
+
+final class SpinnerLayerView: NSView {
+    private var cells: [SpinnerCell] = []
+    private var columns = 0
+    private var cellSize: CGFloat = 0
+    private var animated = true
+    private var cellLayers: [CALayer] = []
+
+    private static let animationKey = "pulse"
+    /// Samples per period. The curve has one soft edge and one sharp one; forty points
+    /// keep both without a visible step.
+    private static let sampleCount = 40
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    var contentSize: CGSize {
+        let rows = (cells.map(\.row).max() ?? -1) + 1
+        let gap = cellSize * 0.8
+        return CGSize(
+            width: CGFloat(columns) * cellSize + CGFloat(max(0, columns - 1)) * gap,
+            height: CGFloat(rows) * cellSize + CGFloat(max(0, rows - 1)) * gap
+        )
+    }
+
+    override var intrinsicContentSize: NSSize { contentSize }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func configure(cells: [SpinnerCell], columns: Int, cellSize: CGFloat, animated: Bool) {
+        let rebuild = cells.count != cellLayers.count
+        guard rebuild || columns != self.columns || cellSize != self.cellSize || animated != self.animated else { return }
+        self.cells = cells
+        self.columns = columns
+        self.cellSize = cellSize
+        self.animated = animated
+        if rebuild {
+            for layer in cellLayers { layer.removeFromSuperlayer() }
+            cellLayers = cells.map { cell in
+                let layer = CALayer()
+                layer.backgroundColor = GradientSpin.rowTintColors[cell.row]
+                // Never implicitly animated: frames are set once and opacity belongs to the keyframes.
+                layer.actions = ["opacity": NSNull(), "bounds": NSNull(), "position": NSNull()]
+                self.layer?.addSublayer(layer)
+                return layer
             }
+        }
+        placeCells()
+        installAnimations()
+        invalidateIntrinsicContentSize()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // A layer that left the window loses nothing, but one that joins it late (a row
+        // built off screen) needs its animation running from the shared clock.
+        if window != nil { installAnimations() }
+    }
+
+    override func layout() {
+        super.layout()
+        placeCells()
+    }
+
+    private func placeCells() {
+        let rows = (cells.map(\.row).max() ?? -1) + 1
+        let gap = cellSize * 0.8
+        let content = contentSize
+        // Centred in whatever frame SwiftUI hands out; the origin is at the top-left of the grid.
+        let originX = ((bounds.width - content.width) / 2).rounded()
+        let originY = ((bounds.height - content.height) / 2).rounded()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (cell, layer) in zip(cells, cellLayers) {
+            // AppKit's coordinates start at the bottom; row 0 sits at the top of the grid.
+            let x = originX + CGFloat(cell.column) * (cellSize + gap)
+            let y = originY + CGFloat(rows - 1 - cell.row) * (cellSize + gap)
+            layer.frame = CGRect(x: x, y: y, width: cellSize, height: cellSize)
+        }
+        CATransaction.commit()
+    }
+
+    private func installAnimations() {
+        for (cell, layer) in zip(cells, cellLayers) {
+            layer.removeAnimation(forKey: Self.animationKey)
+            guard animated else {
+                layer.opacity = Float(GradientSpin.opacity(phase: -cell.lag))
+                continue
+            }
+            layer.opacity = 1
+            let animation = CAKeyframeAnimation(keyPath: "opacity")
+            // The curve, shifted by the cell's lag, so every cell shares one clock and the
+            // wave comes from the offsets alone.
+            animation.values = (0...Self.sampleCount).map { step in
+                GradientSpin.opacity(phase: Double(step) / Double(Self.sampleCount) - cell.lag)
+            }
+            animation.calculationMode = .linear
+            animation.duration = GradientSpin.period
+            animation.repeatCount = .infinity
+            // One fixed origin on the shared clock, so every spinner in the app pulses in step.
+            animation.beginTime = layer.convertTime(1, from: nil)
+            animation.isRemovedOnCompletion = false
+            layer.add(animation, forKey: Self.animationKey)
         }
     }
 }

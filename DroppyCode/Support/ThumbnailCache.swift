@@ -32,3 +32,23 @@ actor ThumbnailCache {
         return thumbnail
     }
 }
+
+/// Thumbnails already decoded, readable on the main actor without a hop. A row scrolling
+/// back into view shows its photos in the pass that builds it, instead of a frame later
+/// with a fade, and never asks the cache actor for something it has shown before.
+@MainActor
+enum ThumbnailMemory {
+    private static var images = RecentCache<String, CGImage>(limit: 240)
+
+    private static func key(_ path: String, pointSize: CGFloat) -> String {
+        "\(path)#\(Int((pointSize * 2).rounded(.up)))"
+    }
+
+    static func image(for path: String, pointSize: CGFloat) -> CGImage? {
+        images.value(for: key(path, pointSize: pointSize))
+    }
+
+    static func store(_ image: CGImage, for path: String, pointSize: CGFloat) {
+        images.insert(image, for: key(path, pointSize: pointSize))
+    }
+}

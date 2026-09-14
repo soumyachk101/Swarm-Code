@@ -8,6 +8,18 @@ struct AppAlert: Identifiable {
     var message: String
 }
 
+/// One value under its own observation. A view that reads a thread or project through
+/// its cell depends on that item alone, so a change to any other item never re-renders it.
+@MainActor
+@Observable
+final class ObservedValue<Value> {
+    var value: Value
+
+    init(_ value: Value) {
+        self.value = value
+    }
+}
+
 /// The app's library of projects and threads, plus everything that spans threads.
 @MainActor
 @Observable
@@ -17,12 +29,24 @@ final class AppModel {
     let terminals: TerminalStore
     let sidebar: SidebarLayout
 
-    private(set) var projects: [Project] = []
-    private(set) var threads: [ChatThread] = []
+    /// The lists are the source of truth for anything that shows several items at once. Single
+    /// lookups go through the cells below, so the timeline rows, composer and chat header of one
+    /// thread are left alone when another thread's title, status or unread flag changes.
+    private(set) var projects: [Project] = [] {
+        didSet { Self.sync(&projectCells, with: projects) }
+    }
+    private(set) var threads: [ChatThread] = [] {
+        didSet { Self.sync(&threadCells, with: threads) }
+    }
+    @ObservationIgnored private var projectCells: [UUID: ObservedValue<Project?>] = [:]
+    @ObservationIgnored private var threadCells: [UUID: ObservedValue<ChatThread?>] = [:]
     var selectedThreadID: UUID? {
         didSet {
             if let selectedThreadID { markRead(selectedThreadID) }
-            if oldValue != selectedThreadID { scheduleIdleSessionStop(leaving: oldValue) }
+            if oldValue != selectedThreadID {
+                scheduleIdleSessionStop(leaving: oldValue)
+                warmNeighbors(of: selectedThreadID)
+            }
             if let selectedThreadID, let thread = thread(selectedThreadID) {
                 rememberLastProject(thread.projectID)
             }
@@ -47,12 +71,42 @@ final class AppModel {
         for index in threads.indices where threads[index].lastStatus == .running {
             threads[index].lastStatus = .interrupted
         }
+        // Property observers stay quiet inside an initializer, so the cells are built here once.
+        Self.sync(&projectCells, with: projects)
+        Self.sync(&threadCells, with: threads)
         if let lastID = settings.lastProjectID, project(lastID) == nil {
             settings.lastProjectID = nil
         }
     }
 
+    /// Mirrors a list into its cells: values that changed are written to their cell (and only
+    /// those, so an untouched item's observers never fire), new items get a cell, and a removed
+    /// item's cell is emptied before it goes, so whoever was showing it re-renders to nothing.
+    private static func sync<Value: Identifiable & Equatable>(
+        _ cells: inout [Value.ID: ObservedValue<Value?>],
+        with values: [Value]
+    ) {
+        var seen = Set<Value.ID>(minimumCapacity: values.count)
+        for value in values {
+            seen.insert(value.id)
+            if let cell = cells[value.id] {
+                if cell.value != value { cell.value = value }
+            } else {
+                cells[value.id] = ObservedValue(value)
+            }
+        }
+        guard cells.count != seen.count else { return }
+        for (id, cell) in cells where !seen.contains(id) {
+            cell.value = nil
+            cells[id] = nil
+        }
+    }
+
     func bootstrap() async {
+        // The threads most likely to be opened first decode in the background from the start,
+        // so the first click into a conversation never parses its history on the main thread.
+        let recent = threads.filter { !$0.isArchived }.sorted { $0.updatedAt > $1.updatedAt }.prefix(12).map(\.id)
+        warmDocuments(recent)
         await LoginEnvironment.load()
         await providers.refreshAll()
         if providers.status(.codex).isInstalled {
@@ -68,12 +122,14 @@ final class AppModel {
 
     // MARK: - Lookup
 
+    /// One project, observed on its own: only a change to this project re-renders the caller.
     func project(_ id: UUID) -> Project? {
-        projects.first { $0.id == id }
+        projectCells[id]?.value ?? nil
     }
 
+    /// One thread, observed on its own: only a change to this thread re-renders the caller.
     func thread(_ id: UUID) -> ChatThread? {
-        threads.first { $0.id == id }
+        threadCells[id]?.value ?? nil
     }
 
     var selectedThread: ChatThread? {
@@ -160,6 +216,25 @@ final class AppModel {
 
     func existingRuntime(for id: UUID) -> ThreadRuntime? {
         runtimes[id]
+    }
+
+    /// Decodes threads' histories ahead of time, off the main thread, so opening one costs no
+    /// parse on the click. Threads already open have their history in memory and are skipped.
+    func warmDocuments(_ ids: [UUID]) {
+        let cold = ids.filter { runtimes[$0] == nil }
+        guard !cold.isEmpty else { return }
+        DocumentPrefetch.shared.warm(cold)
+    }
+
+    /// The rows either side of the selection, for the arrow keys and the next click.
+    private func warmNeighbors(of id: UUID?) {
+        guard let id else { return }
+        let order = sidebarThreads
+        guard let index = order.firstIndex(where: { $0.id == id }) else { return }
+        var neighbors: [UUID] = []
+        if index > 0 { neighbors.append(order[index - 1].id) }
+        if index + 1 < order.count { neighbors.append(order[index + 1].id) }
+        warmDocuments(neighbors)
     }
 
     /// A thread left alone for ten minutes gives its agent process back. Its history stays in memory

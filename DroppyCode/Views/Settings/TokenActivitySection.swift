@@ -434,28 +434,13 @@ struct TokenActivitySection: View {
     }
 
     /// Equal-width week columns of square cells. Each column takes an equal
-    /// share of the width and each cell aspect-fits its column, so the grid
-    /// fills any Settings width without clipping or scrolling.
+    /// share of the width and each cell squares off to its column, so the grid
+    /// fills any Settings width without clipping or scrolling. One canvas draws
+    /// every cell: as a stack of some 360 shape views this was the heaviest
+    /// layout in Settings, felt each time General opened.
     private func heatmap(grid: TokenActivityGrid) -> some View {
-        HStack(alignment: .top, spacing: TokenActivityStyle.cellGap) {
-            ForEach(grid.columns.indices, id: \.self) { c in
-                VStack(spacing: TokenActivityStyle.cellGap) {
-                    ForEach(0..<TokenActivityGrid.rows, id: \.self) { r in
-                        if grid.columns[c][r] == nil {
-                            Color.clear
-                                .aspectRatio(1, contentMode: .fit)
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            RoundedRectangle(cornerRadius: TokenActivityStyle.cellRadius, style: .continuous)
-                                .fill(TokenActivityStyle.color(for: grid.values[c][r], maxValue: grid.maxValue))
-                                .aspectRatio(1, contentMode: .fit)
-                                .frame(maxWidth: .infinity)
-                        }
-                    }
-                }
-            }
-        }
-        .accessibilityHidden(true)
+        HeatmapCanvas(grid: grid)
+            .accessibilityHidden(true)
     }
 
     /// Month names pinned to the column holding each month's first day.
@@ -495,5 +480,39 @@ struct TokenActivitySection: View {
             lastX = x
         }
         return placed
+    }
+}
+
+/// The heatmap's cells, drawn in one pass. The cell size follows the width the canvas is
+/// given; the height follows from that, so the grid stays square-celled at any width.
+private struct HeatmapCanvas: View {
+    let grid: TokenActivityGrid
+
+    @State private var width: CGFloat = 0
+
+    var body: some View {
+        let columns = CGFloat(max(grid.columns.count, 1))
+        let rows = CGFloat(TokenActivityGrid.rows)
+        let gap = TokenActivityStyle.cellGap
+        let cell = max(0, (width - gap * (columns - 1)) / columns)
+        Canvas { context, size in
+            let columns = grid.columns.count
+            guard columns > 0 else { return }
+            let cell = (size.width - gap * CGFloat(columns - 1)) / CGFloat(columns)
+            guard cell > 0 else { return }
+            let pitch = cell + gap
+            for c in 0..<columns {
+                for r in 0..<TokenActivityGrid.rows where grid.columns[c][r] != nil {
+                    let rect = CGRect(x: CGFloat(c) * pitch, y: CGFloat(r) * pitch, width: cell, height: cell)
+                    context.fill(
+                        Path(roundedRect: rect, cornerRadius: TokenActivityStyle.cellRadius, style: .continuous),
+                        with: .color(TokenActivityStyle.color(for: grid.values[c][r], maxValue: grid.maxValue))
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: max(1, cell * rows + gap * (rows - 1)))
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
     }
 }

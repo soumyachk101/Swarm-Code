@@ -429,7 +429,6 @@ private struct SidebarThreadRow: View {
         let isDetailed = projectName != nil
         let showsActions = isHovering || isMenuPresented
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
-        let actions = ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
         Button {
             model.selectedThreadID = thread.id
         } label: {
@@ -484,7 +483,7 @@ private struct SidebarThreadRow: View {
                         }
                         .buttonStyle(.plain)
                         .help("Archive thread")
-                        RowActionsButton(actions: actions, isPresented: $isMenuPresented)
+                        RowActionsButton(actions: makeActions(), isPresented: $isMenuPresented)
                     }
                 } else if isDetailed {
                     ActivityStatus(thread: thread)
@@ -499,10 +498,17 @@ private struct SidebarThreadRow: View {
         }
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
+            // The pointer resting on a row usually means a click is coming: decode its history now.
+            if hovering { model.warmDocuments([thread.id]) }
         }
         .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { windowFrame.frame = $0 }
-        .contextMenu { RowActionMenuButtons(actions: actions) }
+        .contextMenu { RowActionMenuButtons(actions: makeActions()) }
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
+    }
+
+    /// Built when the ellipsis shows or the context menu opens, never on a plain render.
+    private func makeActions() -> [RowAction] {
+        ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
     }
 
     private nonisolated static func windowFrame(_ proxy: GeometryProxy) -> CGRect {
@@ -534,7 +540,8 @@ private struct SidebarThreadRow: View {
                             SidebarSymbol("hand.raised.fill")
                                 .foregroundStyle(Chrome.orange)
                         } else if isRunning {
-                            MiniSpinner(cellSize: 2.4)
+                            // The ghost is an image: the spinner's layers cannot be captured, its shapes can.
+                            MiniSpinner(cellSize: 2.4, isStill: true)
                         } else if isPinned {
                             SidebarSymbol("pin.fill", scale: 0.9)
                         } else {
