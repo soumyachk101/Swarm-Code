@@ -51,9 +51,18 @@ enum WindowChrome {
         window.invalidateShadow()
     }
 
-    /// Pins the native buttons with constraints, since the title bar's own layout pass resets frames.
+    /// Where the buttons sit with the sidebar hidden: level with the chat's chrome capsules,
+    /// which then step aside for them, and inset like the chrome is from the sheet's edge.
+    static var collapsedTrafficLightTop: CGFloat {
+        Chrome.sheetInset + Chrome.chromeTopPadding + (Chrome.capsuleHeight - Chrome.trafficLightDiameter) / 2
+    }
+
+    /// Pins the native buttons with constraints, since the title bar's own layout pass resets
+    /// frames. Beside the sidebar they sit in its top corner; with it hidden they move over
+    /// to the chat's chrome row and down to its centre line, with the slide the chrome makes.
     static func placeTrafficLights(on window: NSWindow, sidebarVisible: Bool, animated: Bool) {
         let leading = sidebarVisible ? Chrome.trafficLightLeading : Chrome.sheetInset + Chrome.chromeHorizontalPadding
+        let top = sidebarVisible ? Chrome.trafficLightTop : collapsedTrafficLightTop
         guard let titlebar = window.standardWindowButton(.closeButton)?.superview else { return }
         var changed = false
         let types: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
@@ -65,7 +74,7 @@ enum WindowChrome {
                 button.translatesAutoresizingMaskIntoConstraints = false
                 let leadingConstraint = button.leadingAnchor.constraint(equalTo: titlebar.leadingAnchor, constant: x)
                 leadingConstraint.identifier = leadingIdentifier
-                let topConstraint = button.topAnchor.constraint(equalTo: titlebar.topAnchor, constant: Chrome.trafficLightTop)
+                let topConstraint = button.topAnchor.constraint(equalTo: titlebar.topAnchor, constant: top)
                 topConstraint.identifier = topIdentifier
                 NSLayoutConstraint.activate([
                     leadingConstraint,
@@ -75,9 +84,14 @@ enum WindowChrome {
                 ])
                 changed = true
             } else {
-                for constraint in titlebar.constraints
-                where constraint.firstItem as? NSView === button && constraint.identifier == leadingIdentifier && constraint.constant != x {
-                    constraint.constant = x
+                for constraint in titlebar.constraints where constraint.firstItem as? NSView === button {
+                    let target: CGFloat? = switch constraint.identifier {
+                    case leadingIdentifier: x
+                    case topIdentifier: top
+                    default: nil
+                    }
+                    guard let target, constraint.constant != target else { continue }
+                    constraint.constant = target
                     changed = true
                 }
             }
@@ -87,8 +101,11 @@ enum WindowChrome {
             titlebar.layoutSubtreeIfNeeded()
             return
         }
+        // The same run as Chrome.panelSlide, so the buttons and the chrome row that makes
+        // room for them arrive together.
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
+            context.duration = 0.32
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             context.allowsImplicitAnimation = true
             titlebar.layoutSubtreeIfNeeded()
         }
