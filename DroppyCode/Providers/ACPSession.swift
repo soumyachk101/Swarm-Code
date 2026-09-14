@@ -549,12 +549,21 @@ final class ACPSession: ProviderSession {
         let raw = update["rawInput"] ?? .null
         var title = Self.cleanTitle(update["title"]?.string)
         if kind == .command, let command = raw["command"]?.string { title = command }
-        if title.isEmpty { title = raw["command"]?.string ?? Self.fallbackTitle(kind) }
+        if title.isEmpty { title = raw["command"]?.string ?? "" }
         var call = ToolCall(kind: kind, title: title)
         if kind != .command, let path = update["locations"]?.array?.first?["path"]?.string {
             let relative = ToolTitles.relativePath(path, to: workingDirectory)
-            if relative != title && relative != workingDirectory { call.detail = relative }
+            if relative != workingDirectory {
+                // A generic title like "Edit file" names the tool, not the
+                // file — the row reads "Edited <title>", so the path wins.
+                if title.isEmpty || Self.isFallbackTitle(title) {
+                    call.title = relative
+                } else if relative != title {
+                    call.detail = relative
+                }
+            }
         }
+        if call.title.isEmpty { call.title = Self.fallbackTitle(kind) }
         call.edits = diffs(update["content"])
         if let status = update["status"]?.string { call.status = Self.status(status) }
         return call
@@ -562,9 +571,10 @@ final class ACPSession: ProviderSession {
 
     private func makeToolUpdate(_ update: JSONValue) -> ToolUpdate {
         var result = ToolUpdate()
-        let title = Self.cleanTitle(update["title"]?.string)
-        if !title.isEmpty { result.title = title }
         if let kind = update["kind"]?.string { result.kind = Self.kind(kind) }
+        let title = Self.cleanTitle(update["title"]?.string)
+        // A bare tool-name title ("Edit file") must not overwrite a real path.
+        if !title.isEmpty, !Self.isFallbackTitle(title) { result.title = title }
         if let command = update["rawInput"]?["command"]?.string { result.title = command }
         if let status = update["status"]?.string { result.status = Self.status(status) }
         let edits = diffs(update["content"])
@@ -622,6 +632,16 @@ final class ACPSession: ProviderSession {
         case .mcp: "Tool"
         case .agent: "Agent"
         case .other: "Tool"
+        }
+    }
+
+    /// True when a call's title is just the tool's display name — no subject.
+    private static func isFallbackTitle(_ title: String) -> Bool {
+        switch title {
+        case "Run command", "Read file", "Edit file", "Search", "Fetch", "Tool", "Agent":
+            true
+        default:
+            false
         }
     }
 
