@@ -190,9 +190,29 @@ struct ThreadTimeline: View, Equatable {
         await MarkdownView.warm(texts)
     }
 
+    /// How a row arrives and leaves. It arrives softly, like everything in the app, and
+    /// leaves at once: a row that lingered while it faded kept its height in the lazy
+    /// stack a beat longer, and a turn folding dozens of rows into one block doubled the
+    /// content for that beat, with the viewport anchored somewhere in the phantom half.
+    /// The block a finished turn folds into gets no transition at all: it stands exactly
+    /// where its rows stood, in the same frame, and a fade over a block that can run to
+    /// thousands of points is a whole-layer composite the renderer may draw as nothing.
+    private static func transition(for block: DisplayBlock) -> AnyTransition {
+        if case .turn = block { return .identity }
+        return .asymmetric(
+            insertion: .modifier(active: SoftAppearModifier(isVisible: false), identity: SoftAppearModifier(isVisible: true))
+                .animation(.softAppear),
+            removal: .identity
+        )
+    }
+
     private func timelineScroll(visible: [DisplayBlock], hidden: Int, rewindable: Set<UUID>) -> some View {
-        // The outline the rail resolves against, kept in step with what is laid out.
-        tracking.setOutline(visible.map { ($0.id, $0.hasUserMessage) })
+        // The outline the rail resolves against, kept in step with what is laid out. Rows
+        // coming and going is when the stack can lose its place; a look a beat from now
+        // costs nothing and catches it whether or not any row says so.
+        if tracking.setOutline(visible.map { ($0.id, $0.hasUserMessage) }) {
+            tracking.armBlankWatch()
+        }
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
@@ -238,7 +258,7 @@ struct ThreadTimeline: View, Equatable {
                             // the on-screen set here; the set is how the timeline knows
                             // when it is showing nothing at all.
                             .onDisappear { tracking.setVisible(block.id, false) }
-                            .transition(.softAppear)
+                            .transition(Self.transition(for: block))
                     }
                 }
                 .id(stackGeneration)
@@ -295,6 +315,11 @@ struct ThreadTimeline: View, Equatable {
                 || (new.offset != old.offset && new.contentHeight == old.contentHeight
                     && new.containerHeight == old.containerHeight && !tracking.isCoasting)
             let atRest = !tracking.isUserScrolling && !tracking.isCoasting
+            if atRest, new.contentHeight < old.contentHeight - 1 {
+                // The content shrank under the viewport: a turn folded, the working line
+                // went. Whatever the rows report, the layout gets checked a beat from now.
+                tracking.armBlankWatch()
+            }
             if new.distanceFromBottom < -1, atRest {
                 // Past the end of the conversation, showing nothing: the content shrank under
                 // the offset. A finished turn folds its whole transcript into one block, and
@@ -347,6 +372,15 @@ struct ThreadTimeline: View, Equatable {
         .onChange(of: runtime.isRunning) { _, running in
             // Sending a message always brings the reader back to the conversation's end.
             guard running else {
+                // The turn's end folds its rows into one block. A reader at the end is put
+                // back on the end once that has laid out, with a real scroll request rather
+                // than the anchor alone, so the stack lays out for where the viewport is.
+                if tracking.isPinnedToBottom {
+                    DispatchQueue.main.async {
+                        withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                    }
+                }
+                tracking.armBlankWatch()
                 Task { await warmMarkdown() }
                 return
             }
@@ -427,8 +461,14 @@ struct ThreadTimeline: View, Equatable {
         } else if tracking.showsNothing {
             switch tracking.blankRepairs {
             case 0:
-                let y = tracking.offset
-                withTransaction(Self.unanimated) { position.scrollTo(y: y > 1 ? y - 1 : y + 1) }
+                // A scroll to a row the stack must lay out: the message the reader was on,
+                // else the end. A point's nudge, the earlier repair, could leave a stack
+                // that had dropped its heights exactly where it was.
+                if let id = tracking.activeBlockID {
+                    withTransaction(Self.unanimated) { position.scrollTo(id: id, anchor: .top) }
+                } else {
+                    withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                }
             case 1:
                 stackGeneration += 1
             case 2:
@@ -496,13 +536,16 @@ final class TimelineScrollTracking {
         !outlineIDs.isEmpty && visibleIDs.isDisjoint(with: outlineSet)
     }
 
-    func setOutline(_ blocks: [(id: String, hasUserMessage: Bool)]) {
+    /// Returns whether the outline changed.
+    @discardableResult
+    func setOutline(_ blocks: [(id: String, hasUserMessage: Bool)]) -> Bool {
         let ids = blocks.map(\.id)
-        guard ids != outlineIDs else { return }
+        guard ids != outlineIDs else { return false }
         outlineIDs = ids
         outlineSet = Set(ids)
         userBlockIDs = Set(blocks.filter(\.hasUserMessage).map(\.id))
         resolveActive()
+        return true
     }
 
     func setVisible(_ id: String, _ isVisible: Bool) {
