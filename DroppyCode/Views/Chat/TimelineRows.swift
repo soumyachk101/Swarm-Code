@@ -354,7 +354,7 @@ struct ToolRow: View {
                         ToolStatusIcon(call: call)
                         // One text run after the icon, so the row reads as
                         // icon + space + text instead of three spaced items.
-                        Text("\(ToolPresentation.verb(for: call)) \(call.title)")
+                        Text(ToolPresentation.label(for: call))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -497,6 +497,28 @@ private enum DiffDetailCache {
 }
 
 enum ToolPresentation {
+    /// The row's text run: verb plus subject. Agents that title a call with the
+    /// tool's own name ("Edit file") would read "Edited Edit file" — drop the
+    /// redundant leading word so it reads "Edited file".
+    static func label(for call: ToolCall) -> String {
+        let root: String = switch call.kind {
+        case .command: "run"
+        case .read: "read"
+        case .edit: "edit"
+        case .search: "search"
+        case .web: "fetch"
+        case .mcp: "call"
+        case .agent: "delegate"
+        case .other: "use"
+        }
+        var subject = call.title
+        let words = call.title.split(separator: " ", maxSplits: 1)
+        if words.first?.lowercased() == root {
+            subject = words.count > 1 ? String(words[1]) : ""
+        }
+        return [verb(for: call), subject].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
     static func verb(for call: ToolCall) -> String {
         let running = call.status == .running
         return switch call.kind {
