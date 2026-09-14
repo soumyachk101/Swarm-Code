@@ -71,6 +71,7 @@ final class SettingsNavigation {
 }
 
 struct SettingsView: View {
+    @Environment(AppModel.self) private var model
     @State private var page: SettingsPage = .general
     @State private var search = ""
     @State private var modelSearch = ""
@@ -153,6 +154,27 @@ struct SettingsView: View {
     }
 
     private var detail: some View {
+        Group {
+            if page == .archive, model.archivedThreads.isEmpty {
+                // An empty archive is one symbol in the middle of the pane: no sentence, no chrome,
+                // no button with nothing to delete.
+                Image(systemName: "archivebox")
+                    .font(.system(size: 44, weight: .light))
+                    .foregroundStyle(Chrome.secondaryText.opacity(0.6))
+                    .accessibilityLabel(Text("No archived threads"))
+            } else {
+                pageScroll
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .detailSheet()
+        .onChange(of: page, initial: true) {
+            scrollChrome.update(travel: 0)
+            modelSearch = ""
+        }
+    }
+
+    private var pageScroll: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
                 pageContent
@@ -189,12 +211,6 @@ struct SettingsView: View {
             .frame(minHeight: Chrome.capsuleHeight)
             .padding(.horizontal, Chrome.chromeHorizontalPadding)
             .padding(.top, Chrome.chromeTopPadding)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .detailSheet()
-        .onChange(of: page, initial: true) {
-            scrollChrome.update(travel: 0)
-            modelSearch = ""
         }
     }
 
@@ -607,28 +623,23 @@ private struct ArchiveDeleteAllButton: View {
     }
 }
 
+/// The archived threads. The empty archive never reaches this page: the pane shows its symbol instead.
 private struct ArchiveSettingsPage: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         let archived = model.archivedThreads
-        if archived.isEmpty {
-            Text("Archived threads show up here.")
-                .font(.system(size: 13))
-                .foregroundStyle(Chrome.secondaryText)
-        } else {
-            ChromeCard {
-                ForEach(Array(archived.enumerated()), id: \.element.id) { index, thread in
-                    if index > 0 { ChromeRowDivider() }
-                    ChromeRow(title: thread.title, detail: model.project(thread.projectID)?.name) {
-                        HStack(spacing: 8) {
-                            Button("Restore") { model.unarchive(thread.id) }
-                                .buttonStyle(.glass)
-                            Button("Delete", role: .destructive) { model.delete(thread.id) }
-                                .buttonStyle(.glass)
-                        }
-                        .controlSize(.small)
+        ChromeCard {
+            ForEach(Array(archived.enumerated()), id: \.element.id) { index, thread in
+                if index > 0 { ChromeRowDivider() }
+                ChromeRow(title: thread.title, detail: model.project(thread.projectID)?.name) {
+                    HStack(spacing: 8) {
+                        Button("Restore") { model.unarchive(thread.id) }
+                            .buttonStyle(.glass)
+                        Button("Delete", role: .destructive) { model.delete(thread.id) }
+                            .buttonStyle(.glass)
                     }
+                    .controlSize(.small)
                 }
             }
         }
