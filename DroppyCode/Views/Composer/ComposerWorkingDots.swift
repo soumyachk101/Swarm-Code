@@ -46,7 +46,7 @@ final class DotFieldLayerView: NSView {
     private static let pitch: CGFloat = 8
     /// The field never grows past this many rows however tall the pill gets, so a
     /// five-line draft does not multiply the layers the render server composites.
-    private static let maxRows = 4
+    private static let maxRows = 3
     /// One pulse per dot; the column delay spreads it into a travelling wave.
     private static let period: Double = 2.2
     private static let columnDelay: Double = 0.045
