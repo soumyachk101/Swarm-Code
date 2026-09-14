@@ -13,6 +13,12 @@
   `git worktree remove --force ~/.droppy-code/worktrees/agent-<slug>` + `git worktree prune`.
 - Never delete Jordy's main checkout, never touch another agent's worktree.
 
+## Relaunching (never unprompted)
+
+- NEVER run `scripts/quick_run.sh` or otherwise quit/relaunch Droppy Code unless Jordy explicitly asks for it in that moment.
+- Building inside the worktree is fine; installing to /Applications and relaunching is not.
+- "Finish", "merge", "done" or "test it" do not imply relaunch — only an explicit request to run/relaunch the app does.
+
 ## Merging (always via glab)
 
 - When Jordy says "merge", always merge via `glab`: push the branch, `glab mr create`, `glab mr merge`, then sync the checkout.
