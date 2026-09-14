@@ -6,12 +6,19 @@
 
 # The download button everywhere on the page points here, so a new release
 # is a one-line change: update the target and nothing in the HTML moves.
-# The disk image is the asset attached to the GitLab release; the project
-# has to be public (or the DMG hosted elsewhere) for visitors to reach it.
+# The disk image lives on the releases bucket, next to Droppy's own.
 [[redirects]]
   from = "/download/latest"
-  to = "https://gitlab.com/droppyformac1/droppy-code/-/releases/v1.0.0/downloads/Droppy-Code-1.0.0.dmg"
+  to = "https://droppy-releases.jordylegrand.workers.dev/app-releases/droppy-code/Droppy-Code-1.0.0.dmg"
   status = 302
+  force = true
+
+# www is an alias; Netlify sends it to the primary domain, and this covers
+# any deploy preview that reaches the rule first.
+[[redirects]]
+  from = "https://www.getdroppycode.app/*"
+  to = "https://getdroppycode.app/:splat"
+  status = 301
   force = true
 
 [[redirects]]
