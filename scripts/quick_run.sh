@@ -33,13 +33,12 @@ xcodebuild \
   build 2>&1 | tail -n 5
 
 step "Installing the single copy to $TARGET"
-osascript -e "tell application \"$APP_NAME\" to quit" 2>/dev/null || true
-for _ in $(seq 1 20); do
-  ps aux | grep -F "$APP_NAME.app/Contents/MacOS" | grep -v grep >/dev/null || break
-  sleep 1
-done
-rm -rf "$TARGET"
+# Atomic swap: move running bundle aside so ditto installs the fresh build immediately
+rm -rf "$TARGET.old"
+mv "$TARGET" "$TARGET.old" 2>/dev/null || true
 ditto "$PRODUCT" "$TARGET"
+rm -rf "$TARGET.old" 2>/dev/null || true
+
 # Keep Xcode's Development signature (Team NARHG44L48). macOS TCC ties granted
 # permissions to the app's signed identity, so re-signing ad-hoc here gave every
 # build a new identity with no Team ID and macOS forgot all approvals on each
@@ -51,6 +50,11 @@ else
 fi
 
 step "Relaunching"
+osascript -e "tell application \"$APP_NAME\" to quit" 2>/dev/null || true
+for _ in $(seq 1 20); do
+  ps aux | grep -F "$APP_NAME.app/Contents/MacOS" | grep -v grep >/dev/null || break
+  sleep 1
+done
 open "$TARGET"
 sleep 4
 ps aux | grep -F "$APP_NAME.app/Contents/MacOS" | grep -v grep | head -n 3

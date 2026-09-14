@@ -389,9 +389,6 @@ struct PaneTopVeil: View {
             // Only once content has scrolled under the chrome; at rest there is nothing to sample.
             if progress > 0 {
                 Rectangle()
-                    .fill(.clear)
-                    .glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)), in: Rectangle())
-                Rectangle()
                     .fill((isDark ? Color.black : Color.white).opacity(scrim))
                 Rectangle()
                     .fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
