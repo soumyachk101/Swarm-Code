@@ -91,19 +91,16 @@ struct AttachmentStrip: View {
     @State private var preview = AttachmentPreviewCoordinator()
 
     var body: some View {
-        // Inner stack hugs the thumbnails so the panel arrow lands on them, not
-        // mid-row; the spacer keeps the pixels exactly where a plain stack puts them.
+        // A plain stack hugs the thumbnails, so a trailing-aligned row keeps the
+        // photos over the bubble — and the anchor view fills just the photos.
         HStack(spacing: 6) {
-            HStack(spacing: 6) {
-                ForEach(attachments) { attachment in
-                    AttachmentThumbnail(attachment: attachment, preview: preview)
-                        .help(attachment.name)
-                }
+            ForEach(attachments) { attachment in
+                AttachmentThumbnail(attachment: attachment, preview: preview)
+                    .help(attachment.name)
             }
-            .background {
-                AttachmentAnchorCapture { preview.setAnchor($0) }
-            }
-            Spacer(minLength: 0)
+        }
+        .background {
+            AttachmentAnchorCapture { preview.setAnchor($0) }
         }
         .onDisappear { preview.close() }
     }
@@ -115,11 +112,14 @@ struct AttachmentThumbnail: View {
     let preview: AttachmentPreviewCoordinator
 
     @State private var image: CGImage?
+    /// The thumbnail's own NSView, handed to the panel on tap so the arrow
+    /// lands on the tapped photo rather than the strip's middle.
+    @State private var ownAnchor = WeakView()
 
     var body: some View {
         Button {
-            StripLog.log.debug("thumb tap id=\(attachment.id) name=\(attachment.name, privacy: .public)")
-            preview.toggle(attachment)
+            StripLog.log.notice("thumb tap id=\(attachment.id) name=\(attachment.name, privacy: .public)")
+            preview.toggle(attachment, over: ownAnchor.value)
         } label: {
             if attachment.isImage {
                 ZStack {
@@ -151,6 +151,13 @@ struct AttachmentThumbnail: View {
             }
         }
         .buttonStyle(.plain)
+        // The .fill image is drawn wider than the cell before it is clipped;
+        // pinning the hit shape to the cell keeps the neighbour's remove badge
+        // reachable no matter how hit-testing treats the overflow.
+        .contentShape(.rect(cornerRadius: 12, style: .continuous))
+        .background {
+            AttachmentAnchorCapture { ownAnchor.value = $0 }
+        }
         .task(id: attachment.path) {
             guard attachment.isImage else { return }
             let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size)
