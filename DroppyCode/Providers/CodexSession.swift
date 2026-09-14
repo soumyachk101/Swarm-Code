@@ -404,6 +404,9 @@ final class CodexSession: ProviderSession {
             switch target {
             case .lead:
                 turnID = nil
+                if status == .failed, let error, UsageLimitSignal.matches(error) {
+                    onEvent?(.usageLimit(resetsAt: UsageLimitSignal.resetTime(in: error)))
+                }
                 onEvent?(.turnCompleted(status: status, error: error))
             case .head(let head):
                 headTurns[head] = nil

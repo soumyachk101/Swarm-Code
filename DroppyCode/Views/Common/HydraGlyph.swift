@@ -79,7 +79,7 @@ private struct HydraBreath: ViewModifier {
     }
 }
 
-/// The Hydra mark: three heads on one body, a template that takes whatever colour it
+/// The Hydra mark: one clean dragon head, a template that takes whatever colour it
 /// is given. Sized by its frame.
 struct HydraMarkImage: View {
     var body: some View {

@@ -243,6 +243,11 @@ struct TimelineMinimapRail: View, Equatable {
             }
         }
         .padding(.top, metrics.topInset)
+        // The ticks re-centre without a slide when the column's height is what changed:
+        // its first measurement (the rail lays out at height 0 first, ticks at the top)
+        // and a window resize. Otherwise the tick that lit up animated the whole stack
+        // down from the top on every thread opened.
+        .animation(nil, value: centerHeight)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 

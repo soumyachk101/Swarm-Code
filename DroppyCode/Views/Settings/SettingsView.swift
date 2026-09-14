@@ -302,6 +302,10 @@ private struct GeneralSettingsPage: View {
                 ChromeRow(title: "Confirm before deleting threads") {
                     SettingsSwitch(isOn: $settings.confirmBeforeDeleting)
                 }
+                ChromeRowDivider()
+                ChromeRow(title: "Continue after a usage limit", detail: "When the provider's limit is spent, the chat waits for the reset and then tells the agent to carry on") {
+                    SettingsSwitch(isOn: $settings.autoContinueAfterLimit)
+                }
             }
         }
         ChromeSection(title: "Finished threads") {
