@@ -252,7 +252,7 @@ private struct GeneralSettingsPage: View {
         ChromeSection(title: "Appearance") {
             ChromeCard {
                 ChromeRow(title: "Theme", detail: settings.theme.detail) {
-                    GlassPickerButton(options: AppTheme.allCases.map { ($0, $0.displayName) }, selection: $settings.theme)
+                    ThemePickerButton(selection: $settings.theme)
                 }
             }
         }
@@ -601,5 +601,59 @@ private struct CreditLink: View {
         }
         .buttonStyle(.plain)
         .help(url.absoluteString)
+    }
+}
+
+/// The theme menu: System on top, then the dark and the light themes in their
+/// own sections, each with a swatch of its surface and accent.
+private struct ThemePickerButton: View {
+    @Binding var selection: AppTheme
+
+    @State private var isPresented = false
+    @State private var isHovering = false
+
+    private static let dark = AppTheme.allCases.filter { $0.scheme == .dark }
+    private static let light = AppTheme.allCases.filter { $0.scheme == .light }
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            HStack(spacing: 6) {
+                selection.swatch
+                    .frame(width: 14, height: 14)
+                Text(verbatim: selection.displayName)
+                    .font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Chrome.secondaryText)
+            }
+            .foregroundStyle(Chrome.primaryText.opacity(isHovering || isPresented ? 1 : 0.92))
+            .padding(.horizontal, Chrome.capsuleHorizontalPadding)
+            .frame(height: Chrome.capsuleContentHeight)
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .chromeGlassCapsule()
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            PopoverMenu {
+                item(.system)
+                PopoverSectionHeader("Dark")
+                ForEach(Self.dark) { item($0) }
+                PopoverSectionHeader("Light")
+                ForEach(Self.light) { item($0) }
+            }
+        }
+    }
+
+    private func item(_ theme: AppTheme) -> some View {
+        PopoverItem(theme.displayName, leading: AnyView(theme.swatch), isChecked: theme == selection) {
+            selection = theme
+        }
     }
 }

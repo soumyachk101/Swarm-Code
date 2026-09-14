@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 /// The queued steering prompts as a tab rising from the top of the chat box. The composer draws
 /// over its lower edge, so it reads as part of the box, exactly like the changes tab. Each row
@@ -14,13 +13,17 @@ struct FollowUpQueueTab: View {
     /// Whether the queued rows are folded away under the title.
     @State private var isCollapsed = false
 
-    /// The prompt being dragged, and each row's height for above/below detection.
-    @State private var draggingID: UUID?
+    /// The live reorder: the grabbed prompt, the pointer's travel since the
+    /// grab, and how far its slot has already moved to meet it (see `QueueDrag`).
+    @State private var drag = QueueDrag()
+    /// Each row's height including its padding: one row's slot in the stack.
     @State private var rowHeights: [UUID: CGFloat] = [:]
+    /// The rows' natural height, so the fold can animate to and from exactly it.
+    @State private var listHeight: CGFloat = 0
 
     var body: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12, style: .continuous)
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 Image(systemName: "arrow.turn.down.right")
                     .font(.system(size: 10, weight: .semibold))
@@ -33,7 +36,9 @@ struct FollowUpQueueTab: View {
                 Button {
                     withAnimation(Chrome.panelSlide) { isCollapsed.toggle() }
                 } label: {
-                    Image(systemName: "chevron.up")
+                    // Points the way the tab will go: down to close while open,
+                    // up to reopen while collapsed.
+                    Image(systemName: "chevron.down")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(Chrome.secondaryText)
                         .frame(width: 22, height: 22)
@@ -47,32 +52,42 @@ struct FollowUpQueueTab: View {
             .font(.system(size: 12, weight: .medium).monospacedDigit())
             .accessibilityLabel(Text(verbatim: runtime.followUps.count == 1 ? "1 queued follow-up" : "\(runtime.followUps.count) queued follow-ups"))
 
-            if !isCollapsed {
+            // The rows stay in place and fold: a clip animates between zero
+            // and their measured height while they fade, so nothing is ever
+            // removed mid-animation to linger over the composer as a ghost.
+            VStack(alignment: .leading, spacing: 8) {
                 Divider().opacity(0.5)
 
-                VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(runtime.followUps.enumerated()), id: \.element.id) { index, prompt in
-                    FollowUpRow(
-                        position: index + 1,
-                        prompt: prompt,
-                        runtime: runtime,
-                        dragging: $draggingID,
-                        rowHeight: rowHeights[prompt.id] ?? 44,
-                        reportHeight: { rowHeights[prompt.id] = $0 },
-                        onHoverMove: { dragged, neighbor, placeAfter in
-                            withAnimation(Chrome.panelSlide) {
-                                runtime.moveFollowUp(dragged, to: neighbor, placeAfter: placeAfter)
-                            }
-                        },
-                        onDropEnd: { draggingID = nil }
-                    )
-                    if prompt.id != runtime.followUps.last?.id {
-                        Divider().opacity(0.35)
+                // Rows carry their own vertical padding and rule, so a row's
+                // measured height is exactly its slot and the reorder maths
+                // never has to know about stack spacing.
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(runtime.followUps.enumerated()), id: \.element.id) { index, prompt in
+                        let isDragged = drag.id == prompt.id
+                        FollowUpRow(
+                            position: index + 1,
+                            prompt: prompt,
+                            runtime: runtime,
+                            isDragged: isDragged,
+                            showsRule: prompt.id != runtime.followUps.last?.id && !isDragged,
+                            onDragChanged: { translation in dragChanged(prompt.id, translation: translation) },
+                            onDragEnded: { dragEnded() }
+                        )
+                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[prompt.id] = $0 }
+                        .offset(y: isDragged ? drag.visualOffset : 0)
+                        .zIndex(isDragged ? 1 : 0)
                     }
                 }
-                }
-                .transition(.opacity)
             }
+            .padding(.top, 8)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                if height > 0 { listHeight = height }
+            }
+            .frame(height: isCollapsed ? 0 : listHeight, alignment: .top)
+            .opacity(isCollapsed ? 0 : 1)
+            .clipped()
+            .allowsHitTesting(!isCollapsed)
+            .accessibilityHidden(isCollapsed)
         }
         .padding(.horizontal, 12)
         .padding(.top, 7)
@@ -80,18 +95,101 @@ struct FollowUpQueueTab: View {
         .frame(maxWidth: 560)
         .glassEffect(.regular, in: shape)
         .contentShape(shape)
+        .onChange(of: runtime.followUps.map(\.id)) { _, ids in
+            // A row that left mid-drag (deleted, or sent) ends the drag cleanly.
+            if let id = drag.id, !ids.contains(id) { dragEnded() }
+        }
     }
+
+    // MARK: - Reorder
+
+    /// Neighbours sliding out of the grabbed row's way.
+    private static let slide = Animation.spring(response: 0.28, dampingFraction: 0.82)
+
+    /// The pointer has moved `translation` since the grab. The grabbed row
+    /// follows it exactly; whenever its centre passes a neighbour's centre the
+    /// prompt moves one slot and the neighbour slides across, with the row's
+    /// own slot shift folded into `settled` so it never jumps. Loops, so a
+    /// fast flick crosses several rows in one step.
+    private func dragChanged(_ id: UUID, translation: CGFloat) {
+        if drag.id != id {
+            drag = QueueDrag(id: id)
+            NSCursor.closedHand.push()
+        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { drag.translation = translation }
+
+        let prompts = runtime.followUps
+        guard let index = prompts.firstIndex(where: { $0.id == id }) else { return }
+        let own = rowHeights[id] ?? 44
+        var current = index
+        var moved = false
+        while true {
+            let offset = drag.visualOffset
+            if offset > 0, current + 1 < prompts.count {
+                let next = prompts[current + 1].id
+                let slot = rowHeights[next] ?? 44
+                guard offset > (own + slot) / 2 else { break }
+                // The neighbour slides and the grabbed row's slot moves in the
+                // same animation as its compensation, so it stays put under
+                // the pointer while the list flows around it.
+                withAnimation(Self.slide) {
+                    runtime.moveFollowUp(id, to: next, placeAfter: true)
+                    drag.settled += slot
+                }
+                current += 1
+                moved = true
+            } else if offset < 0, current > 0 {
+                let previous = prompts[current - 1].id
+                let slot = rowHeights[previous] ?? 44
+                guard -offset > (own + slot) / 2 else { break }
+                withAnimation(Self.slide) {
+                    runtime.moveFollowUp(id, to: previous, placeAfter: false)
+                    drag.settled -= slot
+                }
+                current -= 1
+                moved = true
+            } else {
+                break
+            }
+        }
+        if moved {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+    }
+
+    private func dragEnded() {
+        guard drag.id != nil else { return }
+        NSCursor.pop()
+        // The offset animates from wherever the pointer let go to the row's
+        // slot, so the row settles instead of snapping.
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { drag = QueueDrag() }
+    }
+}
+
+/// One live reorder of a queued follow-up.
+private struct QueueDrag {
+    var id: UUID?
+    /// The pointer's travel since the grab.
+    var translation: CGFloat = 0
+    /// How far the row's slot has already moved toward the pointer through
+    /// reorders; subtracting it keeps the row pinned under the pointer.
+    var settled: CGFloat = 0
+
+    var visualOffset: CGFloat { translation - settled }
 }
 
 private struct FollowUpRow: View {
     let position: Int
     let prompt: FollowUpPrompt
     let runtime: ThreadRuntime
-    @Binding var dragging: UUID?
-    let rowHeight: CGFloat
-    let reportHeight: (CGFloat) -> Void
-    let onHoverMove: (UUID, UUID, Bool) -> Void
-    let onDropEnd: () -> Void
+    /// Lifted and following the pointer.
+    let isDragged: Bool
+    /// The rule under the row, off for the last row and while lifted.
+    let showsRule: Bool
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: () -> Void
 
     /// One preview panel for this row's thumbnails, so every photo opens.
     @State private var preview = AttachmentPreviewCoordinator()
@@ -117,16 +215,24 @@ private struct FollowUpRow: View {
                 .contentShape(.rect)
                 .onHover { hovering in
                     isHoveringGrip = hovering
+                    // The grab cursor is the drag's while a drag is on.
+                    guard !isDragged else { return }
                     if hovering { NSCursor.openHand.push() } else { NSCursor.pop() }
                 }
                 .onDisappear {
                     if isHoveringGrip { NSCursor.pop() }
                     isHoveringGrip = false
                 }
-                .onDrag {
-                    dragging = prompt.id
-                    return NSItemProvider(object: prompt.id.uuidString as NSString)
+                .onChange(of: isDragged) { _, dragging in
+                    // Released away from the grip: the hover's open hand is
+                    // still pushed with no leave to pop it.
+                    if !dragging, !isHoveringGrip { NSCursor.pop() }
                 }
+                .gesture(
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { value in onDragChanged(value.translation.height) }
+                        .onEnded { _ in onDragEnded() }
+                )
                 .help("Drag to reorder")
                 .accessibilityLabel(Text("Drag to reorder"))
             if !prompt.attachments.isEmpty {
@@ -171,17 +277,22 @@ private struct FollowUpRow: View {
             }
             .fixedSize()
         }
-        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { reportHeight($0) }
-        .onDrop(
-            of: [.plainText],
-            delegate: FollowUpDropDelegate(
-                promptID: prompt.id,
-                rowHeight: rowHeight,
-                dragging: $dragging,
-                onHoverMove: onHoverMove,
-                onEnd: onDropEnd
-            )
-        )
+        .padding(.vertical, 8)
+        .overlay(alignment: .bottom) {
+            if showsRule { Divider().opacity(0.35) }
+        }
+        // Lifted: a touch larger with a shadow, over an opaque glass so the
+        // rows sliding underneath never show through.
+        .background {
+            if isDragged {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Chrome.overlay(0.12))
+                    .padding(.horizontal, -8)
+                    .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
+            }
+        }
+        .scaleEffect(isDragged ? 1.02 : 1)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isDragged)
         .onChange(of: prompt.attachments) {
             preview.retire(except: Set(prompt.attachments.map(\.id)))
         }
@@ -199,33 +310,6 @@ private struct FollowUpRow: View {
         if files == 1 { parts.append("1 file") } else if files > 1 { parts.append("\(files) files") }
         guard !parts.isEmpty else { return "Empty follow-up" }
         return parts.joined(separator: ", ")
-    }
-}
-
-/// Reorders queued follow-ups by dragging their grip. The upper half of a row
-/// drops above it, the lower half below; hovering moves the prompt live, so
-/// the list reshuffles smoothly under the dragged row instead of jumping on drop.
-private struct FollowUpDropDelegate: DropDelegate {
-    let promptID: UUID
-    let rowHeight: CGFloat
-    @Binding var dragging: UUID?
-    let onHoverMove: (UUID, UUID, Bool) -> Void
-    let onEnd: () -> Void
-
-    func validateDrop(info: DropInfo) -> Bool {
-        guard let dragging else { return false }
-        return dragging != promptID
-    }
-
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        guard let dragging, dragging != promptID else { return nil }
-        onHoverMove(dragging, promptID, info.location.y > rowHeight / 2)
-        return DropProposal(operation: .move)
-    }
-
-    func performDrop(info: DropInfo) -> Bool {
-        onEnd()
-        return true
     }
 }
 
@@ -251,14 +335,16 @@ private struct QueueIconButton: View {
 }
 
 /// The follow-up editor as an anchored popover instead of a modal sheet, so
-/// editing never takes over the window. Application-defined: it stays open
-/// through file picks and outside clicks (no lost edits) and closes on Save,
-/// Cancel or Escape, or when its row goes away.
+/// editing never takes over the window. Application-defined so AppKit never
+/// closes it on its own: it survives its nested panels (the file picker, the
+/// recent-downloads popover, an attachment preview), and closes on Save,
+/// Cancel, Escape, the pencil again, a click elsewhere in the chat window, or
+/// when its row goes away.
 @MainActor
 final class FollowUpEditCoordinator: NSObject {
     private let popover = NSPopover()
     private var anchor: WeakView?
-    private var keyMonitor: Any?
+    private var monitors: [Any] = []
 
     override init() {
         super.init()
@@ -274,32 +360,61 @@ final class FollowUpEditCoordinator: NSObject {
 
     func show(prompt: FollowUpPrompt, runtime: ThreadRuntime) {
         guard let anchor = anchor?.value, anchor.window != nil else { return }
-        popover.contentViewController = NSHostingController(rootView: FollowUpEditor(
+        // The pencil toggles: a second tap while open closes the editor.
+        if popover.isShown {
+            close()
+            return
+        }
+        let editor = FollowUpEditor(
             prompt: prompt,
             runtime: runtime,
             onDone: { [weak self] in self?.close() }
-        ))
+        )
+        // Measured once at its ideal size, then frozen (see setFixedContent):
+        // a panel that resizes while shown moves off the pencil, and the
+        // editor's text and strip must not move it while the user types.
+        var size = NSHostingView(rootView: editor).intrinsicContentSize
+        if size.width <= 0 || size.height <= 0 { size = NSSize(width: 520, height: 320) }
+        popover.setFixedContent(editor, size: size)
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
-        startKeyMonitor()
+        startMonitors()
     }
 
     func close() {
-        stopKeyMonitor()
+        stopMonitors()
         if popover.isShown { popover.performClose(nil) }
     }
 
-    private func startKeyMonitor() {
-        guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+    private func startMonitors() {
+        guard monitors.isEmpty else { return }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             guard event.keyCode == 53 else { return event } // Escape
             self?.close()
             return nil
+        }) {
+            monitors.append(monitor)
+        }
+        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
+            self?.handleMouseDown(event) ?? event
+        }) {
+            monitors.append(monitor)
         }
     }
 
-    private func stopKeyMonitor() {
-        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
-        self.keyMonitor = nil
+    /// A click in the chat window dismisses the editor, and still reaches its
+    /// target. The editor, the file picker and the editor's nested popovers
+    /// are windows of their own, so clicks there pass, as does the pencil
+    /// (which toggles on its own).
+    private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
+        guard let window = event.window, let anchor = anchor?.value, window === anchor.window else { return event }
+        if anchor.bounds.contains(anchor.convert(event.locationInWindow, from: nil)) { return event }
+        close()
+        return event
+    }
+
+    private func stopMonitors() {
+        for monitor in monitors { NSEvent.removeMonitor(monitor) }
+        monitors.removeAll()
     }
 }
 

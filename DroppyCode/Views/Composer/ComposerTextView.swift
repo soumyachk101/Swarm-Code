@@ -48,18 +48,23 @@ final class ComposerController {
             popover.animates = true
             suggestionPopover = popover
         }
-        if let host = suggestionHost {
-            host.rootView = content
-        } else {
-            let host = NSHostingController(rootView: content)
-            suggestionHost = host
-            popover.contentViewController = host
-        }
         guard let textView = textView, textView.window != nil else { return }
         // Fixed width matching the old menu; height fits the rows so the
         // ScrollView inside never needs to scroll for the capped item count.
-        let height = min(340, 44 + CGFloat(max(itemCount, 1)) * 26)
-        popover.contentSize = NSSize(width: 340, height: height)
+        // The host never publishes its own size (see setFixedContent), so this
+        // is the only size the panel is ever positioned against and it stays
+        // on the caret while the list changes under typing.
+        let size = NSSize(width: 340, height: min(340, 44 + CGFloat(max(itemCount, 1)) * 26))
+        let sized = AnyView(content.frame(width: size.width, height: size.height))
+        if let host = suggestionHost {
+            host.rootView = sized
+        } else {
+            let host = NSHostingController(rootView: sized)
+            host.sizingOptions = []
+            suggestionHost = host
+            popover.contentViewController = host
+        }
+        popover.contentSize = size
         popover.show(relativeTo: caretRect(in: textView), of: textView, preferredEdge: .maxY)
         // The popover must never steal typing focus.
         textView.window?.makeFirstResponder(textView)

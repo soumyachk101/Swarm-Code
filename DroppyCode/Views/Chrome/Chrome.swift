@@ -388,6 +388,12 @@ struct PaneTopVeil: View {
         ZStack {
             // Only once content has scrolled under the chrome; at rest there is nothing to sample.
             if progress > 0 {
+                // The liquid glass is the veil: it samples and refracts the
+                // content sliding under the chrome. The scrim settles it toward
+                // the scheme's base, and the theme's tint colours it lightly.
+                Rectangle()
+                    .fill(.clear)
+                    .glassEffect(.regular, in: Rectangle())
                 Rectangle()
                     .fill((isDark ? Color.black : Color.white).opacity(scrim))
                 Rectangle()
