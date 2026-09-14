@@ -71,11 +71,9 @@ struct AppCommands: Commands {
                     .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
             }
             Divider()
-            Button("Archive thread") {
-                if let id = model.selectedThreadID { model.archive(id) }
-            }
-            .keyboardShortcut(shortcuts.keyboardShortcut(for: .archiveThread))
-            .disabled(model.selectedThreadID == nil)
+            Button(model.finishActionTitle) { model.finishSelectedThread() }
+                .keyboardShortcut(shortcuts.keyboardShortcut(for: .finishThread))
+                .disabled(model.selectedThreadID == nil)
         }
     }
 }
