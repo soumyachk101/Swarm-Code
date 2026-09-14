@@ -15,9 +15,13 @@ struct LinkParagraphView: NSViewRepresentable {
     /// Bumped when favicons finish loading, so the icons appear.
     var revision: Int = 0
 
+    /// Receives the text view, so the hover that sets the cursor can ask it what is under the pointer.
+    var onHost: ((LinkTextView) -> Void)?
+
     func makeNSView(context: Context) -> LinkTextView {
         let view = LinkTextView()
         view.delegate = context.coordinator
+        onHost?(view)
         return view
     }
 
@@ -152,6 +156,29 @@ final class LinkTextView: NSTextView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
+    }
+
+    // MARK: - No per-view tracking
+
+    // A text view normally keeps a tracking area and cursor rects of its own, and AppKit
+    // rebuilds every one of them on each frame the content scrolls, which a long thread
+    // full of link paragraphs turned into a per-frame tax. These views keep none: the
+    // paragraph's SwiftUI hover sets the pointing hand over a link instead (see
+    // `InlineText`), and clicks still reach `clickedOnLink` through `mouseDown`.
+    override func updateTrackingAreas() {
+        for area in trackingAreas { removeTrackingArea(area) }
+    }
+
+    override func resetCursorRects() {}
+
+    /// Whether `point`, in this view's coordinates, is over a link.
+    func hasLink(at point: CGPoint) -> Bool {
+        guard let layoutManager, let textContainer, let textStorage, textStorage.length > 0 else { return false }
+        let glyph = layoutManager.glyphIndex(for: point, in: textContainer)
+        guard glyph < layoutManager.numberOfGlyphs,
+              layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer).contains(point) else { return false }
+        let index = layoutManager.characterIndexForGlyph(at: glyph)
+        return index < textStorage.length && textStorage.attribute(.link, at: index, effectiveRange: nil) != nil
     }
 
     /// The last measurement, so the several `sizeThatFits` calls one layout pass makes

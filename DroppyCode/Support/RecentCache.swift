@@ -24,6 +24,11 @@ struct RecentCache<Key: Hashable, Value> {
         return hit
     }
 
+    /// Whether the key is held, without promoting it.
+    func contains(_ key: Key) -> Bool {
+        current[key] != nil || previous[key] != nil
+    }
+
     mutating func insert(_ value: Value, for key: Key) {
         if current.count >= limit, current[key] == nil {
             previous = current

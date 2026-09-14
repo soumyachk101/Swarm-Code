@@ -221,6 +221,9 @@ struct AttachmentAnchorCapture: NSViewRepresentable {
         @available(*, unavailable)
         required init?(coder: NSCoder) { nil }
 
+        /// Only an anchor: never in the way of a click or a cursor update.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if window != nil { onResolve?(self) }
