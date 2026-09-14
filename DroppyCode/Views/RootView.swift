@@ -10,6 +10,7 @@ struct RootView: View {
             SidebarView()
                 .frame(width: sidebar.renderedWidth)
                 .clipped()
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { sidebar.noteLaidOutWidth($0) }
                 .overlay(alignment: .trailing) {
                     SidebarResizeHandle(
                         isActive: sidebar.isVisible,
@@ -39,7 +40,7 @@ struct RootView: View {
             .padding(.top, Chrome.trafficLightTop + Chrome.trafficLightDiameter)
         }
         .background { WindowBackdrop() }
-        .background { WindowChromeConfigurator(sidebarVisible: sidebar.isVisible) }
+        .background { WindowChromeConfigurator(sidebarVisible: sidebar.holdsTrafficLights) }
         .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
         .ignoresSafeArea()
         .coordinateSpace(.named(GenieAnimator.coordinateSpace))

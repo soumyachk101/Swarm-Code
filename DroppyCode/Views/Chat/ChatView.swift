@@ -172,7 +172,9 @@ private struct ChatChromeRow: View {
     let git: GitStatusModel
 
     var body: some View {
-        let sidebarVisible = model.sidebar.isVisible
+        // Follows the buttons, not the sidebar's state: they leave for the sidebar only once it
+        // is wide enough to hold them, and the row closes up as they go.
+        let sidebarVisible = model.sidebar.holdsTrafficLights
         // One glass pass for the whole row. The row floats over the conversation, so its
         // capsules sample fresh content on every scrolled frame; drawn separately, each was
         // a pass of its own. The spacing is well under the gaps, so nothing morphs together.

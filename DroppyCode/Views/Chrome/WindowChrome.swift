@@ -131,6 +131,16 @@ final class SidebarLayout {
 
     private(set) var width: CGFloat
     private(set) var isVisible: Bool
+    /// Whether the sidebar, as laid out this frame, is wide enough to hold the window buttons
+    /// in its top corner. Until it is (while it slides open, or is dragged out from the edge)
+    /// they stay over the chat's chrome, and the chrome keeps their room; the moment it is,
+    /// they move over and the chrome closes up, together.
+    private(set) var holdsTrafficLights: Bool
+
+    /// The width from which the buttons fit beside the sidebar's edge with their usual clearance.
+    static var trafficLightsFitWidth: CGFloat {
+        Chrome.trafficLightLeading + Chrome.trafficLightsWidth + Chrome.trafficLightClearance
+    }
 
     @ObservationIgnored private var anchorWidth: CGFloat = 0
     @ObservationIgnored private var restingWidth: CGFloat
@@ -140,10 +150,19 @@ final class SidebarLayout {
         let stored = (defaults.object(forKey: Key.width) as? Double).map { CGFloat($0) } ?? Self.defaultWidth
         restingWidth = min(Self.maximumWidth, max(Self.minimumWidth, stored))
         width = restingWidth
-        isVisible = defaults.object(forKey: Key.visible) as? Bool ?? true
+        let visible = defaults.object(forKey: Key.visible) as? Bool ?? true
+        isVisible = visible
+        holdsTrafficLights = visible
     }
 
     var renderedWidth: CGFloat { isVisible ? width : 0 }
+
+    /// The sidebar's width as laid out, reported every frame it changes, so the buttons follow
+    /// the sidebar as it actually is on screen rather than the state it is heading for.
+    func noteLaidOutWidth(_ laidOut: CGFloat) {
+        let fits = laidOut >= Self.trafficLightsFitWidth
+        if fits != holdsTrafficLights { holdsTrafficLights = fits }
+    }
 
     func beginDrag() {
         if isVisible {
