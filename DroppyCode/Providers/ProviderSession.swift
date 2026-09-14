@@ -10,6 +10,9 @@ struct TurnInput: Sendable {
     var serviceTier: String? = nil
     var runtimeMode: RuntimeMode
     var interactionMode: InteractionMode
+    /// A Hydra head past its budget answering for the last time: the turn is one reply
+    /// with no tools, where the session can arrange that.
+    var isFinalReport = false
 }
 
 /// Everything a provider session needs to launch.

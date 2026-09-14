@@ -48,6 +48,27 @@ struct HydraLaunch: Hashable, Sendable {
     var workerModel: String?
     var workerEffort: String?
     var maxHeads: Int
+    /// Whether Droppy-run heads get copies of the checkout of their own.
+    var isolatesHeads = true
+}
+
+/// How much a Droppy-run head gets for one turn, on any provider: a nudge when it only
+/// reads, a word to wrap up, then a stop and one more turn for its report, so the lead
+/// always hears back. The API sessions pace themselves with these from inside the turn;
+/// every other provider gets the stop from the head's runtime.
+enum HydraBudget {
+    /// Tools without a change before the head is asked to act.
+    static let pacingTools = 24
+    static let wrapUpTools = 50
+    static let maxTools = 90
+    static let wrapUpSeconds: TimeInterval = 12 * 60
+    static let maxSeconds: TimeInterval = 20 * 60
+    /// What a stopped head gets to write its report in.
+    static let reportSeconds: TimeInterval = 3 * 60
+
+    static let pacingNote = "[Droppy Code] You have run \(pacingTools) tools without changing a file. If the task is research, reply with your findings now. Otherwise act on what you know: make the change, or reply with what blocks you."
+    static let wrapUpNote = "[Droppy Code] Your budget is nearly spent. Finish now: complete the smallest correct version of the task, then reply with your report."
+    static let finalNote = "[Droppy Code] Your budget is spent and your tools are gone. Reply now with your report: what you changed, how far it got, and what is left."
 }
 
 /// The shape a head's glyph takes. Twelve of them, one per name in the roster.
@@ -463,41 +484,48 @@ enum HydraPrompts {
         return "Your heads so far: " + parts.joined(separator: ", ") + "."
     }
 
-    /// Put in front of the user's prompt on providers that run no heads of their own: the
-    /// lead may end its reply with a delegation block, which Droppy Code turns into heads.
-    /// `isolated` says whether those heads get copies of the checkout of their own; `team`
-    /// is the lead's team so far, when it has one.
-    static func fallbackPreamble(maxHeads: Int, isolated: Bool, team: String?) -> String {
+    /// The standing rules for a lead on a provider that runs no heads of its own: when to
+    /// delegate, how, and what the reports mean. An API session keeps this in its system
+    /// prompt, once; a CLI session gets it in front of every message.
+    static func fallbackPolicy(maxHeads: Int, isolated: Bool) -> String {
         let whereHeadsWork = isolated
             ? "Each head works in a copy of the project of its own and Droppy Code lands its changes in your checkout when it reports"
             : "The heads work in your checkout"
         return """
-        [Hydra is on] You lead a team of up to \(maxHeads) helper agents ("heads").\(team.map { " " + $0 } ?? "") For a simple or single-focus request, just do it yourself. If this request bundles several independent tasks or needs research across many files, delegate: finish your reply with one fenced block
+        [Hydra is on] You lead a team of up to \(maxHeads) helper agents ("heads"). For a simple or single-focus request, just do it yourself. If a request bundles several independent tasks or needs research across many files, delegate: finish your reply with one fenced block
 
         ```hydra
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, and give no two heads the same file. The reports arrive as your next message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work.
-
-        ---
-
+        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, and give no two heads the same file. The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.
         """
     }
 
-    /// Put in front of a report message instead: the heads are back, and the lead's job
-    /// is to finish, not to send out more. `canDelegate` leaves one more round open for
-    /// what failed or turned out to be missing; otherwise the block is not offered at all.
-    static func fallbackReportPreamble(team: String?, canDelegate: Bool) -> String {
+    /// In front of the user's own message: the team so far, when there is one.
+    static func fallbackTurnNote(team: String?) -> String {
+        guard let team else { return "" }
+        return "[Hydra] \(team)\n\n---\n\n"
+    }
+
+    /// In front of a report message: the heads are back, and the lead's job is to
+    /// finish, not to send out more. `canDelegate` leaves one more round open for what
+    /// failed or turned out to be missing; otherwise the block is not offered at all.
+    static func fallbackReportNote(team: String?, canDelegate: Bool) -> String {
         let more = canDelegate
             ? "If a head failed or the reports show a piece of the user's request still undone, you may send out heads once more for exactly that, with the same ```hydra block at the end of your reply; never for verifying, redoing or finishing what a head already did."
             : "Send out no more heads for this request; whatever is left, do yourself."
-        return """
-        [Hydra] Your heads reported back below.\(team.map { " " + $0 } ?? "") \(more)
+        return "[Hydra] Your heads reported back below.\(team.map { " " + $0 } ?? "") \(more)\n\n---\n\n"
+    }
 
-        ---
+    /// Policy and note together, for a CLI provider with no system prompt to keep the
+    /// policy in.
+    static func fallbackPreamble(maxHeads: Int, isolated: Bool, team: String?) -> String {
+        fallbackPolicy(maxHeads: maxHeads, isolated: isolated) + "\n\n" + (fallbackTurnNote(team: team).isEmpty ? "---\n\n" : fallbackTurnNote(team: team))
+    }
 
-        """
+    static func fallbackReportPreamble(maxHeads: Int, isolated: Bool, team: String?, canDelegate: Bool) -> String {
+        fallbackPolicy(maxHeads: maxHeads, isolated: isolated) + "\n\n" + fallbackReportNote(team: team, canDelegate: canDelegate)
     }
 
     /// What the lead hears when its delegation block is refused: the request has had its

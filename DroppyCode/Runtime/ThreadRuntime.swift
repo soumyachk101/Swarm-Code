@@ -107,6 +107,11 @@ final class ThreadRuntime {
     /// How many times heads have gone out for the user's current request; a message of
     /// the user's own starts the count over.
     @ObservationIgnored private var hydraDelegationRounds = 0
+    /// A Droppy-run head's time for one turn (see `HydraBudget`): past it, the head is
+    /// stopped and its next turn is its report.
+    @ObservationIgnored private var headBudget: Task<Void, Never>?
+    @ObservationIgnored private var headBudgetSpent = false
+    @ObservationIgnored private var headReportsNext = false
 
     private struct HydraBatch {
         var pending: Set<UUID>
@@ -465,6 +470,23 @@ final class ThreadRuntime {
                 $0.finishedAt = nil
             }
         }
+        // A Droppy-run head gets so long for a turn, on any provider. The API sessions
+        // stop themselves a little sooner from inside the turn; this is the backstop, and
+        // the only stop a CLI head has.
+        let isFinalReport = headReportsNext
+        headReportsNext = false
+        if initialThread.hydra?.kind == .droppy {
+            let allowance = isFinalReport
+                ? HydraBudget.reportSeconds
+                : HydraBudget.maxSeconds + (initialThread.provider.isAPIKeyBased ? 90 : 0)
+            headBudget?.cancel()
+            headBudget = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(allowance))
+                guard let self, !Task.isCancelled, self.currentTurnID == turn.id, self.phase != .idle else { return }
+                self.headBudgetSpent = !isFinalReport
+                self.interrupt()
+            }
+        }
         scheduleSave()
         let isFirstTurn = turns.count == 1
 
@@ -501,10 +523,13 @@ final class ThreadRuntime {
             // ask Droppy Code for them.
             if !AppModel.hydraIsNative(thread.provider), let launch = app.hydraLaunch(for: thread) {
                 let team = HydraPrompts.teamStatus(app.hydraTeam(of: threadID).compactMap(\.hydra))
-                if hydraHeads == nil {
-                    prompt = HydraPrompts.fallbackPreamble(maxHeads: launch.maxHeads, isolated: app.settings.hydraIsolateHeads, team: team) + prompt
+                let canDelegate = hydraDelegationRounds < HydraPrompts.maxDelegationRounds
+                if thread.provider.isAPIKeyBased {
+                    prompt = (hydraHeads == nil ? HydraPrompts.fallbackTurnNote(team: team) : HydraPrompts.fallbackReportNote(team: team, canDelegate: canDelegate)) + prompt
+                } else if hydraHeads == nil {
+                    prompt = HydraPrompts.fallbackPreamble(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, team: team) + prompt
                 } else {
-                    prompt = HydraPrompts.fallbackReportPreamble(team: team, canDelegate: hydraDelegationRounds < HydraPrompts.maxDelegationRounds) + prompt
+                    prompt = HydraPrompts.fallbackReportPreamble(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, team: team, canDelegate: canDelegate) + prompt
                 }
             }
             phase = .running
@@ -515,7 +540,8 @@ final class ThreadRuntime {
                 effort: thread.effort,
                 serviceTier: serviceTier(for: thread),
                 runtimeMode: thread.runtimeMode,
-                interactionMode: thread.interactionMode
+                interactionMode: thread.interactionMode,
+                isFinalReport: isFinalReport
             ))
             if isFirstTurn { generateTitle(from: text) }
         } catch {
@@ -536,7 +562,10 @@ final class ThreadRuntime {
         // Copilot switches modes live, except that Auto's assisted-approval judge is a
         // session flag: entering or leaving Auto resumes the session with it set right.
         let copilotLaunchMode: RuntimeMode? = thread.provider == .copilot && thread.runtimeMode == .auto ? .auto : nil
-        let hydra = AppModel.hydraIsNative(thread.provider) ? app.hydraLaunch(for: thread) : nil
+        // Providers with heads of their own define them at launch; the API providers put
+        // the lead's Hydra policy in their system prompt. Either way the team is part of
+        // the session, and a change to it restarts one.
+        let hydra = AppModel.hydraIsNative(thread.provider) || thread.provider.isAPIKeyBased ? app.hydraLaunch(for: thread) : nil
         let signature = SessionSignature(
             provider: thread.provider,
             directory: directory,
@@ -571,6 +600,7 @@ final class ThreadRuntime {
                     runtimeMode: thread.runtimeMode,
                     interactionMode: thread.interactionMode,
                     apiKey: app.settings.apiKey(for: thread.provider),
+                    hydra: hydra,
                     transcript: apiTranscript(),
                     isHydraHead: thread.hydra?.kind == .droppy
                 )
@@ -998,6 +1028,8 @@ final class ThreadRuntime {
     private func finishTurn(status: TurnStatus) async {
         interruptWatchdog?.cancel()
         interruptWatchdog = nil
+        headBudget?.cancel()
+        headBudget = nil
         guard let turnID = currentTurnID, let turn = turns.first(where: { $0.id == turnID }) else {
             phase = .idle
             turnStartedAt = nil
@@ -1088,6 +1120,16 @@ final class ThreadRuntime {
         // Heads still out will report, and the lead will work again: the job is not
         // finished until it has heard from all of them.
         if !continues, status == .completed, let app, app.runningDroppyHeads(of: threadID) > 0 { continues = true }
+        // A head stopped for its budget writes its report as its next turn, so its lead
+        // hears what it managed rather than only that it was stopped.
+        if headBudgetSpent {
+            headBudgetSpent = false
+            if status == .interrupted, thread?.hydra?.kind == .droppy {
+                headReportsNext = true
+                Task { await startTurn(text: HydraBudget.finalNote, attachments: []) }
+                continues = true
+            }
+        }
         app?.turnFinished(threadID, status: status, continues: continues)
     }
 

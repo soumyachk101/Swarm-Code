@@ -635,9 +635,10 @@ final class AppModel {
         // it has now.
         if sessionsToRelease.remove(id) != nil { existingRuntime(for: id)?.stopSession() }
         // A head reports to its lead, which is the chat that chimes and notifies when
-        // the whole job is done.
+        // the whole job is done. A head with another turn coming (its report, after its
+        // budget ran out) reports at the end of that one.
         if isHead, let head = thread(id) {
-            hydraHeadTurnFinished(head, status: status)
+            if !continues { hydraHeadTurnFinished(head, status: status) }
             return
         }
         guard !continues else { return }

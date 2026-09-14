@@ -34,7 +34,8 @@ extension AppModel {
         return HydraLaunch(
             workerModel: pair?.workerModel,
             workerEffort: pair?.workerEffort,
-            maxHeads: pair?.maxHeads ?? HydraPair.defaultMaxHeads
+            maxHeads: pair?.maxHeads ?? HydraPair.defaultMaxHeads,
+            isolatesHeads: settings.hydraIsolateHeads
         )
     }
 

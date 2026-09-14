@@ -34,20 +34,13 @@ final class MetaSession: ProviderSession {
     /// rounds means the model is looping, and the turn says so.
     private static let maxRoundsPerTurn = 200
 
-    /// How many tool calls a Hydra head may make without changing a file before it is
-    /// asked to act on what it knows, and again every so many after that.
-    private static let headPacingTools = 24
-    private static let headPacingNote = "[Droppy Code] You have run \(headPacingTools) tools without changing a file. If the task is research, reply with your findings now. Otherwise act on what you know: make the change, or reply with what blocks you."
-
-    /// A head's budget for one turn. Past the first line it is told to wrap up; at the
-    /// second its tools go away and it gets one round to write its report, so the lead
-    /// hears from it instead of waiting on a head that would run all evening.
-    private static let headWrapUpTools = 50
-    private static let headMaxTools = 90
-    private static let headWrapUpSeconds: TimeInterval = 12 * 60
-    private static let headMaxSeconds: TimeInterval = 20 * 60
-    private static let headWrapUpNote = "[Droppy Code] Your budget is nearly spent. Finish now: complete the smallest correct version of the task, then reply with your report."
-    private static let headFinalNote = "[Droppy Code] Your budget is spent and your tools are gone. Reply now with your report: what you changed, how far it got, and what is left."
+    /// Tool results older than the last few are condensed once the ones in history add
+    /// up to this much: the model has long since read them, and every round re-sends the
+    /// whole history. A condensed result says how to get the full one back.
+    private static let condenseHistoryAt = 160_000
+    private static let condenseHistoryTo = 100_000
+    private static let condenseKeepsRecent = 10
+    private static let condensedMarker = "…[Droppy Code condensed this output"
 
     private struct StreamRound: Sendable {
         var content = ""
@@ -115,7 +108,7 @@ final class MetaSession: ProviderSession {
         var finalText = ""
         var rounds = 0
         var toolsSinceChange = 0
-        var pacingAt = Self.headPacingTools
+        var pacingAt = HydraBudget.pacingTools
         var toolsUsed = 0
         var wrapUpAsked = false
         let turnStartedAt = Date.now
@@ -124,9 +117,11 @@ final class MetaSession: ProviderSession {
             while !interrupted {
                 guard rounds < Self.maxRoundsPerTurn else { hitCeiling = true; break }
                 rounds += 1
-                // A head past its budget writes its report with no tools left to reach for.
-                if configuration.isHydraHead, toolsUsed >= Self.headMaxTools || Date.now.timeIntervalSince(turnStartedAt) >= Self.headMaxSeconds {
-                    messages.append(["role": "user", "content": .string(Self.headFinalNote)])
+                // A head past its budget writes its report with no tools left to reach
+                // for; a head stopped by its runtime for the same reason answers the same way.
+                let budgetSpent = configuration.isHydraHead && (toolsUsed >= HydraBudget.maxTools || Date.now.timeIntervalSince(turnStartedAt) >= HydraBudget.maxSeconds)
+                if input.isFinalReport || budgetSpent {
+                    if budgetSpent { messages.append(["role": "user", "content": .string(HydraBudget.finalNote)]) }
                     let last = try await streamOneRound(model: currentModel, effort: input.effort, withTools: false)
                     if let usage = last.usage {
                         onEvent?(.usage(usage))
@@ -139,17 +134,18 @@ final class MetaSession: ProviderSession {
                     }
                     break
                 }
-                if configuration.isHydraHead, !wrapUpAsked, toolsUsed >= Self.headWrapUpTools || Date.now.timeIntervalSince(turnStartedAt) >= Self.headWrapUpSeconds {
+                if configuration.isHydraHead, !wrapUpAsked, toolsUsed >= HydraBudget.wrapUpTools || Date.now.timeIntervalSince(turnStartedAt) >= HydraBudget.wrapUpSeconds {
                     wrapUpAsked = true
-                    messages.append(["role": "user", "content": .string(Self.headWrapUpNote)])
+                    messages.append(["role": "user", "content": .string(HydraBudget.wrapUpNote)])
                 }
                 // A head that only ever reads is paced: every so many tools without a
                 // change, a note in its history asks it to act or report. Its lead is
                 // waiting, and a research task has an answer by then.
                 if configuration.isHydraHead, toolsSinceChange >= pacingAt {
-                    messages.append(["role": "user", "content": .string(Self.headPacingNote)])
-                    pacingAt = toolsSinceChange + Self.headPacingTools
+                    messages.append(["role": "user", "content": .string(HydraBudget.pacingNote)])
+                    pacingAt = toolsSinceChange + HydraBudget.pacingTools
                 }
+                condenseHistory()
                 let round = try await streamOneRound(model: currentModel, effort: input.effort)
                 // A round is one API response, so its total is exactly that
                 // response's spend.
@@ -180,7 +176,7 @@ final class MetaSession: ProviderSession {
                     toolsUsed += 1
                     if tool.name == "write_file" || tool.name == "edit_file" {
                         toolsSinceChange = 0
-                        pacingAt = Self.headPacingTools
+                        pacingAt = HydraBudget.pacingTools
                     } else {
                         toolsSinceChange += 1
                     }
@@ -453,8 +449,12 @@ final class MetaSession: ProviderSession {
         [
             ["type": "function", "function": [
                 "name": "read_file",
-                "description": "Read a file inside the project. Path is relative to the project root.",
-                "parameters": ["type": "object", "properties": ["path": ["type": "string", "description": "Relative file path"]], "required": ["path"]],
+                "description": "Read a file inside the project. Path is relative to the project root. The whole file by default; for a big file (hundreds of lines) pass start_line and line_count to read just the part you need, and the result says how many lines the file has.",
+                "parameters": ["type": "object", "properties": [
+                    "path": ["type": "string", "description": "Relative file path"],
+                    "start_line": ["type": "integer", "description": "First line to read, counted from 1"],
+                    "line_count": ["type": "integer", "description": "How many lines to read from start_line"],
+                ], "required": ["path"]],
             ]],
             ["type": "function", "function": [
                 "name": "list_files",
@@ -496,7 +496,7 @@ final class MetaSession: ProviderSession {
                 return declined(callID)
             }
             do {
-                let text = try readFile(path)
+                let text = try readFile(path, startLine: args["start_line"]?.int, lineCount: args["line_count"]?.int)
                 onEvent?(.toolUpdated(id: callID, update: ToolUpdate(output: summary(text, limit: 4_000), status: .completed)))
                 return text
             } catch {
@@ -653,7 +653,7 @@ final class MetaSession: ProviderSession {
         return trimmed
     }
 
-    private func readFile(_ path: String) throws -> String {
+    private func readFile(_ path: String, startLine: Int? = nil, lineCount: Int? = nil) throws -> String {
         let url = try resolveURL(path)
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ProviderError.failed("No such file: \(displayPath(path)).")
@@ -663,8 +663,44 @@ final class MetaSession: ProviderSession {
         guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
             throw ProviderError.failed("That file is not readable as text.")
         }
-        if text.count > 60_000 { return String(text.prefix(60_000)) + "\n…(truncated, \(text.count) chars total)" }
+        // A slice of the file, when asked for: what it costs to read is what it costs to
+        // re-send every round after, so a big file is best read where it matters.
+        if startLine != nil || lineCount != nil {
+            let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+            let first = max(1, startLine ?? 1)
+            guard first <= lines.count else { return "(the file has \(lines.count) lines; start_line \(first) is past the end)" }
+            let count = max(1, lineCount ?? 200)
+            let last = min(lines.count, first + count - 1)
+            let slice = lines[(first - 1)..<last].joined(separator: "\n")
+            return "(lines \(first)-\(last) of \(lines.count))\n" + slice
+        }
+        if text.count > 60_000 { return String(text.prefix(60_000)) + "\n…(truncated, \(text.count) chars total; read the rest with start_line and line_count)" }
         return text
+    }
+
+    /// Old tool results give way once history carries too much of them. Every round
+    /// re-sends the whole history, and a result the model read twenty rounds ago is
+    /// only weight by now; the most recent ones stay whole, since an edit is written
+    /// from what was just read. A condensed result keeps its head and says how to get
+    /// the rest back.
+    private func condenseHistory() {
+        var toolIndices: [Int] = []
+        var total = 0
+        for (index, message) in messages.enumerated() where message["role"]?.string == "tool" {
+            toolIndices.append(index)
+            total += message["content"]?.string?.count ?? 0
+        }
+        guard total > Self.condenseHistoryAt else { return }
+        for index in toolIndices.dropLast(Self.condenseKeepsRecent) {
+            guard total > Self.condenseHistoryTo else { break }
+            guard var message = messages[index].object, let content = message["content"]?.string,
+                  content.count > 1_200, !content.contains(Self.condensedMarker) else { continue }
+            let kept = String(content.prefix(400))
+            let condensed = kept + "\n\(Self.condensedMarker) (\(content.count) characters); call the tool again if you need it]"
+            message["content"] = .string(condensed)
+            messages[index] = .object(message)
+            total -= content.count - condensed.count
+        }
     }
 
     private func writeFile(path: String, content: String) throws {
@@ -772,6 +808,7 @@ final class MetaSession: ProviderSession {
         - Explain briefly what you did after tool calls; keep chat replies concise markdown.
         - If a tool result shows the user declined an action, do not retry it — ask how to proceed.
         - Today's date is \(ISO8601DateFormatter().string(from: Date())).
+        \(configuration.hydra.map { "\n" + HydraPrompts.fallbackPolicy(maxHeads: $0.maxHeads, isolated: $0.isolatesHeads) } ?? "")
         """
     }
 
