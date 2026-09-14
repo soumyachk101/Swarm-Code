@@ -268,6 +268,28 @@ final class ThreadRuntime {
         interrupt()
     }
 
+    /// Sends a queued follow-up right away instead of waiting its turn: the running turn
+    /// stops and the prompt goes out as soon as the stop lands, exactly as Return does with
+    /// the draft; idle, it simply sends. The rest of the queue waits for the new turn.
+    func sendFollowUpNow(_ id: UUID) {
+        guard let index = followUps.firstIndex(where: { $0.id == id }) else { return }
+        let prompt = followUps.remove(at: index)
+        scheduleSave()
+        guard !prompt.isEmpty else { return }
+        if phase == .idle {
+            if handleLocalCommand(prompt.text.trimmingCharacters(in: .whitespacesAndNewlines)) { return }
+            Task { await startTurn(text: prompt.text, attachments: prompt.attachments) }
+        } else if pendingSend == nil {
+            pendingSend = PendingSend(text: prompt.text, attachments: prompt.attachments)
+            interrupt()
+        } else {
+            // Return already has a message going out the moment the turn stops; this one
+            // goes right behind it.
+            followUps.insert(prompt, at: 0)
+            scheduleSave()
+        }
+    }
+
     func enqueueFollowUp(text: String, attachments: [Attachment]) {
         let prompt = FollowUpPrompt(
             text: text.trimmingCharacters(in: .whitespacesAndNewlines),

@@ -235,6 +235,9 @@ private struct FollowUpRow: View {
             .alignmentGuide(VerticalAlignment.center) { $0[VerticalAlignment.center] + Self.proseLift }
             Spacer(minLength: 4)
             HStack(spacing: 0) {
+                QueueIconButton(symbol: "paperplane", help: runtime.isRunning ? "Send now (stops the running turn)" : "Send now") {
+                    runtime.sendFollowUpNow(prompt.id)
+                }
                 QueueIconButton(symbol: "pencil", help: "Edit follow-up") {
                     editor.show(prompt: prompt, runtime: runtime)
                 }
