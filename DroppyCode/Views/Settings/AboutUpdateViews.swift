@@ -626,10 +626,10 @@ struct AboutSoftwareUpdateSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+            // The cards lead the page on their own, as on Droppy's About page; the version is
+            // on the pill in the chrome and on the cards' popovers.
             if checker.updateAvailable, let update = checker.update {
-                ChromeSection(title: "Droppy Code \(update.version)") {
-                    releaseBody(update)
-                }
+                releaseBody(update)
             }
         }
         .task {
