@@ -1400,10 +1400,13 @@ html.nav-intro-done .nav__pill { animation: none; }
   background: var(--bg-well);
   position: relative;
   overflow: hidden;
+  /* Centred, as the pricing card on getdroppy.app is. */
+  text-align: center;
 }
 .free__app {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
   font-weight: 600;
   color: var(--text-primary);
@@ -1416,9 +1419,11 @@ html.nav-intro-done .nav__pill { animation: none; }
   font-size: 13px;
   color: var(--text-tertiary);
 }
+.free__app span { text-align: left; }
 .free__price {
   display: flex;
   align-items: baseline;
+  justify-content: center;
   gap: 12px;
   font-family: "Inter Tight", var(--font-display);
   font-weight: 600;
@@ -1435,9 +1440,10 @@ html.nav-intro-done .nav__pill { animation: none; }
   color: var(--text-tertiary);
 }
 .free__lines {
-  margin: 24px 0 26px;
-  display: grid;
+  margin: 24px auto 26px;
+  display: inline-grid;
   gap: 10px;
+  text-align: left;
 }
 .free__lines li {
   display: flex;
