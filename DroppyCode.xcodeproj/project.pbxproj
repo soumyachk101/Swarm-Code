@@ -7,11 +7,17 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0C5E1AD4E1B130D7F6AC8A14 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = AE8B6A92FB544EA3A8C2FF3A /* LICENSE */; };
+		5E7A412B75FC1E7F98E7345E /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = F27C3C109E48B14D114F56CA /* THIRD_PARTY_NOTICES.md */; };
+		5F2F518CEF30ADDE0C59C38D /* TRADEMARK.md in Resources */ = {isa = PBXBuildFile; fileRef = 407374162B673FE1CFDB0507 /* TRADEMARK.md */; };
 		60662C7E8940020A2244EB93 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 46198FD9B910732AD71A6686 /* SwiftTerm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		407374162B673FE1CFDB0507 /* TRADEMARK.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = TRADEMARK.md; sourceTree = "<group>"; };
+		AE8B6A92FB544EA3A8C2FF3A /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
 		BF08528FE4987FB150391D97 /* DroppyCode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = DroppyCode.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F27C3C109E48B14D114F56CA /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -49,6 +55,9 @@
 		E79E0F24BD6C0E578BFB5406 = {
 			isa = PBXGroup;
 			children = (
+				AE8B6A92FB544EA3A8C2FF3A /* LICENSE */,
+				F27C3C109E48B14D114F56CA /* THIRD_PARTY_NOTICES.md */,
+				407374162B673FE1CFDB0507 /* TRADEMARK.md */,
 				D316607E993AEB4CB4FF2F06 /* DroppyCode */,
 				D704310475EAFAAE7FA6AD13 /* Products */,
 			);
@@ -121,6 +130,9 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0C5E1AD4E1B130D7F6AC8A14 /* LICENSE in Resources */,
+				5E7A412B75FC1E7F98E7345E /* THIRD_PARTY_NOTICES.md in Resources */,
+				5F2F518CEF30ADDE0C59C38D /* TRADEMARK.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
