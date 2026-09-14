@@ -258,7 +258,8 @@ struct WorkGroup: View {
                 .help(isCollapsed ? "Show these steps" : "Hide these steps")
                 .accessibilityLabel(Text(isCollapsed ? "Show these steps" : "Hide these steps"))
                 if !isCollapsed {
-                    let hidden = showsAll ? 0 : max(0, entries.count - 6)
+                    // Only the two latest steps show; the rest fold under one line.
+                    let hidden = showsAll ? 0 : max(0, entries.count - 2)
                     if hidden > 0 {
                         Button {
                             withAnimation(.snappy) { showsAll = true }
@@ -268,7 +269,7 @@ struct WorkGroup: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .frame(width: TimelineMetrics.iconWidth)
-                                Text("\(hidden) earlier steps")
+                                Text(hidden == 1 ? "1 earlier step" : "\(hidden) earlier steps")
                                     .foregroundStyle(.secondary)
                             }
                             .font(.callout)
