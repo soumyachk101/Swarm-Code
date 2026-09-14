@@ -33,7 +33,7 @@ struct HydraSettingsPage: View {
                 .disabled(!settings.hydraEnabled || settings.hydraAlwaysHeads)
                 .opacity(settings.hydraEnabled && !settings.hydraAlwaysHeads ? 1 : 0.5)
                 ChromeRowDivider()
-                ChromeRow(title: "Every message goes to a head", detail: "With Hydra on, each message you send starts on a head of its own, sent or queued, whether the lead is busy or not; the lead only hears the heads' reports. When every head is busy, a message goes to the lead as usual.") {
+                ChromeRow(title: "Every message goes to a head", detail: "With Hydra on, each message you send starts on a head of its own, sent or queued, whether the lead is busy or not; the lead only hears the heads' reports. Only when a pair caps the heads and every one is busy does a message go to the lead as usual.") {
                     SettingsSwitch(isOn: $settings.hydraAlwaysHeads)
                 }
                 .disabled(!settings.hydraEnabled)
@@ -45,7 +45,7 @@ struct HydraSettingsPage: View {
                 .disabled(!settings.hydraEnabled)
                 .opacity(settings.hydraEnabled ? 1 : 0.5)
                 ChromeRowDivider()
-                ChromeRow(title: "Merge when the team is done", detail: "Once the lead has finished and every head is back, the files the team changed go out as a merge request on a branch of their own, land through glab, gh or tea, and the checkout is brought up to date, all without the checkout ever changing branch. Off, the work stays in the checkout for you.") {
+                ChromeRow(title: "Merge when the team is done", detail: "Once the lead has finished and every head is back, the files the team changed go out as a merge request on a branch of their own, land through glab, gh or tea, and the checkout is brought up to date, all without the checkout ever changing branch. Every finished job lands this way, with heads or without, and the lead is told never to commit or merge by hand. Off, the work stays in the checkout for you.") {
                     SettingsSwitch(isOn: $settings.hydraAutoMerge)
                 }
                 .disabled(!settings.hydraEnabled)
@@ -195,7 +195,7 @@ private struct HydraPairRow: View {
         var parts = [pair.provider.displayName]
         if let effort = pair.orchestratorEffort { parts.append("Lead at \(ModelOption.effortTitle(effort).lowercased()) effort") }
         parts.append(HydraPairSummary.workers(pair, registry: registry))
-        parts.append(pair.maxHeads == 1 ? "1 head at a time" : "Up to \(pair.maxHeads) heads at once")
+        parts.append(pair.maxHeads.map { $0 == 1 ? "1 head at a time" : "Up to \($0) heads at once" } ?? "As many heads as the work takes")
         return parts.joined(separator: " · ")
     }
 }
@@ -302,22 +302,14 @@ private struct HydraPairEditor: View {
                     }
                 }
                 Divider().padding(.horizontal, 14).padding(.vertical, 6)
-                editorRow("Heads at once", detail: "How many work in parallel") {
-                    HStack(spacing: 8) {
-                        Text(verbatim: "\(pair.maxHeads)")
-                            .font(.system(size: 12.5, weight: .medium).monospacedDigit())
-                            .frame(minWidth: 16)
-                        Stepper(
-                            "",
-                            value: Binding(
-                                get: { pair.maxHeads },
-                                set: { count in model.settings.updateHydraPair(pairID) { $0.maxHeads = count } }
-                            ),
-                            in: HydraPair.maxHeadsRange
+                editorRow("Heads at once", detail: "How many work in parallel; with no cap, as many as the work takes") {
+                    GlassPickerButton(
+                        options: [(Int?.none, "No cap")] + HydraPair.maxHeadsRange.map { (Optional($0), String($0)) },
+                        selection: Binding(
+                            get: { pair.maxHeads },
+                            set: { count in model.settings.updateHydraPair(pairID) { $0.maxHeads = count } }
                         )
-                        .labelsHidden()
-                        .controlSize(.small)
-                    }
+                    )
                 }
                 if options.isEmpty {
                     Text(registry.loadingCatalogs.contains(pair.provider) ? "Loading models…" : "No models loaded for \(pair.provider.displayName) yet.")

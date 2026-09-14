@@ -87,12 +87,17 @@ struct SubagentPanelLayout: Equatable {
     /// The narrowest chat box worth typing in; below it the panel moves above the box.
     static let minComposerWidth: CGFloat = 360
     static let composerMaxWidth: CGFloat = 820
-    /// How close to the docked spot a dropped panel snaps back into it.
-    static let snapDistance: CGFloat = 56
+    /// How far past the pane's middle a held panel's centre goes before it changes corner,
+    /// so one held on the line does not flicker between the two.
+    static let cornerSlack: CGFloat = 24
 
     var pane: CGSize
     /// The chat box with its tabs and cards, so a panel above it clears them.
     var composerAreaHeight: CGFloat
+    /// The most panels docked in any one corner. Stacked, they share the room between the
+    /// chrome row and the chat box, so two panels sit one above the other without
+    /// overlapping wherever the pane is tall enough for two of the smallest.
+    var stackDepth: Int = 1
 
     var panelWidth: CGFloat {
         min(Self.width, max(Self.minWidth, pane.width - 2 * Self.sideMargin))
@@ -108,11 +113,18 @@ struct SubagentPanelLayout: Equatable {
         sitsBesideComposer ? panelWidth + Self.gap : 0
     }
 
+    /// The room a docked panel has from the chrome row down to the chat box, or to the
+    /// bottom margin when it sits beside the box.
+    private var verticalRoom: CGFloat {
+        let below = sitsBesideComposer ? Self.bottomMargin : composerAreaHeight + Self.gap
+        return pane.height - Chrome.contentTopInset - below
+    }
+
     var panelHeight: CGFloat {
         let ideal = min(520, max(300, pane.height * 0.5))
-        let below = sitsBesideComposer ? Self.bottomMargin : composerAreaHeight + Self.gap
-        let room = pane.height - Chrome.contentTopInset - below
-        return max(220, min(ideal, room))
+        let depth = CGFloat(max(1, stackDepth))
+        let share = (verticalRoom - (depth - 1) * Self.gap) / depth
+        return max(220, min(ideal, share))
     }
 
     var panelSize: CGSize { CGSize(width: panelWidth, height: panelHeight) }
@@ -137,17 +149,28 @@ struct SubagentPanelLayout: Equatable {
         return CGPoint(x: corner.side == .leading ? Self.sideMargin : pane.width - Self.sideMargin - panelWidth, y: y)
     }
 
-    /// Where a dropped panel docks, if anywhere: let go in the top or bottom band and out
-    /// towards either side, it slides into that corner. Nil leaves it where it was dropped.
-    func dockCorner(forDrop origin: CGPoint, docks: PanelDocks) -> PanelDockCorner? {
-        let centre = origin.x + panelWidth / 2
-        let isTop = origin.y <= docks.topLeading.y + Self.snapDistance
-        let isBottom = origin.y >= docks.bottomLeading.y - Self.snapDistance
-        guard isTop || isBottom else { return nil }
-        let bottom = isBottom && !isTop
-        if centre >= docks.bottomTrailing.x - Self.snapDistance { return bottom ? .bottomTrailing : .topTrailing }
-        if centre <= docks.bottomLeading.x + panelWidth + Self.snapDistance { return bottom ? .bottomLeading : .topLeading }
-        return nil
+    /// The corner a panel at `origin` belongs in: the side of the pane its centre is on, and
+    /// the nearer of the top and bottom spots. The corner it has keeps it until its centre
+    /// is `cornerSlack` past the middle, so a panel held on the line settles on one side.
+    func dockCorner(nearest origin: CGPoint, keeping current: PanelDockCorner, docks: PanelDocks) -> PanelDockCorner {
+        let centre = CGPoint(x: origin.x + panelWidth / 2, y: origin.y + panelHeight / 2)
+        let middle = CGPoint(x: pane.width / 2, y: (docks.topLeading.y + docks.bottomLeading.y + panelHeight) / 2)
+        let side: PanelDockSide = switch centre.x - middle.x {
+        case ..<(-Self.cornerSlack): .leading
+        case Self.cornerSlack...: .trailing
+        default: current.side
+        }
+        let isTop: Bool = switch centre.y - middle.y {
+        case ..<(-Self.cornerSlack): true
+        case Self.cornerSlack...: false
+        default: current.isTop
+        }
+        switch (side, isTop) {
+        case (.leading, true): return .topLeading
+        case (.trailing, true): return .topTrailing
+        case (.leading, false): return .bottomLeading
+        case (.trailing, false): return .bottomTrailing
+        }
     }
 
     /// Keeps a dragged panel inside the pane.
@@ -244,6 +267,84 @@ struct SubagentPanel: View {
                 .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
                 .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
         }
+    }
+}
+
+/// A floating panel's place while its handle is held: the corner under the pointer, and
+/// the flick it is let go with. Its own object rather than chat state on purpose: only the
+/// panel's placement reads it, so each pointer move re-lays out that one offset and nothing
+/// else in the chat.
+@Observable @MainActor
+final class PanelDragState {
+    /// The panel's corner under the pointer, moved with no animation; nil at rest.
+    private(set) var position: CGPoint?
+    /// Where the panel was when the handle took hold, so each move is measured from there.
+    @ObservationIgnored private var grab: CGPoint?
+    /// The pointer's speed over the last few moves, in points a second, for the flick.
+    @ObservationIgnored private var velocity = CGVector.zero
+    @ObservationIgnored private var lastMove: TimeInterval = 0
+
+    /// How far the pointer's speed carries the panel past where it is let go; a flick
+    /// towards a corner lands there without the pointer having to reach it.
+    private static let flickCarry: TimeInterval = 0.12
+    /// A pointer that has rested this long before letting go drops the panel where it is.
+    private static let restBeforeDrop: TimeInterval = 0.08
+
+    /// The panel's corner once the pointer has travelled `translation` from where its
+    /// handle was grabbed while the panel sat at `rest`, kept inside the pane.
+    func move(by translation: CGSize, from rest: CGPoint, in layout: SubagentPanelLayout) -> CGPoint {
+        let start = grab ?? rest
+        grab = start
+        let next = layout.clamped(CGPoint(x: start.x + translation.width, y: start.y + translation.height))
+        let now = CACurrentMediaTime()
+        if let position {
+            let elapsed = now - lastMove
+            // Two events in the same frame say nothing about speed; the last reading stands.
+            if elapsed >= 0.004 {
+                let instant = CGVector(dx: (next.x - position.x) / elapsed, dy: (next.y - position.y) / elapsed)
+                velocity = CGVector(dx: velocity.dx * 0.4 + instant.dx * 0.6, dy: velocity.dy * 0.4 + instant.dy * 0.6)
+            }
+        } else {
+            velocity = .zero
+        }
+        lastMove = now
+        position = next
+        return next
+    }
+
+    /// Lets the panel go, and says where it was heading: where it is, carried on a little
+    /// by the flick it was released with. Nil when it was never moved.
+    func release() -> CGPoint? {
+        defer {
+            position = nil
+            grab = nil
+            velocity = .zero
+        }
+        guard let position else { return nil }
+        guard CACurrentMediaTime() - lastMove < Self.restBeforeDrop else { return position }
+        return CGPoint(x: position.x + velocity.dx * Self.flickCarry, y: position.y + velocity.dy * Self.flickCarry)
+    }
+}
+
+/// A floating panel at its docked spot, or under the pointer while its handle is held.
+/// The handle moves it live; a drop and a resize settle it with a slide, as does the
+/// panel's size when another panel docks into its corner or leaves it. Only this view
+/// observes the drag, so the chat around the panel is left alone while it moves.
+struct PlacedPanel<Content: View>: View {
+    let drag: PanelDragState
+    /// The panel's docked spot.
+    let rest: CGPoint
+    /// The panel's size, which the corner's stack decides.
+    let size: CGSize
+    let content: Content
+
+    var body: some View {
+        let origin = drag.position ?? rest
+        let settles = drag.position == nil
+        content
+            .offset(x: origin.x, y: origin.y)
+            .animation(settles ? Chrome.panelSlide : nil, value: origin)
+            .animation(settles ? Chrome.panelSlide : nil, value: size)
     }
 }
 

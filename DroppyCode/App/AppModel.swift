@@ -636,8 +636,6 @@ final class AppModel {
         thread.hasCustomTitle = true
         threads.append(thread)
         scheduleSave()
-        // A fresh helper opens docked, wherever the last one was dragged to.
-        runtime(for: parentID).subagentPanelOrigin = nil
         let runtime = runtime(for: thread.id)
         runtime.draft = ComposerDraft(text: prompt)
         runtime.send()

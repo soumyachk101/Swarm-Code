@@ -16,15 +16,11 @@ struct ChatView: View {
     @State private var paneSize: CGSize = .zero
     /// The chat box with its tabs and cards, so a helper panel above it clears them.
     @State private var composerAreaHeight: CGFloat = 0
-    /// The helper panel's corner while its handle is held: where it was grabbed, and where
-    /// it is now, moved without animation. Nil at rest.
-    @State private var panelGrab: CGPoint?
-    @State private var panelDrag: CGPoint?
-    /// The same for the Hydra panel, and for the head popped out of it.
-    @State private var hydraGrab: CGPoint?
-    @State private var hydraDrag: CGPoint?
-    @State private var poppedGrab: CGPoint?
-    @State private var poppedDrag: CGPoint?
+    /// The helper panel under the pointer while its handle is held; the same for the Hydra
+    /// panel, and for the head popped out of it. Objects, so a move re-lays out one panel.
+    @State private var subagentDrag = PanelDragState()
+    @State private var hydraDrag = PanelDragState()
+    @State private var poppedDrag = PanelDragState()
 
     var body: some View {
         let thread = model.thread(runtime.threadID)
@@ -44,7 +40,9 @@ struct ChatView: View {
                 projectName: project?.name,
                 workingDirectory: workingDirectory,
                 supportsRewind: thread?.provider.supportsRewind ?? false,
-                columnHeight: columnHeight
+                columnHeight: columnHeight,
+                // A panel docked on the left takes the rail's edge; the rail goes with it.
+                showsMinimap: !scene.dockedSides.contains(.leading)
             )
             .equatable()
             // The room the docked panels take from either side; the conversation and the
@@ -91,10 +89,10 @@ struct ChatView: View {
                         hydraPanel(scene: scene, workingDirectory: workingDirectory, project: project)
                     }
                 }
-                // Toggled from the Hydra button, a ghost of the panel does the moving, so
-                // the panel itself comes and goes with no transition of its own while the
-                // chat still slides to make room or take it back; dismissed, it fades.
-                .animation(runtime.hydraPanelMorphs ? nil : Chrome.panelSlide, value: scene.hasHeads)
+                // Toggled from the Hydra button, a surface morphing out of or into the
+                // button does the moving, so the panel itself only crossfades with it while
+                // the chat still slides to make room or take it back; dismissed, it fades.
+                .animation(runtime.hydraPanelMorphs ? .easeOut(duration: GenieAnimator.morphCrossfade) : Chrome.panelSlide, value: scene.hasHeads)
             }
             // Keyed to the heads, not to whether the panel is on screen yet: that also flips
             // as the pane is first measured, and slid the whole chat into place from its
@@ -132,79 +130,60 @@ struct ChatView: View {
 
     // MARK: - Floating panels
 
-    /// The helper's panel, docked or where it was dragged.
+    /// The helper's panel, in its corner.
     private func subagentPanel(_ subagent: ChatThread, scene: PanelScene, project: Project?) -> some View {
-        let layout = scene.layout
-        let origin = panelDrag ?? runtime.subagentPanelOrigin.map(layout.clamped) ?? scene.docks[runtime.subagentPanelDock]
-        return SubagentPanel(
+        let rest = scene.docks[runtime.subagentPanelDock]
+        return PlacedPanel(drag: subagentDrag, rest: rest, size: scene.layout.panelSize, content: SubagentPanel(
             thread: subagent,
-            size: layout.panelSize,
+            size: scene.layout.panelSize,
             // The helper works in the project folder, whatever this thread's worktree.
             workingDirectory: subagent.worktreePath ?? project?.path,
             projectName: project?.name,
             onDrag: { translation in
-                panelDrag = dragged(from: origin, by: translation, grab: &panelGrab, layout: layout)
+                let position = subagentDrag.move(by: translation, from: rest, in: scene.layout)
+                dock(\.subagentPanelDock, nearest: position, scene: scene)
             },
             onDragEnd: {
-                // Dropped into a corner, the panel docks there; anywhere else it stays put.
-                let dropped = panelDrag ?? origin
-                if let corner = layout.dockCorner(forDrop: dropped, docks: scene.docks) {
-                    runtime.subagentPanelDock = corner
-                    runtime.subagentPanelOrigin = nil
-                } else {
-                    runtime.subagentPanelOrigin = dropped
+                if let heading = subagentDrag.release() {
+                    dock(\.subagentPanelDock, nearest: heading, scene: scene)
                 }
-                panelGrab = nil
-                panelDrag = nil
             },
             close: {
                 // The helper moves to the sidebar under this thread; its row opens with the
                 // same slide as the panel leaving.
                 withAnimation(Chrome.panelSlide) {
                     model.closeSubagent(subagent.id)
-                    runtime.subagentPanelOrigin = nil
                 }
             }
         )
         // Inside the offset, so the panel grows in and fades out in place.
-        .transition(Self.panelTransition)
-        .offset(x: origin.x, y: origin.y)
-        // The handle moves it live; only a drop and a resize settle it with a slide.
-        .animation(panelDrag == nil ? Chrome.panelSlide : nil, value: origin)
+        .transition(Self.panelTransition))
     }
 
-    /// The team's panel: next to the helper panel when that one is docked in the same corner.
+    /// The team's panel: next to the helper panel when that one is in the same corner.
     private func hydraPanel(scene: PanelScene, workingDirectory: String?, project: Project?) -> some View {
-        let layout = scene.layout
         let corner = runtime.hydraPanelDock
-        let dock = scene.docks.stacked(corner, below: scene.isDocked && runtime.subagentPanelDock == corner ? 1 : 0, layout: layout)
-        let origin = hydraDrag ?? runtime.hydraPanelOrigin.map(layout.clamped) ?? dock
-        return HydraPanel(
+        let rest = scene.docks.stacked(corner, below: scene.isDocked && runtime.subagentPanelDock == corner ? 1 : 0, layout: scene.layout)
+        return PlacedPanel(drag: hydraDrag, rest: rest, size: scene.layout.panelSize, content: HydraPanel(
             runtime: runtime,
             heads: scene.heads,
-            size: layout.panelSize,
+            size: scene.layout.panelSize,
             workingDirectory: workingDirectory,
             projectName: project?.name,
             onDrag: { translation in
-                hydraDrag = dragged(from: origin, by: translation, grab: &hydraGrab, layout: layout)
+                let position = hydraDrag.move(by: translation, from: rest, in: scene.layout)
+                dock(\.hydraPanelDock, nearest: position, scene: scene)
             },
             onDragEnd: {
-                let dropped = hydraDrag ?? origin
-                if let corner = layout.dockCorner(forDrop: dropped, docks: scene.docks) {
-                    runtime.hydraPanelDock = corner
-                    runtime.hydraPanelOrigin = nil
-                } else {
-                    runtime.hydraPanelOrigin = dropped
+                if let heading = hydraDrag.release() {
+                    dock(\.hydraPanelDock, nearest: heading, scene: scene)
                 }
-                hydraGrab = nil
-                hydraDrag = nil
             },
             popOut: { id in
                 // The head's own panel opens docked across the column from the team
                 // panel, so the two sit apart.
                 withAnimation(Chrome.panelSlide) {
                     runtime.hydraPoppedHeadID = id
-                    runtime.hydraPoppedPanelOrigin = nil
                     runtime.hydraPoppedPanelDock = runtime.hydraPanelDock.acrossTheColumn
                     if runtime.hydraSelectedHeadID == id { runtime.hydraSelectedHeadID = nil }
                 }
@@ -212,56 +191,43 @@ struct ChatView: View {
             dismiss: {
                 withAnimation(Chrome.panelSlide) {
                     model.dismissHydraHeads(of: runtime.threadID)
-                    runtime.hydraPanelOrigin = nil
                 }
             }
         )
-        .transition(Self.panelTransition)
-        .offset(x: origin.x, y: origin.y)
-        .animation(hydraDrag == nil ? Chrome.panelSlide : nil, value: origin)
+        .transition(Self.panelTransition))
     }
 
-    /// The popped-out head's panel: beyond whichever panels are docked in the same corner.
+    /// The popped-out head's panel: beyond whichever panels are in the same corner.
     private func poppedPanel(_ popped: ChatThread, scene: PanelScene, workingDirectory: String?, project: Project?) -> some View {
-        let layout = scene.layout
         let corner = runtime.hydraPoppedPanelDock
         let below = [scene.isDocked && runtime.subagentPanelDock == corner, scene.isHydraDocked && runtime.hydraPanelDock == corner].count { $0 }
-        let dock = scene.docks.stacked(corner, below: below, layout: layout)
-        let origin = poppedDrag ?? runtime.hydraPoppedPanelOrigin.map(layout.clamped) ?? dock
-        return HydraPanel(
+        let rest = scene.docks.stacked(corner, below: below, layout: scene.layout)
+        return PlacedPanel(drag: poppedDrag, rest: rest, size: scene.layout.panelSize, content: HydraPanel(
             runtime: runtime,
             heads: [popped],
-            size: layout.panelSize,
+            size: scene.layout.panelSize,
             workingDirectory: workingDirectory,
             projectName: project?.name,
             isPoppedOut: true,
             onDrag: { translation in
-                poppedDrag = dragged(from: origin, by: translation, grab: &poppedGrab, layout: layout)
+                let position = poppedDrag.move(by: translation, from: rest, in: scene.layout)
+                dock(\.hydraPoppedPanelDock, nearest: position, scene: scene)
             },
             onDragEnd: {
-                let dropped = poppedDrag ?? origin
-                if let corner = layout.dockCorner(forDrop: dropped, docks: scene.docks) {
-                    runtime.hydraPoppedPanelDock = corner
-                    runtime.hydraPoppedPanelOrigin = nil
-                } else {
-                    runtime.hydraPoppedPanelOrigin = dropped
+                if let heading = poppedDrag.release() {
+                    dock(\.hydraPoppedPanelDock, nearest: heading, scene: scene)
                 }
-                poppedGrab = nil
-                poppedDrag = nil
             },
             dismiss: {
                 // Back into the team panel, and onto its stage.
                 withAnimation(Chrome.panelSlide) {
                     runtime.hydraSelectedHeadID = popped.id
                     runtime.hydraPoppedHeadID = nil
-                    runtime.hydraPoppedPanelOrigin = nil
                 }
             }
         )
+        .transition(Self.panelTransition))
         .id(popped.id)
-        .transition(Self.panelTransition)
-        .offset(x: origin.x, y: origin.y)
-        .animation(poppedDrag == nil ? Chrome.panelSlide : nil, value: origin)
     }
 
     /// A panel grows in and fades out in place.
@@ -272,12 +238,13 @@ struct ChatView: View {
         )
     }
 
-    /// Where a panel's corner is once the pointer has travelled `translation` from where
-    /// its handle was grabbed; the grab is remembered from the first move.
-    private func dragged(from origin: CGPoint, by translation: CGSize, grab: inout CGPoint?, layout: SubagentPanelLayout) -> CGPoint {
-        let start = grab ?? origin
-        if grab == nil { grab = start }
-        return layout.clamped(CGPoint(x: start.x + translation.width, y: start.y + translation.height))
+    /// Docks a panel in the corner nearest to `position`. Called as the panel is held as
+    /// well as when it is let go, so the chat makes room on the new side while the panel
+    /// is still under the pointer, and the panel has its spot the moment it is dropped.
+    private func dock(_ corner: ReferenceWritableKeyPath<ThreadRuntime, PanelDockCorner>, nearest position: CGPoint, scene: PanelScene) {
+        let next = scene.layout.dockCorner(nearest: position, keeping: runtime[keyPath: corner], docks: scene.docks)
+        guard next != runtime[keyPath: corner] else { return }
+        runtime[keyPath: corner] = next
     }
 }
 
@@ -286,10 +253,9 @@ struct ChatView: View {
 @MainActor
 private struct PanelScene {
     let layout: SubagentPanelLayout
-    /// The helper this thread spawned, if it still has its panel open. Docked in a corner,
-    /// it takes room from that side of the chat column, so the conversation and the box
-    /// centre in the rest and sit beside it; dragged away, they have the column to
-    /// themselves again.
+    /// The helper this thread spawned, if it still has its panel open. It sits in a corner
+    /// and takes room from that side of the chat column, so the conversation and the box
+    /// centre in the rest and sit beside it.
     let subagent: ChatThread?
     let isDocked: Bool
     /// The team, in its own panel: next to the helper panel when both dock in one corner.
@@ -302,7 +268,7 @@ private struct PanelScene {
     let showsPopped: Bool
     let isHydraDocked: Bool
     /// The sides with a panel docked on them, in a fixed order, as the key for the slides
-    /// that make room: it changes with a dock and a drag out, never with a measurement.
+    /// that make room: it changes with a dock, never with a measurement.
     let dockedSides: [PanelDockSide]
     let reserve: PanelReserve
     let docks: PanelDocks
@@ -310,10 +276,9 @@ private struct PanelScene {
     var hasHeads: Bool { !heads.isEmpty }
 
     init(runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat) {
-        layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight)
         isMeasured = paneSize != .zero
         subagent = model.subagent(of: runtime.threadID)
-        isDocked = subagent != nil && runtime.subagentPanelOrigin == nil
+        isDocked = subagent != nil
         let team = runtime.isHydraPanelHidden ? [] : model.hydraHeads(of: runtime.threadID)
         let poppedHead = team.count > 1 ? team.first { $0.id == runtime.hydraPoppedHeadID } : nil
         let teamHeads = team.filter { $0.id != poppedHead?.id }
@@ -321,14 +286,17 @@ private struct PanelScene {
         heads = teamHeads
         showsHydra = !teamHeads.isEmpty && isMeasured
         showsPopped = poppedHead != nil && showsHydra
-        isHydraDocked = showsHydra && runtime.hydraPanelOrigin == nil
-        let isPoppedDocked = showsPopped && runtime.hydraPoppedPanelOrigin == nil
+        isHydraDocked = showsHydra
+        let isPoppedDocked = showsPopped
         var corners: [PanelDockCorner] = []
         if isDocked { corners.append(runtime.subagentPanelDock) }
         if isHydraDocked { corners.append(runtime.hydraPanelDock) }
         if isPoppedDocked { corners.append(runtime.hydraPoppedPanelDock) }
         let sides = Set(corners.map(\.side))
         dockedSides = [PanelDockSide.leading, .trailing].filter(sides.contains)
+        // Panels docked in one corner stack, so they share its height between them.
+        let stackDepth = Dictionary(grouping: corners, by: { $0 }).values.map(\.count).max() ?? 1
+        layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth)
         reserve = PanelReserve(
             leading: sides.contains(.leading) ? layout.composerReserve : 0,
             trailing: sides.contains(.trailing) ? layout.composerReserve : 0

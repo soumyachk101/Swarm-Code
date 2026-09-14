@@ -5,7 +5,7 @@ import SwiftUI
 /// in Settings it is always active in every chat: charged, a ring of the roster's colours
 /// turning around it and a soft glow breathing behind, so the chat reads as a team at
 /// work. The badge above it counts the heads at work; tapping the badge (or the mark)
-/// opens the floating panel, tapping again hides it back into the button with a genie morph.
+/// opens the floating panel, tapping again morphs it back into the button.
 struct HydraButton: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -44,10 +44,9 @@ struct HydraButton: View {
         }
         .buttonStyle(.plain)
         .chromeGlassCircle()
-        .onGeometryChange(for: CGPoint.self, of: {
-            let frame = $0.frame(in: .named(GenieAnimator.coordinateSpace))
-            return CGPoint(x: frame.midX, y: frame.midY)
-        }) { runtime.hydraButtonCenterInWindow = $0 }
+        .onGeometryChange(for: CGRect.self, of: {
+            $0.frame(in: .named(GenieAnimator.coordinateSpace))
+        }) { runtime.hydraButtonFrameInWindow = $0 }
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
@@ -56,11 +55,11 @@ struct HydraButton: View {
         .accessibilityValue(Text(isOn ? "On" : "Off"))
     }
 
-    /// Opens the floating panel; open, hides it back into this button with a genie morph.
-    /// Either way the panel itself comes or goes with no transition of its own: a ghost of
-    /// it does the flying, out of this button into the panel's place, or from the panel's
-    /// place down into this button. Heads keep working either way. Nothing to show yet,
-    /// nothing happens.
+    /// Opens the floating panel; open, morphs it back into this button. Either way one
+    /// surface does the moving, as a single shape: this circle growing into the panel's
+    /// rounded rectangle where the panel will sit, or that rectangle shrinking back into
+    /// this circle. The panel itself only crossfades with the surface at either end.
+    /// Heads keep working either way. Nothing to show yet, nothing happens.
     private func togglePanel() {
         guard !model.hydraHeads(of: thread.id).isEmpty else { return }
         let morphs = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -70,9 +69,15 @@ struct HydraButton: View {
             withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden = false }
         } else {
             var flew = false
-            if morphs, let frame = runtime.hydraPanelFrameInWindow, let target = runtime.hydraButtonCenterInWindow {
-                flew = GenieAnimator.shared.launch(frame: frame, colorScheme: colorScheme, target: target) {
-                    HydraPanelGhost(isDark: colorScheme == .dark)
+            if morphs, let frame = runtime.hydraPanelFrameInWindow, let button = runtime.hydraButtonFrameInWindow {
+                let isDark = colorScheme == .dark
+                // The surface fades in over the panel's content first, then sets off.
+                flew = GenieAnimator.shared.morph(
+                    from: frame, radius: HydraPanel.cornerRadius,
+                    to: button, radius: button.height / 2,
+                    fadeIn: GenieAnimator.morphCrossfade, holdsFor: GenieAnimator.morphCrossfade
+                ) { radius in
+                    HydraPanelGhost(isDark: isDark, cornerRadius: radius)
                 }
             }
             runtime.hydraPanelMorphs = flew

@@ -131,7 +131,7 @@ final class CopilotSession: ProviderSession {
         if let effort, !effort.isEmpty { params["reasoningEffort"] = .string(effort) }
         if let hydra = configuration.hydra {
             params["customAgents"] = .array(HydraPrompts.copilotAgents(hydra))
-            params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, maxHeads: hydra.maxHeads))]
+            params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges))]
         }
         return params
     }

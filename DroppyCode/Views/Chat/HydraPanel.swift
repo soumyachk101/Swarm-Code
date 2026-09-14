@@ -29,9 +29,9 @@ struct HydraPanel: View {
     /// Dismisses the panel; for a popped-out one, puts its head back in the team panel.
     let dismiss: () -> Void
 
-    /// Out of sight while a ghost of the panel flies in from the button. Opened from the
-    /// button, the panel starts unseen, so it never shows for a frame before the ghost
-    /// sets off; its first layout starts the flight or, if none can fly, shows it.
+    /// Out of sight while a surface grows out of the button into the panel's shape. Opened
+    /// from the button, the panel starts unseen, so it never shows for a frame before the
+    /// surface sets off; its first layout starts the morph or, if none can run, shows it.
     @State private var isArriving: Bool
 
     init(
@@ -56,11 +56,11 @@ struct HydraPanel: View {
         self.onDragEnd = onDragEnd
         self.popOut = popOut
         self.dismiss = dismiss
-        // Only the team panel flies in from the button; a popped-out head just appears.
+        // Only the team panel grows out of the button; a popped-out head just appears.
         _isArriving = State(initialValue: !isPoppedOut && runtime.hydraPanelMorphs)
     }
 
-    private static let cornerRadius: CGFloat = 22
+    static let cornerRadius: CGFloat = 22
     private static let stripHeight: CGFloat = Chrome.chromeTopPadding + Chrome.capsuleHeight + 6
 
     var body: some View {
@@ -115,40 +115,45 @@ struct HydraPanel: View {
         .onGeometryChange(for: CGRect.self, of: {
             $0.frame(in: .named(GenieAnimator.coordinateSpace))
         }) { frame in
-            // The genie flies to and from the team panel; the popped-out one just fades.
+            // The morph runs to and from the team panel; the popped-out one just fades.
             if !isPoppedOut {
                 runtime.hydraPanelFrameInWindow = frame
                 if runtime.hydraPanelMorphs { arrive(at: frame) }
             }
         }
         .onDisappear {
-            // Gone into the button: the ghost is flying, and the next showing starts clean.
+            // Gone into the button: the surface is on its way, and the next showing starts clean.
             runtime.hydraPanelMorphs = false
         }
     }
 
     /// Opened from the button, the panel appears where it will sit but stays out of sight
-    /// while a ghost of it flies out of the button and into that place; it shows itself
-    /// as the ghost lands. The panel's first layout is the earliest the flight can start,
-    /// since only then is the destination known. No flight, no wait.
+    /// while a surface grows out of the button's circle into the panel's rounded rectangle,
+    /// there; the panel fades in under it as it lands. The panel's first layout is the
+    /// earliest the morph can start, since only then is the destination known. No morph,
+    /// no wait.
     private func arrive(at frame: CGRect) {
         runtime.hydraPanelMorphs = false
-        guard let target = runtime.hydraButtonCenterInWindow else {
+        guard let button = runtime.hydraButtonFrameInWindow else {
             isArriving = false
             return
         }
         let isDark = colorScheme == .dark
-        let flew = GenieAnimator.shared.launch(frame: frame, colorScheme: colorScheme, target: target, arriving: true) {
-            HydraPanelGhost(isDark: isDark)
+        let grew = GenieAnimator.shared.morph(
+            from: button, radius: button.height / 2,
+            to: frame, radius: Self.cornerRadius,
+            fadeIn: 0.08
+        ) { radius in
+            HydraPanelGhost(isDark: isDark, cornerRadius: radius)
         }
-        guard flew else {
+        guard grew else {
             isArriving = false
             return
         }
         isArriving = true
         Task { @MainActor in
-            try? await Task.sleep(for: .seconds(GenieAnimator.duration - 0.08))
-            withAnimation(.easeOut(duration: 0.12)) { isArriving = false }
+            try? await Task.sleep(for: .seconds(GenieAnimator.morphDuration - GenieAnimator.morphCrossfade))
+            withAnimation(.easeOut(duration: GenieAnimator.morphCrossfade)) { isArriving = false }
         }
     }
 
@@ -221,20 +226,23 @@ struct HydraPanel: View {
     }
 }
 
-/// The flat stand-in the Hydra panel becomes for a genie flight to or from the button:
-/// the panel's scrim, tint and hairline in its shape, minus its glass, transcript and
-/// shadow. A ghost is rendered once into an image, where glass has nothing to sample
-/// and a shadow nothing to fall on, so those are left out rather than drawn blank.
+/// The flat stand-in the Hydra panel becomes while it morphs out of or into the button:
+/// the panel's scrim, tint, hairline and shadow in its shape at whatever corner radius the
+/// morph has reached, minus its glass and transcript. Glass would sample the chat afresh
+/// on every frame of the morph, so the scrim stands in for it, a little denser to match.
 struct HydraPanelGhost: View {
     let isDark: Bool
+    var cornerRadius: CGFloat = HydraPanel.cornerRadius
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         ZStack {
             shape.fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.62 : 0.7))
             shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
             shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
         }
+        .compositingGroup()
+        .shadow(color: .black.opacity(isDark ? 0.7 : 0.4), radius: 22, y: 8)
     }
 }
 
