@@ -745,6 +745,9 @@ private struct WorkingIndicator: View {
     @State private var now = Date.now
     @State private var isExpanded = false
 
+    /// The one motion for whatever changes on the line: the words, the chevron.
+    private static let change = Animation.smooth(duration: 0.3)
+
     var body: some View {
         let elapsed = now.timeIntervalSince(startedAt)
         let word = WorkingWords.word(seed: seed, elapsedSeconds: Int64(max(0, elapsed)))
@@ -755,23 +758,26 @@ private struct WorkingIndicator: View {
                 guard canExpand else { return }
                 withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
             } label: {
+                // One piece: the pulse, the words, the time and the chevron are laid out
+                // together and change together. The words cross-fade in place and the chevron
+                // fades in its own slot, on one animation, so no part of the line ever appears
+                // or moves on a beat of its own; the line itself arrives as one row, with the
+                // transition every block gets.
                 HStack(spacing: TimelineMetrics.iconSpacing) {
                     WorkingSpinner(cellSize: 3.5)
                         .frame(width: TimelineMetrics.iconWidth)
                     Text(verbatim: label)
                         .foregroundStyle(.secondary)
-                        .id(label)
-                        .transition(.opacity.combined(with: .offset(y: 3)))
+                        .contentTransition(.opacity)
                     Text(RelativeTime.duration(elapsed))
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
-                    if canExpand {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            .transition(.opacity)
-                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .opacity(canExpand ? 1 : 0)
+                        .accessibilityHidden(!canExpand)
                 }
                 .contentShape(.rect)
             }
@@ -798,8 +804,8 @@ private struct WorkingIndicator: View {
                 }
             }
         }
-        .animation(.smooth(duration: 0.35), value: label)
-        .animation(.smooth(duration: 0.2), value: canExpand)
+        .animation(Self.change, value: label)
+        .animation(Self.change, value: canExpand)
         .font(.callout)
         .task {
             while !Task.isCancelled {
