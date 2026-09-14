@@ -28,11 +28,17 @@ struct ThreadTimeline: View, Equatable {
     }
 
     /// Everything the scroll view and the rows report while the reader scrolls: which blocks
-    /// are on screen, whether the timeline follows new text, and the scroll position itself.
-    /// It lives in an object rather than in view state on purpose. Rows write to it as they
-    /// cross the viewport's edges and the scroll view writes to it as content grows, and only
-    /// the rail reads it, so none of that ever re-runs this body.
+    /// are on screen and whether the timeline follows new text. It lives in an object rather
+    /// than in view state on purpose. Rows write to it as they cross the viewport's edges and
+    /// the scroll view writes to it as content grows, and only the rail reads it, so none of
+    /// that ever re-runs this body.
     @State private var tracking = TimelineScrollTracking()
+    /// The scroll position stays view state, never a property of an observable object. A
+    /// `scrollTo` request is consumed by the scroll view writing the resolved position back
+    /// through the binding; on an observable, that write's `willSet` re-ran this body while
+    /// the property still held the pending request, so the scroll view enqueued it again,
+    /// without end. `@State` applies the write first and re-renders after.
+    @State private var position = ScrollPosition(edge: .bottom)
     @State private var viewportHeight: CGFloat = 0
     /// Lazy-loading window: only the newest groups are materialized, so opening a long
     /// thread and scrolling through it stays instant no matter how much history it holds.
@@ -96,8 +102,7 @@ struct ThreadTimeline: View, Equatable {
             }
             tracking.isPinnedToBottom = (id == blocks.last?.id)
         }
-        let tracking = tracking
-        let scroll = { tracking.position.scrollTo(id: id, anchor: .top) }
+        let scroll = { position.scrollTo(id: id, anchor: .top) }
         if animated {
             if needsExpand {
                 DispatchQueue.main.async { withAnimation(.smooth(duration: 0.35)) { scroll() } }
@@ -116,8 +121,7 @@ struct ThreadTimeline: View, Equatable {
     }
 
     private func timelineScroll(visible: [DisplayBlock], hidden: Int, rewindable: Set<UUID>) -> some View {
-        @Bindable var tracking = tracking
-        return ScrollView {
+        ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
                 if hidden > 0 {
@@ -184,7 +188,7 @@ struct ThreadTimeline: View, Equatable {
         }
         .id(runtime.threadID)
         .scrollIndicators(.never)
-        .scrollPosition($tracking.position)
+        .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
         .onScrollPhaseChange { _, phase in
@@ -198,18 +202,18 @@ struct ThreadTimeline: View, Equatable {
                 let pinned = new.distanceFromBottom < 48
                 if pinned != tracking.isPinnedToBottom { tracking.isPinnedToBottom = pinned }
             } else if new.contentHeight > old.contentHeight, tracking.isPinnedToBottom {
-                withAnimation(.easeOut(duration: 0.2)) { tracking.position.scrollTo(edge: .bottom) }
+                withAnimation(.easeOut(duration: 0.2)) { position.scrollTo(edge: .bottom) }
             }
         }
         .onChange(of: runtime.isRunning) { _, running in
             // Sending a message always brings the reader back to the conversation's end.
             guard running else { return }
             tracking.isPinnedToBottom = true
-            withAnimation(.easeOut(duration: 0.25)) { tracking.position.scrollTo(edge: .bottom) }
+            withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
         }
         .onChange(of: scrollState.jumpRequest) {
             tracking.isPinnedToBottom = true
-            withAnimation(.smooth(duration: 0.35)) { tracking.position.scrollTo(edge: .bottom) }
+            withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
         }
         .onChange(of: runtime.threadID) {
             // A new thread starts with a fresh window on its newest messages, and no
@@ -230,9 +234,6 @@ struct ThreadTimeline: View, Equatable {
 @MainActor
 @Observable
 final class TimelineScrollTracking {
-    /// Where the scroll view is. Written by the scroll view as it scrolls and by the
-    /// follow-along and jump code; nothing reads it in a body.
-    var position = ScrollPosition(edge: .bottom)
     /// Whether new text keeps the timeline at the conversation's end.
     var isPinnedToBottom = true
     /// True while the reader drags or flicks the timeline, as opposed to it following new text.
