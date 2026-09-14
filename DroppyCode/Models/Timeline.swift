@@ -23,6 +23,12 @@ struct TimelineItem: Codable, Identifiable, Hashable, Sendable {
         case notice(Notice)
         case turnEnd(TurnSummary)
     }
+
+    /// A thinking block with nothing to read, as a redacted stream leaves behind.
+    var isEmptyReasoning: Bool {
+        guard case .reasoning(let block) = content else { return false }
+        return block.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 struct UserMessage: Codable, Hashable, Sendable {

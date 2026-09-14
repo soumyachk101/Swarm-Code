@@ -131,7 +131,10 @@ final class ThreadRuntime {
         turns = document.turns
         usage = document.usage
         followUps = document.followUps.filter { !$0.isEmpty }
-        entries = document.items.map(TimelineEntry.init)
+        // Thinking with no text is nothing to show or keep: Claude Code redacts its
+        // reasoning and streams only empty deltas, which older builds stored as blank
+        // entries. They are dropped here and never created below.
+        entries = document.items.filter { !$0.isEmptyReasoning }.map(TimelineEntry.init)
         for entry in entries {
             entryIndex[entry.id] = entry
             endStreaming(entry)
@@ -891,6 +894,9 @@ final class ThreadRuntime {
             case .message:
                 append(TimelineItem(id: id, turnID: currentTurnID, content: .assistant(AssistantMessage(text: "", isStreaming: true))))
             case .reasoning:
+                // Not until there is something to read: a redacted thinking block
+                // only ever sends empty deltas and would leave a blank entry behind.
+                guard !text.isEmpty else { return }
                 append(TimelineItem(id: id, turnID: currentTurnID, content: .reasoning(ReasoningBlock(text: "", isStreaming: true))))
             case .plan:
                 append(TimelineItem(id: id, turnID: currentTurnID, content: .plan(ProposedPlan(markdown: "", state: .drafting))))
@@ -965,6 +971,7 @@ final class ThreadRuntime {
         } else {
             entry.item.content = .reasoning(block)
         }
+        scheduleSave()
     }
 
     private func completePlan(_ id: String, markdown: String) {
