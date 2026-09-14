@@ -1213,3 +1213,42 @@ final class ThreadRuntime {
         Task { await DiskWriter.shared.encodeAndWrite(document, to: url) }
     }
 }
+
+// MARK: - Rehearsal
+
+extension ThreadRuntime {
+    /// Starts a turn with no provider behind it, for the website captures: the user message
+    /// lands, the working line appears, and `rehearse(_:)` then feeds the events a provider
+    /// would. `touchedPaths` and `providerDiff` give the turn a diff for the changes tab.
+    func rehearseTurn(_ text: String?, touchedPaths: [String] = [], providerDiff: String? = nil) {
+        let turnIndex = (turns.map(\.index).max() ?? -1) + 1
+        var turn = TurnRecord(index: turnIndex)
+        turn.touchedPaths = touchedPaths.isEmpty ? nil : touchedPaths
+        turn.providerDiff = providerDiff
+        if let text {
+            let userItem = TimelineItem(turnID: turn.id, content: .user(UserMessage(text: text)))
+            turn.userItemID = userItem.id
+            turns.append(turn)
+            append(userItem)
+        } else {
+            turns.append(turn)
+        }
+        currentTurnID = turn.id
+        phase = .running
+        turnStartedAt = .now
+        app?.updateThread(threadID) {
+            $0.updatedAt = .now
+            $0.lastStatus = .running
+        }
+    }
+
+    /// One provider event, through the same path a live session's events take.
+    func rehearse(_ event: ProviderEvent) {
+        handle(event)
+    }
+
+    /// Tells the changes tab and the diff panel that the turn's diff changed.
+    func noteDiffChanged() {
+        diffRevision += 1
+    }
+}

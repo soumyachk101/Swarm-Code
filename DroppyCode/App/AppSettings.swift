@@ -65,7 +65,7 @@ final class AppSettings {
 
     static let modelListLimit = 15
 
-    @ObservationIgnored private let defaults = UserDefaults.standard
+    @ObservationIgnored private let defaults = WebsiteCaptures.defaults ?? .standard
 
     var defaultProvider: ProviderKind {
         didSet { defaults.set(defaultProvider.rawValue, forKey: Key.defaultProvider) }
@@ -200,7 +200,7 @@ final class AppSettings {
     }
 
     init() {
-        let defaults = UserDefaults.standard
+        let defaults = WebsiteCaptures.defaults ?? .standard
         defaultProvider = ProviderKind(rawValue: defaults.string(forKey: Key.defaultProvider) ?? "") ?? .codex
         defaultRuntimeMode = RuntimeMode(rawValue: defaults.string(forKey: Key.runtimeMode) ?? "") ?? .fullAccess
         defaultWorkspaceMode = WorkspaceMode(rawValue: defaults.string(forKey: Key.workspaceMode) ?? "") ?? .local
@@ -279,7 +279,7 @@ final class AppSettings {
     }
 
     private static func load<Value: Decodable>(_ type: Value.Type, forKey key: String) -> Value? {
-        guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        guard let data = (WebsiteCaptures.defaults ?? .standard).data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(type, from: data)
     }
 

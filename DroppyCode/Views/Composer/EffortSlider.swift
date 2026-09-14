@@ -78,6 +78,12 @@ struct ModelEffortButton: View {
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ModelEffortPanel(threadID: thread.id, hasHistory: hasHistory)
         }
+        .background {
+            // The website captures hang the slider and the switcher from the real chip.
+            if WebsiteCaptures.isEnabled {
+                AttachmentAnchorCapture { WebsiteCaptures.modelChipAnchor = WeakView($0) }
+            }
+        }
         .task(id: thread.provider) { await registry.loadCatalog(thread.provider) }
     }
 }
@@ -172,7 +178,7 @@ private struct ModelEffortPanel: View {
     }
 }
 
-private struct ModelList: View {
+struct ModelList: View {
     @Environment(AppModel.self) private var model
     let thread: ChatThread
     let hasHistory: Bool

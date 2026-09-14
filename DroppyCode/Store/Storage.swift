@@ -3,6 +3,7 @@ import Foundation
 /// Where the app keeps its library, thread histories and attachments.
 enum Storage {
     static let root: URL = {
+        if let captures = WebsiteCaptures.storageRoot { return captures }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let url = base.appendingPathComponent("Droppy Code", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)

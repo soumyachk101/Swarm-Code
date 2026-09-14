@@ -77,7 +77,8 @@ final class ProviderRegistry {
 
     init(settings: AppSettings) {
         self.settings = settings
-        if let data = UserDefaults.standard.data(forKey: cacheKey),
+        if !WebsiteCaptures.isEnabled,
+           let data = UserDefaults.standard.data(forKey: cacheKey),
            let cached = try? JSONDecoder().decode([String: [ModelOption]].self, from: data) {
             for (key, list) in cached {
                 if let provider = ProviderKind(rawValue: key) { catalogs[provider] = list }
@@ -307,6 +308,7 @@ final class ProviderRegistry {
     func updateCatalog(_ list: [ModelOption], for provider: ProviderKind) {
         guard !list.isEmpty, list != catalogs[provider] else { return }
         catalogs[provider] = list
+        guard !WebsiteCaptures.isEnabled else { return }
         let encoded = Dictionary(uniqueKeysWithValues: catalogs.map { ($0.key.rawValue, $0.value) })
         if let data = try? JSONEncoder().encode(encoded) {
             UserDefaults.standard.set(data, forKey: cacheKey)
