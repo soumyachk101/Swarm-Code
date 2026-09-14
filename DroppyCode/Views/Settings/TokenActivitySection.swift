@@ -252,27 +252,36 @@ private enum TokenHistoryScanner {
     }
 }
 
-/// Contribution grid over the last twelve months, Sunday rows. Columns are
-/// week buckets starting on the Sunday on or before the first visible day;
-/// every column keeps all seven rows so the grid never shears mid-month.
+/// Contribution grid over the current year, January to December, Sunday rows.
+/// Columns are week buckets starting on the Sunday on or before New Year's
+/// Day; every column keeps all seven rows so the grid never shears mid-month.
+/// Days still to come stay in the grid as faint cells, so the year keeps its
+/// shape and the months read Jan through Dec whatever today's date.
 private struct TokenActivityGrid {
     /// One column of the grid: the day in each Sunday-first row, nil where
-    /// the cell falls outside the visible range.
+    /// the cell falls outside the year.
     var columns: [[Date?]]
     /// Display value per cell, already scaled for the mode.
     var values: [[Int]]
     var maxValue: Int
     var monthTicks: [(label: String, column: Int)]
+    /// The first day after today, so the canvas can tell a quiet day from one not yet here.
+    var tomorrow: Date
 
     static let rows = 7
     static let months = 12
+
+    /// Fixed English abbreviations: the calendar's own symbols come out as
+    /// "M01" without a locale, and the rest of the app reads in English.
+    private static let monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
     static func build(daily: [String: Int], mode: TokenActivityMode, now: Date = Date()) -> TokenActivityGrid {
         var calendar = Calendar(identifier: .gregorian)
         calendar.firstWeekday = 1
         let startOfToday = calendar.startOfDay(for: now)
-        let thisMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: startOfToday)) ?? startOfToday
-        let rangeStart = calendar.date(byAdding: .month, value: -(months - 1), to: thisMonth) ?? startOfToday
+        let rangeStart = calendar.date(from: calendar.dateComponents([.year], from: startOfToday)) ?? startOfToday
+        let rangeEnd = calendar.date(byAdding: DateComponents(year: 1, day: -1), to: rangeStart) ?? startOfToday
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? startOfToday
 
         // First column starts on the Sunday on or before the range start.
         let leadingGap = (calendar.component(.weekday, from: rangeStart) - calendar.firstWeekday + 7) % 7
@@ -288,19 +297,19 @@ private struct TokenActivityGrid {
             cursor = next
         }
 
-        // Pack days into Sunday-first columns, stopping after the week that
-        // holds today so no future weeks stretch the grid.
+        // Pack days into Sunday-first columns through the week that holds
+        // New Year's Eve.
         var columns: [[Date?]] = []
         var day = gridStart
         while true {
             var column: [Date?] = []
             for _ in 0..<rows {
-                column.append(day < rangeStart || day > startOfToday ? nil : day)
+                column.append(day < rangeStart || day > rangeEnd ? nil : day)
                 guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
                 day = next
             }
             columns.append(column)
-            if day > startOfToday { break }
+            if day > rangeEnd { break }
         }
 
         // Per-mode display values. The shape never changes, only the value
@@ -333,7 +342,6 @@ private struct TokenActivityGrid {
         let maxValue = values.flatMap { $0 }.max() ?? 0
 
         // One tick per month at the column holding its first day.
-        let monthNames = calendar.shortMonthSymbols
         var monthTicks: [(label: String, column: Int)] = []
         for offset in 0..<months {
             guard let monthDate = calendar.date(byAdding: .month, value: offset, to: rangeStart) else { continue }
@@ -345,7 +353,7 @@ private struct TokenActivityGrid {
             if column < columns.count { monthTicks.append((label, column)) }
         }
 
-        return TokenActivityGrid(columns: columns, values: values, maxValue: maxValue, monthTicks: monthTicks)
+        return TokenActivityGrid(columns: columns, values: values, maxValue: maxValue, monthTicks: monthTicks, tomorrow: tomorrow)
     }
 }
 
@@ -373,22 +381,20 @@ private enum TokenActivityStyle {
     /// Narrowest a month label may squeeze before its neighbors hide it.
     static let minLabelAdvance: CGFloat = 30
 
-    /// Five-step intensity ladder, empty plus four blues. The filled steps
-    /// are fixed hues rather than theme overlays so a heavy day reads the
-    /// same in light and dark mode; empty stays a quiet overlay that
-    /// follows the appearance.
-    static func color(for value: Int, maxValue: Int) -> Color {
+    /// Five-step intensity ladder: empty, then four steps of the theme's
+    /// accent (the system accent for System/Light/Dark), so the grid wears
+    /// whatever the rest of the window wears. A day still to come is fainter
+    /// than a quiet one, so the year keeps its shape without reading as data.
+    static func color(for value: Int, maxValue: Int, future: Bool) -> Color {
+        if future { return Chrome.overlay(0.035) }
         guard value > 0, maxValue > 0 else { return Chrome.overlay(0.07) }
+        let accent = Chrome.accent
         let fraction = Double(value) / Double(maxValue)
         switch fraction {
-        case ..<0.25:
-            return Color(red: 0.16, green: 0.32, blue: 0.62).opacity(0.45)
-        case ..<0.5:
-            return Color(red: 0.16, green: 0.32, blue: 0.62).opacity(0.70)
-        case ..<0.75:
-            return Color(red: 0.20, green: 0.40, blue: 0.80).opacity(0.90)
-        default:
-            return Color(red: 0.53, green: 0.72, blue: 1.0)
+        case ..<0.25: return accent.opacity(0.32)
+        case ..<0.5: return accent.opacity(0.55)
+        case ..<0.75: return accent.opacity(0.8)
+        default: return accent
         }
     }
 }
@@ -401,6 +407,10 @@ private enum TokenActivityStyle {
 struct TokenActivitySection: View {
     @State private var mode: TokenActivityMode = .daily
     @State private var ledger = TokenLedger.shared
+    /// The grid the last mode showed and a counter the canvas animates across, so a
+    /// mode switch blends every cell from its old colour to its new one.
+    @State private var previousGrid: TokenActivityGrid?
+    @State private var switchCount = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -413,7 +423,12 @@ struct TokenActivitySection: View {
                 Spacer(minLength: 12)
                 ForEach(TokenActivityMode.allCases, id: \.self) { option in
                     Button {
-                        mode = option
+                        guard option != mode else { return }
+                        previousGrid = TokenActivityGrid.build(daily: ledger.dailyTotals, mode: mode)
+                        withAnimation(.smooth(duration: 0.45)) {
+                            mode = option
+                            switchCount += 1
+                        }
                     } label: {
                         Text(verbatim: option.title)
                             .font(.system(size: 13, weight: mode == option ? .medium : .regular))
@@ -423,6 +438,7 @@ struct TokenActivitySection: View {
                     .accessibilityAddTraits(mode == option ? .isSelected : [])
                 }
             }
+            .animation(.smooth(duration: 0.25), value: mode)
 
             let grid = TokenActivityGrid.build(daily: ledger.dailyTotals, mode: mode)
             heatmap(grid: grid)
@@ -439,7 +455,7 @@ struct TokenActivitySection: View {
     /// every cell: as a stack of some 360 shape views this was the heaviest
     /// layout in Settings, felt each time General opened.
     private func heatmap(grid: TokenActivityGrid) -> some View {
-        HeatmapCanvas(grid: grid)
+        HeatmapCanvas(grid: grid, previous: previousGrid, blend: Double(switchCount))
             .accessibilityHidden(true)
     }
 
@@ -485,16 +501,30 @@ struct TokenActivitySection: View {
 
 /// The heatmap's cells, drawn in one pass. The cell size follows the width the canvas is
 /// given; the height follows from that, so the grid stays square-celled at any width.
-private struct HeatmapCanvas: View {
+///
+/// Animatable over `blend`: a mode switch bumps it by one, and while it travels each cell
+/// mixes from the colour it had under the previous mode to its new one, so the grid
+/// melts between modes instead of snapping.
+private struct HeatmapCanvas: View, Animatable {
     let grid: TokenActivityGrid
+    let previous: TokenActivityGrid?
+    var blend: Double
 
     @State private var width: CGFloat = 0
+
+    var animatableData: Double {
+        get { blend }
+        set { blend = newValue }
+    }
 
     var body: some View {
         let columns = CGFloat(max(grid.columns.count, 1))
         let rows = CGFloat(TokenActivityGrid.rows)
         let gap = TokenActivityStyle.cellGap
         let cell = max(0, (width - gap * (columns - 1)) / columns)
+        // How far into the latest switch the animation is; 1 once it has settled.
+        let progress = blend - blend.rounded(.down)
+        let mixing = progress > 0 && progress < 1
         Canvas { context, size in
             let columns = grid.columns.count
             guard columns > 0 else { return }
@@ -502,11 +532,18 @@ private struct HeatmapCanvas: View {
             guard cell > 0 else { return }
             let pitch = cell + gap
             for c in 0..<columns {
-                for r in 0..<TokenActivityGrid.rows where grid.columns[c][r] != nil {
+                for r in 0..<TokenActivityGrid.rows {
+                    guard let date = grid.columns[c][r] else { continue }
+                    let future = date >= grid.tomorrow
+                    var color = TokenActivityStyle.color(for: grid.values[c][r], maxValue: grid.maxValue, future: future)
+                    if mixing, let previous, c < previous.values.count {
+                        let old = TokenActivityStyle.color(for: previous.values[c][r], maxValue: previous.maxValue, future: future)
+                        color = old.mix(with: color, by: progress)
+                    }
                     let rect = CGRect(x: CGFloat(c) * pitch, y: CGFloat(r) * pitch, width: cell, height: cell)
                     context.fill(
                         Path(roundedRect: rect, cornerRadius: TokenActivityStyle.cellRadius, style: .continuous),
-                        with: .color(TokenActivityStyle.color(for: grid.values[c][r], maxValue: grid.maxValue))
+                        with: .color(color)
                     )
                 }
             }
