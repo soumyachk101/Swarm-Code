@@ -268,6 +268,8 @@ private struct GeneralSettingsPage: View {
 private struct BackdropOpacitySlider: View {
     @Binding var value: Double
 
+    private var isOffStock: Bool { abs(value - AppSettings.defaultBackdropOpacity) >= 0.005 }
+
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "circle.dotted")
@@ -281,20 +283,28 @@ private struct BackdropOpacitySlider: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.secondaryText)
                 .help("Solid")
-            Button {
-                value = AppSettings.defaultBackdropOpacity
-            } label: {
-                Image(systemName: "arrow.counterclockwise")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Chrome.secondaryText)
-                    .frame(width: 22, height: 22)
-                    .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .opacity(abs(value - AppSettings.defaultBackdropOpacity) < 0.005 ? 0 : 1)
-            .disabled(abs(value - AppSettings.defaultBackdropOpacity) < 0.005)
-            .help("Back to the stock look")
         }
+        // The reset takes no room in the row, so the slider ends flush with the card's
+        // other controls whether or not it shows; it fades in to the slider's left once
+        // the value has left the stock look.
+        .overlay(alignment: .leading) {
+            if isOffStock {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { value = AppSettings.defaultBackdropOpacity }
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .frame(width: 22, height: 22)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Back to the stock look")
+                .offset(x: -28)
+                .transition(.opacity.combined(with: .offset(x: 6)))
+            }
+        }
+        .animation(.snappy(duration: 0.2), value: isOffStock)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Window transparency"))
     }
