@@ -178,7 +178,7 @@ struct ChipPopoverButton<Label: View, Content: View>: View {
         .buttonStyle(.chip(active: isPresented))
         .fixedSize()
         .help(help)
-        .popover(isPresented: $isPresented, arrowEdge: .top) {
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             PopoverMenu { content }
         }
     }
