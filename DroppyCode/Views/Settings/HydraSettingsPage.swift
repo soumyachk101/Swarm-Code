@@ -96,29 +96,9 @@ struct HydraSettingsPage: View {
 /// The lead-and-heads mark, large, for the page's opening card.
 private struct HydraSettingsMark: View {
     var body: some View {
-        ZStack {
-            HydraSpokes()
-                .stroke(Chrome.primaryText.opacity(0.5), style: StrokeStyle(lineWidth: 1.4, lineCap: .round))
-            HydraMark()
-                .fill(Chrome.primaryText.opacity(0.85))
-            ForEach(0..<3, id: \.self) { index in
-                HydraSettingsHead(index: index)
-                    .fill(HydraRoster.personas[index].color)
-            }
-        }
-        .frame(width: 30, height: 30)
-    }
-}
-
-private struct HydraSettingsHead: Shape {
-    let index: Int
-
-    func path(in rect: CGRect) -> Path {
-        let orbit = min(rect.width, rect.height) * 0.36
-        let head = min(rect.width, rect.height) * 0.11
-        let angle = -.pi / 2 + CGFloat(index) * 2 * .pi / 3
-        let point = CGPoint(x: rect.midX + orbit * cos(angle), y: rect.midY + orbit * sin(angle))
-        return Path(ellipseIn: CGRect(x: point.x - head, y: point.y - head, width: head * 2, height: head * 2))
+        HydraMarkImage()
+            .foregroundStyle(Chrome.primaryText.opacity(0.85))
+            .frame(width: 30, height: 30)
     }
 }
 

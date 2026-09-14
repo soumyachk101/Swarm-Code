@@ -208,16 +208,12 @@ private struct HydraHeadsButton: View {
     }
 }
 
-/// The lead-and-heads mark at capsule size.
+/// The three-headed mark at capsule size.
 private struct HydraSpokesMark: View {
     var body: some View {
-        ZStack {
-            HydraSpokes()
-                .stroke(Chrome.primaryText.opacity(0.7), style: StrokeStyle(lineWidth: 1.1, lineCap: .round))
-            HydraMark()
-                .fill(Chrome.primaryText.opacity(0.9))
-        }
-        .frame(width: 14, height: 14)
+        HydraMarkImage()
+            .foregroundStyle(Chrome.primaryText.opacity(0.9))
+            .frame(width: 15, height: 15)
     }
 }
 

@@ -71,32 +71,18 @@ enum HydraBudget {
     static let finalNote = "[Droppy Code] Your budget is spent and your tools are gone. Reply now with your report: what you changed, how far it got, and what is left."
 }
 
-/// The shape a head's glyph takes. Twelve of them, one per name in the roster.
-enum HydraShape: String, Codable, CaseIterable, Sendable {
-    case triangle
-    case square
-    case circle
-    case hexagon
-    case diamond
-    case pentagon
-    case octagon
-    case star
-    case capsule
-    case shield
-    case drop
-    case squircle
-}
-
-/// A head's identity: its name, its colour and the shape of its glyph.
+/// A head's identity: its name, its colour and the dragon head that is its glyph.
 struct HydraPersona: Hashable, Sendable {
     let name: String
-    let shape: HydraShape
+    /// The asset with the head's own dragon: one of twenty-five, drawn as a template so
+    /// it takes the head's colour.
+    let asset: String
     /// The colour as 0xRRGGBB.
     let hex: UInt32
 
-    init(_ name: String, _ shape: HydraShape, _ hex: UInt32) {
+    init(_ name: String, _ asset: String, _ hex: UInt32) {
         self.name = name
-        self.shape = shape
+        self.asset = asset
         self.hex = hex
     }
 
@@ -107,26 +93,37 @@ struct HydraPersona: Hashable, Sendable {
             blue: Double(hex & 0xFF) / 255
         )
     }
-
-    var initial: String { String(name.prefix(1)) }
 }
 
-/// The names heads are given, in the order they are sent out. Past twelve the roster
-/// starts over with a number after the name.
+/// The names heads are given, in the order they are sent out, each with a dragon head
+/// of its own. Past twenty-five the roster starts over with a number after the name.
 enum HydraRoster {
     static let personas: [HydraPersona] = [
-        HydraPersona("Hank", .triangle, 0xFF8A3D),
-        HydraPersona("Walter", .square, 0x3D8BFF),
-        HydraPersona("Ada", .circle, 0x34C46A),
-        HydraPersona("Otto", .hexagon, 0xA35BE0),
-        HydraPersona("Nova", .diamond, 0xF25C9A),
-        HydraPersona("Remy", .pentagon, 0x2BB5B0),
-        HydraPersona("Iris", .octagon, 0xE8B430),
-        HydraPersona("Milo", .star, 0xE84F4F),
-        HydraPersona("Juno", .capsule, 0x6A5CFF),
-        HydraPersona("Ezra", .shield, 0x4FD1A1),
-        HydraPersona("Lena", .drop, 0x2FB8E6),
-        HydraPersona("Bo", .squircle, 0xB0784A),
+        HydraPersona("Hank", "hydra-head-01", 0xFF8A3D),
+        HydraPersona("Walter", "hydra-head-02", 0x3D8BFF),
+        HydraPersona("Ada", "hydra-head-03", 0x34C46A),
+        HydraPersona("Otto", "hydra-head-04", 0xA35BE0),
+        HydraPersona("Nova", "hydra-head-05", 0xF25C9A),
+        HydraPersona("Remy", "hydra-head-06", 0x2BB5B0),
+        HydraPersona("Iris", "hydra-head-07", 0xE8B430),
+        HydraPersona("Milo", "hydra-head-08", 0xE84F4F),
+        HydraPersona("Juno", "hydra-head-09", 0x6A5CFF),
+        HydraPersona("Ezra", "hydra-head-10", 0x4FD1A1),
+        HydraPersona("Lena", "hydra-head-11", 0x2FB8E6),
+        HydraPersona("Bo", "hydra-head-12", 0xB0784A),
+        HydraPersona("Kai", "hydra-head-13", 0x8FD14F),
+        HydraPersona("Vera", "hydra-head-14", 0xD946EF),
+        HydraPersona("Finn", "hydra-head-15", 0xF97316),
+        HydraPersona("Mira", "hydra-head-16", 0xC084FC),
+        HydraPersona("Odin", "hydra-head-17", 0xB45309),
+        HydraPersona("Suki", "hydra-head-18", 0xF472B6),
+        HydraPersona("Rex", "hydra-head-19", 0x2563EB),
+        HydraPersona("Zola", "hydra-head-20", 0x65A30D),
+        HydraPersona("Pip", "hydra-head-21", 0x94A3B8),
+        HydraPersona("Ivo", "hydra-head-22", 0x0D9488),
+        HydraPersona("Lux", "hydra-head-23", 0xFACC15),
+        HydraPersona("Tova", "hydra-head-24", 0x059669),
+        HydraPersona("Gus", "hydra-head-25", 0x7DD3FC),
     ]
 
     static func persona(at index: Int) -> HydraPersona {
@@ -134,7 +131,7 @@ enum HydraRoster {
         let base = personas[((index % count) + count) % count]
         let round = max(0, index) / count
         guard round > 0 else { return base }
-        return HydraPersona("\(base.name) \(round + 1)", base.shape, base.hex)
+        return HydraPersona("\(base.name) \(round + 1)", base.asset, base.hex)
     }
 }
 

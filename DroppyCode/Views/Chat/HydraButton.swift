@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// The chat's Hydra switch, first in the chrome row. Off, it is a quiet mark of a lead with
-/// three heads. On, it charges up: the heads take the roster's colours, a ring of those
-/// colours runs around the button and a soft glow breathes behind it, so the chat reads as
-/// a team at work. A badge counts the heads out right now.
+/// The chat's Hydra switch, first in the chrome row. Off, it is a quiet three-headed mark.
+/// On, it charges up: a ring of the roster's colours runs around the button and a soft glow
+/// breathes behind it, so the chat reads as a team at work. A badge counts the heads out
+/// right now.
 struct HydraButton: View {
     @Environment(AppModel.self) private var model
     let thread: ChatThread
@@ -65,46 +65,15 @@ struct HydraButton: View {
     }
 }
 
-/// The lead-and-heads mark. On, each head wears one of the roster's first colours.
+/// The three-headed mark: quiet when Hydra is off, full when it is on or under the pointer.
 private struct HydraMarkView: View {
     let isOn: Bool
     let isHovering: Bool
 
     var body: some View {
-        let base = Chrome.primaryText.opacity(isHovering || isOn ? 1 : 0.92)
-        let size: CGFloat = 17
-        ZStack {
-            HydraSpokes()
-                .stroke(base.opacity(isOn ? 0.9 : 0.55), style: StrokeStyle(lineWidth: 1.2, lineCap: .round))
-            HydraCore()
-                .fill(base)
-            ForEach(0..<3, id: \.self) { index in
-                HydraHeadDot(index: index)
-                    .fill(isOn ? HydraRoster.personas[index].color : base.opacity(0.75))
-            }
-        }
-        .frame(width: size, height: size)
-    }
-}
-
-/// The lead at the centre of the mark.
-private struct HydraCore: Shape {
-    func path(in rect: CGRect) -> Path {
-        let core = min(rect.width, rect.height) * 0.15
-        return Path(ellipseIn: CGRect(x: rect.midX - core, y: rect.midY - core, width: core * 2, height: core * 2))
-    }
-}
-
-/// One head of the mark, on its orbit.
-private struct HydraHeadDot: Shape {
-    let index: Int
-
-    func path(in rect: CGRect) -> Path {
-        let orbit = min(rect.width, rect.height) * 0.36
-        let head = min(rect.width, rect.height) * 0.12
-        let angle = -.pi / 2 + CGFloat(index) * 2 * .pi / 3
-        let point = CGPoint(x: rect.midX + orbit * cos(angle), y: rect.midY + orbit * sin(angle))
-        return Path(ellipseIn: CGRect(x: point.x - head, y: point.y - head, width: head * 2, height: head * 2))
+        HydraMarkImage()
+            .foregroundStyle(Chrome.primaryText.opacity(isOn || isHovering ? 1 : 0.6))
+            .frame(width: 18, height: 18)
     }
 }
 
