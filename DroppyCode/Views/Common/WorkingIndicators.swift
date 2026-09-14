@@ -1,9 +1,10 @@
 // Working indicators, ported from Zeron (https://github.com/zeronsh/zeron), MIT License,
 // Copyright (c) 2026 Wing. Source: apps/ios/Zeron/Views/Loaders.swift and apps/ios/Zeron/Theme/Motion.swift.
 //
-// gradient-spin-pulse: a 3×3 cell grid with per-row "sunrise" tints; each cell pulses once per
-// 750ms with phase = distance from bottom-center, so the wave travels upward. The mini variant
-// (2×3) snakes clockwise around the perimeter and marks working threads in the sidebar.
+// gradient-spin-pulse: a 3×3 cell grid with per-row "sunrise" tints, here drawn from the theme's
+// accent; each cell pulses once per 750ms with phase = distance from bottom-center, so the wave
+// travels upward. The mini variant (2×3) snakes clockwise around the perimeter and marks working
+// threads in the sidebar.
 //
 // The pulse is a repeating Core Animation keyframe on each cell's opacity. Once a spinner is on
 // screen the render server plays it on its own: no timer, no view update and no layout on the
@@ -14,18 +15,18 @@ import QuartzCore
 import SwiftUI
 
 enum GradientSpin {
-    /// Row tints: cool blue, amber, pink.
-    static let rowTints: [Color] = [
-        Color(red: 0xB6 / 255, green: 0xD3 / 255, blue: 0xEF / 255),
-        Color(red: 0xED / 255, green: 0xB1 / 255, blue: 0x85 / 255),
-        Color(red: 0xF8 / 255, green: 0x88 / 255, blue: 0xA0 / 255),
-    ]
-    /// The same tints for the cell layers.
-    static let rowTintColors: [CGColor] = [
-        CGColor(srgbRed: 0xB6 / 255, green: 0xD3 / 255, blue: 0xEF / 255, alpha: 1),
-        CGColor(srgbRed: 0xED / 255, green: 0xB1 / 255, blue: 0x85 / 255, alpha: 1),
-        CGColor(srgbRed: 0xF8 / 255, green: 0x88 / 255, blue: 0xA0 / 255, alpha: 1),
-    ]
+    /// Row tints drawn from the theme's accent (the system accent for System, Light and
+    /// Dark): a lighter shade on top, the accent itself in the middle and a deeper shade
+    /// below, so the wave keeps Zeron's sunrise gradient in whatever colour the theme wears.
+    /// A dynamic accent resolves for the appearance current when this is called.
+    static func rowTints(accent: NSColor) -> [NSColor] {
+        let base = accent.usingColorSpace(.sRGB) ?? accent
+        return [
+            base.blended(withFraction: 0.38, of: .white) ?? base,
+            base,
+            base.blended(withFraction: 0.22, of: .black) ?? base,
+        ]
+    }
     static let dim = 0.1
     static let period: Double = 0.75
 
@@ -66,7 +67,7 @@ struct WorkingSpinner: View {
     }
 
     var body: some View {
-        SpinnerCells(cells: Self.cells, columns: 3, cellSize: cellSize, animated: !reduceMotion)
+        SpinnerCells(cells: Self.cells, columns: 3, cellSize: cellSize, animated: !reduceMotion, theme: ThemeManager.current)
             .accessibilityHidden(true)
     }
 }
@@ -93,9 +94,9 @@ struct MiniSpinner: View {
     var body: some View {
         Group {
             if isStill {
-                StillSpinnerCells(cells: Self.cells, columns: 2, cellSize: cellSize)
+                StillSpinnerCells(cells: Self.cells, columns: 2, cellSize: cellSize, tints: GradientSpin.rowTints(accent: Chrome.accentNSColor))
             } else {
-                SpinnerCells(cells: Self.cells, columns: 2, cellSize: cellSize, animated: !reduceMotion)
+                SpinnerCells(cells: Self.cells, columns: 2, cellSize: cellSize, animated: !reduceMotion, theme: ThemeManager.current)
             }
         }
         .accessibilityLabel(Text("Working"))
@@ -107,6 +108,8 @@ private struct StillSpinnerCells: View {
     let cells: [SpinnerCell]
     let columns: Int
     let cellSize: CGFloat
+    /// One tint per row, resolved by the caller.
+    let tints: [NSColor]
 
     var body: some View {
         let rows = (cells.map(\.row).max() ?? 0) + 1
@@ -116,7 +119,7 @@ private struct StillSpinnerCells: View {
                     ForEach(0..<columns, id: \.self) { column in
                         let lag = cells.first { $0.row == row && $0.column == column }?.lag ?? 0
                         Rectangle()
-                            .fill(GradientSpin.rowTints[row])
+                            .fill(Color(nsColor: tints[row]))
                             .frame(width: cellSize, height: cellSize)
                             .opacity(GradientSpin.opacity(phase: -lag))
                     }
@@ -132,15 +135,18 @@ private struct SpinnerCells: NSViewRepresentable {
     let columns: Int
     let cellSize: CGFloat
     let animated: Bool
+    /// The theme whose accent the rows' tints are drawn from. Passed in so a re-render
+    /// under a new theme reaches the cells at once, without waiting for the notification.
+    let theme: AppTheme
 
     func makeNSView(context: Context) -> SpinnerLayerView {
         let view = SpinnerLayerView()
-        view.configure(cells: cells, columns: columns, cellSize: cellSize, animated: animated)
+        view.configure(cells: cells, columns: columns, cellSize: cellSize, animated: animated, theme: theme)
         return view
     }
 
     func updateNSView(_ view: SpinnerLayerView, context: Context) {
-        view.configure(cells: cells, columns: columns, cellSize: cellSize, animated: animated)
+        view.configure(cells: cells, columns: columns, cellSize: cellSize, animated: animated, theme: theme)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SpinnerLayerView, context: Context) -> CGSize? {
@@ -153,6 +159,7 @@ final class SpinnerLayerView: NSView {
     private var columns = 0
     private var cellSize: CGFloat = 0
     private var animated = true
+    private var theme: AppTheme?
     private var cellLayers: [CALayer] = []
 
     private static let animationKey = "pulse"
@@ -164,11 +171,19 @@ final class SpinnerLayerView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layerContentsRedrawPolicy = .never
+        // The cells' colours are set once, not resolved on every draw, so a theme change
+        // has to reach them here: a row that never re-renders (a thread working away in
+        // the sidebar) would otherwise keep the old theme's colours.
+        NotificationCenter.default.addObserver(self, selector: #selector(themeDidChange), name: ThemeManager.didChange, object: nil)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     var contentSize: CGSize {
@@ -184,24 +199,27 @@ final class SpinnerLayerView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func configure(cells: [SpinnerCell], columns: Int, cellSize: CGFloat, animated: Bool) {
+    func configure(cells: [SpinnerCell], columns: Int, cellSize: CGFloat, animated: Bool, theme: AppTheme) {
         let rebuild = cells.count != cellLayers.count
-        guard rebuild || columns != self.columns || cellSize != self.cellSize || animated != self.animated else { return }
+        let retint = rebuild || theme != self.theme
+        guard retint || columns != self.columns || cellSize != self.cellSize || animated != self.animated else { return }
         self.cells = cells
         self.columns = columns
         self.cellSize = cellSize
         self.animated = animated
+        self.theme = theme
         if rebuild {
             for layer in cellLayers { layer.removeFromSuperlayer() }
-            cellLayers = cells.map { cell in
+            cellLayers = cells.map { _ in
                 let layer = CALayer()
-                layer.backgroundColor = GradientSpin.rowTintColors[cell.row]
-                // Never implicitly animated: frames are set once and opacity belongs to the keyframes.
-                layer.actions = ["opacity": NSNull(), "bounds": NSNull(), "position": NSNull()]
+                // Never implicitly animated: frames are set once, colours on a theme change
+                // and opacity belongs to the keyframes.
+                layer.actions = ["opacity": NSNull(), "bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
                 self.layer?.addSublayer(layer)
                 return layer
             }
         }
+        if retint { applyTints() }
         placeCells()
         installAnimations()
         invalidateIntrinsicContentSize()
@@ -210,8 +228,37 @@ final class SpinnerLayerView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         // A layer that left the window loses nothing, but one that joins it late (a row
-        // built off screen) needs its animation running from the shared clock.
-        if window != nil { installAnimations() }
+        // built off screen) needs its animation running from the shared clock, and its
+        // tints resolved for the window's appearance.
+        guard window != nil else { return }
+        applyTints()
+        installAnimations()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // The system accent is dynamic; re-resolve it for the new appearance.
+        applyTints()
+    }
+
+    @objc private func themeDidChange() {
+        applyTints()
+    }
+
+    /// Colours every cell for its row from the current theme, resolved in this view's
+    /// appearance so the system accent picks its light or dark variant.
+    private func applyTints() {
+        theme = ThemeManager.current
+        var tints: [CGColor] = []
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            tints = GradientSpin.rowTints(accent: Chrome.accentNSColor).map(\.cgColor)
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (cell, layer) in zip(cells, cellLayers) {
+            layer.backgroundColor = tints[cell.row]
+        }
+        CATransaction.commit()
     }
 
     override func layout() {
