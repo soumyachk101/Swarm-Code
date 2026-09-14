@@ -28,6 +28,28 @@ enum TextCleanup {
             .trimmingCharacters(in: .whitespaces) ?? ""
         return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
     }
+
+    /// Model prose never ships an em dash. It is the tell of a machine-written
+    /// paragraph, so every string a model writes for the thread passes through here:
+    /// replies as they stream and as they land, thinking, plans, generated titles and
+    /// commit messages. The dash becomes a plain hyphen with the spacing around it kept,
+    /// so "works — every time" reads "works - every time" and "ships—sometimes" reads
+    /// "ships-sometimes".
+    ///
+    /// The en dash stays: it is the correct mark in a range, as in "lines 10–20".
+    static func withoutEmDashes(_ text: String) -> String {
+        guard text.contains(where: { isEmDash($0) }) else { return text }
+        return String(text.map { isEmDash($0) ? "-" : $0 })
+    }
+
+    /// The em dash and its longer relatives: the horizontal bar, and the two- and
+    /// three-em dashes.
+    private static func isEmDash(_ character: Character) -> Bool {
+        switch character {
+        case "\u{2014}", "\u{2015}", "\u{2E3A}", "\u{2E3B}": true
+        default: false
+        }
+    }
 }
 
 enum SimpleDiff {

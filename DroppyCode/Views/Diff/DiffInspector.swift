@@ -8,13 +8,18 @@ struct DiffInspector: View {
     @State private var isLoading = false
     @State private var collapsed: Set<String> = []
     @State private var isConfirmingRevert = false
+    /// The file to bring into view, set when a tapped tool row focused its edits.
+    @State private var scrollTarget: String?
+    /// Bumped with every focus load: state can survive a re-opened popover, so the
+    /// scroll is driven by a counter that always changes, never by the target alone.
+    @State private var scrollRequest = 0
 
     private var changedTurns: [TurnRecord] {
         runtime.turns.filter { $0.endCheckpoint != nil || $0.providerDiff != nil }
     }
 
     private var loadKey: String {
-        "\(runtime.diffRevision)-\(runtime.diffSelection?.uuidString ?? "all")"
+        "\(runtime.diffRevision)-\(runtime.diffSelection?.uuidString ?? "all")-\(runtime.diffFocusPaths.joined(separator: "|"))"
     }
 
     var body: some View {
@@ -84,15 +89,25 @@ struct DiffInspector: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(files) { file in
-                            DiffFileCard(file: file, isCollapsed: collapsed.contains(file.id)) {
-                                if collapsed.contains(file.id) { collapsed.remove(file.id) } else { collapsed.insert(file.id) }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            ForEach(files) { file in
+                                DiffFileCard(file: file, isCollapsed: collapsed.contains(file.id)) {
+                                    if collapsed.contains(file.id) { collapsed.remove(file.id) } else { collapsed.insert(file.id) }
+                                }
+                                .id(file.id)
                             }
                         }
+                        .padding(12)
                     }
-                    .padding(12)
+                    .onChange(of: scrollRequest) {
+                        guard let target = scrollTarget else { return }
+                        // After layout, so the card is there to scroll to.
+                        DispatchQueue.main.async {
+                            withAnimation(.smooth(duration: 0.25)) { proxy.scrollTo(target, anchor: .top) }
+                        }
+                    }
                 }
             }
         }
@@ -134,10 +149,16 @@ struct DiffInspector: View {
         guard !Task.isCancelled else { return }
         let filtered = filtersToThread ? parsed.filter { TouchedPaths.matches($0, touched: touched) } : parsed
         files = Array(filtered.prefix(120))
-        // Opening with every file expanded materializes thousands of rows in the same
-        // transaction as the slide, which is the visible hitch. Keep the first file open
-        // and collapse the rest when there are many; one tap expands any of them.
-        if files.count > 6, collapsed.isEmpty {
+        // The files a tapped tool row asked to see open on arrival, and the view
+        // scrolls to the first of them. Everything else keeps the "first file open,
+        // the rest collapsed" rule, so opening with a hundred files stays cheap.
+        let focus = Set(runtime.diffFocusPaths)
+        let focused = focus.isEmpty ? [] : files.filter { TouchedPaths.matches($0, touched: focus) }.map(\.id)
+        if !focused.isEmpty {
+            collapsed = Set(files.map(\.id)).subtracting(focused)
+            scrollTarget = focused.first
+            scrollRequest += 1
+        } else if files.count > 6, collapsed.isEmpty {
             collapsed = Set(files.dropFirst().map(\.id))
         } else {
             collapsed = collapsed.intersection(files.map(\.id))

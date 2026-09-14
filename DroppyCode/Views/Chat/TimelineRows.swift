@@ -188,16 +188,19 @@ struct AssistantMessageRow: View {
         if case .assistant(let message) = entry.item.content {
             VStack(alignment: .leading, spacing: 2) {
                 MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
+                // One side for both kinds of message: the copy control sits on the trailing
+                // edge. On the leading edge it landed in the tool rows' icon column, where a
+                // step below the answer drew right under it.
                 HStack(spacing: 8) {
-                    CopyButton(text: message.text)
                     if let summary {
                         Text(TurnEndRow.label(for: summary))
                             .font(.caption)
                             .foregroundStyle(.tertiary)
                     }
+                    Spacer(minLength: 8)
+                    CopyButton(text: message.text)
                 }
                 .opacity(isHovering && !message.isStreaming ? 1 : 0)
-                .offset(x: -4)
             }
             .onHover { hovering in
                 withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
@@ -218,12 +221,14 @@ struct AssistantMessageRow: View {
 /// A lone tool renders as its row alone.
 struct WorkGroup: View {
     let entries: [TimelineEntry]
+    let runtime: ThreadRuntime
     var workingDirectory: String?
     var startsCollapsed = false
     @State private var isCollapsed: Bool
 
-    init(entries: [TimelineEntry], workingDirectory: String? = nil, startsCollapsed: Bool = false) {
+    init(entries: [TimelineEntry], runtime: ThreadRuntime, workingDirectory: String? = nil, startsCollapsed: Bool = false) {
         self.entries = entries
+        self.runtime = runtime
         self.workingDirectory = workingDirectory
         self.startsCollapsed = startsCollapsed
         _isCollapsed = State(initialValue: startsCollapsed)
@@ -231,7 +236,7 @@ struct WorkGroup: View {
 
     var body: some View {
         if entries.count == 1, let only = entries.first {
-            ToolRow(entry: only, workingDirectory: workingDirectory)
+            ToolRow(entry: only, runtime: runtime, workingDirectory: workingDirectory)
         } else {
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 Button {
@@ -257,7 +262,7 @@ struct WorkGroup: View {
                 .help(isCollapsed ? "Show these steps" : "Hide these steps")
                 .accessibilityLabel(Text(isCollapsed ? "Show these steps" : "Hide these steps"))
                 if !isCollapsed {
-                    WorkSteps(entries: entries, workingDirectory: workingDirectory)
+                    WorkSteps(entries: entries, runtime: runtime, workingDirectory: workingDirectory)
                 }
             }
             .onChange(of: startsCollapsed) { _, collapsed in
@@ -274,6 +279,7 @@ struct WorkGroup: View {
 /// and the running turn's working line.
 struct WorkSteps: View {
     let entries: [TimelineEntry]
+    let runtime: ThreadRuntime
     var workingDirectory: String?
     @State private var showsAll = false
 
@@ -298,7 +304,7 @@ struct WorkSteps: View {
             .buttonStyle(.plain)
         }
         ForEach(entries.suffix(entries.count - hidden)) { entry in
-            ToolRow(entry: entry, workingDirectory: workingDirectory)
+            ToolRow(entry: entry, runtime: runtime, workingDirectory: workingDirectory)
         }
     }
 }
@@ -362,16 +368,28 @@ enum WorkGroupSummary {
 
 struct ToolRow: View {
     let entry: TimelineEntry
+    let runtime: ThreadRuntime
     var workingDirectory: String?
     @State private var isExpanded = false
+    /// The row's own view, so the changes popover opens on the row that was tapped.
+    @State private var popoverAnchor = WeakView()
 
     var body: some View {
         if case .tool(let call) = entry.item.content {
-            let hasDetail = !call.output.isEmpty || !call.edits.isEmpty || !(call.detail ?? "").isEmpty
+            // A row that carries a diff never unfolds: the diff opens in the changes
+            // popover, anchored on the row. Only a row whose content is its own output
+            // (a command's text, a tool's detail) still expands in place.
+            let edits = call.edits.filter { !$0.path.isEmpty }
+            let opensDiff = !edits.isEmpty
+            let showsOutput = !opensDiff && (!call.output.isEmpty || !(call.detail ?? "").isEmpty)
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 Button {
-                    guard hasDetail else { return }
-                    withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
+                    if opensDiff {
+                        guard let view = popoverAnchor.value else { return }
+                        runtime.showDiff(on: view, turn: entry.turnID, focusPaths: edits.map(\.path))
+                    } else if showsOutput {
+                        withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
+                    }
                 } label: {
                     HStack(spacing: TimelineMetrics.iconSpacing) {
                         ToolStatusIcon(call: call)
@@ -384,6 +402,18 @@ struct ToolRow: View {
                         if let stats = ToolPresentation.stats(for: call) {
                             DiffStatLabel(additions: stats.additions, deletions: stats.deletions)
                         }
+                        // Beside the subject, not out at the trailing edge: the chevron
+                        // belongs to the row's own text.
+                        if opensDiff {
+                            Image(systemName: "chevron.down")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        } else if showsOutput {
+                            Image(systemName: "chevron.right")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        }
                         Spacer(minLength: 8)
                         if call.status == .failed, let exitCode = call.exitCode {
                             Text("exit \(exitCode)")
@@ -394,24 +424,30 @@ struct ToolRow: View {
                                 .font(.caption)
                                 .foregroundStyle(Chrome.warning)
                         }
-                        if hasDetail {
-                            Image(systemName: "chevron.right")
-                                .font(.caption2.weight(.semibold))
-                                .foregroundStyle(.tertiary)
-                                .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        }
                     }
                     .font(.callout)
                     .padding(.trailing, 12)
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
-                if isExpanded {
+                .help(helpText(opensDiff: opensDiff, showsOutput: showsOutput))
+                if isExpanded, showsOutput {
                     ToolDetailView(call: call, workingDirectory: workingDirectory)
                         .padding(.trailing, 12)
                 }
             }
+            .background {
+                if opensDiff {
+                    AttachmentAnchorCapture { popoverAnchor.value = $0 }
+                }
+            }
         }
+    }
+
+    private func helpText(opensDiff: Bool, showsOutput: Bool) -> String {
+        if opensDiff { return "Show this change" }
+        guard showsOutput else { return "" }
+        return isExpanded ? "Hide the output" : "Show the output"
     }
 }
 
@@ -854,7 +890,7 @@ struct TurnFinishedBlock: View {
                             case .assistant:
                                 AssistantMessageRow(entry: entry, summary: nil)
                             case .tool:
-                                WorkGroup(entries: [entry], workingDirectory: workingDirectory)
+                                WorkGroup(entries: [entry], runtime: runtime, workingDirectory: workingDirectory)
                             case .plan:
                                 PlanCard(entry: entry, runtime: runtime)
                             case .todos:
@@ -865,7 +901,7 @@ struct TurnFinishedBlock: View {
                                 EmptyView()
                             }
                         case .work(_, let entries, let startsCollapsed):
-                            WorkGroup(entries: entries, workingDirectory: workingDirectory, startsCollapsed: startsCollapsed)
+                            WorkGroup(entries: entries, runtime: runtime, workingDirectory: workingDirectory, startsCollapsed: startsCollapsed)
                         }
                     }
                 }

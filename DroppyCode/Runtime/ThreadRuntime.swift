@@ -85,21 +85,41 @@ final class ThreadRuntime {
     var isTerminalVisible = false
     var isDiffVisible = false
     var diffSelection: UUID?
-    /// The view the changes popover should open on: a turn's Review button, or
-    /// nil for the changes tab. Held weakly so a row that leaves the screen never
+    /// The view the changes popover should open on: a tool row, a turn's Review button,
+    /// or nil for the changes tab. Held weakly so a row that leaves the screen never
     /// keeps a view alive.
     @ObservationIgnored var diffAnchor: WeakView?
-    /// Bumped by `showDiff(on:turn:)`, so the popover moves to the new anchor
+    /// Bumped by `showDiff(on:turn:focusPaths:)`, so the popover moves to the new anchor
     /// even when it is already open somewhere else.
     private(set) var diffOpenRequest = 0
+    /// The files a tapped tool row asked to see. The popover leaves these cards
+    /// expanded and scrolls to the first of them; empty for the tab and the Review
+    /// button, which open the whole selection.
+    private(set) var diffFocusPaths: [String] = []
 
-    /// Opens the changes popover on `anchor` (a Review button), showing `turn`'s
-    /// changes, or the whole thread's for nil.
-    func showDiff(on anchor: NSView, turn: UUID?) {
+    /// Opens the changes popover on `anchor` (a tool row or a Review button), showing
+    /// `turn`'s changes, or the whole thread's for nil.
+    func showDiff(on anchor: NSView, turn: UUID?, focusPaths: [String] = []) {
         diffAnchor = WeakView(anchor)
         if diffSelection != turn { diffSelection = turn }
+        if diffFocusPaths != focusPaths { diffFocusPaths = focusPaths }
         if !isDiffVisible { isDiffVisible = true }
         diffOpenRequest += 1
+    }
+
+    /// Drops the file a tapped tool row focused, so the openers that show a whole
+    /// selection (the changes tab, ⌘D) never open on some earlier row's file.
+    func clearDiffFocus() {
+        if !diffFocusPaths.isEmpty { diffFocusPaths = [] }
+    }
+
+    /// The changes tab, the toolbar button, ⌘D and the palette: they show the whole
+    /// selection, so any file a tapped tool row focused is dropped first and the
+    /// popover opens at the top of the list rather than on some earlier row's file.
+    func toggleDiff() {
+        clearDiffFocus()
+        if !isDiffVisible { diffAnchor = nil }
+        isDiffVisible.toggle()
     }
 
     @ObservationIgnored private weak var app: AppModel?
@@ -150,8 +170,10 @@ final class ThreadRuntime {
         followUps = document.followUps.filter { !$0.isEmpty }
         // Thinking with no text is nothing to show or keep: Claude Code redacts its
         // reasoning and streams only empty deltas, which older builds stored as blank
-        // entries. They are dropped here and never created below.
-        entries = document.items.filter { !$0.isEmptyReasoning }.map(TimelineEntry.init)
+        // entries. They are dropped here and never created below. Threads stored before
+        // the app flattened model prose on the way in are cleaned as they are read, so
+        // no reply from any earlier build can put an em dash back on screen.
+        entries = document.items.filter { !$0.isEmptyReasoning }.map { TimelineEntry($0.cleanedOfEmDashes) }
         for entry in entries {
             entryIndex[entry.id] = entry
             endStreaming(entry)
@@ -755,7 +777,7 @@ final class ThreadRuntime {
             // Provider titles are only a fallback; they must not replace the one Droppy Code writes.
             guard turns.count <= 1, let app, let thread, !thread.hasCustomTitle,
                   app.textEngine(preferring: thread.provider) == nil else { break }
-            app.updateThread(threadID) { $0.title = title }
+            app.updateThread(threadID) { $0.title = TextCleanup.withoutEmDashes(title) }
         case .assistantMessageID(let anchor):
             if let currentTurnID { updateTurn(currentTurnID) { $0.providerAnchor = anchor } }
         case .turnCompleted(let status, let error):
@@ -922,7 +944,10 @@ final class ThreadRuntime {
             }
         }
         guard !text.isEmpty else { return }
-        pendingDeltas[id, default: PendingDelta(kind: kind, text: "")].text += text
+        // Prose is flattened as it streams, so a reply can never render an em dash.
+        // Tool output is process text, not the model's own writing, and passes through.
+        let prose = kind == .toolOutput ? text : TextCleanup.withoutEmDashes(text)
+        pendingDeltas[id, default: PendingDelta(kind: kind, text: "")].text += prose
         guard flushTask == nil else { return }
         flushTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(45))
@@ -959,6 +984,7 @@ final class ThreadRuntime {
     }
 
     private func completeMessage(_ id: String, text: String) {
+        let text = TextCleanup.withoutEmDashes(text)
         guard let entry = entryIndex[id] else {
             guard !text.isEmpty else { return }
             append(TimelineItem(id: id, turnID: currentTurnID, content: .assistant(AssistantMessage(text: text))))
@@ -976,6 +1002,7 @@ final class ThreadRuntime {
     }
 
     private func completeReasoning(_ id: String, text: String) {
+        let text = TextCleanup.withoutEmDashes(text)
         guard let entry = entryIndex[id], case .reasoning(var block) = entry.item.content else {
             guard !text.isEmpty else { return }
             append(TimelineItem(id: id, turnID: currentTurnID, content: .reasoning(ReasoningBlock(text: text))))
@@ -992,6 +1019,7 @@ final class ThreadRuntime {
     }
 
     private func completePlan(_ id: String, markdown: String) {
+        let markdown = TextCleanup.withoutEmDashes(markdown)
         if let entry = entryIndex[id], case .plan(var plan) = entry.item.content {
             if !markdown.isEmpty { plan.markdown = markdown }
             plan.state = .proposed

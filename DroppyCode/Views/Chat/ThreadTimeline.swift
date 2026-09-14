@@ -672,7 +672,7 @@ struct TimelineGroupView: View {
             case .user: UserMessageRow(entry: entry, runtime: runtime, canRevert: context.canRewind)
             case .assistant: AssistantMessageRow(entry: entry, summary: summary)
             case .reasoning: EmptyView()
-            case .tool: WorkGroup(entries: [entry], workingDirectory: context.workingDirectory)
+            case .tool: WorkGroup(entries: [entry], runtime: runtime, workingDirectory: context.workingDirectory)
             case .plan: PlanCard(entry: entry, runtime: runtime)
             case .todos: TodoListRow(entry: entry)
             case .notice: NoticeRow(entry: entry)
@@ -682,7 +682,7 @@ struct TimelineGroupView: View {
                 }
             }
         case .work(_, let entries, let startsCollapsed):
-            WorkGroup(entries: entries, workingDirectory: context.workingDirectory, startsCollapsed: startsCollapsed)
+            WorkGroup(entries: entries, runtime: runtime, workingDirectory: context.workingDirectory, startsCollapsed: startsCollapsed)
         }
     }
 }
@@ -692,6 +692,7 @@ struct TimelineGroupView: View {
 /// before any tool starts) and the elapsed time. Collapsed by default; the chevron
 /// opens the thinking (when shown) and the run's steps beneath it.
 private struct WorkingIndicator: View {
+    let runtime: ThreadRuntime
     let startedAt: Date
     let seed: UInt64
     /// The running turn's thinking. When there is any, a chevron opens it beneath the indicator.
@@ -750,7 +751,7 @@ private struct WorkingIndicator: View {
                     .transition(.softAppear)
                 }
                 if !liveWork.isEmpty {
-                    WorkSteps(entries: liveWork, workingDirectory: workingDirectory)
+                    WorkSteps(entries: liveWork, runtime: runtime, workingDirectory: workingDirectory)
                         .transition(.softAppear)
                 }
             }
@@ -803,6 +804,7 @@ private struct WorkingIndicatorSlot: View {
         ZStack(alignment: .topLeading) {
             if !replyTookOver {
                 WorkingIndicator(
+                    runtime: runtime,
                     startedAt: runtime.turnStartedAt ?? .now,
                     seed: WorkingWords.seed(runtime.threadID.uuidString),
                     thinkingSteps: showsThinking ? thinking : [],

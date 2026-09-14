@@ -127,7 +127,7 @@ private struct ChatChromeRow: View {
                         }
                         ChromeDivider()
                         ChromeIconButton(symbol: "plusminus", isActive: runtime.isDiffVisible, help: "Changes (⌘D)") {
-                            runtime.isDiffVisible.toggle()
+                            runtime.toggleDiff()
                         }
                     }
                 }
