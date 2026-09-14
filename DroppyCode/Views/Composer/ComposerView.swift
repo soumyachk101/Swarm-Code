@@ -155,20 +155,25 @@ struct ComposerView: View {
         .padding(.leading, 14)
         .padding(.trailing, 8)
         .padding(.vertical, 8)
-        // While a turn runs, accent dots flow along the pill's bottom two-fifths,
-        // behind the text and inside the glass.
+        // The glass is a plain layer under the content, not the content's own effect: the
+        // working dots animate between the two, composited by Core Animation on their own,
+        // so neither the glass nor the text re-renders while the field pulses.
         .background {
-            if runtime.isRunning {
-                GeometryReader { proxy in
-                    ComposerWorkingDots()
-                        .frame(height: proxy.size.height * 0.4)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
+            let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+            ZStack {
+                Color.clear.glassEffect(.regular, in: shape)
+                if runtime.isRunning {
+                    // Accent dots flow along the pill's bottom two-fifths, behind the text.
+                    GeometryReader { proxy in
+                        ComposerWorkingDots()
+                            .frame(height: proxy.size.height * 0.4)
+                            .frame(maxHeight: .infinity, alignment: .bottom)
+                    }
+                    .clipShape(shape)
+                    .transition(.opacity.animation(.easeInOut(duration: 0.4)))
                 }
-                .clipShape(.rect(cornerRadius: 22, style: .continuous))
-                .transition(.opacity.animation(.easeInOut(duration: 0.4)))
             }
         }
-        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
         .onChange(of: suggestions) { _, new in
             if new.isVisible {
                 controller.showSuggestions(AnyView(suggestionMenu()), itemCount: new.items.count)

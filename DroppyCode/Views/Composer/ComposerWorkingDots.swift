@@ -43,7 +43,10 @@ final class DotFieldLayerView: NSView {
     private var laidOutSize: CGSize = .zero
 
     private static let dotSize: CGFloat = 2
-    private static let pitch: CGFloat = 7
+    private static let pitch: CGFloat = 8
+    /// The field never grows past this many rows however tall the pill gets, so a
+    /// five-line draft does not multiply the layers the render server composites.
+    private static let maxRows = 4
     /// One pulse per dot; the column delay spreads it into a travelling wave.
     private static let period: Double = 2.2
     private static let columnDelay: Double = 0.045
@@ -98,7 +101,7 @@ final class DotFieldLayerView: NSView {
         guard size != laidOutSize, size.width > 0, size.height > 0 else { return }
         laidOutSize = size
         let columnCount = Int(ceil(size.width / Self.pitch)) + 1
-        let rowCount = max(1, Int(ceil(size.height / Self.pitch)))
+        let rowCount = min(Self.maxRows, max(1, Int(ceil(size.height / Self.pitch))))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         rows.frame = bounds
