@@ -241,9 +241,10 @@ private struct ChatChromeRow: View {
                     model.newThread(in: project)
                 }
                 if let thread = model.thread(runtime.threadID) {
-                    // The team switch, once Hydra is on in Settings. A head leads no team of its own.
+                    // The team mark, once Hydra is on in Settings: always active in every
+                    // chat until switched off there. A head leads no team of its own.
                     if model.settings.hydraEnabled, !thread.isHelper {
-                        HydraButton(thread: thread)
+                        HydraButton(thread: thread, runtime: runtime)
                             .transition(.softAppear)
                     }
                     PermissionMenu(thread: thread)

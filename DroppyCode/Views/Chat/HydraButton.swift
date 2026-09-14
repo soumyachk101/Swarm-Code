@@ -1,59 +1,94 @@
 import AppKit
 import SwiftUI
 
-/// The chat's Hydra switch, first in the chrome row. Off, it is a quiet three-headed mark.
-/// On, it charges up: a ring of the roster's colours runs around the button and a soft glow
-/// breathes behind it, so the chat reads as a team at work. A badge counts the heads out
-/// right now.
+/// The chat's Hydra mark, first in the chrome row: three heads on one body. With Hydra on
+/// in Settings it is always active in every chat: charged, a ring of the roster's colours
+/// turning around it and a soft glow breathing behind, so the chat reads as a team at
+/// work. The badge above it counts the heads at work; tapping the badge (or the mark)
+/// opens the floating panel, tapping again hides it back into the button with a genie morph.
 struct HydraButton: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
     let thread: ChatThread
+    let runtime: ThreadRuntime
 
     @State private var isHovering = false
 
     var body: some View {
-        let isOn = thread.hydraEnabled
+        let isOn = model.hydraIsOn(thread)
         let running = model.hydraHeads(of: thread.id).count { $0.hydra?.status == .running }
-        Button {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                model.setHydra(!isOn, for: thread.id)
-            }
-        } label: {
-            ZStack {
-                if isOn {
-                    HydraCharge()
-                        .transition(.scale(scale: 0.6).combined(with: .opacity))
+        // Siblings, badge last: the badge always draws above the button's glass, and each
+        // keeps its own tap. Nested, the badge sat under the glass and its taps went to the mark.
+        ZStack(alignment: .topTrailing) {
+            Button {
+                togglePanel()
+            } label: {
+                ZStack {
+                    if isOn {
+                        HydraCharge()
+                            .transition(.scale(scale: 0.6).combined(with: .opacity))
+                    }
+                    HydraMarkView(isOn: isOn, isHovering: isHovering)
                 }
-                HydraMarkView(isOn: isOn, isHovering: isHovering)
+                .frame(width: Chrome.capsuleHeight, height: Chrome.capsuleHeight)
+                .contentShape(Circle())
             }
-            .frame(width: Chrome.capsuleHeight, height: Chrome.capsuleHeight)
-            .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .chromeGlassCircle()
-        .overlay(alignment: .topTrailing) {
+            .buttonStyle(.plain)
+            .chromeGlassCircle()
+            .onGeometryChange(for: CGPoint.self, of: {
+                let frame = $0.frame(in: .named(GenieAnimator.coordinateSpace))
+                return CGPoint(x: frame.midX, y: frame.midY)
+            }) { runtime.hydraButtonCenterInWindow = $0 }
+            .help(help(isOn: isOn, running: running))
+            .accessibilityLabel(Text(panelHelp(running: running)))
+            .accessibilityValue(Text(isOn ? "On" : "Off"))
             if running > 0 {
-                Text(verbatim: "\(running)")
-                    .font(.system(size: 9, weight: .bold).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 4)
-                    .frame(minWidth: 14, minHeight: 14)
-                    .background(Chrome.accent, in: Capsule())
-                    .offset(x: 3, y: -3)
-                    .transition(.scale.combined(with: .opacity))
+                Button {
+                    togglePanel()
+                } label: {
+                    Text(verbatim: "\(running)")
+                        .font(.system(size: 9, weight: .bold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .frame(minWidth: 14, minHeight: 14)
+                        .background(Chrome.accent, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .offset(x: 3, y: -3)
+                .transition(.scale.combined(with: .opacity))
+                .help(running == 1 ? "1 head working · Show or hide the Hydra panel" : "\(running) heads working · Show or hide the Hydra panel")
+                .accessibilityLabel(Text(running == 1 ? "1 head working, show or hide the Hydra panel" : "\(running) heads working, show or hide the Hydra panel"))
             }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: running)
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
-        .help(help(isOn: isOn, running: running))
-        .accessibilityLabel(Text(isOn ? "Turn off Hydra" : "Turn on Hydra"))
-        .accessibilityValue(Text(isOn ? "On" : "Off"))
+    }
+
+    /// Opens the floating panel; open, hides it back into this button with a genie morph.
+    /// Heads keep working either way. Nothing to show yet, nothing happens.
+    private func togglePanel() {
+        guard !model.hydraHeads(of: thread.id).isEmpty else { return }
+        if runtime.isHydraPanelHidden {
+            withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden = false }
+        } else {
+            if let frame = runtime.hydraPanelFrameInWindow, let target = runtime.hydraButtonCenterInWindow {
+                GenieAnimator.shared.launch(frame: frame, colorScheme: colorScheme, target: target) {
+                    HydraPanelGhost(isDark: colorScheme == .dark)
+                }
+            }
+            withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden = true }
+        }
+    }
+
+    private func panelHelp(running: Int) -> String {
+        if running == 0 { return "Hydra is on, show the panel" }
+        return running == 1 ? "Hydra is on, 1 head working, show or hide the panel" : "Hydra is on, \(running) heads working, show or hide the panel"
     }
 
     private func help(isOn: Bool, running: Int) -> String {
-        guard isOn else { return "Turn on Hydra: the agent leads a team of heads on big jobs" }
+        guard isOn else { return "Hydra is on in Settings" }
         var parts = ["Hydra is on"]
         if let pair = model.hydraPair(for: thread) {
             parts.append(HydraPairSummary.workers(pair, registry: model.providers))
@@ -61,6 +96,7 @@ struct HydraButton: View {
             parts.append("Heads run on this chat's model")
         }
         if running > 0 { parts.append(running == 1 ? "1 head working" : "\(running) heads working") }
+        parts.append(runtime.isHydraPanelHidden ? "Show the panel" : "Hide the panel into the button")
         return parts.joined(separator: " · ")
     }
 }
@@ -123,6 +159,33 @@ struct HydraCharge: View {
     }
 }
 
+/// The flat stand-in the Hydra panel becomes while it hides into the button: the
+/// panel's own glass, scrim, tint and hairline, minus its transcript, so the genie
+/// flight carries its glow rather than a blank tile.
+private struct HydraPanelGhost: View {
+    let isDark: Bool
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        ZStack {
+            shape
+                .fill(.clear)
+                .glassEffect(.regular, in: shape)
+                .overlay {
+                    shape.fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
+                }
+                .overlay {
+                    shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
+                }
+        }
+        .overlay {
+            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(isDark ? 0.36 : 0.22), radius: 28, y: 10)
+    }
+}
+
+/// One-line summaries of a pair, for tooltips and rows.
 enum HydraPairSummary {
     /// "Heads on Opus · High effort", or what they inherit.
     @MainActor

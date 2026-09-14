@@ -15,7 +15,7 @@ struct HydraSettingsPage: View {
                         Text("One chat, many heads")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(Chrome.primaryText)
-                        Text("With Hydra on, a chat's agent leads a team of helper agents on big jobs: a request with several parts, changes across the codebase, research over many files. Small requests it still does alone. Every chat gets its own Hydra switch in the chrome row.")
+                        Text("With Hydra on, a chat's agent leads a team of helper agents on big jobs: a request with several parts, changes across the codebase, research over many files. Small requests it still does alone. The chrome row shows the Hydra mark; tap it to show the team's panel.")
                             .font(.system(size: 11))
                             .foregroundStyle(Chrome.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
@@ -27,7 +27,7 @@ struct HydraSettingsPage: View {
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 12)
                 ChromeRowDivider()
-                ChromeRow(title: "Queued follow-ups go to heads", detail: "With Hydra on in a chat, a prompt queued behind a running turn starts on a head right away, with a note on what the lead is doing") {
+                ChromeRow(title: "Queued follow-ups go to heads", detail: "With Hydra on, a prompt queued behind a running turn starts on a head right away, with a note on what the lead is doing") {
                     SettingsSwitch(isOn: $settings.hydraQueueHeads)
                 }
                 .disabled(!settings.hydraEnabled)
@@ -71,7 +71,7 @@ struct HydraSettingsPage: View {
                     }
                 }
             }
-            Text("Switching Hydra on in a chat applies the pair for its provider: the one whose lead model the chat runs, else one for any model. A pair that names a lead model moves the chat onto it.")
+            Text("Each chat leads with the pair for its provider: the one whose lead model the chat runs, else one for any model.")
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.secondaryText)
                 .padding(.horizontal, 4)

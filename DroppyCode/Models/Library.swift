@@ -97,10 +97,11 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     var isInPanel = false
     /// Whether this thread's helpers are folded away under it in the sidebar.
     var foldsHelpers = false
-    /// Whether Hydra is on for this chat: with the app-wide switch on too, the chat's agent
-    /// leads a team of heads on big jobs.
+    /// Legacy per-chat flag, kept for decoding old threads. Ignored: with the app-wide
+    /// switch on, every chat leads (see `hydraIsOn`).
     var hydraEnabled = false
-    /// The pair the heads run on while Hydra is on, when one was picked for this chat.
+    /// The pair an old thread picked while Hydra had per-chat switches. Kept for
+    /// decoding; new threads use the best fit for their provider and model.
     var hydraPairID: UUID?
     /// How many heads this chat has sent out so far: the next one's place in the roster.
     var hydraSpawnCount = 0

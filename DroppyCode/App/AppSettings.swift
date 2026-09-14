@@ -241,12 +241,12 @@ final class AppSettings {
         didSet { store(modelPreferences, forKey: Key.modelPreferences) }
     }
 
-    /// Hydra is available: every chat gets its own switch for it in the chrome row.
+    /// Hydra is on for the app: every chat's chrome row shows its mark while it is on.
     var hydraEnabled: Bool {
         didSet { defaults.set(hydraEnabled, forKey: Key.hydraEnabled) }
     }
 
-    /// With Hydra on in a chat, a follow-up queued while a turn runs goes to a head at once
+    /// With Hydra on, a follow-up queued while a turn runs goes to a head at once
     /// instead of waiting for the turn.
     var hydraQueueHeads: Bool {
         didSet { defaults.set(hydraQueueHeads, forKey: Key.hydraQueueHeads) }
