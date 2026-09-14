@@ -75,6 +75,8 @@ enum Chrome {
     /// The window root also applies it as the view tint, so prominent glass
     /// buttons, toggles and progress indicators follow the theme.
     static var accent: Color { ThemeManager.spec.accent ?? systemAccent }
+    /// The same accent for AppKit: text view link attributes and layer colours.
+    static var accentNSColor: NSColor { ThemeManager.spec.accent.map { NSColor($0) } ?? .controlAccentColor }
 
     /// Status hues: system green/orange/red for System/Light/Dark, the
     /// palette's own hues for every named theme.

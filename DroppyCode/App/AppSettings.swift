@@ -192,7 +192,7 @@ final class AppSettings {
         defaultWorkspaceMode = WorkspaceMode(rawValue: defaults.string(forKey: Key.workspaceMode) ?? "") ?? .local
         notifyWhenFinished = defaults.object(forKey: Key.notify) as? Bool ?? true
         confirmBeforeDeleting = defaults.object(forKey: Key.confirmDelete) as? Bool ?? true
-        showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? true
+        showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
         // The old System/Light/Dark choice maps straight onto the same themes.
         let initialTheme = AppTheme(rawValue: defaults.string(forKey: Key.appTheme) ?? "")
