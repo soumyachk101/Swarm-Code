@@ -37,9 +37,11 @@ struct UserMessageRow: View {
                 if !message.text.isEmpty {
                     Text(message.text)
                         .textSelection(.enabled)
-                        .padding(.horizontal, 14)
+                        .padding(.leading, 14)
+                        // The tail hangs past the body; the text keeps its inset from the body.
+                        .padding(.trailing, 14 + UserBubble.tail)
                         .padding(.vertical, 9)
-                        .background(.tint.opacity(0.14), in: .rect(cornerRadius: 18, style: .continuous))
+                        .background(.tint.opacity(0.14), in: UserBubble())
                 }
                 HStack(spacing: 2) {
                     if canRevert {
@@ -78,6 +80,51 @@ struct UserMessageRow: View {
     private func revert(restoreFiles: Bool) {
         guard let turnID = entry.turnID else { return }
         Task { await runtime.revert(to: turnID, restoreFiles: restoreFiles) }
+    }
+}
+
+/// iMessage's outgoing bubble: rounded on three corners, the bottom-right one drawn out into
+/// the little tail that curls back under the bubble. The shape only; the fill is the row's.
+/// The tail's tip sits `tail` points past the body's trailing edge, at the very bottom.
+struct UserBubble: Shape {
+    static let cornerRadius: CGFloat = 18
+    static let tail: CGFloat = 4
+
+    func path(in rect: CGRect) -> Path {
+        let r = Self.cornerRadius
+        let left = rect.minX
+        let top = rect.minY
+        let bottom = rect.maxY
+        // The body's trailing edge; the tail reaches past it.
+        let edge = rect.maxX - Self.tail
+        var path = Path()
+        path.move(to: CGPoint(x: left + r, y: top))
+        path.addLine(to: CGPoint(x: edge - r, y: top))
+        path.addArc(center: CGPoint(x: edge - r, y: top + r), radius: r, startAngle: .degrees(-90), endAngle: .degrees(0), clockwise: false)
+        path.addLine(to: CGPoint(x: edge, y: bottom - 11))
+        // Out to the tip at the bottom corner, then curling back in under the body and
+        // easing into the bottom edge.
+        path.addCurve(
+            to: CGPoint(x: edge + Self.tail, y: bottom),
+            control1: CGPoint(x: edge, y: bottom - 1),
+            control2: CGPoint(x: edge + Self.tail, y: bottom)
+        )
+        path.addCurve(
+            to: CGPoint(x: edge - 7, y: bottom - 4),
+            control1: CGPoint(x: edge, y: bottom + 0.5),
+            control2: CGPoint(x: edge - 4, y: bottom - 1)
+        )
+        path.addCurve(
+            to: CGPoint(x: edge - 21, y: bottom),
+            control1: CGPoint(x: edge - 12, y: bottom),
+            control2: CGPoint(x: edge - 16, y: bottom)
+        )
+        path.addLine(to: CGPoint(x: left + r, y: bottom))
+        path.addArc(center: CGPoint(x: left + r, y: bottom - r), radius: r, startAngle: .degrees(90), endAngle: .degrees(180), clockwise: false)
+        path.addLine(to: CGPoint(x: left, y: top + r))
+        path.addArc(center: CGPoint(x: left + r, y: top + r), radius: r, startAngle: .degrees(180), endAngle: .degrees(270), clockwise: false)
+        path.closeSubpath()
+        return path
     }
 }
 
