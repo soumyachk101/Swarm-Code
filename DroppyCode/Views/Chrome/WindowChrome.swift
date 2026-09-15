@@ -218,10 +218,12 @@ enum WindowChrome {
             return
         }
         // The same run as Chrome.panelSlide, so the buttons and the chrome row that makes
-        // room for them arrive together.
+        // room for them arrive together. A plain ease-out spends the run gliding; a curve
+        // that is nearly done after its first few frames reads as the buttons popping over.
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.32
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
+            context.duration = reduceMotion ? 0.18 : 0.32
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             context.allowsImplicitAnimation = true
             titlebar.layoutSubtreeIfNeeded()
         }
@@ -377,6 +379,7 @@ final class SidebarResizeHandleView: NSView {
         didSet {
             guard isActive != oldValue else { return }
             window?.invalidateCursorRects(for: self)
+            refreshHover()
             updateGrip(animated: false)
         }
     }
@@ -435,10 +438,32 @@ final class SidebarResizeHandleView: NSView {
 
     override func layout() {
         super.layout()
+        // The strip moves with the sidebar's edge: a toggle, or a release that springs the
+        // width back, carries it out from under a resting cursor, and AppKit only reports
+        // enter and exit for the mouse moving. Each new frame asks where the cursor is now.
+        let hovered = isHovering
+        refreshHover()
+        updateGrip(animated: hovered != isHovering)
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        refreshHover()
         updateGrip(animated: false)
     }
 
     private var showsGrip: Bool { isActive && (isHovering || isDragging) }
+
+    /// Reads the cursor's actual place, so `isHovering` never outlives the cursor being over
+    /// the strip; the entered/exited pair only keeps it true while the mouse itself moves.
+    private func refreshHover() {
+        guard isActive, let window, !isHiddenOrHasHiddenAncestor else {
+            isHovering = false
+            return
+        }
+        let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        isHovering = bounds.contains(point)
+    }
 
     private func updateGrip(animated: Bool) {
         let height = showsGrip ? Grip.shownHeight : Grip.restHeight
@@ -491,8 +516,10 @@ final class SidebarResizeHandleView: NSView {
     override func mouseUp(with event: NSEvent) {
         onChange?(event.locationInWindow.x - pressOriginX)
         isDragging = false
-        updateGrip(animated: true)
         onEnd?()
+        // No exit arrives while the button is held; the release decides from the cursor.
+        refreshHover()
+        updateGrip(animated: true)
     }
 
     override func updateTrackingAreas() {
@@ -504,7 +531,7 @@ final class SidebarResizeHandleView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        isHovering = true
+        isHovering = isActive
         updateGrip(animated: true)
     }
 

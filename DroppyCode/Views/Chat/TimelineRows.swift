@@ -2317,7 +2317,9 @@ private struct TurnFileCard: View {
             .popover(isPresented: $isShowingFiles, arrowEdge: .bottom) {
                 filesPopover.presentedChrome()
             }
-            Spacer(minLength: 8)
+            // A fixed gap, not a spacer: the card hugs its title and stats, and the round
+            // buttons follow it rather than sitting at the far side of the column.
+            Color.clear.frame(width: 20, height: 1)
             if canUndo {
                 Button { isConfirmingRevert = true } label: {
                     MutedRoundGlyph(symbol: "arrow.uturn.backward")
@@ -2371,8 +2373,8 @@ private struct TurnFileCard: View {
         .padding(.trailing, 6)
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.32), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .fixedSize(horizontal: true, vertical: false)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.trailing, 96)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(title))
     }
