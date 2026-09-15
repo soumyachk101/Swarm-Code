@@ -680,6 +680,8 @@ struct ToolRow: View {
     /// scrolls, so a row scrolling past never mounts one. Once mounted it stays: a popover
     /// is positioned against this view, and taking it away under an open one closes it.
     @State private var needsAnchor = false
+    /// Whether the steps popover of the head this row sent out is open.
+    @State private var isShowingHead = false
 
     var body: some View {
         if case .tool(let call) = entry.item.content {
@@ -694,14 +696,20 @@ struct ToolRow: View {
             let showsOutput = !opensDiff && (!call.output.isEmpty || !(call.detail ?? "").isEmpty)
             let opensImage = imagePath != nil && (call.kind == .read || !showsOutput)
             let opensPopover = opensDiff || opensImage
+            // A row that sent out a head opens the head's steps in a popover of its own,
+            // never its raw tool output.
+            let headID = call.kind == .agent ? runtime.hydraHead(forTool: entry.id) : nil
+            let opensHead = headID != nil
             // A call with no change to show, no image and no output of its own has
             // nothing to open. Rendered as a line of text rather than a control, so the
             // pointer and VoiceOver both treat it as what it is.
-            let isTappable = opensPopover || showsOutput
+            let isTappable = opensPopover || opensHead || showsOutput
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 if isTappable {
                     Button {
-                        if opensDiff {
+                        if opensHead {
+                            isShowingHead.toggle()
+                        } else if opensDiff {
                             guard let view = preview.anchor.value else { return }
                             runtime.showDiff(on: view, edge: .minY, turn: entry.turnID, focusEdits: edits)
                         } else if opensImage, let imagePath {
@@ -710,13 +718,14 @@ struct ToolRow: View {
                             withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
                         }
                     } label: {
-                        line(call: call, imagePath: imagePath, opensPopover: opensPopover, showsOutput: showsOutput)
+                        line(call: call, imagePath: imagePath, opensPopover: opensPopover, opensHead: opensHead, showsOutput: showsOutput)
                             .contentShape(.rect)
+                            .modifier(HeadStepsPopoverModifier(headID: headID, isPresented: $isShowingHead))
                     }
                     .buttonStyle(.plain)
-                    .help(helpText(opensDiff: opensDiff, opensImage: opensImage, showsOutput: showsOutput))
+                    .help(helpText(opensDiff: opensDiff, opensImage: opensImage, opensHead: opensHead, showsOutput: showsOutput))
                 } else {
-                    line(call: call, imagePath: imagePath, opensPopover: opensPopover, showsOutput: showsOutput)
+                    line(call: call, imagePath: imagePath, opensPopover: opensPopover, opensHead: opensHead, showsOutput: showsOutput)
                 }
                 if isExpanded, showsOutput, !opensImage {
                     ToolDetailView(call: call, workingDirectory: workingDirectory)
@@ -730,7 +739,7 @@ struct ToolRow: View {
     /// The row itself: icon, text, stats and chevron, laid out the same whether or not
     /// the line can be tapped.
     @ViewBuilder
-    private func line(call: ToolCall, imagePath: String?, opensPopover: Bool, showsOutput: Bool) -> some View {
+    private func line(call: ToolCall, imagePath: String?, opensPopover: Bool, opensHead: Bool, showsOutput: Bool) -> some View {
         HStack(spacing: TimelineMetrics.iconSpacing) {
             HStack(spacing: TimelineMetrics.iconSpacing) {
                 // A row that sent out a head wears the head's glyph and name.
@@ -752,7 +761,7 @@ struct ToolRow: View {
                 }
                 // Beside the subject, not out at the trailing edge: the chevron
                 // belongs to the row's own text.
-                if opensPopover {
+                if opensPopover || opensHead {
                     Image(systemName: "chevron.down")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.tertiary)
@@ -786,11 +795,216 @@ struct ToolRow: View {
         .padding(.trailing, 12)
     }
 
-    private func helpText(opensDiff: Bool, opensImage: Bool, showsOutput: Bool) -> String {
+    private func helpText(opensDiff: Bool, opensImage: Bool, opensHead: Bool, showsOutput: Bool) -> String {
+        if opensHead { return "Show the head's steps" }
         if opensDiff { return "Show this change" }
         if opensImage { return "Show the image" }
         guard showsOutput else { return "" }
         return isExpanded ? "Hide the output" : "Show the output"
+    }
+}
+
+/// Hangs the head's steps popover from a row that sent out a head. A row that did not
+/// mounts nothing: the popover, its state and its anchor exist only where they can open.
+private struct HeadStepsPopoverModifier: ViewModifier {
+    let headID: UUID?
+    @Binding var isPresented: Bool
+
+    func body(content: Content) -> some View {
+        if let headID {
+            content.popover(isPresented: $isPresented, arrowEdge: .bottom) {
+                HydraHeadStepsPopover(headID: headID)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// What a head did, in plain text: its brief, then every step it took, then its report.
+/// Reads the head's own runtime straight from the model, so the list grows while the
+/// head still works.
+struct HydraHeadStepsPopover: View {
+    let headID: UUID
+    @Environment(AppModel.self) private var model
+
+    private static let width: CGFloat = 440
+    private static let maxHeight: CGFloat = 520
+
+    var body: some View {
+        let hydra = model.thread(headID)?.hydra
+        let steps = Self.steps(in: model.runtime(for: headID).entries)
+        let report = hydra.flatMap { head -> String? in
+            guard head.isFinished else { return nil }
+            let text = (head.summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : text
+        }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if let hydra {
+                    header(hydra)
+                    if !hydra.task.isEmpty {
+                        Text(verbatim: hydra.task)
+                            .font(.callout)
+                            .foregroundStyle(Chrome.primaryText)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+                    sectionTitle("Steps")
+                    if steps.isEmpty {
+                        Text("No steps yet.")
+                            .font(.callout)
+                            .foregroundStyle(Chrome.secondaryText)
+                    } else {
+                        ForEach(steps) { entry in
+                            step(entry)
+                        }
+                    }
+                }
+                if let report {
+                    VStack(alignment: .leading, spacing: 8) {
+                        sectionTitle("Report")
+                        Text(verbatim: report)
+                            .font(.callout)
+                            .foregroundStyle(Chrome.primaryText)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(16)
+            .frame(width: Self.width, alignment: .leading)
+        }
+        .frame(width: Self.width)
+        .frame(maxHeight: Self.maxHeight)
+    }
+
+    /// The head's glyph and name, with where it stands on the trailing side.
+    private func header(_ hydra: HydraHeadInfo) -> some View {
+        HStack(alignment: .center, spacing: TimelineMetrics.iconSpacing) {
+            HydraGlyph(persona: hydra.persona, size: 22, isRunning: hydra.status == .running, status: hydra.status)
+            Text(verbatim: hydra.persona.name)
+                .font(.headline)
+                .foregroundStyle(Chrome.primaryText)
+            Spacer(minLength: 12)
+            Text(verbatim: Self.statusLine(for: hydra))
+                .font(.caption)
+                .foregroundStyle(Chrome.secondaryText)
+                .lineLimit(1)
+        }
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(verbatim: title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Chrome.secondaryText)
+    }
+
+    /// One step, laid out like the timeline's own rows: the icon column, then the text.
+    @ViewBuilder
+    private func step(_ entry: TimelineEntry) -> some View {
+        switch entry.item.content {
+        case .tool(let call):
+            HStack(alignment: .firstTextBaseline, spacing: TimelineMetrics.iconSpacing) {
+                ToolStatusIcon(call: call)
+                    .frame(width: TimelineMetrics.iconWidth)
+                Text(verbatim: ToolPresentation.label(for: call))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
+                if let stats = ToolPresentation.stats(for: call) {
+                    DiffStatLabel(additions: stats.additions, deletions: stats.deletions)
+                }
+            }
+        case .assistant(let message):
+            Text(verbatim: message.text)
+                .font(.callout)
+                .foregroundStyle(Chrome.primaryText)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        case .user(let message):
+            // A later brief: the lead steering the head on.
+            Text(verbatim: message.text)
+                .font(.callout)
+                .foregroundStyle(Chrome.secondaryText)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        case .notice(let notice):
+            HStack(alignment: .firstTextBaseline, spacing: TimelineMetrics.iconSpacing) {
+                Image(systemName: Self.noticeSymbol(for: notice.level))
+                    .font(.caption)
+                    .foregroundStyle(Self.noticeColor(for: notice.level))
+                    .frame(width: TimelineMetrics.iconWidth)
+                Text(verbatim: notice.message)
+                    .font(.callout)
+                    .foregroundStyle(Self.noticeColor(for: notice.level))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    /// "Working…" or the outcome, then the tool count and, once the head is done, how
+    /// long it took.
+    private static func statusLine(for hydra: HydraHeadInfo) -> String {
+        let outcome: String = switch hydra.status {
+        case .running: "Working…"
+        case .completed: "Done"
+        case .failed: "Failed"
+        case .stopped: "Stopped"
+        }
+        var parts = [outcome]
+        if hydra.toolCalls > 0 {
+            parts.append(hydra.toolCalls == 1 ? "1 tool" : "\(hydra.toolCalls) tools")
+        }
+        if let finishedAt = hydra.finishedAt {
+            parts.append(RelativeTime.duration(finishedAt.timeIntervalSince(hydra.startedAt)))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// The entries worth a line: every tool call, reply and notice, and any brief after
+    /// the first. The first user entry is the task itself, shown above; thinking, plans,
+    /// todo lists and turn ends are the head's own bookkeeping.
+    private static func steps(in entries: [TimelineEntry]) -> [TimelineEntry] {
+        var sawBrief = false
+        return entries.filter { entry in
+            switch entry.item.content {
+            case .user(let message):
+                if !sawBrief {
+                    sawBrief = true
+                    return false
+                }
+                return !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .assistant(let message):
+                return !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            case .tool, .notice:
+                return true
+            case .reasoning, .turnEnd, .plan, .todos:
+                return false
+            }
+        }
+    }
+
+    private static func noticeSymbol(for level: Notice.Level) -> String {
+        switch level {
+        case .info: "info.circle"
+        case .warning: "exclamationmark.triangle"
+        case .error: "exclamationmark.octagon"
+        }
+    }
+
+    private static func noticeColor(for level: Notice.Level) -> Color {
+        switch level {
+        case .info: .secondary
+        case .warning: Chrome.warning
+        case .error: Chrome.danger
+        }
     }
 }
 
