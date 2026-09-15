@@ -116,6 +116,12 @@ final class ThreadRuntime {
     /// How many times heads have gone out for the user's current request; a message of
     /// the user's own starts the count over.
     @ObservationIgnored private var hydraDelegationRounds = 0
+    /// How many turns of the user's current request were spent telling the lead its block
+    /// could not be read or was held back. Each such message is a turn the lead answers,
+    /// and a lead that answers with the same block again would be told again, without end:
+    /// past `maxRefusedBlocks` the block is simply dropped and the turn ends. Starts over
+    /// with the rounds, on a message of the user's own.
+    @ObservationIgnored private var hydraRefusedBlocks = 0
     /// A Droppy-run head's time for one turn (see `HydraBudget`): past it, the head is
     /// stopped and its next turn is its report.
     @ObservationIgnored private var headBudget: Task<Void, Never>?
@@ -615,7 +621,10 @@ final class ThreadRuntime {
         }
         // A settled thread put back to work is open again.
         app.reopenIfSettled(threadID)
-        if hydraHeads == nil { hydraDelegationRounds = 0 }
+        if hydraHeads == nil {
+            hydraDelegationRounds = 0
+            hydraRefusedBlocks = 0
+        }
         // A finished head told more from the panel is at work again: its lead's team
         // counts it, and its next report goes out as a fresh one.
         if let info = initialThread.hydra, info.kind == .droppy, info.isFinished {
@@ -658,10 +667,11 @@ final class ThreadRuntime {
         let git = Git(directory)
         let checkpointRef = Git.checkpointRef(thread: threadID, turn: turnIndex, phase: "start")
         // Anything could have happened in the checkout since the last turn, so no snapshot
-        // from it stands any more, and the heads' files belong to the turn they worked in.
+        // from it stands any more. The heads' files are not cleared here: a native head
+        // works on after the lead's reply ends, and what it changed then belongs to the
+        // next turn, which takes it up at its end (see `finishTurn`).
         settledTree = nil
         treeEpoch += 1
-        hydraTouched.removeAll()
         // The checkpoint is several git processes over the whole checkout. It runs while
         // the session starts rather than in front of it, and both are waited for before a
         // word reaches the model, so nothing the agent does can slip past the snapshot.
@@ -1321,8 +1331,10 @@ final class ThreadRuntime {
                 if let path = TouchedPaths.relative(edit.path, root: root) { touched.insert(path) }
             }
             for file in providerFiles { touched.insert(file.path) }
-            // What the lead's native heads changed, which their own timelines carry.
+            // What the lead's native heads changed, which their own timelines carry: this
+            // turn takes it, whether it came during the turn or between the last and this.
             touched.formUnion(hydraTouched)
+            hydraTouched.removeAll()
             let touchedPaths = touched.sorted()
             updateTurn(turnID) { $0.touchedPaths = touchedPaths }
             files = files.filter { TouchedPaths.matches($0, touched: touched) }
@@ -1383,9 +1395,14 @@ final class ThreadRuntime {
         // The job is done: the lead has answered, every head is back and nothing is
         // waiting. With the setting on, the work goes out and lands by itself, whether
         // heads took part or the lead did it all; a job that changed no file is let be.
+        // Native heads are not in the batches: they run on inside the lead's session after
+        // the lead's reply ends, and report in a turn of their own later. A merge while any
+        // head is still at work would commit its half-done files and then, the head having
+        // finished before the next turn began, never come back for the rest.
         if !continues, status == .completed,
            hydraPendingReports.isEmpty, hydraBatches.isEmpty, hydraWaiting.isEmpty,
-           let app, let thread, app.hydraIsOn(thread), app.settings.hydraAutoMerge {
+           let app, let thread, app.hydraIsOn(thread), app.settings.hydraAutoMerge,
+           app.runningHydraHeads(of: threadID) == 0 {
             Task { await app.autoMergeHydraWork(of: threadID) }
         }
     }
@@ -1643,6 +1660,12 @@ final class ThreadRuntime {
     /// practice, and the pair's cap still decides how many run at a time.
     private static let maxDelegatedTasks = 32
 
+    /// How many times one request may tell the lead that its block was unreadable or held
+    /// back, each in a turn of its own. Enough for a lead to fix a malformed block and to
+    /// hear once that its rounds are spent; past it a reply that still ends in a block is
+    /// treated as a plain reply, so no chat ever loops turn after turn on the same refusal.
+    private static let maxRefusedBlocks = 3
+
     /// What a reply's delegation block led to, for the end of the turn.
     private enum DelegationOutcome {
         /// No block, or nothing came of it.
@@ -1667,8 +1690,7 @@ final class ThreadRuntime {
             if message.text.isEmpty { message.text = "Asking for heads." }
             entry.item.content = .assistant(message)
             scheduleSave()
-            Task { await startTurn(text: HydraPrompts.unreadableBlockMessage(reason: nil), attachments: [], hydraHeads: []) }
-            return .turnStarted
+            return refuseBlock(HydraPrompts.unreadableBlockMessage(reason: nil), dropped: "Its delegation block could not be read, and it had been told so already.")
         }
         message.text = HydraPrompts.withoutDelegationBlock(message.text)
         // An empty block is the lead saying it did the work itself: the block leaves the
@@ -1686,9 +1708,7 @@ final class ThreadRuntime {
             if message.text.isEmpty { message.text = "Asking for more heads." }
             entry.item.content = .assistant(message)
             scheduleSave()
-            let text = HydraPrompts.heldBackMessage(count: delegations.count)
-            Task { await startTurn(text: text, attachments: [], hydraHeads: []) }
-            return .turnStarted
+            return refuseBlock(HydraPrompts.heldBackMessage(count: delegations.count), dropped: "This request has had all \(HydraPrompts.maxDelegationRounds) of its rounds of heads, and the lead had been told so already.")
         }
         hydraDelegationRounds += 1
         if message.text.isEmpty { message.text = "Sending out heads." }
@@ -1710,6 +1730,22 @@ final class ThreadRuntime {
         settleBatches()
         scheduleSave()
         return hydraBatches.isEmpty && hydraWaiting.isEmpty ? .none : .headsOut
+    }
+
+    /// Tells the lead, in a turn of its own, that the block its reply ended in sent no heads
+    /// out, and why: `message` is what it hears. Only so many times per request (see
+    /// `maxRefusedBlocks`): a lead that keeps answering with the same block would otherwise
+    /// be answered with the same refusal, turn after turn, for as long as the app runs. Past
+    /// the cap the block is dropped with a note in the timeline saying `dropped`, and the
+    /// turn ends as a plain reply would.
+    private func refuseBlock(_ message: String, dropped: String) -> DelegationOutcome {
+        guard hydraRefusedBlocks < Self.maxRefusedBlocks else {
+            appendHydraNote("No heads went out\n\(dropped) The block was dropped from the reply.")
+            return .none
+        }
+        hydraRefusedBlocks += 1
+        Task { await startTurn(text: message, attachments: [], hydraHeads: []) }
+        return .turnStarted
     }
 
     /// Sends out delegated tasks still waiting, as far as the pair's cap allows; without

@@ -333,9 +333,17 @@ struct Git: Sendable {
     /// check goes through `cat-file --batch-check`, one `HEAD:<path>` per line on stdin,
     /// which answers in order with `missing` for what HEAD does not have.
     func trackedPaths(among paths: [String]) async -> Set<String> {
+        await presentPaths(among: paths, in: "HEAD")
+    }
+
+    /// Paths from `paths` that `ref` holds, answered by one `cat-file --batch-check` over
+    /// the lot rather than a `cat-file -e` per path: a branch that moved on by thousands
+    /// of files (a build's output merged once by mistake, say) used to mean thousands of
+    /// git processes one after another, with the main actor picking each one up in turn.
+    func presentPaths(among paths: [String], in ref: String) async -> Set<String> {
         guard !paths.isEmpty else { return [] }
         let input = paths.reduce(into: Data()) { data, path in
-            data.append(contentsOf: "HEAD:\(path)".utf8)
+            data.append(contentsOf: "\(ref):\(path)".utf8)
             data.append(0)
         }
         guard let result = try? await run(["cat-file", "--batch-check=%(objecttype)", "-Z"], input: input), result.succeeded else { return [] }
@@ -385,10 +393,6 @@ struct Git: Sendable {
     func removePaths(_ paths: [String]) async throws {
         guard !paths.isEmpty else { return }
         try Self.check(await run(["rm", "--quiet", "--"] + paths))
-    }
-
-    func pathExists(_ path: String, in ref: String) async -> Bool {
-        (try? await run(["cat-file", "-e", "\(ref):\(path)"]))?.succeeded ?? false
     }
 
     func pullFastForward() async throws {

@@ -17,6 +17,11 @@ final class ComposerController {
     fileprivate weak var textView: ComposerNSTextView?
     private var suggestionPopover: NSPopover?
     private var suggestionHost: NSHostingController<AnyView>?
+    /// The slash/@ refresh in flight for the latest keystroke; the next keystroke cancels it.
+    /// The search for the caret's word, for the suggestions popover. One at a time: the
+    /// next keystroke cancels it, and so does losing focus (see the composer's `onBlur`),
+    /// so an answer for a word that is gone never shows.
+    var suggestionRefresh: Task<Void, Never>?
 
     var cursorLocation: Int {
         textView?.selectedRange().location ?? 0

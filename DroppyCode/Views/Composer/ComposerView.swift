@@ -171,7 +171,12 @@ struct ComposerView: View {
                     onBlur: {
                         // Clicking a row focuses the popover; only dismiss when
                         // focus truly left both the text and the suggestions.
-                        if !controller.isClickInsideSuggestions() { suggestions = SuggestionState() }
+                        if !controller.isClickInsideSuggestions() {
+                            // A search still under way for the last keystroke would put
+                            // the popover back over a field that no longer has focus.
+                            controller.suggestionRefresh?.cancel()
+                            suggestions = SuggestionState()
+                        }
                     },
                     takesFocusOnAppear: takesFocusOnAppear
                 )
@@ -393,11 +398,17 @@ struct ComposerView: View {
 
     // MARK: - Suggestions
 
-    private func cursorMoved(to location: Int) {
-        Task { @MainActor in refreshSuggestions(cursor: location) }
+    /// One refresh per keystroke. The text view reports a keystroke twice, as the change and
+    /// as the caret's move, and each report scored the whole file index; the earlier refresh
+    /// is dropped and the one that runs reads the caret where it is then.
+    private func cursorMoved(to _: Int) {
+        controller.suggestionRefresh?.cancel()
+        controller.suggestionRefresh = Task { @MainActor in
+            await refreshSuggestions(cursor: controller.cursorLocation)
+        }
     }
 
-    private func refreshSuggestions(cursor: Int) {
+    private func refreshSuggestions(cursor: Int) async {
         let text = runtime.draft.text as NSString
         guard cursor > 0, cursor <= text.length else {
             if suggestions.isVisible { suggestions = SuggestionState() }
@@ -414,7 +425,11 @@ struct ComposerView: View {
         var kind = SuggestionState.Kind.file
         var items: [Suggestion] = []
         if word.hasPrefix("@") {
-            items = fileIndex.search(String(word.dropFirst())).map { path in
+            let paths = await fileIndex.search(String(word.dropFirst()))
+            // The caret moved on while the index was searched: the newer keystroke's refresh
+            // is under way, and this answer is for a word that is gone.
+            guard !Task.isCancelled else { return }
+            items = paths.map { path in
                 Suggestion(value: "@\(path) ", title: (path as NSString).lastPathComponent, detail: path, symbol: "doc")
             }
         } else if word.hasPrefix("/"), start == 0 {
@@ -761,10 +776,13 @@ private struct SuggestionPopoverRow: View {
 @MainActor
 @Observable
 final class FileIndex {
-    private struct Entry {
+    nonisolated private struct Entry: Sendable {
         var path: String
         var lowercased: String
         var name: String
+        /// How much the path's length costs its score, taken at build time: a Swift string's
+        /// count walks the whole string, and the search used to take it for every match.
+        var lengthPenalty: Int
     }
 
     @ObservationIgnored private var entries: [Entry] = []
@@ -800,15 +818,33 @@ final class FileIndex {
     private nonisolated static func build(_ directory: String) async -> [Entry] {
         await list(directory).map { path in
             let lowercased = path.lowercased()
-            return Entry(path: path, lowercased: lowercased, name: (lowercased as NSString).lastPathComponent)
+            return Entry(
+                path: path,
+                lowercased: lowercased,
+                name: (lowercased as NSString).lastPathComponent,
+                lengthPenalty: min(path.count, 99)
+            )
         }
     }
 
-    func search(_ query: String, limit: Int = 8) -> [String] {
+    /// The best matches for a query. Scored off the main actor: the index holds up to
+    /// 60,000 paths and every keystroke after an `@` scored each of them, which held the
+    /// main thread for as long as that took in a large project. The caller drops the answer
+    /// when the caret has moved on (the task is cancelled), so the scan stops early too.
+    func search(_ query: String, limit: Int = 8) async -> [String] {
         let needle = query.lowercased()
         guard !needle.isEmpty else { return entries.prefix(limit).map(\.path) }
-        var scored: [(path: String, score: Int)] = []
-        for entry in entries {
+        return await Self.search(needle, in: entries, limit: limit)
+    }
+
+    @concurrent
+    private nonisolated static func search(_ needle: String, in entries: [Entry], limit: Int) async -> [String] {
+        // The best `limit` so far, highest score first. An insertion into a list this short
+        // beats collecting every match and sorting them all.
+        var best: [(path: String, score: Int)] = []
+        best.reserveCapacity(limit + 1)
+        for (offset, entry) in entries.enumerated() {
+            if offset % 2_048 == 0, Task.isCancelled { return [] }
             let score: Int
             if entry.name == needle {
                 score = 1_000
@@ -818,17 +854,21 @@ final class FileIndex {
                 score = 600
             } else if entry.lowercased.contains(needle) {
                 score = 400
-            } else if Self.isSubsequence(needle, of: entry.lowercased) {
+            } else if isSubsequence(needle, of: entry.lowercased) {
                 score = 100
             } else {
                 continue
             }
-            scored.append((entry.path, score - min(entry.path.count, 99)))
+            let scored = score - entry.lengthPenalty
+            if best.count == limit, scored <= best[limit - 1].score { continue }
+            let index = best.firstIndex { $0.score < scored } ?? best.count
+            best.insert((entry.path, scored), at: index)
+            if best.count > limit { best.removeLast() }
         }
-        return scored.sorted { $0.score > $1.score }.prefix(limit).map(\.path)
+        return best.map(\.path)
     }
 
-    private static func isSubsequence(_ needle: String, of haystack: String) -> Bool {
+    private nonisolated static func isSubsequence(_ needle: String, of haystack: String) -> Bool {
         var remaining = needle[...]
         for character in haystack where character == remaining.first {
             remaining = remaining.dropFirst()
@@ -857,7 +897,9 @@ final class FileIndex {
         ) else { return [] }
         var results: [String] = []
         while let url = enumerator.nextObject() as? URL {
-            if skipped.contains(url.lastPathComponent) {
+            // Nothing a mention would want sits that deep, and a tree that deep is usually
+            // a vendored or generated one whose name the list above does not know.
+            if skipped.contains(url.lastPathComponent) || enumerator.level > 16 {
                 enumerator.skipDescendants()
                 continue
             }
