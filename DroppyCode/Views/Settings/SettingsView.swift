@@ -324,7 +324,7 @@ private struct GeneralSettingsPage: View {
                 ChromeRowDivider()
                 ChromeRow(
                     title: "Show a usage panel",
-                    detail: "The plan's limits and credits in a floating panel beside the chat, for the model in use or a pair's two; it opens at the left, across from the heads"
+                    detail: "The plan's limits and credits in a floating panel beside every chat, for the model in use or a pair's two; the usage popover's pop-out button switches it on as well, and it keeps the corner it was last dragged to"
                 ) {
                     SettingsSwitch(isOn: $settings.showsUsagePanel)
                 }
@@ -365,6 +365,22 @@ private struct GeneralSettingsPage: View {
                 ChromeRowDivider()
                 ChromeRow(title: "Transparency", detail: "How much shows through the window") {
                     BackdropOpacitySlider(value: $settings.backdropOpacity)
+                }
+                ChromeRowDivider()
+                ChromeRow(title: "Open the sidebar at launch", detail: "Collapsed otherwise; the list button in the toolbar shows and hides it any time") {
+                    SettingsSwitch(isOn: Binding(
+                        get: { model.sidebar.startsOpen },
+                        set: { model.sidebar.startsOpen = $0 }
+                    ))
+                }
+                ChromeRowDivider()
+                ChromeRow(title: "Float the sidebar over the chat", detail: "With the column collapsed, the thread list floats as a panel over the chat instead of opening from the toolbar button, and stays where you leave it") {
+                    SettingsSwitch(isOn: $settings.sidebarFloats)
+                }
+                ChromeRowDivider()
+                ChromeRow(title: "Only the floating panel", detail: "No column and no toolbar button; the panel is the sidebar") {
+                    SettingsSwitch(isOn: $settings.sidebarOnlyFloats)
+                        .disabled(!settings.sidebarFloats)
                 }
             }
             ChatTextSizeCard(index: $settings.chatZoom)

@@ -96,13 +96,18 @@ final class ThreadRuntime {
     /// the corner that panel sits in.
     var hydraPoppedHeadID: UUID?
     var hydraPoppedPanelDock: PanelDockCorner = .bottomLeading
+    /// Heads whose automatic panel the user closed, so they stay in the team panel while
+    /// the others fill the room.
+    var hydraAutoPopHeld: Set<UUID> = []
+    /// The order the user gave the panels inside their corners by dragging; a panel not
+    /// listed comes after the listed ones, in the built-in order: helper, team, popped
+    /// head, usage, heads popped out automatically.
+    var panelStackOrder: [FloatingPanelID] = []
+    /// Heads whose automatic panel the user dragged: they keep that corner and count
+    /// against its room.
+    var hydraAutoPanelDocks: [UUID: PanelDockCorner] = [:]
     /// The Hydra panel was dismissed; the next head to start brings it back.
     var isHydraPanelHidden = false
-    /// The usage panel: the plan's limits and credits floating beside the chat, across the
-    /// column from the heads. Nil follows the setting (see `AppSettings.showsUsagePanel`);
-    /// dismissing it or opening it from the usage popover decides for this chat alone.
-    var isUsagePanelShown: Bool?
-    var usagePanelDock: PanelDockCorner = .bottomLeading
     /// Heads by the tool row that stands for them in this timeline, so the row can show
     /// who was sent out.
     private(set) var hydraToolHeads: [String: UUID] = [:]

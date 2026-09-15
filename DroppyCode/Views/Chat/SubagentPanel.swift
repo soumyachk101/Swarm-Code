@@ -1,13 +1,18 @@
 import AppKit
 import SwiftUI
 
+/// Every floating panel of a chat, for its place in a corner's stack.
+enum FloatingPanelID: Hashable {
+    case subagent, hydra, popped, usage, auto(UUID)
+}
+
 /// The side of the chat column a docked panel sits on.
 enum PanelDockSide: Equatable {
     case leading, trailing
 }
 
 /// The corner a floating panel docks in.
-enum PanelDockCorner: Equatable {
+enum PanelDockCorner: String, Equatable {
     case topLeading, topTrailing, bottomLeading, bottomTrailing
 
     var side: PanelDockSide {
@@ -18,6 +23,15 @@ enum PanelDockCorner: Equatable {
     }
 
     var isTop: Bool { self == .topLeading || self == .topTrailing }
+
+    static func make(side: PanelDockSide, isTop: Bool) -> PanelDockCorner {
+        switch (side, isTop) {
+        case (.leading, true): .topLeading
+        case (.trailing, true): .topTrailing
+        case (.leading, false): .bottomLeading
+        case (.trailing, false): .bottomTrailing
+        }
+    }
 
     /// The corner on the other side of the chat column, at the same edge.
     var acrossTheColumn: PanelDockCorner {
@@ -60,14 +74,25 @@ struct PanelDocks {
         }
     }
 
-    /// The docked spot in a corner with `below` panels already docked in it: each one
-    /// stacks a panel's height further from the edge, above the last at the bottom and
-    /// below it at the top.
-    func stacked(_ corner: PanelDockCorner, below: Int, layout: SubagentPanelLayout) -> CGPoint {
-        let spot = self[corner]
-        let step = CGFloat(below) * (layout.panelHeight + SubagentPanelLayout.gap)
-        let y = corner.isTop ? min(spot.y + step, layout.pane.height - layout.panelHeight - 8) : max(8, spot.y - step)
-        return CGPoint(x: spot.x, y: y)
+    /// A panel's spot in its side's grid of `slots` slots, spread evenly between
+    /// the two docked spots: a panel in a top corner with `below = b` sits in
+    /// slot `b`, one in a bottom corner in slot `slots - 1 - b`.
+    func stacked(_ corner: PanelDockCorner, below: Int, slots: Int, layout: SubagentPanelLayout) -> CGPoint {
+        let step = slots > 1 ? (bottomLeading.y - topLeading.y) / CGFloat(slots - 1) : 0
+        let index = corner.isTop ? below : slots - 1 - below
+        let y = topLeading.y + CGFloat(max(0, index)) * step
+        return CGPoint(x: self[corner].x, y: y)
+    }
+
+    /// The corner and stack depth a side's slot holds: the top half sits in the
+    /// side's top corner counting down from the chrome row, the bottom half in
+    /// the bottom corner counting up from the chat box.
+    static func corner(forSlot index: Int, of slots: Int, side: PanelDockSide) -> (corner: PanelDockCorner, below: Int) {
+        if index <= (slots - 1) / 2 {
+            (PanelDockCorner.make(side: side, isTop: true), index)
+        } else {
+            (PanelDockCorner.make(side: side, isTop: false), slots - 1 - index)
+        }
     }
 }
 
@@ -126,7 +151,7 @@ struct SubagentPanelLayout: Equatable {
 
     /// The room a docked panel has from the chrome row down to the chat box, or to the
     /// bottom margin when it sits beside the box.
-    private var verticalRoom: CGFloat {
+    var verticalRoom: CGFloat {
         let below = sitsBesideComposer ? Self.bottomMargin : composerAreaHeight + Self.gap
         return pane.height - Chrome.contentTopInset - below
     }
@@ -191,6 +216,13 @@ struct SubagentPanelLayout: Equatable {
         case (.leading, false): return .bottomLeading
         case (.trailing, false): return .bottomTrailing
         }
+    }
+
+    /// Which slot of the side's grid of `slots` slots a panel whose top-left
+    /// is at `origin` is over: the slot whose y it sits nearest, rounded.
+    func slotIndex(at origin: CGPoint, slots: Int, docks: PanelDocks) -> Int {
+        let step = slots > 1 ? (docks.bottomLeading.y - docks.topLeading.y) / CGFloat(slots - 1) : 0
+        return step > 0 ? min(slots - 1, max(0, Int(((origin.y - docks.topLeading.y) / step).rounded()))) : 0
     }
 
     /// Keeps a dragged panel inside the pane.

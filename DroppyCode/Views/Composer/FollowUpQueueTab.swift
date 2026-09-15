@@ -381,6 +381,11 @@ final class FollowUpEditCoordinator: NSObject {
     /// its own for it to hang from.
     private var anchorRect: CGRect?
     private var monitors: [Any] = []
+    /// The chat window and the pencil's rect in it as the editor opened, for the click
+    /// monitor: resolving the anchor per event (see `WindowRectAnchor.target`) would
+    /// name the editor's own window once a click lands there, and close it.
+    private weak var shownIn: NSWindow?
+    private var shownRect: NSRect = .zero
 
     override init() {
         super.init()
@@ -416,6 +421,8 @@ final class FollowUpEditCoordinator: NSObject {
         var size = NSHostingView(rootView: editor).intrinsicContentSize
         if size.width <= 0 || size.height <= 0 { size = NSSize(width: 520, height: 320) }
         popover.setFixedContent(editor, size: size)
+        shownIn = anchor.view.window
+        shownRect = anchor.view.convert(anchor.rect, to: nil)
         popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: anchor.view.isFlipped ? .maxY : .minY)
         startMonitors()
     }
@@ -446,8 +453,8 @@ final class FollowUpEditCoordinator: NSObject {
     /// are windows of their own, so clicks there pass, as does the pencil
     /// (which toggles on its own).
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
-        guard let window = event.window, let anchor = anchorTarget, window === anchor.view.window else { return event }
-        if anchor.rect.contains(anchor.view.convert(event.locationInWindow, from: nil)) { return event }
+        guard let window = event.window, let shownIn, window === shownIn else { return event }
+        if shownRect.contains(event.locationInWindow) { return event }
         close()
         return event
     }

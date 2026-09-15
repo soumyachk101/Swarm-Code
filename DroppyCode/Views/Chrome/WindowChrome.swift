@@ -239,11 +239,17 @@ final class SidebarLayout {
 
     private enum Key {
         static let width = "sidebarWidth"
-        static let visible = "sidebarVisible"
+        static let startsOpen = "sidebarStartsOpen"
     }
 
     private(set) var width: CGFloat
     private(set) var isVisible: Bool
+    /// Whether the sidebar is open when the app starts (Settings › Appearance). Collapsed
+    /// by default: the list button in the toolbar shows and hides it any time, and that
+    /// choice lasts for the session alone.
+    var startsOpen: Bool {
+        didSet { persist() }
+    }
     /// Whether the sidebar, as laid out this frame, is wide enough to hold the window buttons
     /// in its top corner. Until it is (while it slides open, or is dragged out from the edge)
     /// they stay over the chat's chrome, and the chrome keeps their room; the moment it is,
@@ -265,7 +271,8 @@ final class SidebarLayout {
         let stored = (defaults.object(forKey: Key.width) as? Double).map { CGFloat($0) } ?? Self.defaultWidth
         restingWidth = min(Self.maximumWidth, max(Self.minimumWidth, stored))
         width = restingWidth
-        let visible = defaults.object(forKey: Key.visible) as? Bool ?? true
+        let visible = defaults.object(forKey: Key.startsOpen) as? Bool ?? false
+        startsOpen = visible
         isVisible = visible
         holdsTrafficLights = visible
     }
@@ -321,7 +328,7 @@ final class SidebarLayout {
     private func persist() {
         let defaults = WebsiteCaptures.defaults ?? .standard
         defaults.set(Double(restingWidth), forKey: Key.width)
-        defaults.set(isVisible, forKey: Key.visible)
+        defaults.set(startsOpen, forKey: Key.startsOpen)
     }
 }
 
