@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ThreadTimeline: View, Equatable {
     @Environment(AppModel.self) private var model
+    @Environment(\.chatZoom) private var zoom
     let runtime: ThreadRuntime
     let scrollChrome: ChromeScrollModel
     let scrollState: TimelineScrollState
@@ -81,7 +82,8 @@ struct ThreadTimeline: View, Equatable {
         let blocks = blockCache.blocks(
             for: entries, meta: meta,
             showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning,
-            isHydraMerging: runtime.isHydraMerging
+            isHydraMerging: runtime.isHydraMerging,
+            workingHeads: model.hydraHeads(of: runtime.threadID).compactMap { $0.hydra?.status == .running ? $0.hydra?.index : nil }
         )
         if blocks.isEmpty && !runtime.isRunning {
             NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
@@ -229,7 +231,7 @@ struct ThreadTimeline: View, Equatable {
                         loadEarlier()
                     } label: {
                         Label("Show \(hidden) earlier messages", systemImage: "chevron.up")
-                            .font(.callout)
+                            .font(.chat(.callout, zoom: zoom))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 7)
@@ -1044,6 +1046,10 @@ enum DisplayBlock: Identifiable, Equatable {
     /// `AppModel.autoMergeHydraWork`). Never built from the entries either: the timeline
     /// appends it while the merge runs and drops it when the note about the outcome lands.
     case merging
+    /// The heads still out on the lead's behalf once its turn is over, by their roster
+    /// index in the order they went. Never built from the entries: the timeline appends
+    /// it while any head works and drops it when the last one reports back.
+    case headsWorking(heads: [Int])
 
     var id: String {
         switch self {
@@ -1051,6 +1057,7 @@ enum DisplayBlock: Identifiable, Equatable {
         case .group(let group, _, _): group.id
         case .working(let turnID, _): "working-\(turnID?.uuidString ?? "")"
         case .merging: "hydra-merging"
+        case .headsWorking: "hydra-heads-working"
         }
     }
 
@@ -1059,7 +1066,7 @@ enum DisplayBlock: Identifiable, Equatable {
         switch self {
         case .turn(_, let turnID, _, _, _): turnID
         case .group(.single(let entry), _, _): entry.turnID
-        case .group(.work, _, _), .group(.heads, _, _), .working, .merging: nil
+        case .group(.work, _, _), .group(.heads, _, _), .working, .merging, .headsWorking: nil
         }
     }
 
@@ -1069,12 +1076,12 @@ enum DisplayBlock: Identifiable, Equatable {
         switch self {
         case .turn(_, _, let entries, _, _): entries.contains { $0.kind == .user }
         case .group(.single(let entry), _, _): entry.kind == .user
-        case .group(.work, _, _), .group(.heads, _, _), .working, .merging: false
+        case .group(.work, _, _), .group(.heads, _, _), .working, .merging, .headsWorking: false
         }
     }
 
     @MainActor
-    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool) -> [DisplayBlock] {
+    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int] = []) -> [DisplayBlock] {
         // Partition into contiguous runs sharing one turnID (nil groups together),
         // so every turn becomes one block.
         var runs: [(turnID: UUID?, entries: [TimelineEntry])] = []
@@ -1106,8 +1113,15 @@ enum DisplayBlock: Identifiable, Equatable {
         if waiting, !(blocks.last?.carriesWorkingLine ?? false) {
             blocks.append(.working(turnID: entries.last?.turnID, liveWork: []))
         }
-        // The merge begins once the lead's turn is over; while it runs, its row ends the timeline.
-        if isHydraMerging, !isRunning {
+        // Heads out on the lead's behalf once its turn is over: their row says who is at
+        // work until they report back. While the lead itself runs, its working line and
+        // the heads' own rows already say so.
+        if !workingHeads.isEmpty, !isRunning {
+            blocks.append(.headsWorking(heads: workingHeads))
+        }
+        // The merge begins once the lead's turn is over; while it runs, its card ends the
+        // timeline, and stays if the user starts the lead on something else meanwhile.
+        if isHydraMerging {
             blocks.append(.merging)
         }
         return blocks
@@ -1133,22 +1147,25 @@ final class TimelineBlockCache {
         var isRunning: Bool
         /// The merge's row comes and goes on this flag alone; no entry changes for it.
         var isHydraMerging: Bool
+        /// The heads' row likewise: it comes and goes as heads start and finish.
+        var workingHeads: [Int]
         var showReasoning: Bool
     }
 
     private var key: Key?
     private var built: [DisplayBlock] = []
 
-    func blocks(for entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool) -> [DisplayBlock] {
+    func blocks(for entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int] = []) -> [DisplayBlock] {
         let wanted = Key(
             entries: entries.map(ObjectIdentifier.init),
             summaries: meta.summaryByTurn,
             isRunning: isRunning,
             isHydraMerging: isHydraMerging,
+            workingHeads: workingHeads,
             showReasoning: showReasoning
         )
         if wanted == key { return built }
-        built = DisplayBlock.build(entries, meta: meta, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging)
+        built = DisplayBlock.build(entries, meta: meta, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads)
         key = wanted
         return built
     }
@@ -1260,6 +1277,8 @@ private struct DisplayBlockView: View, Equatable {
         case .merging:
             // Arrives and leaves like the working line: the stack gives every block the row transition.
             HydraMergingRow(runtime: runtime)
+        case .headsWorking(let heads):
+            HydraHeadsWorkingRow(heads: heads, runtime: runtime)
         }
     }
 }
@@ -1372,6 +1391,7 @@ private struct WorkingIndicator: View {
     /// The tool run in progress, folded into this line while it runs.
     let liveWork: [TimelineEntry]
     var workingDirectory: String?
+    @Environment(\.chatZoom) private var zoom
     @State private var now = Date.now
     @State private var isExpanded = false
 
@@ -1403,7 +1423,7 @@ private struct WorkingIndicator: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                     Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
+                        .font(.chat(.caption2, weight: .semibold, zoom: zoom))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .opacity(canExpand ? 1 : 0)
@@ -1436,7 +1456,7 @@ private struct WorkingIndicator: View {
         }
         .animation(Self.change, value: label)
         .animation(Self.change, value: canExpand)
-        .font(.callout)
+        .font(.chat(.callout, zoom: zoom))
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))

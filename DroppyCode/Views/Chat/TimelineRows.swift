@@ -91,6 +91,7 @@ struct UserMessageRow: View {
 /// team's work merged) takes the same row with the Hydra mark in the glyphs' place; a note
 /// that leads with the merge request's address links to it from the pill.
 struct HydraReportRow: View {
+    @Environment(\.chatZoom) private var zoom
     let message: UserMessage
 
     @State private var isShowingReport = false
@@ -127,19 +128,19 @@ struct HydraReportRow: View {
                     }
                 }
                 Text(verbatim: title)
-                    .font(.callout.weight(.medium))
+                    .font(.chat(.callout, weight: .medium, zoom: zoom))
                     .foregroundStyle(Chrome.primaryText.opacity(0.9))
                 if let link {
                     Link(destination: link) {
                         Text("Open")
-                            .font(.caption.weight(.semibold))
+                            .font(.chat(.caption, weight: .semibold, zoom: zoom))
                             .foregroundStyle(Chrome.secondaryText)
                     }
                     .help("Open in the browser")
                 }
                 if !details.isEmpty {
                     Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
+                        .font(.chat(.caption2, weight: .semibold, zoom: zoom))
                         .foregroundStyle(.tertiary)
                 }
             }
@@ -182,6 +183,88 @@ struct HydraReportRow: View {
     }
 }
 
+/// The heads still out on the lead's behalf: who they are, working, until they report back.
+/// The report pill's twin while the work is still on.
+struct HydraHeadsWorkingRow: View {
+    @Environment(\.chatZoom) private var zoom
+    let heads: [Int]
+    let runtime: ThreadRuntime
+
+    var body: some View {
+        let personas = heads.map(HydraRoster.persona(at:))
+        let names = personas.map(\.name)
+        let who: String = {
+            if names.isEmpty { return "" }
+            if names.count == 1 { return names[0] }
+            return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+        }()
+        let title = names.isEmpty ? "Heads are working" : "\(who) \(names.count == 1 ? "is" : "are") working"
+        HStack(spacing: 8) {
+            HStack(spacing: -4) {
+                ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
+                    HydraGlyph(persona: persona, size: 18, isRunning: true)
+                }
+            }
+            Text(verbatim: title)
+                .font(.chat(.callout, weight: .medium, zoom: zoom))
+                .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                .modifier(HydraShimmer())
+                .contentTransition(.opacity)
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 14)
+        .padding(.vertical, 8)
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .animation(.smooth(duration: 0.3), value: heads)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, 96)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(title))
+    }
+}
+
+/// A shimmer sweeping across the content on a loop: a narrow bright band sliding
+/// left to right, masked to the content itself. Still when reduced motion is on.
+private struct HydraShimmer: ViewModifier {
+    @State private var phase: CGFloat = 0
+    @State private var width: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            content
+        } else {
+            // The band lives in a layer the size of the text and is masked to the text
+            // there: masking the band alone would cut the text to the band's own width.
+            let band = max(24, width / 3)
+            content
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                .overlay {
+                    Color.clear
+                        .overlay(alignment: .leading) {
+                            LinearGradient(
+                                stops: [
+                                    .init(color: Chrome.primaryText.opacity(0), location: 0),
+                                    .init(color: Chrome.primaryText.opacity(0.9), location: 0.5),
+                                    .init(color: Chrome.primaryText.opacity(0), location: 1),
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                            .frame(width: band)
+                            .offset(x: -band + phase * (width + band))
+                        }
+                        .mask { content }
+                        .allowsHitTesting(false)
+                }
+                .onAppear {
+                    withAnimation(.linear(duration: 1.8).repeatForever(autoreverses: false)) {
+                        phase = 1
+                    }
+                }
+        }
+    }
+}
+
 /// A head's report in the popover its pill opens: the markdown at reading width, scrolling
 /// past the panel's height rather than pushing the timeline apart.
 private struct HydraReportPopover: View {
@@ -204,6 +287,7 @@ private struct HydraReportPopover: View {
 /// Never the JSON itself. While the block is still streaming, or when it cannot be read,
 /// the card says the briefs are being written and nothing more.
 struct HydraDelegationBlock: View {
+    @Environment(\.chatZoom) private var zoom
     let json: String
 
     var body: some View {
@@ -215,15 +299,15 @@ struct HydraDelegationBlock: View {
                 .accessibilityHidden(true)
             if tasks.isEmpty {
                 Text("Writing the heads' briefs…")
-                    .font(.callout)
+                    .font(.chat(.callout, zoom: zoom))
                     .foregroundStyle(Chrome.secondaryText)
             } else {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(tasks.count == 1 ? "Sending out a head" : "Sending out \(tasks.count) heads")
-                        .font(.callout.weight(.medium))
+                        .font(.chat(.callout, weight: .medium, zoom: zoom))
                     ForEach(Array(tasks.enumerated()), id: \.offset) { _, task in
                         Text(verbatim: "· " + task)
-                            .font(.caption)
+                            .font(.chat(.caption, zoom: zoom))
                             .foregroundStyle(Chrome.secondaryText)
                     }
                 }
@@ -250,11 +334,13 @@ struct HydraDelegationBlock: View {
     }
 }
 
-/// The team's work on its way to the remote once the lead has finished: what the merge
-/// is doing right now beside the spinner, and how long it has been at it, on the working
-/// line's own geometry and type. The timeline appends the row while the merge runs and
-/// drops it when the note about the outcome lands, so it holds no condition of its own.
+/// The team's work on its way to the remote once the lead has finished, as a card in the
+/// delegation card's style: the mark, what is happening, and under it the stage the merge
+/// is at right now beside the spinner, with how long it has been at it. The timeline
+/// appends the card while the merge runs and drops it when the note about the outcome
+/// lands, so it holds no condition of its own.
 struct HydraMergingRow: View {
+    @Environment(\.chatZoom) private var zoom
     let runtime: ThreadRuntime
     @State private var now = Date.now
 
@@ -264,18 +350,30 @@ struct HydraMergingRow: View {
     var body: some View {
         let stage = (runtime.hydraMergeStage ?? "Merging the team's work") + "…"
         let elapsed = now.timeIntervalSince(runtime.hydraMergeStartedAt ?? now)
-        HStack(spacing: TimelineMetrics.iconSpacing) {
-            WorkingSpinner(cellSize: 3.5)
-                .frame(width: TimelineMetrics.iconWidth)
-            Text(verbatim: stage)
-                .foregroundStyle(.secondary)
-                .contentTransition(.opacity)
-            Text(RelativeTime.duration(elapsed))
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: TimelineMetrics.iconSpacing) {
+            HydraMarkImage()
+                .foregroundStyle(Chrome.secondaryText)
+                .frame(width: 16, height: 16)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Merging the team's work")
+                    .font(.chat(.callout, weight: .medium, zoom: zoom))
+                HStack(spacing: 6) {
+                    WorkingSpinner(cellSize: 3)
+                        .frame(width: 14)
+                    Text(verbatim: stage)
+                        .contentTransition(.opacity)
+                    Text(RelativeTime.duration(elapsed))
+                        .monospacedDigit()
+                }
+                .font(.chat(.caption, zoom: zoom))
+                .foregroundStyle(Chrome.secondaryText)
+                .animation(Self.change, value: stage)
+            }
         }
-        .font(.callout)
-        .animation(Self.change, value: stage)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
         .task {
             while !Task.isCancelled {
@@ -355,6 +453,7 @@ struct AttachmentStrip: View {
 }
 
 struct AttachmentThumbnail: View {
+    @Environment(\.chatZoom) private var zoom
     let attachment: Attachment
     var size: CGFloat = 56
     /// The panel the photo opens in: either a slot, which makes its panel on the first
@@ -425,7 +524,7 @@ struct AttachmentThumbnail: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                .font(.caption)
+                .font(.chat(.caption, zoom: zoom))
                 .padding(.horizontal, 10)
                 .frame(height: size * 0.6)
                 .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 10, style: .continuous))
@@ -458,6 +557,7 @@ struct AttachmentThumbnail: View {
 }
 
 struct AssistantMessageRow: View {
+    @Environment(\.chatZoom) private var zoom
     let entry: TimelineEntry
     /// The turn's summary, set only on the turn's last reply. Precomputed by the
     /// timeline, so rows never scan the thread.
@@ -474,7 +574,7 @@ struct AssistantMessageRow: View {
                 HStack(spacing: 8) {
                     if let summary {
                         Text(TurnEndRow.label(for: summary))
-                            .font(.caption)
+                            .font(.chat(.caption, zoom: zoom))
                             .foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 8)
@@ -500,6 +600,7 @@ struct AssistantMessageRow: View {
 /// reads as one tappable line above the answer; the live group stays expanded.
 /// A lone tool renders as its row alone.
 struct WorkGroup: View {
+    @Environment(\.chatZoom) private var zoom
     let entries: [TimelineEntry]
     let runtime: ThreadRuntime
     var workingDirectory: String?
@@ -524,17 +625,17 @@ struct WorkGroup: View {
                 } label: {
                     HStack(spacing: TimelineMetrics.iconSpacing) {
                         Image(systemName: WorkGroupSummary.symbol(for: entries))
-                            .font(.caption)
+                            .font(.chat(.caption, zoom: zoom))
                             .foregroundStyle(.secondary)
                             .frame(width: TimelineMetrics.iconWidth)
                         Text(WorkGroupSummary.text(for: entries))
                             .foregroundStyle(.secondary)
                         Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
+                            .font(.chat(.caption2, weight: .semibold, zoom: zoom))
                             .foregroundStyle(.tertiary)
                             .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                     }
-                    .font(.callout)
+                    .font(.chat(.callout, zoom: zoom))
                     .padding(.trailing, 12)
                     .contentShape(.rect)
                 }
@@ -558,6 +659,7 @@ struct WorkGroup: View {
 /// one "N earlier steps" line until tapped. Shared by the expanded work group
 /// and the running turn's working line.
 struct WorkSteps: View {
+    @Environment(\.chatZoom) private var zoom
     let entries: [TimelineEntry]
     let runtime: ThreadRuntime
     var workingDirectory: String?
@@ -571,13 +673,13 @@ struct WorkSteps: View {
             } label: {
                 HStack(spacing: TimelineMetrics.iconSpacing) {
                     Image(systemName: "ellipsis")
-                        .font(.caption)
+                        .font(.chat(.caption, zoom: zoom))
                         .foregroundStyle(.secondary)
                         .frame(width: TimelineMetrics.iconWidth)
                     Text(hidden == 1 ? "1 earlier step" : "\(hidden) earlier steps")
                         .foregroundStyle(.secondary)
                 }
-                .font(.callout)
+                .font(.chat(.callout, zoom: zoom))
                 .padding(.trailing, 12)
                 .contentShape(.rect)
             }
@@ -664,6 +766,7 @@ enum WorkGroupSummary {
 }
 
 struct ToolRow: View {
+    @Environment(\.chatZoom) private var zoom
     @Environment(AppModel.self) private var model
     let entry: TimelineEntry
     let runtime: ThreadRuntime
@@ -763,11 +866,11 @@ struct ToolRow: View {
                 // belongs to the row's own text.
                 if opensPopover || opensHead {
                     Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.semibold))
+                        .font(.chat(.caption2, weight: .semibold, zoom: zoom))
                         .foregroundStyle(.tertiary)
                 } else if showsOutput {
                     Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
+                        .font(.chat(.caption2, weight: .semibold, zoom: zoom))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
@@ -783,15 +886,15 @@ struct ToolRow: View {
             Spacer(minLength: 8)
             if call.status == .failed, let exitCode = call.exitCode {
                 Text("exit \(exitCode)")
-                    .font(.caption.monospacedDigit())
+                    .font(.chat(.caption, zoom: zoom).monospacedDigit())
                     .foregroundStyle(Chrome.danger)
             } else if call.status == .declined {
                 Text("Declined")
-                    .font(.caption)
+                    .font(.chat(.caption, zoom: zoom))
                     .foregroundStyle(Chrome.warning)
             }
         }
-        .font(.callout)
+        .font(.chat(.callout, zoom: zoom))
         .padding(.trailing, 12)
     }
 
@@ -825,6 +928,7 @@ private struct HeadStepsPopoverModifier: ViewModifier {
 /// Reads the head's own runtime straight from the model, so the list grows while the
 /// head still works.
 struct HydraHeadStepsPopover: View {
+    @Environment(\.chatZoom) private var zoom
     let headID: UUID
     @Environment(AppModel.self) private var model
 
@@ -845,7 +949,7 @@ struct HydraHeadStepsPopover: View {
                     header(hydra)
                     if !hydra.task.isEmpty {
                         Text(verbatim: hydra.task)
-                            .font(.callout)
+                            .font(.chat(.callout, zoom: zoom))
                             .foregroundStyle(Chrome.primaryText)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
@@ -855,7 +959,7 @@ struct HydraHeadStepsPopover: View {
                     sectionTitle("Steps")
                     if steps.isEmpty {
                         Text("No steps yet.")
-                            .font(.callout)
+                            .font(.chat(.callout, zoom: zoom))
                             .foregroundStyle(Chrome.secondaryText)
                     } else {
                         ForEach(steps) { entry in
@@ -867,7 +971,7 @@ struct HydraHeadStepsPopover: View {
                     VStack(alignment: .leading, spacing: 8) {
                         sectionTitle("Report")
                         Text(verbatim: report)
-                            .font(.callout)
+                            .font(.chat(.callout, zoom: zoom))
                             .foregroundStyle(Chrome.primaryText)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
@@ -886,11 +990,11 @@ struct HydraHeadStepsPopover: View {
         HStack(alignment: .center, spacing: TimelineMetrics.iconSpacing) {
             HydraGlyph(persona: hydra.persona, size: 22, isRunning: hydra.status == .running, status: hydra.status)
             Text(verbatim: hydra.persona.name)
-                .font(.headline)
+                .font(.chat(.headline, zoom: zoom))
                 .foregroundStyle(Chrome.primaryText)
             Spacer(minLength: 12)
             Text(verbatim: Self.statusLine(for: hydra))
-                .font(.caption)
+                .font(.chat(.caption, zoom: zoom))
                 .foregroundStyle(Chrome.secondaryText)
                 .lineLimit(1)
         }
@@ -898,7 +1002,7 @@ struct HydraHeadStepsPopover: View {
 
     private func sectionTitle(_ title: String) -> some View {
         Text(verbatim: title)
-            .font(.caption.weight(.semibold))
+            .font(.chat(.caption, weight: .semibold, zoom: zoom))
             .foregroundStyle(Chrome.secondaryText)
     }
 
@@ -911,7 +1015,7 @@ struct HydraHeadStepsPopover: View {
                 ToolStatusIcon(call: call)
                     .frame(width: TimelineMetrics.iconWidth)
                 Text(verbatim: ToolPresentation.label(for: call))
-                    .font(.callout)
+                    .font(.chat(.callout, zoom: zoom))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .truncationMode(.middle)
@@ -921,25 +1025,25 @@ struct HydraHeadStepsPopover: View {
             }
         case .assistant(let message):
             Text(verbatim: message.text)
-                .font(.callout)
+                .font(.chat(.callout, zoom: zoom))
                 .foregroundStyle(Chrome.primaryText)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         case .user(let message):
             // A later brief: the lead steering the head on.
             Text(verbatim: message.text)
-                .font(.callout)
+                .font(.chat(.callout, zoom: zoom))
                 .foregroundStyle(Chrome.secondaryText)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         case .notice(let notice):
             HStack(alignment: .firstTextBaseline, spacing: TimelineMetrics.iconSpacing) {
                 Image(systemName: Self.noticeSymbol(for: notice.level))
-                    .font(.caption)
+                    .font(.chat(.caption, zoom: zoom))
                     .foregroundStyle(Self.noticeColor(for: notice.level))
                     .frame(width: TimelineMetrics.iconWidth)
                 Text(verbatim: notice.message)
-                    .font(.callout)
+                    .font(.chat(.callout, zoom: zoom))
                     .foregroundStyle(Self.noticeColor(for: notice.level))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1009,6 +1113,7 @@ struct HydraHeadStepsPopover: View {
 }
 
 private struct ToolStatusIcon: View {
+    @Environment(\.chatZoom) private var zoom
     let call: ToolCall
     /// Stands in for the kind's symbol: a photo for a read that looked at one.
     var symbol: String?
@@ -1030,12 +1135,13 @@ private struct ToolStatusIcon: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .font(.caption)
+        .font(.chat(.caption, zoom: zoom))
         .frame(width: TimelineMetrics.iconWidth)
     }
 }
 
 private struct ToolDetailView: View {
+    @Environment(\.chatZoom) private var zoom
     let call: ToolCall
     var workingDirectory: String?
 
@@ -1053,7 +1159,7 @@ private struct ToolDetailView: View {
             }
             if let detail = call.detail, !detail.isEmpty {
                 Text(detail)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(.chat(.caption, design: .monospaced, zoom: zoom))
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .lineLimit(12)
@@ -1062,7 +1168,7 @@ private struct ToolDetailView: View {
                 if let diff = edit.diff, !diff.isEmpty {
                     VStack(alignment: .leading, spacing: 0) {
                         Text(edit.path)
-                            .font(.caption)
+                            .font(.chat(.caption, zoom: zoom))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
@@ -1079,7 +1185,7 @@ private struct ToolDetailView: View {
                 let visible = collapsed ? lines.prefix(Self.outputLineLimit).joined(separator: "\n") : output
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     Text(visible)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(.chat(.caption, design: .monospaced, zoom: zoom))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
@@ -1089,7 +1195,7 @@ private struct ToolDetailView: View {
                             showsFullOutput.toggle()
                         }
                         .buttonStyle(.link)
-                        .font(.caption)
+                        .font(.chat(.caption, zoom: zoom))
                     }
                 }
             }
@@ -1171,6 +1277,7 @@ enum ToolPresentation {
 }
 
 struct PlanCard: View {
+    @Environment(\.chatZoom) private var zoom
     let entry: TimelineEntry
     let runtime: ThreadRuntime
 
@@ -1181,16 +1288,16 @@ struct PlanCard: View {
                     Image(systemName: "list.bullet.clipboard")
                         .foregroundStyle(.tint)
                     Text("Plan")
-                        .font(.headline)
+                        .font(.chat(.headline, zoom: zoom))
                     Spacer()
                     switch plan.state {
                     case .accepted:
                         Label("Approved", systemImage: "checkmark")
-                            .font(.caption)
+                            .font(.chat(.caption, zoom: zoom))
                             .foregroundStyle(.secondary)
                     case .dismissed:
                         Text("Dismissed")
-                            .font(.caption)
+                            .font(.chat(.caption, zoom: zoom))
                             .foregroundStyle(.secondary)
                     default:
                         EmptyView()
@@ -1227,6 +1334,7 @@ struct PlanCard: View {
 }
 
 struct TodoListRow: View {
+    @Environment(\.chatZoom) private var zoom
     let entry: TimelineEntry
 
     var body: some View {
@@ -1236,7 +1344,7 @@ struct TodoListRow: View {
                     Image(systemName: "checklist")
                     Text("\(steps.count { $0.status == .done }) of \(steps.count) done")
                 }
-                .font(.caption)
+                .font(.chat(.caption, zoom: zoom))
                 .foregroundStyle(.secondary)
                 ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1246,7 +1354,7 @@ struct TodoListRow: View {
                             .foregroundStyle(step.status == .done ? .secondary : .primary)
                             .strikethrough(step.status == .done, color: .secondary)
                     }
-                    .font(.callout)
+                    .font(.chat(.callout, zoom: zoom))
                 }
             }
             .padding(14)
@@ -1268,6 +1376,7 @@ struct TodoListRow: View {
 }
 
 struct NoticeRow: View {
+    @Environment(\.chatZoom) private var zoom
     let entry: TimelineEntry
 
     var body: some View {
@@ -1279,7 +1388,7 @@ struct NoticeRow: View {
                     .textSelection(.enabled)
                     .foregroundStyle(notice.level == .info ? .secondary : .primary)
             }
-            .font(.callout)
+            .font(.chat(.callout, zoom: zoom))
             .padding(.horizontal, notice.level == .info ? 0 : 12)
             .padding(.vertical, notice.level == .info ? 0 : 9)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1315,6 +1424,7 @@ struct NoticeRow: View {
 }
 
 struct TurnEndRow: View {
+    @Environment(\.chatZoom) private var zoom
     let summary: TurnSummary
     /// Whether the turn produced a reply. Set by the timeline; when true the duration
     /// lives on the reply's hover line instead.
@@ -1323,7 +1433,7 @@ struct TurnEndRow: View {
     var body: some View {
         if !hasReply {
             Text(Self.label(for: summary))
-                .font(.caption)
+                .font(.chat(.caption, zoom: zoom))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -1342,6 +1452,7 @@ struct TurnEndRow: View {
 /// A finished turn, collapsed to nothing more than its header, its final response
 /// and its file summary. The chevron re-opens the turn's full steps.
 struct TurnFinishedBlock: View {
+    @Environment(\.chatZoom) private var zoom
     let runtime: ThreadRuntime
     let turnID: UUID
     let summary: TurnSummary
@@ -1450,10 +1561,10 @@ struct TurnFinishedBlock: View {
             } label: {
                 HStack(spacing: 6) {
                     Text(TurnEndRow.label(for: summary))
-                        .font(.callout)
+                        .font(.chat(.callout, zoom: zoom))
                         .foregroundStyle(.secondary)
                     Image(systemName: "chevron.right")
-                        .font(.caption2.weight(.semibold))
+                        .font(.chat(.caption2, weight: .semibold, zoom: zoom))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
@@ -1545,6 +1656,7 @@ struct TurnFinishedBlock: View {
 }
 
 private struct TurnFileCard: View {
+    @Environment(\.chatZoom) private var zoom
     let summary: TurnSummary
     let files: [TurnFinishedBlock.FileStat]
     let canUndo: Bool
@@ -1565,13 +1677,13 @@ private struct TurnFileCard: View {
                     .frame(width: 36, height: 36)
                     .overlay {
                         Image(systemName: "plus.app")
-                            .font(.system(size: 15))
+                            .font(.system(size: 15 * zoom))
                             .foregroundStyle(.secondary)
                     }
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(summary.filesChanged == 1 ? "Edited 1 file" : "Edited \(summary.filesChanged) files")
-                        .font(.callout.weight(.medium))
+                        .font(.chat(.callout, weight: .medium, zoom: zoom))
                     DiffStatLabel(additions: summary.additions, deletions: summary.deletions)
                 }
                 Spacer(minLength: 8)
@@ -1581,7 +1693,7 @@ private struct TurnFileCard: View {
                             Text("Undo")
                             Image(systemName: "arrow.uturn.backward")
                         }
-                        .font(.callout)
+                        .font(.chat(.callout, zoom: zoom))
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 4)
@@ -1615,7 +1727,7 @@ private struct TurnFileCard: View {
                     ForEach(files, id: \.path) { file in
                         HStack(spacing: 8) {
                             Text(verbatim: file.path)
-                                .font(.callout)
+                                .font(.chat(.callout, zoom: zoom))
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer(minLength: 8)
