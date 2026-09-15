@@ -38,6 +38,13 @@ struct ChatView: View {
     /// its arrival, and a panel that flashed on and straight off again read as a glitch:
     /// once shown it stays at least `hydraMinimumPresence`, then goes with the same slide
     /// a finished head's panel goes with.
+    /// Whether the panels and the room the chat makes for them follow the pointer with
+    /// no spring: a panel grip, the sidebar's edge or the terminal's divider is held. A
+    /// sidebar drag or a terminal-divider drag moves the pane every frame the way a live
+    /// resize does; a spring restarted per frame lagged the panels behind and swam.
+    private var panelsHeld: Bool {
+        panelResize.isActive || model.sidebar.isDragging || runtime.isTerminalResizing
+    }
     @State private var hydraShownSince: Date?
     @State private var hydraLingers = false
     @State private var hydraLingerTask: Task<Void, Never>?
@@ -58,7 +65,11 @@ struct ChatView: View {
         // Split, so a resize frame recomputes docks and reserves only, never the
         // thread lists.
         let members = PanelMembers(runtime: runtime, model: model)
-        let scene = PanelScene(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight)
+        let scene = PanelScene(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight, holdsHydra: hydraLingers)
+        // The team's panel as the model has it, before the linger below: what decides
+        // whether the panel is held on a beat after its heads leave.
+        let hydraPresent = !members.heads.isEmpty && scene.isMeasured
+        let holds = panelsHeld
         VStack(spacing: 0) {
             ThreadTimeline(
                 runtime: runtime,
@@ -86,14 +97,14 @@ struct ChatView: View {
             // The room the docked panels take from either side; the conversation and the
             // box centre in the rest, so they stay lined up with each other (see
             // `ReserveSlide` for how they get there without laying out on every frame).
-            .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !panelResize.isActive))
+            .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !holds))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ComposerArea(runtime: runtime, workingDirectory: workingDirectory)
                     .overlay(alignment: .top) {
                         JumpToLatestButton(scrollState: scrollState)
                     }
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerAreaHeight = $0 }
-                    .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !panelResize.isActive, animatesWidth: true))
+                    .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !holds, animatesWidth: true))
             }
             .overlay(alignment: .top) {
                 PaneTopVeil(model: scrollChrome)
@@ -118,7 +129,7 @@ struct ChatView: View {
                 .animation(Chrome.panelSlide, value: scene.subagent?.id)
             }
             .overlay(alignment: .topLeading) {
-                let showsHydraPanel = scene.showsHydra || hydraLingers
+                let showsHydraPanel = scene.showsHydra
                 ZStack(alignment: .topLeading) {
                     if showsHydraPanel {
                         hydraPanel(scene: scene, workingDirectory: workingDirectory, project: project)
@@ -130,7 +141,7 @@ struct ChatView: View {
                 // transaction. The room the chat makes for it is animated by
                 // `ReserveSlide` on its own, so nothing here reaches the column.
                 .animation(Chrome.panelSlide, value: showsHydraPanel)
-                .onChange(of: scene.showsHydra) { _, shows in
+                .onChange(of: hydraPresent) { _, shows in
                     hydraLingerTask?.cancel()
                     if shows {
                         hydraShownSince = .now
@@ -180,7 +191,7 @@ struct ChatView: View {
                 let layout = PanelScene.geometry(
                     members: members, runtime: runtime, model: model,
                     paneSize: paneSize, composerAreaHeight: composerAreaHeight,
-                    usageContentHeight: usageContentHeight).layout
+                    usageContentHeight: usageContentHeight, holdsHydra: hydraLingers).layout
                 subagentDrag.reclamp(in: layout)
                 hydraDrag.reclamp(in: layout)
                 poppedDrag.reclamp(in: layout)
@@ -277,7 +288,7 @@ struct ChatView: View {
             }
         )
         // Inside the offset, so the panel grows in and fades out in place.
-        .transition(Self.panelTransition), resize: resizer(for: runtime.subagentPanelDock, scene: scene), isResizing: panelResize.isActive)
+        .transition(Self.panelTransition), resize: resizer(for: runtime.subagentPanelDock, scene: scene), isResizing: panelsHeld)
     }
 
     /// The team's panel: next to the helper panel when that one is in the same corner.
@@ -324,7 +335,7 @@ struct ChatView: View {
             guard !liveResize.isActive else { return }
             if WebsiteCaptures.isEnabled { WebsiteCaptures.hydraPanelFrames[runtime.threadID] = frame }
         }
-        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelResize.isActive)
+        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelsHeld)
     }
 
     /// The popped-out head's panel: beyond whichever panels are in the same corner.
@@ -358,7 +369,7 @@ struct ChatView: View {
                 }
             }
         )
-        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelResize.isActive)
+        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelsHeld)
         .id(popped.id)
     }
 
@@ -393,7 +404,7 @@ struct ChatView: View {
                 }
             }
         )
-        .transition(Self.panelTransition), resize: resizer(for: slot.corner, scene: scene), isResizing: panelResize.isActive)
+        .transition(Self.panelTransition), resize: resizer(for: slot.corner, scene: scene), isResizing: panelsHeld)
         .id(head.id)
     }
 
@@ -435,7 +446,7 @@ struct ChatView: View {
                 }
             }
         )
-        .transition(Self.panelTransition), resize: usageResizer(for: corner, scene: scene, size: size, minimum: minimum), isResizing: panelResize.isActive)
+        .transition(Self.panelTransition), resize: usageResizer(for: corner, scene: scene, size: size, minimum: minimum), isResizing: panelsHeld)
     }
 
     /// The grips of a panel docked in `corner`. A pull on a free edge grows the panel away
@@ -728,8 +739,8 @@ private struct PanelScene {
 
     var hasHeads: Bool { !heads.isEmpty }
 
-    init(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?) {
-        let geometry = Self.geometry(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight)
+    init(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?, holdsHydra: Bool = false) {
+        let geometry = Self.geometry(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight, holdsHydra: holdsHydra)
         subagent = members.subagent
         isDocked = members.isDocked
         autoPopped = geometry.autoPopped
@@ -771,9 +782,12 @@ private struct PanelScene {
     /// The smallest usage panel: its strip and one row.
     static let usageMinimumHeight = HydraPanel.stripHeight + 44
 
-    static func geometry(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?) -> Geometry {
+    /// `holdsHydra` keeps the team's panel in the scene after its heads have gone (see
+    /// `ChatView.hydraLingers`), so the conversation keeps its room and the panel fades
+    /// out over it rather than the column sliding out from under a panel still showing.
+    static func geometry(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?, holdsHydra: Bool = false) -> Geometry {
         let isMeasured = paneSize != .zero
-        let showsHydra = !members.heads.isEmpty && isMeasured
+        let showsHydra = (!members.heads.isEmpty || holdsHydra) && isMeasured
         let showsPopped = members.popped != nil && showsHydra
         let showsUsage = members.usage != nil && isMeasured
         let isHydraDocked = showsHydra

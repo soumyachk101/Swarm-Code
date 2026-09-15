@@ -83,7 +83,7 @@ struct TerminalPanel: View {
         // the tabs moved the drawer instead of scrolling them.
         .overlay(alignment: .top) {
             TerminalResizeHandle(
-                onBegin: { dragOrigin = model.settings.terminalHeight },
+                onBegin: { dragOrigin = model.settings.terminalHeight; runtime.isTerminalResizing = true },
                 onChange: { delta in
                     let origin = dragOrigin ?? model.settings.terminalHeight
                     dragHeight = min(760, max(140, origin + delta))
@@ -92,6 +92,7 @@ struct TerminalPanel: View {
                     if let dragHeight { model.settings.terminalHeight = dragHeight }
                     dragHeight = nil
                     dragOrigin = nil
+                    runtime.isTerminalResizing = false
                 }
             )
             .frame(height: 8)

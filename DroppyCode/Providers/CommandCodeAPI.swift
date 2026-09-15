@@ -332,7 +332,7 @@ enum CommandCodeAPI {
         ModelOption(id: "claude-fable-5-1", name: "Claude Fable 5.1", detail: "Anthropic · most capable for demanding reasoning & long-horizon agents", efforts: efforts(for: "claude-fable-5-1")),
         ModelOption(id: "claude-opus-5", name: "Claude Opus 5", detail: "Anthropic · most intelligent Opus for agents and coding", efforts: efforts(for: "claude-opus-5")),
         ModelOption(id: "gpt-6-astra", name: "GPT-6 Astra", detail: "OpenAI · most capable OpenAI model for demanding reasoning & agents", efforts: efforts(for: "gpt-6-astra")),
-        ModelOption(id: "gpt-5.5", name: "GPT-5.5", detail: "OpenAI · latest frontier model for general complex work", efforts: efforts(for: "gpt-5.5")),
+        ModelOption(id: "gpt-5.6-sol", name: "GPT-5.6 Sol", detail: "OpenAI · latest frontier model for general complex work", efforts: efforts(for: "gpt-5.6-sol")),
         ModelOption(id: "google/gemini-3.8-flash", name: "Gemini 3.8 Flash", detail: "Google · newest Gemini Flash, improved core reasoning", efforts: efforts(for: "google/gemini-3.8-flash")),
         ModelOption(id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash", detail: "Open Source · fast hybrid-attention reasoning", efforts: efforts(for: "deepseek/deepseek-v4-flash")),
         ModelOption(id: "moonshotai/kimi-k3", name: "Kimi K3", detail: "Open Source · long-horizon coding & knowledge work with 1M context", efforts: efforts(for: "moonshotai/kimi-k3")),

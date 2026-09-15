@@ -28,18 +28,18 @@ enum HydraCookbook {
         HydraPairRecipe(id: "claude-opus-opus", title: "Opus max, Opus heads", tagline: "Opus thinks as hard as it can about the plan and the review; Opus heads build at a working effort.", lead: .init(provider: .claude, models: ["Opus"], effort: "max"), heads: .init(provider: .claude, models: ["Opus"], effort: "medium"), maxHeads: nil),
         HydraPairRecipe(id: "claude-opus-sonnet", title: "Opus leads Sonnet", tagline: "A careful plan and quick hands: the everyday pair, cheaper than all-Opus and nearly as good.", lead: .init(provider: .claude, models: ["Opus"], effort: "high"), heads: .init(provider: .claude, models: ["Sonnet"], effort: "medium"), maxHeads: nil),
         HydraPairRecipe(id: "claude-fable-fable", title: "All Fable", tagline: "For the hardest, longest jobs: every seat on the most capable model, a few heads at a time.", lead: .init(provider: .claude, models: ["Fable"], effort: "max"), heads: .init(provider: .claude, models: ["Fable"], effort: "high"), maxHeads: 4),
-        HydraPairRecipe(id: "claude-fable-gemini-flash", title: "Fable leads Gemini Flash", tagline: "A slow, careful lead and a wide, fast team: many Gemini 3.8 Flash heads on the mechanical parts.", lead: .init(provider: .claude, models: ["Fable"], effort: "high"), heads: .init(provider: .antigravity, models: ["Gemini 3.8 Flash", "Flash"], effort: "medium"), maxHeads: 6),
-        HydraPairRecipe(id: "claude-opus-spark", title: "Opus leads Spark Contributor", tagline: "Opus writes the briefs; Muse Spark 1.3 Contributor heads on Command Code run them fast and cheap.", lead: .init(provider: .claude, models: ["Opus"], effort: "high"), heads: .init(provider: .commandcode, models: ["Muse Spark 1.3 Contributor", "Contributor"], effort: "medium"), maxHeads: nil),
-        HydraPairRecipe(id: "claude-opus-deepseek-flash", title: "Opus leads DeepSeek Flash", tagline: "Opus keeps the plan tight; DeepSeek V4.1 Flash heads keep the bill small on the routine parts.", lead: .init(provider: .claude, models: ["Opus"], effort: "high"), heads: .init(provider: .deepseek, models: ["Flash"], effort: "high"), maxHeads: nil),
-        HydraPairRecipe(id: "commandcode-astra-spark", title: "Astra leads Spark Contributor", tagline: "GPT-6 Astra orchestrates at high; Muse Spark 1.3 Contributor heads build at medium, all on one Command Code account.", lead: .init(provider: .commandcode, models: ["GPT-6 Astra", "Astra"], effort: "high"), heads: .init(provider: .commandcode, models: ["Muse Spark 1.3 Contributor", "Contributor"], effort: "medium"), maxHeads: nil),
-        HydraPairRecipe(id: "commandcode-astra-gpt55", title: "Astra leads GPT-5.5", tagline: "OpenAI top to bottom: Astra plans and reviews, GPT-5.5 heads do the work.", lead: .init(provider: .commandcode, models: ["GPT-6 Astra", "Astra"], effort: "high"), heads: .init(provider: .commandcode, models: ["GPT-5.5"], effort: "medium"), maxHeads: nil),
-        HydraPairRecipe(id: "commandcode-fable-flash", title: "Fable leads Gemini Flash on Command Code", tagline: "Claude Fable 5.1 leads; Gemini 3.8 Flash heads sprint, without a second account.", lead: .init(provider: .commandcode, models: ["Claude Fable 5.1", "Fable"], effort: "high"), heads: .init(provider: .commandcode, models: ["Gemini 3.8 Flash"], effort: "medium"), maxHeads: 6),
-        HydraPairRecipe(id: "commandcode-astra-kimi", title: "Astra leads Kimi K3", tagline: "A frontier lead over open-weight heads with a million tokens of context each.", lead: .init(provider: .commandcode, models: ["GPT-6 Astra", "Astra"], effort: "high"), heads: .init(provider: .commandcode, models: ["Kimi K3", "kimi"], effort: "high"), maxHeads: nil),
-        HydraPairRecipe(id: "codex-gpt55-mini", title: "GPT-5.5 leads the mini", tagline: "A Codex lead on high sends GPT-5.4 mini heads out at medium: quick, cheap legwork.", lead: .init(provider: .codex, models: ["gpt-5.5", "5.5"], effort: "high"), heads: .init(provider: .codex, models: ["mini"], effort: "medium"), maxHeads: nil),
-        HydraPairRecipe(id: "codex-claude-sonnet", title: "GPT-5.5 leads Sonnet", tagline: "Two labs on one job: a Codex lead with Claude Sonnet heads.", lead: .init(provider: .codex, models: ["gpt-5.5", "5.5"], effort: "high"), heads: .init(provider: .claude, models: ["Sonnet"], effort: "medium"), maxHeads: nil),
-        HydraPairRecipe(id: "antigravity-pro-flash", title: "Gemini Pro leads Gemini Flash", tagline: "Gemini 3.1 Pro plans at high; six Gemini 3.8 Flash heads sprint at medium.", lead: .init(provider: .antigravity, models: ["Gemini 3.1 Pro", "Pro"], effort: "high"), heads: .init(provider: .antigravity, models: ["Gemini 3.8 Flash", "Flash"], effort: "medium"), maxHeads: 6),
-        HydraPairRecipe(id: "deepseek-pro-flash", title: "V4 Pro leads V4.1 Flash", tagline: "DeepSeek end to end: Pro reasons at high, Flash heads build at high for very little.", lead: .init(provider: .deepseek, models: ["Pro"], effort: "high"), heads: .init(provider: .deepseek, models: ["Flash"], effort: "high"), maxHeads: nil),
-        HydraPairRecipe(id: "meta-spark-contributor", title: "Spark 1.3 leads Spark Contributor", tagline: "Muse Spark 1.3 leads at high; the cheaper Contributor heads build at medium.", lead: .init(provider: .meta, models: ["Spark 1.3"], effort: "high"), heads: .init(provider: .meta, models: ["Contributor"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "claude-fable-gemini-flash", title: "Fable leads Gemini Flash", tagline: "A slow, careful lead and a wide, fast team: many Gemini Flash heads on the mechanical parts.", lead: .init(provider: .claude, models: ["Fable"], effort: "high"), heads: .init(provider: .antigravity, models: ["Flash"], effort: "medium"), maxHeads: 6),
+        HydraPairRecipe(id: "claude-opus-spark", title: "Opus leads Spark Contributor", tagline: "Opus writes the briefs; Muse Spark Contributor heads on Command Code run them fast and cheap.", lead: .init(provider: .claude, models: ["Opus"], effort: "high"), heads: .init(provider: .commandcode, models: ["Contributor"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "claude-opus-deepseek-flash", title: "Opus leads DeepSeek Flash", tagline: "Opus keeps the plan tight; DeepSeek Flash heads keep the bill small on the routine parts.", lead: .init(provider: .claude, models: ["Opus"], effort: "high"), heads: .init(provider: .deepseek, models: ["Flash"], effort: "high"), maxHeads: nil),
+        HydraPairRecipe(id: "commandcode-astra-spark", title: "GPT leads Spark Contributor", tagline: "The newest GPT orchestrates at high; Muse Spark Contributor heads build at medium, all on one Command Code account.", lead: .init(provider: .commandcode, models: ["GPT-6"], effort: "high"), heads: .init(provider: .commandcode, models: ["Contributor"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "commandcode-astra-gpt", title: "GPT leads GPT", tagline: "OpenAI top to bottom: the newest GPT plans and reviews, its lighter sibling does the work.", lead: .init(provider: .commandcode, models: ["GPT-6"], effort: "high"), heads: .init(provider: .commandcode, models: ["Luna", "GPT-5"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "commandcode-fable-flash", title: "Fable leads Gemini Flash on Command Code", tagline: "Claude Fable leads; Gemini Flash heads sprint, without a second account.", lead: .init(provider: .commandcode, models: ["Claude Fable"], effort: "high"), heads: .init(provider: .commandcode, models: ["Gemini"], effort: "medium"), maxHeads: 6),
+        HydraPairRecipe(id: "commandcode-astra-kimi", title: "GPT leads Kimi", tagline: "A frontier lead over open-weight heads with a million tokens of context each.", lead: .init(provider: .commandcode, models: ["GPT-6"], effort: "high"), heads: .init(provider: .commandcode, models: ["Kimi K"], effort: "high"), maxHeads: nil),
+        HydraPairRecipe(id: "codex-gpt-family", title: "Codex GPT team", tagline: "A Codex lead on the newest GPT sends its lightest sibling out at medium: quick, cheap legwork.", lead: .init(provider: .codex, models: ["Sol", "Terra", "GPT-5"], effort: "high"), heads: .init(provider: .codex, models: ["Luna", "GPT-5"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "codex-claude-sonnet", title: "Codex GPT leads Sonnet", tagline: "Two labs on one job: a Codex lead with Claude Sonnet heads.", lead: .init(provider: .codex, models: ["Sol", "Terra", "GPT-5"], effort: "high"), heads: .init(provider: .claude, models: ["Sonnet"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "antigravity-pro-flash", title: "Gemini Pro leads Gemini Flash", tagline: "Gemini Pro plans at high; six Gemini Flash heads sprint at medium.", lead: .init(provider: .antigravity, models: ["Pro"], effort: "high"), heads: .init(provider: .antigravity, models: ["Flash"], effort: "medium"), maxHeads: 6),
+        HydraPairRecipe(id: "deepseek-pro-flash", title: "DeepSeek Pro leads DeepSeek Flash", tagline: "DeepSeek end to end: Pro reasons at high, Flash heads build at high for very little.", lead: .init(provider: .deepseek, models: ["Pro"], effort: "high"), heads: .init(provider: .deepseek, models: ["Flash"], effort: "high"), maxHeads: nil),
+        HydraPairRecipe(id: "meta-spark-contributor", title: "Spark leads Spark Contributor", tagline: "Muse Spark leads at high; the cheaper Contributor heads build at medium.", lead: .init(provider: .meta, models: ["Spark"], effort: "high"), heads: .init(provider: .meta, models: ["Contributor"], effort: "medium"), maxHeads: nil),
     ]
 
     /// Whether a provider is set up and switched on here.
@@ -79,15 +79,27 @@ enum HydraCookbook {
         return pair
     }
 
-    /// The first catalog model whose name or id contains one of the names, best name first.
+    /// A fragment names a family; the newest member the catalog lists wins, so a new
+    /// release moves a recipe up on its own.
     @MainActor static func model(named names: [String], for provider: ProviderKind, registry: ProviderRegistry) -> ModelOption? {
         let options = registry.models(for: provider)
         for name in names {
-            if let match = options.first(where: { $0.name.localizedCaseInsensitiveContains(name) || $0.id.localizedCaseInsensitiveContains(name) }) {
-                return match
+            let matches = options.filter { $0.name.localizedCaseInsensitiveContains(name) || $0.id.localizedCaseInsensitiveContains(name) }
+            guard !matches.isEmpty else { continue }
+            return matches.max { lhs, rhs in
+                let lhsVersion = version(of: lhs.name) ?? -1
+                let rhsVersion = version(of: rhs.name) ?? -1
+                if lhsVersion != rhsVersion { return lhsVersion < rhsVersion }
+                return options.firstIndex(where: { $0.id == lhs.id })! > options.firstIndex(where: { $0.id == rhs.id })!
             }
         }
         return nil
+    }
+
+    /// The first version number in a catalog name ('Gemini 3.8 Flash' → 3.8), if any.
+    private static func version(of name: String) -> Double? {
+        guard let match = name.firstMatch(of: #/[0-9]+(?:\.[0-9]+)?/#) else { return nil }
+        return Double(match.output)
     }
 
     /// The effort asked for when the model offers it; nil otherwise, which keeps the default.

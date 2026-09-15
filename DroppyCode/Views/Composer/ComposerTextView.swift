@@ -9,6 +9,8 @@ enum ComposerKey {
     case submit
     /// Command-Return: steer the running turn (queue as a follow-up).
     case steer
+    /// Delete with the caret at the very start and nothing selected: the chips before the text take it.
+    case deleteAtStart
 }
 
 /// Lets SwiftUI reach into the text view for focus and in-place replacements.
@@ -353,6 +355,11 @@ struct ComposerTextView: NSViewRepresentable {
                 return parent.onKey(.tab)
             case #selector(NSResponder.cancelOperation(_:)):
                 return parent.onKey(.escape)
+            case #selector(NSResponder.deleteBackward(_:)):
+                if textView.selectedRange() == NSRange(location: 0, length: 0) {
+                    return parent.onKey(.deleteAtStart)
+                }
+                return false
             default:
                 return false
             }

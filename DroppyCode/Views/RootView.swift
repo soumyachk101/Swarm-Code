@@ -29,6 +29,12 @@ struct RootView: View {
 
             DetailView()
                 .frame(minWidth: 0, maxWidth: .infinity)
+                // The sheet keeps to its own bounds. A conversation gliding sideways to make
+                // room for a panel (`ReserveSlide` carries it on an offset), a panel settling
+                // into a corner of a pane that just changed size, and rows re-wrapping in a
+                // live resize all reach past the sheet for a few frames, and drew over the
+                // sidebar or off the window's edge until they landed.
+                .clipped()
                 .padding(.leading, sidebar.isVisible && !onlyFloats ? 0 : Chrome.sheetInset)
                 .padding(.trailing, Chrome.sheetInset)
                 .padding(.vertical, Chrome.sheetInset)
@@ -53,7 +59,7 @@ struct RootView: View {
             .padding(.top, Chrome.trafficLightTop + Chrome.trafficLightDiameter)
         }
         .background { WindowBackdrop() }
-        .background { WindowChromeConfigurator(sidebarVisible: sidebar.holdsTrafficLights) }
+        .background { WindowChromeConfigurator(sidebarVisible: sidebar.holdsTrafficLights, sidebarDragging: sidebar.isDragging) }
         // Clipped after the backdrop is painted, so the glass and its edge stop at the window's own curve.
         .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
         .ignoresSafeArea()

@@ -6,23 +6,26 @@ import SwiftUI
 /// with the title bar kept reaching down to them so they take their clicks wherever they are pinned.
 struct WindowChromeConfigurator: NSViewRepresentable {
     var sidebarVisible = true
+    var sidebarDragging = false
 
     func makeNSView(context: Context) -> WindowChromeProbeView {
         WindowChromeProbeView()
     }
 
     func updateNSView(_ nsView: WindowChromeProbeView, context: Context) {
+        nsView.sidebarDragging = sidebarDragging
         nsView.sidebarVisible = sidebarVisible
     }
 }
 
 final class WindowChromeProbeView: NSView {
+    var sidebarDragging = false
     var sidebarVisible = true {
         didSet {
             guard sidebarVisible != oldValue, let window else { return }
             // A restarted animation every frame of a live resize is what made the
             // buttons lag behind the window; they follow unanimated, then settle.
-            WindowChrome.placeTrafficLights(on: window, sidebarVisible: sidebarVisible, animated: !window.inLiveResize)
+            WindowChrome.placeTrafficLights(on: window, sidebarVisible: sidebarVisible, animated: !window.inLiveResize && !sidebarDragging)
         }
     }
 
@@ -218,7 +221,7 @@ enum WindowChrome {
         // room for them arrive together.
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.32
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.9, 0.3, 1)
             context.allowsImplicitAnimation = true
             titlebar.layoutSubtreeIfNeeded()
         }
@@ -255,6 +258,8 @@ final class SidebarLayout {
     /// they stay over the chat's chrome, and the chrome keeps their room; the moment it is,
     /// they move over and the chrome closes up, together.
     private(set) var holdsTrafficLights: Bool
+    /// True while the sidebar's edge is held; the chat follows the width with no spring until it is let go.
+    private(set) var isDragging = false
 
     /// The width from which the buttons fit beside the sidebar's edge with their usual clearance.
     static var trafficLightsFitWidth: CGFloat {
@@ -290,6 +295,7 @@ final class SidebarLayout {
     }
 
     func beginDrag() {
+        isDragging = true
         if isVisible {
             anchorWidth = width
             return
@@ -317,6 +323,7 @@ final class SidebarLayout {
             withAnimation(Chrome.panelSlide) { width = settled }
         }
         persist()
+        isDragging = false
     }
 
     func toggle() {

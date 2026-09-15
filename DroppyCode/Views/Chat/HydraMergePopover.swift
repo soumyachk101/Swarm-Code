@@ -1,0 +1,192 @@
+import AppKit
+import SwiftUI
+
+/// A merge note's body read into fields, so the popover can draw the card instead of
+/// the bare text. The files line carries the numbers; every other line is a status
+/// remark worth one quiet row, and the up-to-date line becomes a check rather than text.
+struct HydraMergeNote {
+    let link: MergeRequestLink
+    let files: Int
+    let additions: Int
+    let deletions: Int
+    let target: String
+    let branch: String
+    let notes: [String]
+    let isUpToDate: Bool
+
+    /// The files line, which is what makes a body a merge note at all: without it the
+    /// caller keeps the generic popover.
+    private static let filesPattern = try! NSRegularExpression(
+        pattern: #"^(\d+) files? \(\+(\d+) −(\d+)\) landed on `([^`]+)` from `([^`]+)`\.$"#
+    )
+
+    static func parse(_ body: String, link: MergeRequestLink) -> HydraMergeNote? {
+        var match: (files: Int, additions: Int, deletions: Int, target: String, branch: String)?
+        var notes: [String] = []
+        var isUpToDate = false
+        for rawLine in body.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { continue }
+            let range = NSRange(line.startIndex..., in: line)
+            if let found = filesPattern.firstMatch(in: line, range: range), match == nil {
+                func group(_ i: Int) -> String {
+                    let ns = found.range(at: i)
+                    guard ns.location != NSNotFound, let swift = Range(ns, in: line) else { return "" }
+                    return String(line[swift])
+                }
+                guard let files = Int(group(1)), let additions = Int(group(2)), let deletions = Int(group(3)) else { continue }
+                match = (files, additions, deletions, group(4), group(5))
+                continue
+            }
+            if line.hasSuffix("is up to date.") {
+                isUpToDate = true
+                continue
+            }
+            notes.append(line.replacingOccurrences(of: "`", with: ""))
+        }
+        guard let match else { return nil }
+        return HydraMergeNote(
+            link: link, files: match.files, additions: match.additions, deletions: match.deletions,
+            target: match.target, branch: match.branch, notes: notes, isUpToDate: isUpToDate
+        )
+    }
+}
+
+/// A merge note as a small card: what landed and where, in numbers first, then the
+/// checkout's own standing. Sized to its content, so no empty box hangs off the pill.
+struct HydraMergePopover: View {
+    let note: HydraMergeNote
+
+    /// The forge's mark beside the title, loaded on appear so the header reads as the
+    /// merge request's home rather than a bare label.
+    @State private var favicon: NSImage?
+
+    /// GitLab calls it a merge request; the other forges call it a pull request.
+    private var openTitle: String {
+        switch note.link.forge {
+        case .gitlab: "Open merge request"
+        case .github, .gitea: "Open pull request"
+        }
+    }
+
+    var body: some View {
+        let host = note.link.url.host ?? ""
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Group {
+                    if let favicon {
+                        Image(nsImage: favicon)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                    } else {
+                        Image(systemName: "arrow.triangle.merge")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Chrome.accent)
+                    }
+                }
+                .frame(width: 22, height: 22)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Merged")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Chrome.primaryText)
+                    Text(verbatim: "\(note.link.label) on \(host)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+                Spacer()
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 20))
+                    .foregroundStyle(Chrome.success)
+            }
+            HStack(spacing: 8) {
+                stat(value: "\(note.files)", label: note.files == 1 ? "file" : "files")
+                stat(value: "+\(note.additions)", label: "added", tint: Chrome.success)
+                stat(value: "−\(note.deletions)", label: "removed", tint: Chrome.danger)
+            }
+            HStack(spacing: 6) {
+                chip(note.branch)
+                    .frame(maxWidth: 230, alignment: .leading)
+                    .help(note.branch)
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Chrome.secondaryText)
+                chip(note.target)
+            }
+            if note.isUpToDate {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.success)
+                    Text("Checkout is up to date")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+            }
+            ForEach(Array(note.notes.enumerated()), id: \.offset) { _, entry in
+                HStack(alignment: .top, spacing: 6) {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText)
+                    Text(verbatim: entry)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            HStack(spacing: 8) {
+                Spacer()
+                Button("Copy link") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(note.link.url.absoluteString, forType: .string)
+                }
+                .buttonStyle(.glass)
+                Button {
+                    NSWorkspace.shared.open(note.link.url)
+                } label: {
+                    Label(openTitle, systemImage: "arrow.up.right")
+                }
+                .buttonStyle(.glassProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(18)
+        .frame(width: 380)
+        .accessibilityElement(children: .contain)
+        .task {
+            if let known = FaviconCache.cached(host: host) {
+                favicon = known
+            } else {
+                favicon = await FaviconCache.image(for: host)
+            }
+        }
+    }
+
+    /// One number tile: the count large, what it counts small beneath it.
+    private func stat(value: String, label: String, tint: Color? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: value)
+                .font(.system(size: 17, weight: .semibold).monospacedDigit())
+                .foregroundStyle(tint ?? Chrome.primaryText)
+            Text(verbatim: label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Chrome.secondaryText)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Chrome.overlay(0.08)))
+    }
+
+    /// A branch name as a capsule, since branch names read as names rather than prose.
+    private func chip(_ name: String) -> some View {
+        Text(verbatim: name)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(Chrome.primaryText.opacity(0.9))
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule(style: .continuous).fill(Chrome.overlay(0.1)))
+    }
+}

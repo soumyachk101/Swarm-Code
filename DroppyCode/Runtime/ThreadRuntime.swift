@@ -62,23 +62,39 @@ struct ReplyQuote: Identifiable, Equatable, Sendable {
     }
 }
 
+/// The slash command or skill the message leads with, picked from the suggestions:
+/// a chip in the chat box, the first word of what goes out.
+struct DraftCommand: Equatable, Sendable {
+    var name: String
+    var detail: String
+    var isBuiltIn: Bool
+}
+
 struct ComposerDraft: Equatable {
     var text = ""
     var attachments: [Attachment] = []
     var quotes: [ReplyQuote] = []
+    var command: DraftCommand? = nil
 
     var isEmpty: Bool {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty && command == nil
     }
 
     /// What actually goes out: every quote as a markdown blockquote, a blank line, then
     /// the typed words.
     var outgoingText: String {
-        guard !quotes.isEmpty else { return text }
-        let blocks = quotes.map { quote in
-            quote.text.split(separator: "\n", omittingEmptySubsequences: false).map { $0.isEmpty ? ">" : "> " + $0 }.joined(separator: "\n")
-        }
-        return blocks.joined(separator: "\n\n") + "\n\n" + text
+        let body: String = {
+            guard !quotes.isEmpty else { return text }
+            let blocks = quotes.map { quote in
+                quote.text.split(separator: "\n", omittingEmptySubsequences: false).map { $0.isEmpty ? ">" : "> " + $0 }.joined(separator: "\n")
+            }
+            return blocks.joined(separator: "\n\n") + "\n\n" + text
+        }()
+        guard let command else { return body }
+        let head = "/\(command.name)"
+        if body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return head }
+        if quotes.isEmpty { return head + " " + body }
+        return head + "\n\n" + body
     }
 }
 
@@ -110,6 +126,8 @@ final class ThreadRuntime {
 
     var draft = ComposerDraft()
     var isTerminalVisible = false
+    /// True while the terminal's divider is held: the pane's height follows the pointer, and the chat's panels follow it with no spring until it is let go.
+    var isTerminalResizing = false
     var isDiffVisible = false
     /// Which corner of the chat pane the helper panel this thread spawned sits in.
     var subagentPanelDock: PanelDockCorner = .bottomTrailing
@@ -424,7 +442,7 @@ final class ThreadRuntime {
         let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = draft.attachments
         let outgoing = draft.outgoingText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if handleLocalCommand(text) {
+        if handleLocalCommand(outgoing) {
             draft = ComposerDraft()
             return
         }
