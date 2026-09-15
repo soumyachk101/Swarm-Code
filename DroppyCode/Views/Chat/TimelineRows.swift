@@ -194,57 +194,61 @@ struct HydraReportRow: View {
         // a link on the pill, and the chevron stays only for what the note says after it.
         let link = personas.isEmpty ? Self.leadingURL(in: body) : nil
         let details = link == nil ? body : Self.withoutFirstLine(body)
-        Button {
-            guard !details.isEmpty else { return }
-            isShowingReport.toggle()
-        } label: {
-            HStack(spacing: 8) {
-                // The mark takes a glyph's slot, so both rows sit the same in the pill.
-                // (Only one or the other: an empty stack would still keep its spacing.)
-                if personas.isEmpty {
-                    HydraMarkImage()
-                        .foregroundStyle(Chrome.secondaryText)
-                        .frame(width: 18, height: 18)
-                } else {
-                    HStack(spacing: -4) {
-                        ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
-                            HydraGlyph(persona: persona, size: 18)
+        // The link is a control of its own beside the button, never inside its label: a
+        // link nested in a button takes the button's clicks on macOS, and the text
+        // stopped opening the popover.
+        HStack(spacing: 8) {
+            Button {
+                guard !details.isEmpty else { return }
+                isShowingReport.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    // The mark takes a glyph's slot, so both rows sit the same in the pill.
+                    // (Only one or the other: an empty stack would still keep its spacing.)
+                    if personas.isEmpty {
+                        HydraMarkImage()
+                            .foregroundStyle(Chrome.secondaryText)
+                            .frame(width: 18, height: 18)
+                    } else {
+                        HStack(spacing: -4) {
+                            ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
+                                HydraGlyph(persona: persona, size: 18)
+                            }
                         }
                     }
-                }
-                Text(verbatim: title)
-                    .font(.chat(.callout, weight: .medium, zoom: zoom))
-                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if let link {
-                    Link(destination: link) {
-                        Text("Open")
-                            .font(.chat(.caption, weight: .semibold, zoom: zoom))
-                            .foregroundStyle(Chrome.secondaryText)
+                    Text(verbatim: title)
+                        .font(.chat(.callout, weight: .medium, zoom: zoom))
+                        .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if !details.isEmpty {
+                        Image(systemName: "chevron.right")
+                            .font(.chat(.caption2, weight: .semibold, zoom: zoom))
+                            .foregroundStyle(.tertiary)
                     }
-                    .help("Open in the browser")
                 }
-                if !details.isEmpty {
-                    Image(systemName: "chevron.right")
-                        .font(.chat(.caption2, weight: .semibold, zoom: zoom))
-                        .foregroundStyle(.tertiary)
-                }
+                .contentShape(.rect)
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 14)
-            .padding(.vertical, 8)
-            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .contentShape(.rect)
+            .buttonStyle(.plain)
+            .disabled(details.isEmpty)
+            .help(details.isEmpty ? "" : "Show the message")
+            .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
+                HydraReportPopover(text: body)
+                    .presentedChrome()
+            }
+            if let link {
+                Link(destination: link) {
+                    Text("Open")
+                        .font(.chat(.caption, weight: .semibold, zoom: zoom))
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+                .help("Open in the browser")
+            }
         }
-        .buttonStyle(.plain)
-        // The pill stays live for its link when there is nothing more to open.
-        .disabled(details.isEmpty && link == nil)
-        .help(details.isEmpty ? "" : "Show the message")
-        .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
-            HydraReportPopover(text: body)
-                .presentedChrome()
-        }
+        .padding(.leading, 12)
+        .padding(.trailing, 14)
+        .padding(.vertical, 8)
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         // The report parses off the main thread as the pill appears, so the tap that
         // opens it finds the blocks ready rather than parsing the whole batch first.
         .task(id: body) {
