@@ -81,7 +81,7 @@ final class ClaudeSession: ProviderSession {
                 // The heads and the lead's brief.
                 arguments += [
                     "--agents", HydraPrompts.claudeAgents(hydra).compactString,
-                    "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges),
+                    "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads),
                     "--system-prompt-snapshot", "off",
                     "--forward-subagent-text",
                 ]

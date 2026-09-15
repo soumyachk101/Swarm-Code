@@ -15,7 +15,13 @@ extension AppModel {
         guard settings.hydraAutoMerge, let lead = thread(leadID), hydraIsOn(lead), let project = project(lead.projectID),
               let runtime = existingRuntime(for: leadID), !runtime.isHydraMerging else { return }
         runtime.isHydraMerging = true
-        defer { runtime.isHydraMerging = false }
+        runtime.hydraMergeStartedAt = .now
+        runtime.hydraMergeStage = "Gathering the team's files"
+        defer {
+            runtime.isHydraMerging = false
+            runtime.hydraMergeStage = nil
+            runtime.hydraMergeStartedAt = nil
+        }
         // A head's work still going into the checkout finishes first: the snapshot the
         // commit is built from must hold the patch whole or not at all. Landings that have
         // not started yet wait for the merge instead (see `waitForSettledCheckout`).
@@ -50,6 +56,7 @@ extension AppModel {
 
         do {
             let head = try await git.commitHash()
+            runtime.hydraMergeStage = "Writing the commit"
             let tree = try await git.captureTree(paths: sorted)
             // Everything the team did is committed already, or was merged before.
             guard try await tree != git.treeHash(of: "HEAD") else { return }
@@ -58,6 +65,7 @@ extension AppModel {
             // A whole job's patch is big and parsing it counts every line: off the main
             // actor, so the chat stays live while the work goes out.
             let files = await Task.detached(priority: .utility) { DiffParser.parse(patch) }.value
+            runtime.hydraMergeStage = "Writing the commit message"
             let message = await commitMessage(for: lead, files: files, patch: patch, directory: checkout)
             let subject = TextCleanup.singleLine(message, limit: 72)
 
@@ -86,14 +94,17 @@ extension AppModel {
                 // tree already has the content.
                 try await git.resetIndex(paths: sorted)
             }
+            runtime.hydraMergeStage = "Pushing the branch"
             try await git.pushBranch(branch)
 
             let body = mergeRequestBody(for: lead, files: files, runtime: runtime)
+            runtime.hydraMergeStage = "Opening the merge request"
             guard let url = try await git.createPullRequest(title: subject, body: body, source: branch, target: target),
                   let link = MergeRequestLink(url: url) else {
                 note(leadID, "Hydra pushed \(branch) but could not open a merge request.", "Open one for `\(branch)` into `\(target)` and merge it from there.")
                 return
             }
+            runtime.hydraMergeStage = "Merging"
             do {
                 try await git.mergePullRequest(link)
             } catch {
@@ -110,16 +121,18 @@ extension AppModel {
                 lines.append("\(work.dropped == 1 ? "One file" : "\(work.dropped) files") the team wrote outside the checkout stayed where they are; only the project's own files can go out.")
             }
             if ownBranch {
+                runtime.hydraMergeStage = "Bringing the checkout up to date"
                 let synced = await syncDefaultBranch(git, from: head, target: target, ownPaths: sorted)
                 lines.append(synced ? "The checkout is up to date." : "The checkout was left as it was: `\(target)` moved on in other ways meanwhile, or the team's files changed again; `git pull` when it suits you.")
             } else if lead.worktreePath != nil {
                 // The lead worked in a worktree: the project's own checkout follows when it can.
+                runtime.hydraMergeStage = "Bringing the checkout up to date"
                 let main = Git(project.path)
                 if await main.status()?.branch == target, await main.dirtyPaths().isEmpty, !(await main.hasOperationInProgress()) {
                     if (try? await main.pullFastForward()) != nil { lines.append("The project checkout is up to date.") }
                 }
             }
-            note(leadID, "Hydra merged \(link.label).", lines.joined(separator: "\n"))
+            note(leadID, "Hydra merged \(link.label)", lines.joined(separator: "\n"))
             existingRuntime(for: leadID)?.noteDiffChanged()
         } catch {
             note(leadID, "Hydra could not merge the team's work.", "\(error.localizedDescription)\n\nThe work is still in the checkout.")

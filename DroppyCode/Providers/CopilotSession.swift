@@ -132,7 +132,7 @@ final class CopilotSession: ProviderSession {
         if let hydra = configuration.hydra {
             if hydra.runsNatively {
                 params["customAgents"] = .array(HydraPrompts.copilotAgents(hydra))
-                params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges))]
+                params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))]
             } else {
                 // Heads on another provider are Droppy-run: the lead asks for them with the
                 // delegation block, and no agents of the CLI's own are defined.
