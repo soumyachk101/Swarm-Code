@@ -23,6 +23,14 @@ struct ChatView: View {
     @State private var hydraDrag = PanelDragState()
     @State private var poppedDrag = PanelDragState()
     @State private var usageDrag = PanelDragState()
+    /// The automatic panels never move (their spot is the layout's), so one resting
+    /// drag state serves them all.
+    @State private var autoDrag = PanelDragState()
+    /// One drag state per head with its own panel, made as they appear.
+    @State private var autoDrags: [UUID: PanelDragState] = [:]
+    /// What the usage panel's content asked for, so the panel is no taller than its rows
+    /// (see `usagePanel`).
+    @State private var usageContentHeight: CGFloat?
     /// One grip held at a time, whichever panel it is on.
     @State private var panelResize = PanelResizeState()
 
@@ -40,7 +48,7 @@ struct ChatView: View {
         // Split, so a resize frame recomputes docks and reserves only, never the
         // thread lists.
         let members = PanelMembers(runtime: runtime, model: model)
-        let scene = PanelScene(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight)
+        let scene = PanelScene(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight)
         VStack(spacing: 0) {
             ThreadTimeline(
                 runtime: runtime,
@@ -66,22 +74,16 @@ struct ChatView: View {
             // scales its fonts by this factor itself (see `Font.chat`).
             .environment(\.chatZoom, ChatZoom.scale(at: model.settings.chatZoom))
             // The room the docked panels take from either side; the conversation and the
-            // box centre in the rest, so they stay lined up with each other. The slide is
-            // keyed to what is docked, never to the measured room: a pane measured for the
-            // first time then lays out in place instead of sliding in from nowhere, and a
-            // window resize moves things at once, as it should.
-            .padding(.leading, scene.reserve.leading)
-            .padding(.trailing, scene.reserve.trailing)
-            .animation(Chrome.panelSlide, value: scene.dockedSides)
+            // box centre in the rest, so they stay lined up with each other (see
+            // `ReserveSlide` for how they get there without laying out on every frame).
+            .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !panelResize.isActive))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ComposerArea(runtime: runtime, workingDirectory: workingDirectory)
                     .overlay(alignment: .top) {
                         JumpToLatestButton(scrollState: scrollState)
                     }
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerAreaHeight = $0 }
-                    .padding(.leading, scene.reserve.leading)
-                    .padding(.trailing, scene.reserve.trailing)
-                    .animation(Chrome.panelSlide, value: scene.dockedSides)
+                    .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !panelResize.isActive))
             }
             .overlay(alignment: .top) {
                 PaneTopVeil(model: scrollChrome)
@@ -124,6 +126,12 @@ struct ChatView: View {
             }
             .animation(Chrome.panelSlide, value: scene.popped?.id)
             .overlay(alignment: .topLeading) {
+                ForEach(scene.autoPopped) { auto in
+                    autoPoppedPanel(auto, scene: scene, workingDirectory: workingDirectory, project: project)
+                }
+            }
+            .animation(Chrome.panelSlide, value: scene.autoPopped.map(\.id))
+            .overlay(alignment: .topLeading) {
                 if let usage = scene.usage, scene.showsUsage {
                     usagePanel(usage, scene: scene)
                 }
@@ -136,11 +144,13 @@ struct ChatView: View {
                 guard liveResize.isActive else { return }
                 let layout = PanelScene.geometry(
                     members: members, runtime: runtime, model: model,
-                    paneSize: paneSize, composerAreaHeight: composerAreaHeight).layout
+                    paneSize: paneSize, composerAreaHeight: composerAreaHeight,
+                    usageContentHeight: usageContentHeight).layout
                 subagentDrag.reclamp(in: layout)
                 hydraDrag.reclamp(in: layout)
                 poppedDrag.reclamp(in: layout)
                 usageDrag.reclamp(in: layout)
+                for drag in autoDrags.values { drag.reclamp(in: layout) }
             }
             // The pane's final size: docked panels land on their new docked spot, and
             // a free spot left outside is pulled back inside.
@@ -150,6 +160,11 @@ struct ChatView: View {
                 hydraDrag.reclamp(in: scene.layout)
                 poppedDrag.reclamp(in: scene.layout)
                 usageDrag.reclamp(in: scene.layout)
+                for drag in autoDrags.values { drag.reclamp(in: scene.layout) }
+            }
+            .onChange(of: scene.autoPopped.map(\.id), initial: true) { _, ids in
+                for id in ids where autoDrags[id] == nil { autoDrags[id] = PanelDragState() }
+                for id in autoDrags.keys where !ids.contains(id) { autoDrags[id] = nil }
             }
 
             if runtime.isTerminalVisible {
@@ -189,6 +204,8 @@ struct ChatView: View {
             hydraDrag = PanelDragState()
             poppedDrag = PanelDragState()
             usageDrag = PanelDragState()
+            autoDrag = PanelDragState()
+            autoDrags = [:]
             panelResize = PanelResizeState()
         }
     }
@@ -197,7 +214,8 @@ struct ChatView: View {
 
     /// The helper's panel, in its corner.
     private func subagentPanel(_ subagent: ChatThread, scene: PanelScene, project: Project?) -> some View {
-        let rest = scene.docks[runtime.subagentPanelDock]
+        let slot = scene.slots[.subagent] ?? PanelScene.PanelSlot(corner: runtime.subagentPanelDock, below: 0, lift: 0)
+        let rest = Self.rest(for: slot, scene: scene)
         return PlacedPanel(drag: subagentDrag, rest: rest, size: scene.layout.panelSize, content: SubagentPanel(
             thread: subagent,
             size: scene.layout.panelSize,
@@ -207,10 +225,12 @@ struct ChatView: View {
             onDrag: { translation in
                 let position = subagentDrag.move(by: translation, from: rest, in: scene.layout)
                 dock(\.subagentPanelDock, nearest: position, scene: scene)
+                reorder(.subagent, at: position, corner: runtime.subagentPanelDock, scene: scene)
             },
             onDragEnd: {
                 if let heading = subagentDrag.release() {
                     dock(\.subagentPanelDock, nearest: heading, scene: scene)
+                    reorder(.subagent, at: heading, corner: runtime.subagentPanelDock, scene: scene)
                 }
             },
             close: {
@@ -227,8 +247,9 @@ struct ChatView: View {
 
     /// The team's panel: next to the helper panel when that one is in the same corner.
     private func hydraPanel(scene: PanelScene, workingDirectory: String?, project: Project?) -> some View {
-        let corner = runtime.hydraPanelDock
-        let rest = scene.docks.stacked(corner, below: scene.isDocked && runtime.subagentPanelDock == corner ? 1 : 0, layout: scene.layout)
+        let slot = scene.slots[.hydra] ?? PanelScene.PanelSlot(corner: runtime.hydraPanelDock, below: 0, lift: 0)
+        let corner = slot.corner
+        let rest = Self.rest(for: slot, scene: scene)
         return PlacedPanel(drag: hydraDrag, rest: rest, size: scene.layout.panelSize, content: HydraPanel(
             runtime: runtime,
             heads: scene.heads,
@@ -238,10 +259,12 @@ struct ChatView: View {
             onDrag: { translation in
                 let position = hydraDrag.move(by: translation, from: rest, in: scene.layout)
                 dock(\.hydraPanelDock, nearest: position, scene: scene)
+                reorder(.hydra, at: position, corner: runtime.hydraPanelDock, scene: scene)
             },
             onDragEnd: {
                 if let heading = hydraDrag.release() {
                     dock(\.hydraPanelDock, nearest: heading, scene: scene)
+                    reorder(.hydra, at: heading, corner: runtime.hydraPanelDock, scene: scene)
                 }
             },
             popOut: { id in
@@ -271,9 +294,9 @@ struct ChatView: View {
 
     /// The popped-out head's panel: beyond whichever panels are in the same corner.
     private func poppedPanel(_ popped: ChatThread, scene: PanelScene, workingDirectory: String?, project: Project?) -> some View {
-        let corner = runtime.hydraPoppedPanelDock
-        let below = [scene.isDocked && runtime.subagentPanelDock == corner, scene.isHydraDocked && runtime.hydraPanelDock == corner].count { $0 }
-        let rest = scene.docks.stacked(corner, below: below, layout: scene.layout)
+        let slot = scene.slots[.popped] ?? PanelScene.PanelSlot(corner: runtime.hydraPoppedPanelDock, below: 0, lift: 0)
+        let corner = slot.corner
+        let rest = Self.rest(for: slot, scene: scene)
         return PlacedPanel(drag: poppedDrag, rest: rest, size: scene.layout.panelSize, content: HydraPanel(
             runtime: runtime,
             heads: [popped],
@@ -284,10 +307,12 @@ struct ChatView: View {
             onDrag: { translation in
                 let position = poppedDrag.move(by: translation, from: rest, in: scene.layout)
                 dock(\.hydraPoppedPanelDock, nearest: position, scene: scene)
+                reorder(.popped, at: position, corner: runtime.hydraPoppedPanelDock, scene: scene)
             },
             onDragEnd: {
                 if let heading = poppedDrag.release() {
                     dock(\.hydraPoppedPanelDock, nearest: heading, scene: scene)
+                    reorder(.popped, at: heading, corner: runtime.hydraPoppedPanelDock, scene: scene)
                 }
             },
             dismiss: {
@@ -302,38 +327,80 @@ struct ChatView: View {
         .id(popped.id)
     }
 
-    /// The usage panel: beyond whichever panels are in the same corner, so it is the last
-    /// of a stack. Across the column from the heads by default, at the left.
-    private func usagePanel(_ usage: PanelUsage, scene: PanelScene) -> some View {
-        let corner = runtime.usagePanelDock
-        let below = [
-            scene.isDocked && runtime.subagentPanelDock == corner,
-            scene.isHydraDocked && runtime.hydraPanelDock == corner,
-            scene.showsPopped && runtime.hydraPoppedPanelDock == corner,
-        ].count { $0 }
-        let rest = scene.docks.stacked(corner, below: below, layout: scene.layout)
-        return PlacedPanel(drag: usageDrag, rest: rest, size: scene.layout.panelSize, content: UsageFloatingPanel(
+    /// A head popped out because there was room; its X sends it back into the team
+    /// panel and holds it there.
+    private func autoPoppedPanel(_ head: ChatThread, scene: PanelScene, workingDirectory: String?, project: Project?) -> some View {
+        let slot = scene.slots[.auto(head.id)] ?? PanelScene.PanelSlot(corner: runtime.hydraPanelDock.acrossTheColumn, below: 0, lift: 0)
+        let rest = Self.rest(for: slot, scene: scene)
+        let drag = autoDrags[head.id] ?? autoDrag
+        return PlacedPanel(drag: drag, rest: rest, size: scene.layout.panelSize, content: HydraPanel(
             runtime: runtime,
-            provider: usage.provider,
-            headsProvider: usage.headsProvider,
+            heads: [head],
             size: scene.layout.panelSize,
+            workingDirectory: workingDirectory,
+            projectName: project?.name,
+            isPoppedOut: true,
             onDrag: { translation in
-                let position = usageDrag.move(by: translation, from: rest, in: scene.layout)
-                dock(\.usagePanelDock, nearest: position, scene: scene)
+                let position = drag.move(by: translation, from: rest, in: scene.layout)
+                dockAuto(head.id, nearest: position, scene: scene)
+                reorder(.auto(head.id), at: position, corner: runtime.hydraAutoPanelDocks[head.id] ?? slot.corner, scene: scene)
             },
             onDragEnd: {
-                if let heading = usageDrag.release() {
-                    dock(\.usagePanelDock, nearest: heading, scene: scene)
+                if let heading = drag.release() {
+                    dockAuto(head.id, nearest: heading, scene: scene)
+                    reorder(.auto(head.id), at: heading, corner: runtime.hydraAutoPanelDocks[head.id] ?? slot.corner, scene: scene)
                 }
             },
             dismiss: {
-                // For this chat alone; the usage popover's expand button brings it back.
                 withAnimation(Chrome.panelSlide) {
-                    runtime.isUsagePanelShown = false
+                    runtime.hydraAutoPopHeld.insert(head.id)
+                    runtime.hydraSelectedHeadID = head.id
                 }
             }
         )
-        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelResize.isActive)
+        .transition(Self.panelTransition), resize: resizer(for: slot.corner, scene: scene), isResizing: panelResize.isActive)
+        .id(head.id)
+    }
+
+    /// The usage panel: beyond whichever panels are in the same corner, so it is the last
+    /// of a stack. Across the column from the heads by default, at the left.
+    private func usagePanel(_ usage: PanelUsage, scene: PanelScene) -> some View {
+        let slot = scene.slots[.usage] ?? PanelScene.PanelSlot(corner: model.settings.usagePanelDock, below: 0, lift: 0)
+        let corner = slot.corner
+        let rest = Self.rest(for: slot, scene: scene)
+        let full = scene.layout.panelSize
+        let minimum = PanelScene.usageMinimumHeight
+        // The panel's own height, worked out with the scene (see `PanelScene.usageHeight`).
+        let height = scene.usageHeight ?? full.height
+        let size = CGSize(width: full.width, height: height)
+        // A bottom-docked panel keeps its bottom edge where the full-height one would
+        // sit; a top-docked one keeps its top.
+        let origin = corner.isTop ? rest : CGPoint(x: rest.x, y: rest.y + (full.height - height))
+        return PlacedPanel(drag: usageDrag, rest: origin, size: size, content: UsageFloatingPanel(
+            runtime: runtime,
+            provider: usage.provider,
+            headsProvider: usage.headsProvider,
+            size: size,
+            onContentHeight: { wanted in if usageContentHeight != wanted { usageContentHeight = wanted } },
+            onDrag: { translation in
+                let position = usageDrag.move(by: translation, from: origin, in: scene.layout)
+                dockUsage(nearest: position, scene: scene)
+                reorder(.usage, at: position, corner: model.settings.usagePanelDock, scene: scene)
+            },
+            onDragEnd: {
+                if let heading = usageDrag.release() {
+                    dockUsage(nearest: heading, scene: scene)
+                    reorder(.usage, at: heading, corner: model.settings.usagePanelDock, scene: scene)
+                }
+            },
+            dismiss: {
+                // For every chat; the usage popover's pop-out button brings it back.
+                withAnimation(Chrome.panelSlide) {
+                    model.settings.showsUsagePanel = false
+                }
+            }
+        )
+        .transition(Self.panelTransition), resize: usageResizer(for: corner, scene: scene, size: size, minimum: minimum), isResizing: panelResize.isActive)
     }
 
     /// The grips of a panel docked in `corner`. A pull on a free edge grows the panel away
@@ -360,6 +427,33 @@ struct ChatView: View {
         )
     }
 
+    /// The usage panel's grips: its width is the panels' shared width, its height its own
+    /// (see `AppSettings.usagePanelHeight`); a double-click puts it back to fitting its rows.
+    private func usageResizer(for corner: PanelDockCorner, scene: PanelScene, size: CGSize, minimum: CGFloat) -> PanelResize {
+        PanelResize(
+            corner: corner,
+            onResize: { translation, axes in
+                let start = panelResize.begin(at: size)
+                // The pointer's travel runs right and down; a panel docked at the right
+                // grows leftwards, one docked at the bottom grows upwards.
+                let acrossSign: CGFloat = corner.side == .trailing ? -1 : 1
+                let downSign: CGFloat = corner.isTop ? 1 : -1
+                if axes.contains(.width) {
+                    var next = scene.layout.panelSize
+                    next.width = start.width + translation.width * acrossSign
+                    model.settings.panelSize = scene.layout.fitted(next)
+                }
+                if axes.contains(.height) {
+                    model.settings.usagePanelHeight = max(minimum, start.height + translation.height * downSign)
+                }
+            },
+            onResizeEnd: { panelResize.end() },
+            onReset: {
+                withAnimation(Chrome.panelSlide) { model.settings.usagePanelHeight = nil }
+            }
+        )
+    }
+
     /// A panel grows in and fades out in place.
     private static var panelTransition: AnyTransition {
         .asymmetric(
@@ -375,6 +469,130 @@ struct ChatView: View {
         let next = scene.layout.dockCorner(nearest: position, keeping: runtime[keyPath: corner], docks: scene.docks)
         guard next != runtime[keyPath: corner] else { return }
         runtime[keyPath: corner] = next
+    }
+
+    /// The usage panel's corner is one for every chat (see `AppSettings.usagePanelDock`).
+    private func dockUsage(nearest position: CGPoint, scene: PanelScene) {
+        let next = scene.layout.dockCorner(nearest: position, keeping: model.settings.usagePanelDock, docks: scene.docks)
+        guard next != model.settings.usagePanelDock else { return }
+        model.settings.usagePanelDock = next
+    }
+
+    private func dockAuto(_ id: UUID, nearest position: CGPoint, scene: PanelScene) {
+        let current = runtime.hydraAutoPanelDocks[id] ?? scene.slots[.auto(id)]?.corner ?? runtime.hydraPanelDock.acrossTheColumn
+        let next = scene.layout.dockCorner(nearest: position, keeping: current, docks: scene.docks)
+        if runtime.hydraAutoPanelDocks[id] != next { runtime.hydraAutoPanelDocks[id] = next }
+    }
+
+    /// The held panel takes the slot it is over on its side, live: a free slot
+    /// is taken, a taken one on a full side is swapped for the panel's old
+    /// slot, otherwise the occupant and the rest move one slot along; the
+    /// corners and the order are rewritten from the slots.
+    private func reorder(_ id: FloatingPanelID, at position: CGPoint, corner: PanelDockCorner, scene: PanelScene) {
+        let side = corner.side
+        let others = scene.slots.filter { $0.value.corner.side == side && $0.key != id }
+        let n = max(scene.slotsOnSide[side] ?? 1, others.count + 1)
+        let target = scene.layout.slotIndex(at: position, slots: n, docks: scene.docks)
+        var occupancy: [Int: FloatingPanelID] = [:]
+        for (panelID, slot) in others {
+            occupancy[slot.corner.isTop ? slot.below : n - 1 - slot.below] = panelID
+        }
+        let previous: Int? = scene.slots[id].flatMap { $0.corner.side == side ? ($0.corner.isTop ? $0.below : n - 1 - $0.below) : nil }
+        let full = !(others.count + 1 > (scene.slotsOnSide[side] ?? 1))
+        if let other = occupancy[target], previous != nil, full {
+            occupancy[previous!] = other
+            occupancy[target] = id
+        } else if let other = occupancy[target] {
+            occupancy.removeValue(forKey: target)
+            occupancy[target] = id
+            let forward = previous == nil || previous! < target
+            var displaced = other
+            var next = target + (forward ? 1 : -1)
+            while true {
+                if next < 0 || next >= n {
+                    let free = forward ? (0..<n).first(where: { occupancy[$0] == nil }) : (0..<n).reversed().first(where: { occupancy[$0] == nil })
+                    if let free { occupancy[free] = displaced }
+                    break
+                }
+                if occupancy[next] == nil {
+                    occupancy[next] = displaced
+                    break
+                }
+                let occupant = occupancy[next]!
+                occupancy[next] = displaced
+                displaced = occupant
+                next += forward ? 1 : -1
+            }
+        } else {
+            occupancy[target] = id
+        }
+        for (index, panelID) in occupancy {
+            let (corner, _) = PanelDocks.corner(forSlot: index, of: n, side: side)
+            setCorner(panelID, corner)
+        }
+        let occupiedCorners = Dictionary(uniqueKeysWithValues: occupancy.map { ($0.value, PanelDocks.corner(forSlot: $0.key, of: n, side: side).corner) })
+        let top = occupancy.filter { occupiedCorners[$0.value]?.isTop == true }.sorted { $0.key < $1.key }.map(\.value)
+        let bottom = occupancy.filter { occupiedCorners[$0.value]?.isTop == false }.sorted { $0.key > $1.key }.map(\.value)
+        let sideOrder = top + bottom
+        let onSide = Set(occupancy.values)
+        let kept = runtime.panelStackOrder.filter { !onSide.contains($0) && $0 != id }
+        let next = kept + sideOrder
+        if next != runtime.panelStackOrder { runtime.panelStackOrder = next }
+    }
+
+    private func setCorner(_ id: FloatingPanelID, _ corner: PanelDockCorner) {
+        switch id {
+        case .subagent:
+            if runtime.subagentPanelDock != corner { runtime.subagentPanelDock = corner }
+        case .hydra:
+            if runtime.hydraPanelDock != corner { runtime.hydraPanelDock = corner }
+        case .popped:
+            if runtime.hydraPoppedPanelDock != corner { runtime.hydraPoppedPanelDock = corner }
+        case .usage:
+            if model.settings.usagePanelDock != corner { model.settings.usagePanelDock = corner }
+        case .auto(let head):
+            if runtime.hydraAutoPanelDocks[head] != corner { runtime.hydraAutoPanelDocks[head] = corner }
+        }
+    }
+
+    private static func rest(for slot: PanelScene.PanelSlot, scene: PanelScene) -> CGPoint {
+        let stacked = scene.docks.stacked(slot.corner, below: slot.below, slots: scene.slotsOnSide[slot.corner.side] ?? 1, layout: scene.layout)
+        return CGPoint(x: stacked.x, y: slot.corner.isTop ? stacked.y + slot.lift : stacked.y - slot.lift)
+    }
+}
+
+/// Makes room for the docked panels on either side and slides the content to its new
+/// place, without laying it out at every width in between. Animating the padding itself
+/// re-wrapped every visible message and the chat box on each frame of the spring, which
+/// stuttered on a long conversation; here the padding snaps (one layout, at the final
+/// width) and the content starts where it was and glides over on a transform, which
+/// costs nothing per frame. The slide is keyed to a change in the room, never to a
+/// measurement: a pane measured for the first time lays out in place, and a window resize
+/// or a panel's width grip moves things at once, as they should (`slides` is off then).
+private struct ReserveSlide: ViewModifier {
+    let reserve: PanelReserve
+    let slides: Bool
+
+    @State private var offset: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.leading, reserve.leading)
+            .padding(.trailing, reserve.trailing)
+            .offset(x: offset)
+            .onChange(of: reserve) { old, new in
+                // The column centres in the room left, so its centre moves by half the
+                // change in the room on either side: start from where it was and glide.
+                let shift = ((new.leading - new.trailing) - (old.leading - old.trailing)) / 2
+                guard slides, shift != 0 else {
+                    offset = 0
+                    return
+                }
+                var snap = Transaction()
+                snap.disablesAnimations = true
+                withTransaction(snap) { offset -= shift }
+                withAnimation(Chrome.panelSlide) { offset = 0 }
+            }
     }
 }
 
@@ -402,8 +620,7 @@ private struct PanelMembers {
         let poppedHead = team.count > 1 ? team.first { $0.id == runtime.hydraPoppedHeadID } : nil
         popped = poppedHead
         heads = team.filter { $0.id != poppedHead?.id }
-        // The chat's own word first, the setting when it has none (see `isUsagePanelShown`).
-        if let thread = model.thread(runtime.threadID), runtime.isUsagePanelShown ?? model.settings.showsUsagePanel {
+        if let thread = model.thread(runtime.threadID), model.settings.showsUsagePanel {
             var headsProvider: ProviderKind?
             if model.hydraIsOn(thread), let pair = model.hydraPair(for: thread) {
                 let provider = model.hydraHeadsProvider(of: pair)
@@ -438,6 +655,22 @@ private struct PanelScene {
     /// list; it only stays out while another head is left behind to keep that panel.
     let heads: [ChatThread]
     let popped: ChatThread?
+    /// A panel's place: its corner, how many panels sit under it in that corner's
+    /// stack, and how much further from the edge it sits when a usage panel taller
+    /// than one slot is under it.
+    struct PanelSlot {
+        let corner: PanelDockCorner
+        let below: Int
+        let lift: CGFloat
+    }
+    /// The heads with a panel of their own.
+    let autoPopped: [ChatThread]
+    let slots: [FloatingPanelID: PanelSlot]
+    let slotsOnSide: [PanelDockSide: Int]
+    /// The usage panel's own height: what it was dragged to, else its rows, capped at the
+    /// room left in its corner under the panels stacked below it (never the heads' compact
+    /// height); nil without a usage panel.
+    let usageHeight: CGFloat?
     /// The usage panel's providers, when the chat shows one (see `PanelMembers`).
     let usage: PanelUsage?
     let isMeasured: Bool
@@ -453,11 +686,15 @@ private struct PanelScene {
 
     var hasHeads: Bool { !heads.isEmpty }
 
-    init(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat) {
-        let geometry = Self.geometry(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight)
+    init(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?) {
+        let geometry = Self.geometry(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight)
         subagent = members.subagent
         isDocked = members.isDocked
-        heads = members.heads
+        autoPopped = geometry.autoPopped
+        slots = geometry.slots
+        slotsOnSide = geometry.slotsOnSide
+        usageHeight = geometry.usageHeight
+        heads = members.heads.filter { head in !geometry.autoPopped.contains { $0.id == head.id } }
         popped = members.popped
         usage = members.usage
         isMeasured = geometry.isMeasured
@@ -475,6 +712,10 @@ private struct PanelScene {
     /// recomputes, with no model reads of its own.
     struct Geometry {
         let layout: SubagentPanelLayout
+        let autoPopped: [ChatThread]
+        let slots: [FloatingPanelID: PanelSlot]
+        let slotsOnSide: [PanelDockSide: Int]
+        let usageHeight: CGFloat?
         let isMeasured: Bool
         let showsHydra: Bool
         let showsPopped: Bool
@@ -485,27 +726,85 @@ private struct PanelScene {
         let docks: PanelDocks
     }
 
-    static func geometry(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat) -> Geometry {
+    /// The smallest usage panel: its strip and one row.
+    static let usageMinimumHeight = HydraPanel.stripHeight + 44
+
+    static func geometry(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?) -> Geometry {
         let isMeasured = paneSize != .zero
         let showsHydra = !members.heads.isEmpty && isMeasured
         let showsPopped = members.popped != nil && showsHydra
         let showsUsage = members.usage != nil && isMeasured
         let isHydraDocked = showsHydra
-        let isPoppedDocked = showsPopped
-        var corners: [PanelDockCorner] = []
-        if members.isDocked { corners.append(runtime.subagentPanelDock) }
-        if isHydraDocked { corners.append(runtime.hydraPanelDock) }
-        if isPoppedDocked { corners.append(runtime.hydraPoppedPanelDock) }
-        if showsUsage { corners.append(runtime.usagePanelDock) }
-        let sides = Set(corners.map(\.side))
-        let dockedSides = [PanelDockSide.leading, .trailing].filter(sides.contains)
-        // Panels docked in one corner stack, so they share its height between them.
-        let stackDepth = Dictionary(grouping: corners, by: { $0 }).values.map(\.count).max() ?? 1
-        // Every panel shows a head's progress bar rather than a conversation: the heads'
-        // with "Show what heads are doing" off, and the helper panel only when it holds a
-        // head too (a helper of the user's own keeps its chat, so it keeps the full height).
         let helperShowsProgress = members.subagent?.isHydraHead ?? true
         let compact = !model.settings.hydraShowsHeadDetails && helperShowsProgress && (showsHydra || members.subagent != nil)
+        // One panel at its natural height is a slot; the usage panel is measured against
+        // it, since it has a height of its own and may take more than one.
+        let single = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: 1, preferred: model.settings.panelSize, compact: compact)
+        let slotHeight = single.panelHeight
+        let gap = SubagentPanelLayout.gap
+        var placed: [(id: FloatingPanelID, corner: PanelDockCorner)] = []
+        if members.isDocked { placed.append((.subagent, runtime.subagentPanelDock)) }
+        if isHydraDocked { placed.append((.hydra, runtime.hydraPanelDock)) }
+        if showsPopped { placed.append((.popped, runtime.hydraPoppedPanelDock)) }
+        if showsUsage { placed.append((.usage, model.settings.usagePanelDock)) }
+        let usageCorner = model.settings.usagePanelDock
+        var usageHeight: CGFloat?
+        if showsUsage {
+            let under = Self.order(placed, by: runtime.panelStackOrder)[.usage]?.below ?? 0
+            let room = single.verticalRoom - CGFloat(under) * (slotHeight + gap)
+            let wanted = model.settings.usagePanelHeight ?? usageContentHeight ?? slotHeight
+            usageHeight = min(max(Self.usageMinimumHeight, room), max(Self.usageMinimumHeight, wanted))
+        }
+        // The room the usage panel takes past its slot, which a panel stacked beyond it
+        // steps over.
+        let usageLift = max(0, (usageHeight ?? 0) - slotHeight)
+        var autoPopped: [ChatThread] = []
+        let natural = max(1, Int((single.verticalRoom + gap) / (slotHeight + gap)))
+        if model.settings.hydraAutoPopsHeads, showsHydra, members.heads.count > 1 {
+            var candidates = Array(members.heads.dropFirst()).filter { !runtime.hydraAutoPopHeld.contains($0.id) }
+            for candidate in candidates where runtime.hydraAutoPanelDocks[candidate.id] != nil {
+                let corner = runtime.hydraAutoPanelDocks[candidate.id]!
+                placed.append((.auto(candidate.id), corner))
+                autoPopped.append(candidate)
+            }
+            candidates.removeAll { runtime.hydraAutoPanelDocks[$0.id] != nil }
+            // Slots the usage panel takes beyond its own: a tall one is worth more than one.
+            let usageExtra = usageLift > 0 ? Int(ceil(usageLift / (slotHeight + gap))) : 0
+            for corner in [runtime.hydraPanelDock.acrossTheColumn, runtime.hydraPanelDock] {
+                let other = Self.flippedVertically(corner)
+                let usageOnSide = showsUsage && (usageCorner == corner || usageCorner == other)
+                let used = placed.count { $0.corner == corner } + placed.count { $0.corner == other } + (usageOnSide ? usageExtra : 0)
+                let free = max(0, natural - used)
+                for _ in 0..<min(free, candidates.count) {
+                    let head = candidates.removeFirst()
+                    placed.append((.auto(head.id), corner))
+                    autoPopped.append(head)
+                }
+            }
+        }
+        var slotsByID: [FloatingPanelID: PanelSlot] = [:]
+        let ordered = Self.order(placed, by: runtime.panelStackOrder)
+        let usageBelow = ordered[.usage]?.below
+        for (id, entry) in ordered {
+            let lift: CGFloat
+            if let usageBelow, entry.corner == usageCorner, showsUsage, id != .usage, entry.below > usageBelow {
+                lift = usageLift
+            } else {
+                lift = 0
+            }
+            slotsByID[id] = PanelSlot(corner: entry.corner, below: entry.below, lift: lift)
+        }
+        let corners = placed.map(\.corner)
+        let sides = Set(corners.map(\.side))
+        let dockedSides = [PanelDockSide.leading, .trailing].filter(sides.contains)
+        var slotsOnSide: [PanelDockSide: Int] = [:]
+        for side in [PanelDockSide.leading, PanelDockSide.trailing] {
+            slotsOnSide[side] = max(natural, placed.count { $0.corner.side == side })
+        }
+        // A side holding more panels than fit at their natural height shares its room
+        // between them; fewer keep the natural height, since the layout only shrinks
+        // past the natural share.
+        let stackDepth = max(1, [PanelDockSide.leading, PanelDockSide.trailing].map { side in placed.count { $0.corner.side == side } }.max() ?? 1)
         let layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth, preferred: model.settings.panelSize, compact: compact)
         let reserve = PanelReserve(
             leading: sides.contains(.leading) ? layout.composerReserve : 0,
@@ -513,6 +812,10 @@ private struct PanelScene {
         )
         return Geometry(
             layout: layout,
+            autoPopped: autoPopped,
+            slots: slotsByID,
+            slotsOnSide: slotsOnSide,
+            usageHeight: usageHeight,
             isMeasured: isMeasured,
             showsHydra: showsHydra,
             showsPopped: showsPopped,
@@ -522,6 +825,37 @@ private struct PanelScene {
             reserve: reserve,
             docks: PanelDocks(layout: layout, reserve: reserve)
         )
+    }
+
+    static func order(_ placed: [(id: FloatingPanelID, corner: PanelDockCorner)], by stackOrder: [FloatingPanelID]) -> [FloatingPanelID: (corner: PanelDockCorner, below: Int)] {
+        var rank: [FloatingPanelID: Int] = [:]
+        for id in stackOrder where rank[id] == nil {
+            rank[id] = rank.count
+        }
+        var out: [FloatingPanelID: (corner: PanelDockCorner, below: Int)] = [:]
+        let corners = Set(placed.map(\.corner))
+        for corner in corners {
+            let inCorner = placed.enumerated().filter { $0.element.corner == corner }
+                .sorted {
+                    let left = (rank[$0.element.id] ?? Int.max, $0.offset)
+                    let right = (rank[$1.element.id] ?? Int.max, $1.offset)
+                    return left < right
+                }
+                .map(\.element)
+            for (below, entry) in inCorner.enumerated() {
+                out[entry.id] = (entry.corner, below)
+            }
+        }
+        return out
+    }
+
+    private static func flippedVertically(_ corner: PanelDockCorner) -> PanelDockCorner {
+        switch corner {
+        case .topLeading: .bottomLeading
+        case .bottomLeading: .topLeading
+        case .topTrailing: .bottomTrailing
+        case .bottomTrailing: .topTrailing
+        }
     }
 }
 
@@ -566,8 +900,9 @@ private struct ChatChromeRow: View {
         GlassEffectContainer(spacing: 2) {
             HStack(alignment: .center, spacing: 10) {
                 // With the sidebar away, its list is one press away: the button arrives with the
-                // window buttons and leaves with them.
-                if !sidebarVisible {
+                // window buttons and leaves with them. Not when the list floats as the only
+                // sidebar (see `AppSettings.sidebarOnlyFloats`): there is nothing to open.
+                if !sidebarVisible, !(model.settings.sidebarFloats && model.settings.sidebarOnlyFloats) {
                     ThreadsButton()
                         .transition(.softAppear)
                 }
@@ -685,8 +1020,11 @@ private struct ThreadsButton: View {
     @State private var isPresented = false
 
     var body: some View {
-        ChromeCircleButton(symbol: "list.bullet", help: "Threads") {
-            isPresented.toggle()
+        // With the list floating over the chat, the button brings the column back instead;
+        // the floating panel is the list while the column is away.
+        let floats = model.settings.sidebarFloats
+        ChromeCircleButton(symbol: "list.bullet", help: floats ? "Show the sidebar" : "Threads") {
+            if floats { model.sidebar.toggle() } else { isPresented.toggle() }
         }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             SidebarView(inPopover: true, dismiss: { isPresented = false })

@@ -107,7 +107,14 @@ final class AppSettings {
         static let hydraReviewHeads = "hydraReviewHeads"
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
         static let hydraShowsHeadDetails = "hydraShowsHeadDetails"
+        static let hydraAutoPopsHeads = "hydraAutoPopsHeads"
         static let showsUsagePanel = "showsUsagePanel"
+        static let sidebarFloats = "sidebarFloats"
+        static let sidebarOnlyFloats = "sidebarOnlyFloats"
+        static let sidebarPanelOrigin = "sidebarPanelOrigin"
+        static let sidebarPanelSize = "sidebarPanelSize"
+        static let usagePanelDock = "usagePanelDock"
+        static let usagePanelHeight = "usagePanelHeight"
         static let hydraPairs = "hydraPairs"
         static let hasSeenTour = "hasSeenTour"
     }
@@ -395,11 +402,69 @@ final class AppSettings {
         didSet { defaults.set(hydraShowsHeadDetails, forKey: Key.hydraShowsHeadDetails) }
     }
 
-    /// A floating panel with the chat's usage, the plan's limits and credits, beside the
-    /// chat for as long as it is open: across the column from the heads, at the left by
-    /// default. Each chat can dismiss it or open it from the usage popover regardless.
+    /// While there is room beside the chat, each head after the first gets a panel of
+    /// its own, on the left and the right, until each side is full (see `PanelScene.autoPopped`).
+    var hydraAutoPopsHeads: Bool {
+        didSet { defaults.set(hydraAutoPopsHeads, forKey: Key.hydraAutoPopsHeads) }
+    }
+
+    /// A floating panel with the chat's usage, the plan's limits and credits, beside
+    /// every chat for as long as it is on: the General setting, the popover's pop-out
+    /// button and the panel's own close button all set it, so it stays across threads
+    /// and relaunches.
     var showsUsagePanel: Bool {
         didSet { defaults.set(showsUsagePanel, forKey: Key.showsUsagePanel) }
+    }
+
+    /// The sidebar as a floating panel over the chat whenever its column is collapsed, in
+    /// place of the popover from the toolbar button; it stays where it was last left.
+    var sidebarFloats: Bool {
+        didSet { defaults.set(sidebarFloats, forKey: Key.sidebarFloats) }
+    }
+
+    /// Only the floating panel: the column and the toolbar button are gone; meaningful
+    /// with `sidebarFloats` on.
+    var sidebarOnlyFloats: Bool {
+        didSet { defaults.set(sidebarOnlyFloats, forKey: Key.sidebarOnlyFloats) }
+    }
+
+    /// Where the floating sidebar was last left, from the chat area's top-left.
+    var sidebarPanelOrigin: CGPoint? {
+        didSet {
+            if let sidebarPanelOrigin {
+                defaults.set([sidebarPanelOrigin.x, sidebarPanelOrigin.y], forKey: Key.sidebarPanelOrigin)
+            } else {
+                defaults.removeObject(forKey: Key.sidebarPanelOrigin)
+            }
+        }
+    }
+
+    /// The size it was last dragged to.
+    var sidebarPanelSize: CGSize? {
+        didSet {
+            if let sidebarPanelSize {
+                defaults.set([sidebarPanelSize.width, sidebarPanelSize.height], forKey: Key.sidebarPanelSize)
+            } else {
+                defaults.removeObject(forKey: Key.sidebarPanelSize)
+            }
+        }
+    }
+
+    /// The corner the usage panel is docked in, for every chat; it goes where it was
+    /// last dragged.
+    var usagePanelDock: PanelDockCorner {
+        didSet { defaults.set(usagePanelDock.rawValue, forKey: Key.usagePanelDock) }
+    }
+
+    /// The height the usage panel was dragged to, for every chat; nil fits the panel to its rows.
+    var usagePanelHeight: CGFloat? {
+        didSet {
+            if let usagePanelHeight {
+                defaults.set(Double(usagePanelHeight), forKey: Key.usagePanelHeight)
+            } else {
+                defaults.removeObject(forKey: Key.usagePanelHeight)
+            }
+        }
     }
 
     /// The lead-and-heads pairings, in the order they were added.
@@ -467,7 +532,22 @@ final class AppSettings {
         hydraReviewHeads = defaults.object(forKey: Key.hydraReviewHeads) as? Bool ?? false
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
         hydraShowsHeadDetails = defaults.object(forKey: Key.hydraShowsHeadDetails) as? Bool ?? false
+        hydraAutoPopsHeads = defaults.object(forKey: Key.hydraAutoPopsHeads) as? Bool ?? false
         showsUsagePanel = defaults.object(forKey: Key.showsUsagePanel) as? Bool ?? false
+        sidebarFloats = defaults.object(forKey: Key.sidebarFloats) as? Bool ?? false
+        sidebarOnlyFloats = defaults.object(forKey: Key.sidebarOnlyFloats) as? Bool ?? false
+        if let stored = defaults.array(forKey: Key.sidebarPanelOrigin) as? [Double], stored.count == 2 {
+            sidebarPanelOrigin = CGPoint(x: stored[0], y: stored[1])
+        } else {
+            sidebarPanelOrigin = nil
+        }
+        if let stored = defaults.array(forKey: Key.sidebarPanelSize) as? [Double], stored.count == 2 {
+            sidebarPanelSize = CGSize(width: stored[0], height: stored[1])
+        } else {
+            sidebarPanelSize = nil
+        }
+        usagePanelDock = defaults.string(forKey: Key.usagePanelDock).flatMap(PanelDockCorner.init(rawValue:)) ?? .bottomLeading
+        usagePanelHeight = defaults.object(forKey: Key.usagePanelHeight).flatMap { $0 as? Double }.map { CGFloat($0) }
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
     }
 

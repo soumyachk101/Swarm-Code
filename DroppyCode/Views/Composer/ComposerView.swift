@@ -30,6 +30,8 @@ struct ComposerArea: View {
                 }
                 .background { ChangeStatsRefresh(runtime: runtime) }
                 .onAppear { diffPopover.sync(isVisible: runtime.isDiffVisible, runtime: runtime) }
+                // The box moved to another thread; the coordinator closes the popover it had and never opens one on arrival.
+                .onChange(of: runtime.threadID) { diffPopover.sync(isVisible: runtime.isDiffVisible, runtime: runtime) }
                 .onChange(of: runtime.isDiffVisible) { _, visible in
                     diffPopover.sync(isVisible: visible, runtime: runtime)
                 }
@@ -595,7 +597,11 @@ private struct ComposerControls: View {
                 )
             }
             ModelEffortSlot(runtime: runtime, thread: thread, compact: compact)
-            ContextMeter(runtime: runtime, provider: thread.provider, headsProvider: headsProvider)
+            // A floating panel's box (compact chip) leaves the ring out: a head's context
+            // is not what the panel is for, and the row is short of room as it is.
+            if !compact {
+                ContextMeter(runtime: runtime, provider: thread.provider, headsProvider: headsProvider)
+            }
             SendButton(runtime: runtime, goesToHead: goesToHead, queueGoesToHead: queueGoesToHead, send: onSend)
         }
         .fixedSize()
@@ -653,7 +659,10 @@ private struct ContextMeter: View {
         // A key with credit behind it has something to show from the first turn, before any
         // usage has been reported, so the ring is not waiting on a context window to exist.
         let hasCredits = CreditsReader.exposesCredits(provider) && model.settings.hasAPIKey(for: provider)
-        if fraction != nil || PlanLimitsReader.exposesLimits(provider) || hasCredits {
+        // Popped out as a floating panel, the usage is already on screen beside the chat:
+        // the ring goes until that panel is dismissed, which brings it back here.
+        let isPoppedOut = model.settings.showsUsagePanel
+        if !isPoppedOut, fraction != nil || PlanLimitsReader.exposesLimits(provider) || hasCredits {
             Button {
                 isPresented.toggle()
             } label: {
@@ -679,9 +688,10 @@ private struct ContextMeter: View {
             .accessibilityValue(Text(fraction.map { "\(Int($0 * 100))% of the context window used" } ?? ""))
             .popover(isPresented: $isPresented, arrowEdge: .bottom) {
                 VStack(spacing: 0) {
-                    // The same limits as a floating panel beside the chat, open for as long
-                    // as the chat is (see `UsageFloatingPanel`); this is where it comes back
-                    // from once dismissed, so the button is always here.
+                    // The same limits as a floating panel beside every chat (see
+                    // `UsageFloatingPanel`); the panel then stays until dismissed or
+                    // switched off in Settings, and this button is where it comes back
+                    // from, so it is always here.
                     HStack {
                         Text("Usage")
                             .font(.system(size: 12, weight: .semibold))
@@ -690,7 +700,7 @@ private struct ContextMeter: View {
                         ChromeCircleButton(symbol: "arrow.up.right", help: "Open as a floating panel beside the chat") {
                             isPresented = false
                             withAnimation(Chrome.panelSlide) {
-                                runtime.isUsagePanelShown = true
+                                model.settings.showsUsagePanel = true
                             }
                         }
                     }

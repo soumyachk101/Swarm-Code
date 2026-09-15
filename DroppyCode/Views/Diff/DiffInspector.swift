@@ -559,7 +559,26 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
     }
 
     /// Drives the popover from `runtime.isDiffVisible`. Call on change and on appear.
+    /// Three cases: the composer moved to another thread (close what was open and
+    /// never open on arrival), first appearance (adopt the runtime without opening
+    /// unless asked), or the same thread (follow the flag as before).
     func sync(isVisible: Bool, runtime: ThreadRuntime) {
+        if let current = self.runtime, current !== runtime {
+            close()
+            if current.isDiffVisible { current.isDiffVisible = false }
+            self.runtime = runtime
+            seenOpenRequest = runtime.diffOpenRequest
+            if runtime.isDiffVisible, !WebsiteCaptures.isEnabled { runtime.isDiffVisible = false }
+            return
+        }
+        if self.runtime == nil {
+            self.runtime = runtime
+            seenOpenRequest = runtime.diffOpenRequest
+            if isVisible, !WebsiteCaptures.isEnabled {
+                runtime.isDiffVisible = false
+                return
+            }
+        }
         self.runtime = runtime
         desiredVisible = isVisible
         if isVisible { show() } else { close() }
@@ -583,11 +602,18 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
     private var fallback: WeakView?
     /// The view the open popover is anchored to.
     private weak var shownOn: NSView?
+    /// The runtime the open popover was shown for, the only one a close may flag.
+    private weak var shownRuntime: ThreadRuntime?
+    /// The thread's `diffOpenRequest` as last seen, so a counter that merely differs between two threads never opens the popover.
+    private var seenOpenRequest = 0
 
-    /// A tool row or a Review button asked for the popover: opens it there, moving it
-    /// if it is already open on another view.
+    /// A tool row or a Review button bumped the request on the thread the
+    /// coordinator already serves; a bump seen only because the composer moved
+    /// to another thread is not an opener.
     func reopen(runtime: ThreadRuntime) {
-        self.runtime = runtime
+        guard runtime === self.runtime else { sync(isVisible: runtime.isDiffVisible, runtime: runtime); return }
+        guard runtime.diffOpenRequest != seenOpenRequest else { return }
+        seenOpenRequest = runtime.diffOpenRequest
         desiredVisible = true
         if popover.isShown {
             if shownOn === resolvedAnchor()?.view { return }
@@ -619,6 +645,7 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
         popover.setFixedContent(DiffInspector(runtime: runtime), size: NSSize(width: Self.width, height: Self.height))
         startMonitors()
         shownOn = target.view
+        shownRuntime = runtime
         popover.show(relativeTo: target.view.bounds, of: target.view, preferredEdge: target.edge)
     }
 
@@ -632,8 +659,9 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
             // Only the close that posted this may clear the flag: a Review tap
             // that already reopened (newer session) must survive.
             if self.session == self.pendingSession {
-                self.runtime?.isDiffVisible = false
+                if let shown = self.shownRuntime, shown.isDiffVisible { shown.isDiffVisible = false }
             }
+            self.shownRuntime = nil
         }
     }
 

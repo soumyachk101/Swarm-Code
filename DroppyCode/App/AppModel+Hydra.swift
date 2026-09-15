@@ -525,6 +525,9 @@ extension AppModel {
                     let leadRuntime = self.runtime(for: parentID)
                     if leadRuntime.hydraSelectedHeadID == id { leadRuntime.hydraSelectedHeadID = nil }
                     if leadRuntime.hydraPoppedHeadID == id { leadRuntime.hydraPoppedHeadID = nil }
+                    leadRuntime.hydraAutoPopHeld.remove(id)
+                    leadRuntime.hydraAutoPanelDocks[id] = nil
+                    leadRuntime.panelStackOrder.removeAll { $0 == .auto(id) }
                 }
             }
         }
@@ -804,6 +807,9 @@ extension AppModel {
         leadRuntime.isHydraPanelHidden = true
         leadRuntime.hydraSelectedHeadID = nil
         leadRuntime.hydraPoppedHeadID = nil
+        leadRuntime.hydraAutoPopHeld.removeAll()
+        leadRuntime.hydraAutoPanelDocks.removeAll()
+        leadRuntime.panelStackOrder.removeAll { if case .auto = $0 { return true }; return false }
     }
 
     /// Finished heads leave the panel for the sidebar, and give their copies back.

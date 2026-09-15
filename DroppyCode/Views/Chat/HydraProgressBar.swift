@@ -38,8 +38,9 @@ struct HydraProgressBar: View {
     /// One pass of the highlight across the filled staves.
     private static let sweep: TimeInterval = 1.8
     private static let cardWidth: CGFloat = 260
-    /// How many of a stave's steps the card lists before "and N more".
-    private static let cardLines = 6
+    /// How many of a stave's steps the card lists before "and N more": few enough that
+    /// the card clears the strip of a compact panel, where the bar sits under the task.
+    private static let cardLines = 4
 
     var body: some View {
         let events = Self.events(in: runtime.entries)
@@ -138,7 +139,11 @@ struct HydraProgressBar: View {
         .padding(.vertical, 10)
         .frame(width: Self.cardWidth, alignment: .leading)
         .glassEffect(.regular, in: .rect(cornerRadius: Chrome.cardCornerRadius, style: .continuous))
-        .alignmentGuide(.top) { $0[.bottom] + 8 }
+        // Hung from a zero-height frame at the bar's top edge, so the card's bottom sits 8
+        // points above the bar whatever its height: an alignment guide on the overlay
+        // was not honoured and left the card over the staves.
+        .padding(.bottom, 8)
+        .frame(height: 0, alignment: .bottom)
         .offset(x: x)
         .allowsHitTesting(false)
         .transition(.opacity)

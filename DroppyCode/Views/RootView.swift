@@ -3,17 +3,22 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @State private var detailSize: CGSize = .zero
 
     var body: some View {
         let sidebar = model.sidebar
+        // With the sidebar floating, the collapsed column hands its list to a panel over
+        // the chat rather than the toolbar popover; only-floating drops the column altogether.
+        let onlyFloats = model.settings.sidebarFloats && model.settings.sidebarOnlyFloats
+        let floats = model.settings.sidebarFloats && (onlyFloats || !sidebar.isVisible)
         HStack(spacing: 0) {
             SidebarView()
-                .frame(width: sidebar.renderedWidth)
+                .frame(width: onlyFloats ? 0 : sidebar.renderedWidth)
                 .clipped()
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { sidebar.noteLaidOutWidth($0) }
                 .overlay(alignment: .trailing) {
                     SidebarResizeHandle(
-                        isActive: sidebar.isVisible,
+                        isActive: !onlyFloats && sidebar.isVisible,
                         onBegin: { sidebar.beginDrag() },
                         onChange: { sidebar.drag(by: $0) },
                         onEnd: { sidebar.endDrag() }
@@ -24,14 +29,22 @@ struct RootView: View {
 
             DetailView()
                 .frame(minWidth: 0, maxWidth: .infinity)
-                .padding(.leading, sidebar.isVisible ? 0 : Chrome.sheetInset)
+                .padding(.leading, sidebar.isVisible && !onlyFloats ? 0 : Chrome.sheetInset)
                 .padding(.trailing, Chrome.sheetInset)
                 .padding(.vertical, Chrome.sheetInset)
+                .onGeometryChange(for: CGSize.self, of: { $0.size }) { detailSize = $0 }
+                .overlay(alignment: .topLeading) {
+                    if floats, detailSize != .zero {
+                        FloatingSidebarPanel(area: detailSize, canClose: !onlyFloats) { sidebar.toggle() }
+                            .transition(.scale(scale: 0.94).combined(with: .opacity))
+                    }
+                }
+                .animation(Chrome.panelSlide, value: floats)
         }
         // While the sidebar is hidden, dragging the window's leading edge pulls it back out.
         .overlay(alignment: .leading) {
             SidebarResizeHandle(
-                isActive: !sidebar.isVisible,
+                isActive: !onlyFloats && !sidebar.isVisible,
                 onBegin: { sidebar.beginDrag() },
                 onChange: { sidebar.drag(by: $0) },
                 onEnd: { sidebar.endDrag() }

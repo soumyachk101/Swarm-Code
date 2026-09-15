@@ -49,6 +49,8 @@ struct HydraSettingsPage: View {
                     toggleRow("Clear finished heads", detail: "A finished head moves from the panel to the sidebar.", isOn: $settings.hydraAutoClearFinished)
                     ChromeRowDivider()
                     toggleRow("Show every step", detail: "Each step in the head's panel instead of its progress bar.", isOn: $settings.hydraShowsHeadDetails)
+                    ChromeRowDivider()
+                    toggleRow("Pop heads out automatically", detail: "While there is room beside the chat, each head after the first gets a panel of its own, on the left and the right, until each side is full; the usage panel keeps its spot.", isOn: $settings.hydraAutoPopsHeads)
                 }
             }
             ChromeSection(title: "Messages") {

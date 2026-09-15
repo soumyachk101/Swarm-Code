@@ -13,6 +13,9 @@ struct UsageFloatingPanel: View {
     let provider: ProviderKind
     let headsProvider: ProviderKind?
     let size: CGSize
+    /// The height the content wants, strip and paddings included, reported whenever it
+    /// changes; the placer sizes the panel to it, up to `size.height`.
+    let onContentHeight: (CGFloat) -> Void
     /// The pointer's travel since the handle was grabbed.
     let onDrag: (CGSize) -> Void
     let onDragEnd: () -> Void
@@ -28,6 +31,7 @@ struct UsageFloatingPanel: View {
             if hasSomething {
                 ScrollView(.vertical) {
                     UsagePanel(usage: usage, provider: provider, headsProvider: headsProvider, fillsWidth: true)
+                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { onContentHeight($0 + HydraPanel.stripHeight + 8) }
                         .padding(.top, HydraPanel.stripHeight)
                         .padding(.bottom, 8)
                 }
@@ -37,6 +41,7 @@ struct UsageFloatingPanel: View {
                     .foregroundStyle(Chrome.secondaryText)
                     .padding(.top, HydraPanel.stripHeight)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onAppear { onContentHeight(HydraPanel.stripHeight + 44) }
             }
         }
         .overlay(alignment: .top) {

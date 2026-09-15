@@ -40,6 +40,9 @@ final class RowGlideAnimator {
         let launchedAt = Date.now
         /// Landing is close: the real row shows again under the ghost's last frames.
         var hasArrived = false
+        /// The new row reported its frame, so the ghost lands on a real row; otherwise
+        /// it is headed for the fallback and fades out on the way.
+        var hasLanded = false
     }
 
     private(set) var glides: [Glide] = []
@@ -50,10 +53,18 @@ final class RowGlideAnimator {
     /// would flip out of its sight.
     @ObservationIgnored private var hidingCells: [UUID: ObservedValue<Bool>] = [:]
 
-    /// A landing frame counts only right after launch: the new row lays out in the same
-    /// pass as the thread's change. One reporting later was out of view when the ghost
-    /// took off, and the ghost is on its way to the edge by then.
-    private static let landingWindow: TimeInterval = 0.1
+    /// The `Settled` header's frame in the window, reported by the header while it is
+    /// on screen; a settle with the section folded lands on it.
+    @ObservationIgnored private(set) var settledHeaderFrame: CGRect?
+
+    func noteSettledHeader(_ frame: CGRect?) { settledHeaderFrame = frame }
+
+    /// A landing frame counts through the first half second of the flight, from the
+    /// thread's arriving row only; the new row lays out in the pass after the change,
+    /// but a busy pass can be later, and its position converges as the list closes up,
+    /// so the latest report inside the window wins; the interpolation below absorbs
+    /// the re-targeting.
+    private static let landingWindow: TimeInterval = 0.5
 
     /// Starts a glide from `from`, headed for `fallback` (just past the list's edge) until
     /// the new row reports where it really is. Nothing flies with Reduce Motion on.
@@ -78,10 +89,12 @@ final class RowGlideAnimator {
     }
 
     /// The new row is on screen at `frame`: the ghost lands there.
-    func land(threadID: UUID, at frame: CGRect) {
+    func land(threadID: UUID, settled: Bool, at frame: CGRect) {
         guard let index = glides.firstIndex(where: { $0.threadID == threadID }),
-              Date.now.timeIntervalSince(glides[index].launchedAt) < Self.landingWindow else { return }
+              Date.now.timeIntervalSince(glides[index].launchedAt) < Self.landingWindow,
+              glides[index].direction == (settled ? .settle : .reopen) else { return }
         glides[index].to = frame
+        glides[index].hasLanded = true
     }
 
     /// Whether the thread's row should stay out of sight: its ghost is in the air. Read
@@ -212,6 +225,9 @@ private struct RowGlideView: View {
                         .opacity(settles ? 1 - 0.2 * p : 1 - Self.smoothstep(0.55, 0.9, p))
                         .position(x: checkStart + (checkEnd - checkStart) * checkTravel, y: frame.midY)
                 }
+                // A ghost with no row to hand over to (headed for the list's edge or the
+                // folded header) fades out on the way instead of vanishing on arrival.
+                .opacity(glide.hasLanded ? 1 : 1 - Self.smoothstep(0.55, 0.92, p))
                 .frame(width: canvas.width, height: canvas.height, alignment: .topLeading)
                 .clipShape(FrameShape(frame: glide.bounds))
             } keyframes: { _ in

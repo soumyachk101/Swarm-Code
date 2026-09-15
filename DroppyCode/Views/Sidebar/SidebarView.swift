@@ -971,6 +971,9 @@ private struct SidebarHelperRow: View {
         // touches, not every row in the list.
         let isSelected = model.isSelected(thread.id)
         let showsActions = isHovering || isMenuPresented
+        // A helper goes out of sight the moment its parent's ghost takes off, so it never
+        // lingers under the rows closing up.
+        let isHidden = RowGlideAnimator.shared.isHiding(thread.parentThreadID ?? thread.id)
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         HStack(spacing: 0) {
             HelperConnector(endsHere: isLast, action: onFold)
@@ -1032,6 +1035,9 @@ private struct SidebarHelperRow: View {
             }
             .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
         }
+        // A helper goes out of sight the moment its parent's ghost takes off, so it never
+        // lingers under the rows closing up.
+        .opacity(isHidden ? 0 : 1)
     }
 
     /// The ellipsis popover's items. Kept on the instance: a popover is not an AppKit menu.
@@ -1069,6 +1075,9 @@ private struct HelperStubRow: View {
         }
         // A team of heads is called that; a mix, or merges alone, stays "helpers".
         let noun = helpers.allSatisfy(\.isHydraHead) ? "head" : "helper"
+        // A helper goes out of sight the moment its parent's ghost takes off, so it never
+        // lingers under the rows closing up.
+        let isHidden = RowGlideAnimator.shared.isHiding(parentSnapshot.id)
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         Button(action: action) {
             HStack(spacing: 0) {
@@ -1103,6 +1112,9 @@ private struct HelperStubRow: View {
         }
         .help(count == 1 ? "Show the \(noun)" : "Show \(count) \(noun)s")
         .accessibilityLabel(Text(count == 1 ? "1 folded \(noun)" : "\(count) folded \(noun)s"))
+        // A helper goes out of sight the moment its parent's ghost takes off, so it never
+        // lingers under the rows closing up.
+        .opacity(isHidden ? 0 : 1)
     }
 }
 
@@ -1296,13 +1308,13 @@ private struct SidebarThreadRow: View {
         .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { frame in
             windowFrame.note(frame)
             // A row that has just arrived where a ghost of it is headed tells the ghost where to land.
-            RowGlideAnimator.shared.land(threadID: thread.id, at: frame)
+            RowGlideAnimator.shared.land(threadID: thread.id, settled: snapshot.isSettled, at: frame)
         }
         .opacity(isHidden ? 0 : 1)
-        // The ghost hands over in a 0.12s window (see `RowGlideAnimator`: the row comes
-        // back at settlingDuration − 0.12, the ghost goes 0.12 later), so the un-hide
-        // must finish inside it; a slower curve leaves a dip between ghost and row.
-        .animation(.easeOut(duration: 0.12), value: isHidden)
+        // Hiding is instant, since the ghost takes over the row's frame in the same pass;
+        // showing eases in over the 0.12 s handover window in which the ghost still covers
+        // the row (see `RowGlideAnimator`).
+        .animation(isHidden ? nil : .easeOut(duration: 0.12), value: isHidden)
         // Lifted: a touch larger with a shadow, over an opaque fill so the rows sliding
         // underneath never show through. The queue's rows lift the same way.
         .background {
@@ -1410,12 +1422,17 @@ private struct SidebarThreadRow: View {
             arriving.hasUnread = false
         }
         let arrivalHeight = settled ? ThreadRowMetrics.settledHeight : (projectName != nil ? ThreadRowMetrics.detailedHeight : Chrome.rowHeight)
-        let fallback = CGRect(
+        var fallback = CGRect(
             x: from.minX,
             y: settled ? bounds.maxY : bounds.minY - arrivalHeight,
             width: from.width,
             height: arrivalHeight
         )
+        // With the settled section folded there is no row to land on, so the ghost
+        // heads for the `Settled` header's line and fades out there.
+        if settled, model.settings.settledCollapsed, let header = RowGlideAnimator.shared.settledHeaderFrame, bounds.intersects(header) {
+            fallback = CGRect(x: from.minX, y: header.maxY - arrivalHeight, width: from.width, height: arrivalHeight)
+        }
         let animator = RowGlideAnimator.shared
         let badge = ThreadGhostBadge(thread: thread, runtime: model.existingRuntime(for: thread.id))
         // The faces leave the same room at the trailing end as the rows they stand in for: the
@@ -1838,6 +1855,7 @@ private struct SettledHeader: View {
             .animation(Chrome.panelSlide, value: isFirst)
         }
         .buttonStyle(.plain)
+        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(GenieAnimator.coordinateSpace)) }) { RowGlideAnimator.shared.noteSettledHeader($0) }
         .help(collapsed ? "Show settled threads" : "Hide settled threads")
         .accessibilityLabel(Text("Settled, \(shown) threads"))
         .accessibilityValue(Text(collapsed ? "Collapsed" : "Expanded"))
@@ -1867,6 +1885,7 @@ private struct SettledHeader: View {
         }
         .onDisappear {
             countTask?.cancel()
+            RowGlideAnimator.shared.noteSettledHeader(nil)
         }
     }
 }
