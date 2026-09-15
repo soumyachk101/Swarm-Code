@@ -35,16 +35,30 @@ struct DotFieldSweep: View {
     }
 }
 
+/// The same field through a whole surface, endlessly: the pill's wave over every row at
+/// one strength, for the timeline's working badge. Still with reduced motion.
+struct DotFieldFill: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        DotFieldLayerView.Representable(color: Chrome.accentNSColor, animated: !reduceMotion, fills: true)
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+    }
+}
+
 final class DotFieldLayerView: NSView {
     struct Representable: NSViewRepresentable {
         let color: NSColor
         let animated: Bool
         /// One pass over every row instead of the pill's endless wave along the bottom.
         var sweeps = false
+        var fills = false
 
         func makeNSView(context: Context) -> DotFieldLayerView {
             let view = DotFieldLayerView()
             view.sweeps = sweeps
+            view.fills = fills
             view.configure(color: color, animated: animated)
             return view
         }
@@ -63,6 +77,8 @@ final class DotFieldLayerView: NSView {
     /// Set once, before the view is configured: a sweep fills every row of its surface
     /// with one wave that starts when the view appears and ends faded out.
     fileprivate var sweeps = false
+    /// The pill's endless wave over every row of the surface at one strength, for a badge the field runs through.
+    fileprivate var fills = false
 
     private static let dotSize: CGFloat = 2
     private static let pitch: CGFloat = 8
@@ -132,7 +148,7 @@ final class DotFieldLayerView: NSView {
         guard size != laidOutSize, size.width > 0, size.height > 0 else { return }
         laidOutSize = size
         let columnCount = Int(ceil(size.width / Self.pitch)) + 1
-        let rowCount = sweeps
+        let rowCount = (sweeps || fills)
             ? max(1, Int(ceil(size.height / Self.pitch)))
             : min(Self.maxRows, max(1, Int(ceil(size.height / Self.pitch))))
         CATransaction.begin()
@@ -150,7 +166,7 @@ final class DotFieldLayerView: NSView {
         // A sweep's rows move as one front, all the same, so the wave is a wall crossing
         // the surface rather than the pill's fade-out upward.
         rows.instanceDelay = sweeps ? 0 : Self.rowDelay
-        rows.instanceAlphaOffset = sweeps ? 0 : -Float(1) / Float(rowCount)
+        rows.instanceAlphaOffset = (sweeps || fills) ? 0 : -Float(1) / Float(rowCount)
         CATransaction.commit()
     }
 

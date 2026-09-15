@@ -85,6 +85,7 @@ final class AppSettings {
         static let disabledProviders = "disabledProviders"
         static let models = "lastModels"
         static let efforts = "lastEfforts"
+        static let lastHydraPair = "lastHydraPairID"
         static let textGeneration = "textGeneration"
         static let commitInstructions = "commitInstructions"
         static let terminalHeight = "terminalHeight"
@@ -338,6 +339,13 @@ final class AppSettings {
         didSet { defaults.set(lastEfforts, forKey: Key.efforts) }
     }
 
+    /// The pair a chat was last put in from the model picker, so a new chat with no chat to
+    /// carry from (after a relaunch, say) starts in it rather than on the bare last model.
+    /// Cleared when a chat leaves its pair or the pair is removed.
+    var lastHydraPairID: UUID? {
+        didSet { defaults.set(lastHydraPairID?.uuidString, forKey: Key.lastHydraPair) }
+    }
+
     private(set) var modelList: [ModelPin] {
         didSet { store(modelList, forKey: Key.modelList) }
     }
@@ -535,6 +543,7 @@ final class AppSettings {
         disabledProviders = defaults.stringArray(forKey: Key.disabledProviders) ?? []
         lastModels = defaults.dictionary(forKey: Key.models) as? [String: String] ?? [:]
         lastEfforts = defaults.dictionary(forKey: Key.efforts) as? [String: String] ?? [:]
+        lastHydraPairID = defaults.string(forKey: Key.lastHydraPair).flatMap(UUID.init(uuidString:))
         modelList = Self.load([ModelPin].self, forKey: Key.modelList) ?? []
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
         hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? true

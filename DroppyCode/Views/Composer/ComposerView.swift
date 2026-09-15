@@ -912,9 +912,24 @@ private struct DraftChips: View {
                 }
             }
             .padding(.bottom, 8)
-            .transition(.softAppear)
+            .transition(.modifier(active: ChipRowCollapse(collapsed: true), identity: ChipRowCollapse(collapsed: false)))
             .animation(Chrome.panelSlide, value: ChipKey(quoteIDs: quotes.map(\.id), commandName: command?.name))
         }
+    }
+}
+
+/// The chip row's arrival and departure: it opens from and closes to nothing, clipped
+/// from the bottom and fading, on the transaction's own animation. A fade in place
+/// left the row hanging over the text view as that slid up into its room, so the
+/// placeholder seemed to fade in through the chip.
+private struct ChipRowCollapse: ViewModifier {
+    let collapsed: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .frame(height: collapsed ? 0 : nil, alignment: .top)
+            .clipped()
+            .opacity(collapsed ? 0 : 1)
     }
 }
 

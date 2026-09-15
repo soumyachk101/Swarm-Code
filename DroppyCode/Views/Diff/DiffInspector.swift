@@ -172,7 +172,11 @@ struct DiffInspector: View {
         // The tapped row's own patches carry any file the turn's diff cannot show:
         // a running turn has no end checkpoint yet, and work that was reverted or
         // moved into a worktree leaves its checkpoint diff empty.
-        let missing = focusedFiles(runtime.diffFocusEdits, missingFrom: filtered)
+        // Off the main thread: a tapped row's patches can run to thousands of lines,
+        // and parsing them here held the popover's first frame.
+        let focusEdits = runtime.diffFocusEdits
+        let missing = await Task.detached(priority: .userInitiated) { focusedFiles(focusEdits, missingFrom: filtered) }.value
+        guard !Task.isCancelled else { return }
         files = Array((missing + filtered).prefix(120))
         // The files a tapped tool row asked to see open on arrival, and the view
         // scrolls to the first of them. Everything else keeps the "first file open,
@@ -660,6 +664,10 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
             // that already reopened (newer session) must survive.
             if self.session == self.pendingSession {
                 if let shown = self.shownRuntime, shown.isDiffVisible { shown.isDiffVisible = false }
+                // The content goes with the close: a hosting view left in the popover kept
+                // its inspector alive, observing the runtime and re-rendering on every
+                // change while nothing was on screen.
+                self.popover.contentViewController = nil
             }
             self.shownRuntime = nil
         }

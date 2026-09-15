@@ -521,7 +521,24 @@ final class AppModel {
             fastMode: fastMode
         )
         // A chat made from one that leads a pair carries the pair along with the model.
-        if carriesModel { thread.hydraPairID = current?.hydraPairID }
+        // With no chat to carry from (a fresh launch), the pair last entered from the
+        // picker is where the new chat starts, on its lead model and effort, provided
+        // Hydra is on and the pair is still there for this provider. Before any pair
+        // has been entered since this was remembered, the pair of the chat last worked
+        // in stands in, so an existing pair chat carries over the first relaunch too.
+        let lastPairID = settings.lastHydraPairID
+            ?? threads.filter { $0.hydraPairID != nil && !$0.isHelper }.max { $0.updatedAt < $1.updatedAt }?.hydraPairID
+        if carriesModel {
+            thread.hydraPairID = current?.hydraPairID
+        } else if settings.hydraEnabled, let pairID = lastPairID,
+                  let pair = hydraPickerPairs.first(where: { $0.id == pairID }), pair.provider == provider {
+            let lead = hydraLead(of: pair, for: thread)
+            thread.model = lead.model
+            thread.effort = lead.effort
+            thread.fastMode = lead.fastMode
+            thread.hydraPairID = pair.id
+            thread.hydraEnabled = true
+        }
         threads.append(thread)
         updateProject(project.id) { $0.isExpanded = true }
         rememberLastProject(project.id)

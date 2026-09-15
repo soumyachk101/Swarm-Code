@@ -266,7 +266,7 @@ struct HydraReportRow: View {
     }
 
     /// The title without the one full stop a note's first line ends on.
-    private static func withoutTrailingStop(_ title: String) -> String {
+    static func withoutTrailingStop(_ title: String) -> String {
         title.hasSuffix(".") ? String(title.dropLast()) : title
     }
 
@@ -310,7 +310,7 @@ struct HydraReportRow: View {
     }
 
     /// The address on the body's first line, when that line is an address and nothing else.
-    private static func leadingURL(in body: String) -> URL? {
+    static func leadingURL(in body: String) -> URL? {
         guard let line = body.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmingCharacters(in: .whitespaces),
               line.lowercased().hasPrefix("http://") || line.lowercased().hasPrefix("https://"),
               !line.contains(where: \.isWhitespace) else { return nil }
@@ -318,7 +318,7 @@ struct HydraReportRow: View {
     }
 
     /// The body past its first line: what a note says after the address it leads with.
-    private static func withoutFirstLine(_ body: String) -> String {
+    static func withoutFirstLine(_ body: String) -> String {
         guard let newline = body.firstIndex(where: \.isNewline) else { return "" }
         return String(body[newline...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -684,29 +684,137 @@ struct HydraDelegationBlock: View {
     }
 }
 
-/// The team's work on its way to the remote once the lead has finished, in the report
-/// pill's own frame: the mark, the spinner, the stage the merge is at right now (the same
-/// words the sidebar shows), with how long it has been at it. The timeline appends the
-/// pill while the merge runs and drops it when the note about the outcome lands, so the
-/// merging state reads inside the exact pill that then morphs into the merged report,
-/// with no second row. It holds no condition of its own.
-struct HydraMergingRow: View {
+/// What the merge pill shows: the merge under way, or the note about how it went.
+enum HydraMergePhase: Equatable {
+    case merging
+    case outcome(UserMessage)
+}
+
+/// A merge outcome note read for the pill: the title it leads with, the merge request's
+/// address when the body leads with one, and what the note says past that.
+private struct HydraMergeOutcome {
+    let title: String
+    /// The note past its title, for the popover.
+    let body: String
+    /// The merge request's address, when the body leads with one: a link beside the pill.
+    let link: URL?
+    /// What the note says after the address, if any: with none, the pill has no popover.
+    let details: String
+
+    init(_ message: UserMessage) {
+        let parts = message.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
+        title = HydraReportRow.withoutTrailingStop(String(parts.first ?? "Hydra"))
+        body = String(parts.count > 1 ? parts[1] : "").trimmingCharacters(in: .whitespacesAndNewlines)
+        link = HydraReportRow.leadingURL(in: body)
+        details = link == nil ? body : HydraReportRow.withoutFirstLine(body)
+    }
+}
+
+/// The team's work on its way to the remote once the lead has finished, and then the word
+/// on how it went, in one pill in the report pill's frame. While the merge runs: the mark,
+/// the spinner, the stage the merge is at right now (the same words the sidebar shows), and
+/// how long it has been at it. Once the outcome note lands: the note's title with its report
+/// a tap away, and the merge request's link beside it. The timeline draws the pill under the
+/// outcome note's own id from the first stage on (see `ThreadRuntime.hydraMergeNoteID`), so
+/// this one row keeps its identity across the change and morphs: the contents crossfade
+/// while the capsule glides to the new width. It holds no condition of its own.
+struct HydraMergeRow: View {
     @Environment(\.chatZoom) private var zoom
     let runtime: ThreadRuntime
-    @State private var now = Date.now
+    let phase: HydraMergePhase
 
-    /// The one motion for the stage's words changing.
+    @State private var now = Date.now
+    @State private var isShowingReport = false
+
+    /// The one motion for anything in the pill changing: the stage's words, the time's
+    /// digits, and the merging state giving way to the outcome.
     private static let change = Animation.smooth(duration: 0.3)
 
     var body: some View {
+        let outcome: HydraMergeOutcome? = if case .outcome(let message) = phase { HydraMergeOutcome(message) } else { nil }
+        let isMerging = outcome == nil
         // The same stage words the sidebar shows beside its own spinner.
         let stage = (runtime.hydraMergeStage ?? "Merging") + "…"
-        let elapsed = now.timeIntervalSince(runtime.hydraMergeStartedAt ?? now)
+        let elapsed = RelativeTime.duration(now.timeIntervalSince(runtime.hydraMergeStartedAt ?? now))
         HStack(spacing: 8) {
+            // The mark stays put through the change; it opens the report like the title does.
             HydraMarkImage()
                 .foregroundStyle(Chrome.secondaryText)
                 .frame(width: 18, height: 18)
+                .contentShape(.rect)
+                .onTapGesture {
+                    guard let outcome, !outcome.details.isEmpty else { return }
+                    isShowingReport.toggle()
+                }
                 .accessibilityHidden(true)
+            // Only the contents of the current state take part in layout: a still copy of
+            // them sizes the slot, and it changes over at once (an identity transition), so
+            // the pill glides straight from the one width to the other. The contents on
+            // show are drawn over that slot at their own size and clipped to it, the old
+            // ones fading out as the new ones fade in; laid out side by side instead, the
+            // two would hold the pill wide for the length of the fade.
+            ZStack(alignment: .leading) {
+                if let outcome {
+                    outcomeLabel(outcome)
+                        .transition(.identity)
+                } else {
+                    mergingLabel(stage: stage, elapsed: elapsed)
+                        .transition(.identity)
+                }
+            }
+            .hidden()
+            .overlay(alignment: .leading) {
+                ZStack(alignment: .leading) {
+                    if let outcome {
+                        outcomeControls(outcome)
+                            .fixedSize()
+                            .transition(.opacity)
+                    } else {
+                        mergingContent(stage: stage, elapsed: elapsed)
+                            .fixedSize()
+                            .transition(.opacity)
+                    }
+                }
+            }
+            // Room above and below for the stage words' lift, and a hair either side for
+            // the controls' own edges, given back after the clip.
+            .padding(.vertical, 6)
+            .padding(.horizontal, 2)
+            .clipped()
+            .padding(.horizontal, -2)
+            .padding(.vertical, -6)
+            // Scoped to the slot, so the shimmer's own frames beside it are never caught in
+            // the transaction; the pill around it follows the slot's animated width.
+            .animation(Self.change, value: isMerging)
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 14)
+        .padding(.vertical, 8)
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, 96)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(outcome?.title ?? "Merging the team's work: \(stage)"))
+        .task(id: isMerging) {
+            guard isMerging else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                now = .now
+            }
+        }
+        // The report parses off the main thread as the pill appears, so the tap that
+        // opens it finds the blocks ready rather than parsing the whole batch first.
+        .task(id: outcome?.body) {
+            guard let outcome, !outcome.details.isEmpty else { return }
+            await MarkdownView.warm([outcome.body])
+        }
+    }
+
+    // MARK: Merging
+
+    /// The merging state as shown: the spinner, the stage with its shimmer, the time.
+    private func mergingContent(stage: String, elapsed: String) -> some View {
+        HStack(spacing: 8) {
             WorkingSpinner(cellSize: 3)
                 .frame(width: 14)
             // A new stage is a new text: the old one fades up and out as the new one fades in
@@ -740,26 +848,104 @@ struct HydraMergingRow: View {
                 .padding(.vertical, 6)
                 .clipped()
                 .padding(.vertical, -6)
-            Text(RelativeTime.duration(elapsed))
+                // On the slot alone: the whole row's transaction would catch the shimmer's
+                // next frame too and ease it, so the band hitched at every new stage.
+                .animation(Self.change, value: stage)
+            // The digits roll over, and the width glides when they gain or lose one ("9s" to
+            // "10s", "59s" to "1m 0s"): a plain swap snapped the pill's edge every ten seconds.
+            Text(verbatim: elapsed)
                 .font(.chat(.caption, zoom: zoom))
                 .foregroundStyle(Chrome.secondaryText)
                 .monospacedDigit()
+                .contentTransition(.numericText())
+                .animation(Self.change, value: elapsed)
         }
-        .animation(Self.change, value: stage)
-        .padding(.leading, 12)
-        .padding(.trailing, 14)
-        .padding(.vertical, 8)
-        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 96)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("Merging the team's work: \(stage)"))
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                now = .now
+    }
+
+    /// The merging state's still copy, for its size only: the spinner's slot, the words,
+    /// the time, in the fonts they show in.
+    private func mergingLabel(stage: String, elapsed: String) -> some View {
+        HStack(spacing: 8) {
+            Color.clear
+                .frame(width: 14, height: 1)
+            Text(verbatim: stage)
+                .font(.chat(.callout, weight: .medium, zoom: zoom))
+                .animation(Self.change, value: stage)
+            Text(verbatim: elapsed)
+                .font(.chat(.caption, zoom: zoom))
+                .monospacedDigit()
+                .animation(Self.change, value: elapsed)
+        }
+    }
+
+    // MARK: Outcome
+
+    /// The outcome as shown: the title opens the report, the link opens the merge request.
+    /// The link is a control of its own beside the button, never inside its label: a link
+    /// nested in a button takes the button's clicks on macOS, and the text stopped opening
+    /// the popover.
+    private func outcomeControls(_ outcome: HydraMergeOutcome) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                guard !outcome.details.isEmpty else { return }
+                isShowingReport.toggle()
+            } label: {
+                outcomeTitle(outcome)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .disabled(outcome.details.isEmpty)
+            .help(outcome.details.isEmpty ? "" : "Show the message")
+            .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
+                // A merge note draws its own card; every other outcome keeps the markdown view.
+                if let link = outcome.link, let request = MergeRequestLink(url: link), let note = HydraMergeNote.parse(outcome.details, link: request) {
+                    HydraMergePopover(note: note)
+                        .presentedChrome()
+                } else {
+                    HydraReportPopover(text: outcome.body)
+                        .presentedChrome()
+                }
+            }
+            if let link = outcome.link {
+                Link(destination: link) {
+                    openLabel
+                }
+                .help("Open in the browser")
             }
         }
+    }
+
+    /// The outcome's still copy, for its size only: the same title and link text without
+    /// the controls around them, which add nothing to their size.
+    private func outcomeLabel(_ outcome: HydraMergeOutcome) -> some View {
+        HStack(spacing: 8) {
+            outcomeTitle(outcome)
+            if outcome.link != nil {
+                openLabel
+            }
+        }
+    }
+
+    /// The title, and the chevron when there is a report behind it.
+    private func outcomeTitle(_ outcome: HydraMergeOutcome) -> some View {
+        HStack(spacing: 8) {
+            Text(verbatim: outcome.title)
+                .font(.chat(.callout, weight: .medium, zoom: zoom))
+                .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if !outcome.details.isEmpty {
+                Image(systemName: "chevron.right")
+                    .font(.chat(.caption2, weight: .semibold, zoom: zoom))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+
+    private var openLabel: some View {
+        Text("Open")
+            .font(.chat(.caption, weight: .semibold, zoom: zoom))
+            .foregroundStyle(Chrome.secondaryText)
     }
 }
 
@@ -1240,7 +1426,8 @@ struct HydraHeadsList: View {
     var workingDirectory: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+        // Badges, not lines of text: they stack closer than rows of text do.
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(entries) { entry in
                 ToolRow(entry: entry, runtime: runtime, workingDirectory: workingDirectory)
             }
@@ -1370,7 +1557,6 @@ struct ToolRow: View {
                     } label: {
                         line(call: call, imagePath: imagePath, opensPopover: opensPopover, opensHead: opensHead, showsOutput: showsOutput)
                             .contentShape(.rect)
-                            .modifier(HeadStepsPopoverModifier(headID: headID, isPresented: $isShowingHead))
                     }
                     .buttonStyle(.plain)
                     .help(helpText(opensDiff: opensDiff, opensImage: opensImage, opensHead: opensHead, showsOutput: showsOutput))
@@ -1393,20 +1579,22 @@ struct ToolRow: View {
         // The slot alone: the hover responder and the anchor view must not keep this
         // row's entry (and its text) alive after it scrolls away.
         let previewSlot = preview
+        // A row that sent out a head wears the head's glyph and name, in the badge the
+        // finished turn's card and the working line wear, rather than as a line of text.
+        let head = call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
+        let isBadge = head != nil
         HStack(spacing: TimelineMetrics.iconSpacing) {
-            HStack(spacing: TimelineMetrics.iconSpacing) {
-                // A row that sent out a head wears the head's glyph and name.
-                let head = call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
+            HStack(spacing: isBadge ? 8 : TimelineMetrics.iconSpacing) {
                 if let head {
-                    HydraGlyph(persona: head.persona, size: 14, isRunning: call.status == .running && head.status == .running, status: head.status)
-                        .frame(width: TimelineMetrics.iconWidth)
+                    HydraGlyph(persona: head.persona, size: 18, isRunning: call.status == .running && head.status == .running, status: head.status)
                 } else {
                     ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)
                 }
                 // One text run after the icon, so the row reads as
                 // icon + space + text instead of three spaced items.
                 Text(head.map { "\(call.status == .running ? "Sending out" : "Sent out") \($0.persona.name): \(call.title)" } ?? ToolPresentation.label(for: call))
-                    .foregroundStyle(.secondary)
+                    .font(isBadge ? .chat(.callout, weight: .medium, zoom: zoom) : .chat(.callout, zoom: zoom))
+                    .foregroundStyle(isBadge ? AnyShapeStyle(Chrome.primaryText.opacity(0.9)) : AnyShapeStyle(.secondary))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 if let stats = ToolPresentation.stats(for: call) {
@@ -1425,6 +1613,15 @@ struct ToolRow: View {
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
             }
+            .padding(.leading, isBadge ? 12 : 0)
+            .padding(.trailing, isBadge ? 10 : 0)
+            .padding(.vertical, isBadge ? 6 : 0)
+            .background {
+                if isBadge {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(.quaternary.opacity(0.32))
+                }
+            }
             .onHover { [needed = $needsAnchor] hovering in
                 if hovering, !needed.wrappedValue { needed.wrappedValue = true }
             }
@@ -1433,6 +1630,9 @@ struct ToolRow: View {
                     AttachmentAnchorCapture { [weak previewSlot] in previewSlot?.setAnchor($0) }
                 }
             }
+            // On the text run (the badge), not the full-width row: hung from the row, the
+            // popover's arrow pointed at the row's middle, well to the right of the words.
+            .modifier(HeadStepsPopoverModifier(headID: opensHead ? runtime.hydraHead(forTool: entry.id) : nil, isPresented: $isShowingHead))
             Spacer(minLength: 8)
             if call.status == .failed, let exitCode = call.exitCode {
                 Text("exit \(exitCode)")
@@ -1771,22 +1971,23 @@ private enum DiffDetailCache {
 
 enum ToolPresentation {
     /// The row's text run: verb plus subject. Agents that title a call with the
-    /// tool's own name ("Edit file") would read "Edited Edit file" — drop the
-    /// redundant leading word so it reads "Edited file".
+    /// tool's own name ("Edit file", "Write file") would read "Edited Edit file" or
+    /// "Editing Write file" — a leading word that only restates the kind goes, so it
+    /// reads "Edited file".
     static func label(for call: ToolCall) -> String {
-        let root: String = switch call.kind {
-        case .command: "run"
-        case .read: "read"
-        case .edit: "edit"
-        case .search: "search"
-        case .web: "fetch"
-        case .mcp: "call"
-        case .agent: "delegate"
-        case .other: "use"
+        let roots: [String] = switch call.kind {
+        case .command: ["run", "bash", "shell", "exec", "execute", "command"]
+        case .read: ["read", "view", "open", "cat"]
+        case .edit: ["edit", "write", "multiedit", "create", "notebookedit", "apply_patch", "patch"]
+        case .search: ["search", "grep", "glob", "find"]
+        case .web: ["fetch", "webfetch", "websearch", "browse"]
+        case .mcp: ["call"]
+        case .agent: ["delegate", "agent", "task"]
+        case .other: ["use"]
         }
         var subject = call.title
         let words = call.title.split(separator: " ", maxSplits: 1)
-        if words.first?.lowercased() == root {
+        if let first = words.first?.lowercased(), roots.contains(first) {
             subject = words.count > 1 ? String(words[1]) : ""
         }
         return [verb(for: call), subject].filter { !$0.isEmpty }.joined(separator: " ")

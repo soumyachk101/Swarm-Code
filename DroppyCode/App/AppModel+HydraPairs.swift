@@ -44,12 +44,13 @@ extension AppModel {
         if switchesProvider { existingRuntime(for: threadID)?.stopSession() }
         settings.remember(model: lead.model, effort: lead.effort, for: provider)
         settings.defaultProvider = provider
+        settings.lastHydraPairID = pair.id
         settings.hydraEnabled = true
         settings.hydraDefaultEnabled = true
     }
 
     /// The model, effort and fast mode a chat runs on as a pair's lead.
-    private func hydraLead(of pair: HydraPair, for thread: ChatThread) -> (model: String?, effort: String?, fastMode: Bool) {
+    func hydraLead(of pair: HydraPair, for thread: ChatThread) -> (model: String?, effort: String?, fastMode: Bool) {
         let provider = pair.provider
         let switchesProvider = provider != thread.provider
         // A pair with no lead model runs on any model, so the chat keeps the one it is on;
@@ -106,6 +107,7 @@ extension AppModel {
     /// that is gone: each stays on its own model, Hydra as it was.
     func removeHydraPair(_ id: UUID) {
         settings.removeHydraPair(id)
+        if settings.lastHydraPairID == id { settings.lastHydraPairID = nil }
         for thread in threads where thread.hydraPairID == id {
             updateThread(thread.id) { $0.hydraPairID = nil }
         }
@@ -117,5 +119,6 @@ extension AppModel {
     /// own model and effort until a pair is picked again.
     func leaveHydraPair(for threadID: UUID) {
         updateThread(threadID) { $0.hydraPairID = nil }
+        settings.lastHydraPairID = nil
     }
 }

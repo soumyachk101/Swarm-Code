@@ -243,6 +243,7 @@ final class ACPSession: ProviderSession {
         }
         defer { session.stop() }
         _ = try await session.start()
+        await session.probeModelEfforts()
         return models
     }
 
@@ -274,6 +275,22 @@ final class ACPSession: ProviderSession {
         }
         if let modelState = state["models"], !modelState.isNull { applyModels(modelState) }
         if let options = state["configOptions"]?.array { applyConfigOptions(options) }
+    }
+
+    /// Cursor reports the effort scale of the current model only, so the catalog probe
+    /// walks the list: each model without a scale yet is made current in turn and its
+    /// scale read off the reply, and the model the session started on is put back.
+    private func probeModelEfforts() async {
+        guard usesParameterizedModels, let modelConfigID else { return }
+        let original = currentModel
+        for model in models where model.efforts.isEmpty {
+            await setConfigOption(modelConfigID, value: model.id)
+            currentModel = model.id
+        }
+        if let original, !Self.sameModel(original, currentModel) {
+            await setConfigOption(modelConfigID, value: original)
+            currentModel = original
+        }
     }
 
     private func resolveModes(_ ids: [String]) {
@@ -319,12 +336,20 @@ final class ACPSession: ProviderSession {
                 let list = values.compactMap { value -> ModelOption? in
                     guard let rawID = value["value"]?.string else { return nil }
                     let valueID = usesParameterizedModels ? Self.baseModelID(rawID) : rawID
-                    return ModelOption(
+                    // A rebuilt list keeps what earlier passes learned about each model (its
+                    // scale, its Fast tier): Cursor reports them for the current model only,
+                    // one pass at a time.
+                    let known = models.first { Self.sameModel($0.id, valueID) }
+                    var option = ModelOption(
                         id: valueID,
                         name: value["name"]?.string ?? valueID,
                         detail: value["description"]?.string,
+                        efforts: known?.efforts ?? [],
+                        defaultEffort: known?.defaultEffort,
                         isDefault: valueID == currentModel
                     )
+                    option.fastTier = known?.fastTier
+                    return option
                 }
                 if !list.isEmpty { models = list }
             case "mode":
