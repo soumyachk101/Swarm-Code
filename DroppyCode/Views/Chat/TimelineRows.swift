@@ -337,7 +337,12 @@ struct HydraHeadsWorkingRow: View {
         // what redraws this one (see `AppModel.startHydraWatchdog`).
         // The whole team, not only the panel: a finished head leaves the panel on its own
         // (`hydraAutoClearFinished`), and its pill below has to stay until the report lands.
-        let team = model.hydraTeam(of: runtime.threadID)
+        // Read through this thread's own cells (`helpers(of:)` holds every unarchived head,
+        // in the panel or not), the same list as `hydraTeam(of:)` without its scan of
+        // `model.threads`: a write to some other chat never re-renders this pill.
+        let team = model.helpers(of: runtime.threadID)
+            .filter(\.isHydraHead)
+            .sorted { ($0.hydra?.index ?? 0) < ($1.hydra?.index ?? 0) }
         let running = team.filter { $0.hydra?.status == .running && heads.contains($0.hydra?.index ?? -1) }
         let thinking = !running.isEmpty && running.allSatisfy { head in
             guard let live = model.existingRuntime(for: head.id) else { return false }
@@ -492,12 +497,20 @@ struct HydraBriefRow: View {
     let runtime: ThreadRuntime
 
     @State private var isShowingBrief = false
+    /// Whether the brief's turn has output, as of an entry count: the row re-evaluates far
+    /// more often than the timeline grows, so the scan runs once per count and is replayed.
+    @State private var scanned: (count: Int, value: Bool)?
 
     var body: some View {
         let persona = runtime.thread?.hydra?.persona ?? HydraRoster.persona(at: 0)
         // The brief's turn has produced nothing of its own yet: no entry past the brief
         // itself on the same turn means the head is still cooking.
-        let hasOutput = entry.turnID != nil && runtime.entries.contains { $0.turnID == entry.turnID && $0.id != entry.id }
+        let count = runtime.entries.count
+        let hasOutput: Bool = if let scanned, scanned.count == count {
+            scanned.value
+        } else {
+            entry.turnID != nil && runtime.entries.contains { $0.turnID == entry.turnID && $0.id != entry.id }
+        }
         let cooking = !hasOutput && runtime.isRunning
         let title = cooking ? "\(persona.name) is starting to cook…" : "\(persona.name)'s brief"
         VStack(alignment: .trailing, spacing: 6) {
@@ -543,6 +556,10 @@ struct HydraBriefRow: View {
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 96)
         .accessibilityElement(children: .contain)
+        // The scan the body just made, kept for the evaluations until the count moves.
+        .onChange(of: count, initial: true) { _, _ in
+            if scanned?.count != count { scanned = (count, hasOutput) }
+        }
     }
 }
 
@@ -632,18 +649,27 @@ struct HydraDelegationBlock: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// The tasks read out of each block's JSON, by source: a finished block is the same
+    /// card on every evaluation, so its JSON parses once. Only whole JSON gets in; a block
+    /// still streaming fails to parse and is read again on the next flush.
+    @MainActor private static var taskCache = RecentCache<String, [String]>(limit: 200)
+
     /// What each head is given, in the block's order: its task, or the start of its prompt
     /// when it has none (as `HydraPrompts.delegations(in:)` titles it). Nothing until the
     /// JSON is whole and holds at least one head.
+    @MainActor
     private static func tasks(in json: String) -> [String] {
+        if let cached = taskCache.value(for: json) { return cached }
         guard let parsed = JSONValue.parse(json) else { return [] }
         let entries: [JSONValue] = parsed.array ?? (parsed.object == nil ? [] : [parsed])
-        return entries.compactMap { entry -> String? in
+        let tasks = entries.compactMap { entry -> String? in
             let task = entry["task"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             if !task.isEmpty { return task }
             let prompt = entry["prompt"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return prompt.isEmpty ? nil : TextCleanup.singleLine(prompt, limit: 60)
         }
+        taskCache.insert(tasks, for: json)
+        return tasks
     }
 }
 
@@ -788,20 +814,25 @@ struct AttachmentThumbnail: View {
     /// scrolling past should not be building views for a tap that never comes.
     @State private var ownAnchor = WeakView()
     @State private var needsAnchor = false
+    /// Never mounts an anchor view of its own: for a strip that keeps every AppKit view
+    /// out of SwiftUI's key-view-loop walk (see `WindowRectAnchor`). The panel then aims
+    /// at the tap inside the strip's own anchor, which is where the pointer is anyway.
+    private let anchorless: Bool
 
-    init(attachment: Attachment, size: CGFloat = 56, preview: AttachmentPreviewSlot) {
-        self.init(attachment: attachment, size: size, slot: preview, panel: nil)
+    init(attachment: Attachment, size: CGFloat = 56, preview: AttachmentPreviewSlot, anchorless: Bool = false) {
+        self.init(attachment: attachment, size: size, slot: preview, panel: nil, anchorless: anchorless)
     }
 
     init(attachment: Attachment, size: CGFloat = 56, preview: AttachmentPreviewCoordinator) {
-        self.init(attachment: attachment, size: size, slot: nil, panel: preview)
+        self.init(attachment: attachment, size: size, slot: nil, panel: preview, anchorless: false)
     }
 
-    private init(attachment: Attachment, size: CGFloat, slot: AttachmentPreviewSlot?, panel: AttachmentPreviewCoordinator?) {
+    private init(attachment: Attachment, size: CGFloat, slot: AttachmentPreviewSlot?, panel: AttachmentPreviewCoordinator?, anchorless: Bool) {
         self.attachment = attachment
         self.size = size
         self.slot = slot
         self.panel = panel
+        self.anchorless = anchorless
         // A photo shown before starts out drawn, so scrolling back to it never fades it in again.
         _image = State(initialValue: attachment.isImage ? ThumbnailMemory.image(for: attachment.path, pointSize: size) : nil)
     }
@@ -862,11 +893,11 @@ struct AttachmentThumbnail: View {
         // pinning the hit shape to the cell keeps the neighbour's remove badge
         // reachable no matter how hit-testing treats the overflow.
         .contentShape(.rect(cornerRadius: 12, style: .continuous))
-        .onHover { [needed = $needsAnchor] hovering in
-            if hovering, !needed.wrappedValue { needed.wrappedValue = true }
+        .onHover { [needed = $needsAnchor, anchorless] hovering in
+            if hovering, !anchorless, !needed.wrappedValue { needed.wrappedValue = true }
         }
         .background {
-            if needsAnchor {
+            if needsAnchor, !anchorless {
                 AttachmentAnchorCapture { [weak anchorBox] in anchorBox?.value = $0 }
             }
         }
@@ -1948,6 +1979,17 @@ struct TurnFinishedBlock: View {
 
     @State private var isExpanded = false
     @State private var isConfirmingUndo = false
+    /// What the body last derived from the turn, keyed on its entries' identities and the
+    /// fold: an evaluation with the same key reads it back instead of walking the turn
+    /// again. Written after the body (see the `onChange` below), never in it.
+    @State private var derived: (key: DerivedKey, value: Derived)?
+
+    /// What `Derived` depends on: which entries the turn holds (each a class, so identity
+    /// is enough) and whether the full steps are showing.
+    private struct DerivedKey: Equatable {
+        var ids: [ObjectIdentifier]
+        var expanded: Bool
+    }
 
     struct FileStat: Hashable {
         var path: String
@@ -2029,7 +2071,8 @@ struct TurnFinishedBlock: View {
     }
 
     var body: some View {
-        let derived = Derived(content: content, expanded: isExpanded)
+        let key = DerivedKey(ids: content.map(ObjectIdentifier.init), expanded: isExpanded)
+        let derived = (self.derived?.key == key ? self.derived?.value : nil) ?? Derived(content: content, expanded: isExpanded)
         let showsHeads = !derived.headEntries.isEmpty
         let showsBody = showsHeads || summary.filesChanged > 0 || (isExpanded ? !derived.detailGroups.isEmpty : derived.hasResponse)
         VStack(alignment: .leading, spacing: 0) {
@@ -2136,6 +2179,10 @@ struct TurnFinishedBlock: View {
             }
         } message: {
             Text("Files go back to how they were before this turn, and the turn leaves the conversation.")
+        }
+        // The derivation the body just made, kept for the evaluations until the key moves.
+        .onChange(of: key, initial: true) { _, _ in
+            if self.derived?.key != key { self.derived = (key, derived) }
         }
     }
 }

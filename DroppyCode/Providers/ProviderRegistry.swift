@@ -89,6 +89,9 @@ final class ProviderRegistry {
     /// seventy-odd models, led by the one the CLI itself is set to.
     static let commandcodeSeed = CommandCodeAPI.seed
 
+    /// Pi's starting catalog; the live catalog from pi's RPC `get_available_models` replaces it.
+    static let piSeed = [ModelOption(id: "default", name: "Default", detail: "The model pi itself is set to", efforts: ["off", "minimal", "low", "medium", "high", "xhigh", "max"], defaultEffort: "medium", isDefault: true)]
+
     /// Every provider tries its live catalog at most once per launch unless forced, success or not,
     /// so views that ask on appear never re-spawn a CLI or re-hit an API while scrolling.
     @ObservationIgnored private var attemptedCatalogs: Set<ProviderKind> = []
@@ -110,6 +113,7 @@ final class ProviderRegistry {
         }
         if catalogs[.copilot]?.isEmpty ?? true { catalogs[.copilot] = [Self.copilotAuto] }
         if catalogs[.commandcode]?.isEmpty ?? true { catalogs[.commandcode] = Self.commandcodeSeed }
+        if catalogs[.pi]?.isEmpty ?? true { catalogs[.pi] = Self.piSeed }
     }
 
     var availableProviders: [ProviderKind] {
@@ -158,6 +162,9 @@ final class ProviderRegistry {
                 }
             }
             return candidates
+        case .pi:
+            let home = LoginEnvironment.homeDirectory
+            return ["\(home)/.npm-global/bin/pi", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "\(home)/.local/bin/pi", "\(home)/.volta/bin/pi", "\(home)/.bun/bin/pi"].map { URL(fileURLWithPath: $0) }
         default:
             return []
         }
@@ -319,7 +326,7 @@ final class ProviderRegistry {
         case .copilot: try? await CopilotSession.listModels(executable: executable, environment: environment)
         case .commandcode: try? await CommandCodeAPI.listModels(executable: executable, environment: environment)
         case .cursor, .opencode, .grok, .devin: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
-        case .claude, .deepseek, .meta: nil
+        case .claude, .deepseek, .meta, .pi: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
     }
@@ -453,7 +460,7 @@ final class ProviderRegistry {
             return await CopilotSession.authStatus(executable: executable, environment: environment)
         case .commandcode:
             return await CommandCodeAPI.authStatus(executable: executable, environment: environment)
-        case .opencode, .grok, .deepseek, .meta:
+        case .opencode, .grok, .deepseek, .meta, .pi:
             return .unknown
         }
     }

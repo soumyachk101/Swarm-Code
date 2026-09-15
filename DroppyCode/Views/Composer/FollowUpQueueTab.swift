@@ -255,14 +255,15 @@ private struct FollowUpRow: View {
                 .help("Drag to reorder")
                 .accessibilityLabel(Text("Drag to reorder"))
             if !prompt.attachments.isEmpty {
+                // No anchor view under the thumbnails or the strip: nothing in this tab
+                // may join SwiftUI's key-view-loop walk (see `WindowRectAnchor`). The
+                // panel hangs from the strip's rect on the window instead.
                 HStack(spacing: 4) {
                     ForEach(prompt.attachments) { attachment in
-                        AttachmentThumbnail(attachment: attachment, size: 22, preview: preview)
+                        AttachmentThumbnail(attachment: attachment, size: 22, preview: preview, anchorless: true)
                     }
                 }
-                .background {
-                    AttachmentAnchorCapture { preview.setAnchor($0) }
-                }
+                .windowRectAnchor { preview.setAnchor(windowRect: $0) }
                 .onDisappear { preview.close() }
             }
             VStack(alignment: .leading, spacing: 4) {
@@ -273,12 +274,14 @@ private struct FollowUpRow: View {
                         .lineLimit(2)
                         .truncationMode(.tail)
                 } else {
+                    // Not selectable on purpose: selection mounts an AppKit text view,
+                    // and this tab keeps every AppKit view out of the key-view-loop walk
+                    // (see `WindowRectAnchor`). The pencil opens the full text to copy.
                     Text(verbatim: prompt.text)
                         .font(.system(size: 12))
                         .foregroundStyle(Chrome.primaryText.opacity(0.9))
                         .lineLimit(2)
                         .truncationMode(.tail)
-                        .textSelection(.enabled)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -298,9 +301,7 @@ private struct FollowUpRow: View {
                 QueueIconButton(symbol: "pencil", help: "Edit follow-up") {
                     editor.show(prompt: prompt, runtime: runtime)
                 }
-                .background {
-                    AttachmentAnchorCapture { editor.setAnchor($0) }
-                }
+                .windowRectAnchor { editor.setAnchor(windowRect: $0) }
                 QueueIconButton(symbol: "trash", help: "Delete follow-up") {
                     runtime.removeFollowUp(prompt.id)
                 }
@@ -375,7 +376,10 @@ private struct QueueIconButton: View {
 @MainActor
 final class FollowUpEditCoordinator: NSObject {
     private let popover = NSPopover()
-    private var anchor: WeakView?
+    /// The pencil's frame in its window (see `WindowRectAnchor`): the editor hangs from
+    /// that rect on the window's content view, since the queue tab mounts no view of
+    /// its own for it to hang from.
+    private var anchorRect: CGRect?
     private var monitors: [Any] = []
 
     override init() {
@@ -384,14 +388,18 @@ final class FollowUpEditCoordinator: NSObject {
         popover.animates = true
     }
 
-    /// The pencil button's own view. Captured from the button's background, so
-    /// it is always the live view.
-    func setAnchor(_ view: NSView) {
-        anchor = WeakView(view)
+    /// The pencil button's frame in the window, as its geometry reports it.
+    func setAnchor(windowRect: CGRect) {
+        anchorRect = windowRect
+    }
+
+    /// The pencil's place: the window's content view and the rect in it.
+    private var anchorTarget: (view: NSView, rect: NSRect)? {
+        anchorRect.flatMap(WindowRectAnchor.target(for:))
     }
 
     func show(prompt: FollowUpPrompt, runtime: ThreadRuntime) {
-        guard let anchor = anchor?.value, anchor.window != nil else { return }
+        guard let anchor = anchorTarget else { return }
         // The pencil toggles: a second tap while open closes the editor.
         if popover.isShown {
             close()
@@ -408,7 +416,7 @@ final class FollowUpEditCoordinator: NSObject {
         var size = NSHostingView(rootView: editor).intrinsicContentSize
         if size.width <= 0 || size.height <= 0 { size = NSSize(width: 520, height: 320) }
         popover.setFixedContent(editor, size: size)
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+        popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: anchor.view.isFlipped ? .maxY : .minY)
         startMonitors()
     }
 
@@ -438,8 +446,8 @@ final class FollowUpEditCoordinator: NSObject {
     /// are windows of their own, so clicks there pass, as does the pencil
     /// (which toggles on its own).
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
-        guard let window = event.window, let anchor = anchor?.value, window === anchor.window else { return event }
-        if anchor.bounds.contains(anchor.convert(event.locationInWindow, from: nil)) { return event }
+        guard let window = event.window, let anchor = anchorTarget, window === anchor.view.window else { return event }
+        if anchor.rect.contains(anchor.view.convert(event.locationInWindow, from: nil)) { return event }
         close()
         return event
     }
