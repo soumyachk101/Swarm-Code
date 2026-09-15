@@ -645,7 +645,11 @@ extension AppModel {
             let busy = leadRuntime.phase != .idle && !wanted.isEmpty
                 && !wanted.isDisjoint(with: hydraChatContext(for: parentID).touchedPaths)
             guard busy || leadRuntime.isHydraMerging else { return }
-            try? await Task.sleep(for: .milliseconds(250))
+            // A cancelled task's sleep throws at once, without suspending: swallowing
+            // that would turn this into a tight loop on the main actor for the rest of
+            // the half hour, with the whole app frozen behind it. The landing goes ahead
+            // instead, as it does at the deadline.
+            guard (try? await Task.sleep(for: .milliseconds(250))) != nil else { return }
         }
     }
 

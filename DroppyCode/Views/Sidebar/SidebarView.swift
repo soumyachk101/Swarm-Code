@@ -12,7 +12,16 @@ struct SidebarView: View {
     @State private var search = ""
     @State private var renaming: ChatThread?
     @State private var renameText = ""
-    @State private var pendingDeletion: ChatThread?
+    /// The thread whose delete popover is open, by id: the popover's binding compares two
+    /// UUIDs and never reaches into a thread snapshot that may since have changed hands.
+    @State private var pendingDeletionID: UUID?
+    /// A delete the popover confirmed, carried out once the popover has closed (see
+    /// `confirmDeletion` and `deletePopover`).
+    @State private var confirmedDeletion: ConfirmedDeletion?
+    /// Whether a delete popover's content is on screen, from its appearance to its
+    /// disappearance: a confirmed delete waits for it to go. One flag serves every row,
+    /// since only one delete popover is ever open.
+    @State private var isDeletePopoverShown = false
     /// Carries context-menu intents (rename, delete) outside any row's @State, so an AppKit
     /// menu's callbacks never retain a row's state storage. The menu posts a value-type
     /// request here (holding this box weakly); the list takes it up below.
@@ -115,7 +124,7 @@ struct SidebarView: View {
             guard let thread else { return }
             menuRequests.delete = nil
             if model.settings.confirmBeforeDeleting {
-                pendingDeletion = thread
+                pendingDeletionID = thread.id
             } else {
                 model.delete(thread.id)
             }
@@ -135,18 +144,60 @@ struct SidebarView: View {
 
     /// The delete question, asked in a popover on the row itself rather than a sheet over
     /// the window. Clicking away or pressing Escape keeps the thread.
+    ///
+    /// The binding is built on the thread's id alone, and the confirmed delete does not run
+    /// while the popover is up: the item closes the popover and the delete waits for its
+    /// content to have gone (see `confirmDeletion`). Before, the delete ran a turn after
+    /// the close, which could be while the popover was still going: it removed the row the
+    /// popover hangs on, and in the Threads popover the whole list with it (the delete
+    /// selects a neighbour, which dismisses the list); the popover's dismissal then read
+    /// this binding on a view already torn down and crashed in the getter.
     private func deletePopover<Row: View>(for thread: ChatThread, on row: Row) -> some View {
-        row.popover(
+        let threadID = thread.id
+        return row.popover(
             isPresented: Binding(
-                get: { pendingDeletion?.id == thread.id },
-                set: { if !$0, pendingDeletion?.id == thread.id { pendingDeletion = nil } }
+                get: { pendingDeletionID == threadID },
+                set: { if !$0, pendingDeletionID == threadID { pendingDeletionID = nil } }
             ),
             arrowEdge: .trailing
         ) {
             DeleteThreadPopover(thread: thread) { removeWorktree in
-                model.delete(thread.id, removeWorktree: removeWorktree)
+                confirmDeletion(of: threadID, removeWorktree: removeWorktree)
+            }
+            .onAppear { isDeletePopoverShown = true }
+            .onDisappear {
+                isDeletePopoverShown = false
+                carryOutConfirmedDeletion()
             }
         }
+    }
+
+    /// The popover's answer. Its item has closed the popover (through the binding above)
+    /// and calls here a turn later, so the popover may be on its way out or already gone:
+    /// the delete runs now if it is gone, and when it goes otherwise. Clicking away
+    /// instead confirms nothing.
+    private func confirmDeletion(of id: UUID, removeWorktree: Bool) {
+        confirmedDeletion = ConfirmedDeletion(threadID: id, removeWorktree: removeWorktree)
+        pendingDeletionID = nil
+        if !isDeletePopoverShown { carryOutConfirmedDeletion() }
+    }
+
+    /// Runs the delete the popover confirmed, once the popover has closed and a turn
+    /// later: the model changes outside the view update that removed the presentation,
+    /// and the rows it takes away are no longer anchoring anything. A popover closed by a
+    /// click away has nothing confirmed and does nothing here.
+    private func carryOutConfirmedDeletion() {
+        guard let confirmed = confirmedDeletion else { return }
+        confirmedDeletion = nil
+        let model = model
+        Task { @MainActor in
+            model.delete(confirmed.threadID, removeWorktree: confirmed.removeWorktree)
+        }
+    }
+
+    private struct ConfirmedDeletion {
+        let threadID: UUID
+        let removeWorktree: Bool
     }
 
     @ViewBuilder
@@ -175,7 +226,7 @@ struct SidebarView: View {
                 },
                 onDelete: {
                     if model.settings.confirmBeforeDeleting {
-                        pendingDeletion = thread
+                        pendingDeletionID = thread.id
                     } else {
                         model.delete(thread.id)
                     }
@@ -562,7 +613,7 @@ struct SidebarView: View {
             },
             onDelete: {
                 if model.settings.confirmBeforeDeleting {
-                    pendingDeletion = thread
+                    pendingDeletionID = thread.id
                 } else {
                     model.delete(thread.id)
                 }
@@ -802,7 +853,9 @@ private struct SidebarHelperRow: View {
     /// The last helper under its parent: the connector ends at this row.
     let isLast: Bool
     /// Carries rename/delete intents out of the AppKit menu without retaining row state.
-    weak var menuRequests: SidebarMenuRequests?
+    /// Held strongly: the box is the list's, not the row's, so holding it pins no row
+    /// state, and a weak one could go nil under a menu still on screen.
+    let menuRequests: SidebarMenuRequests
     let onFold: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
@@ -860,7 +913,7 @@ private struct SidebarHelperRow: View {
             }
             // Snapshots only: the menu builder must not capture the row, so the AppKit menu
             // it builds cannot pin the row's state storage (and its responder with it).
-            .contextMenu { [thread, model, weak menuRequests] in
+            .contextMenu { [thread, model, menuRequests] in
                 let threadSnapshot = thread
                 let modelSnapshot = model
                 let requestsSnapshot = menuRequests
@@ -1008,7 +1061,9 @@ private struct SidebarThreadRow: View {
     /// The project shown under the title in the activity layout; nil in the project layout.
     let projectName: String?
     /// Carries rename/delete intents out of the AppKit menu without retaining row state.
-    weak var menuRequests: SidebarMenuRequests?
+    /// Held strongly: the box is the list's, not the row's, so holding it pins no row
+    /// state, and a weak one could go nil under a menu still on screen.
+    let menuRequests: SidebarMenuRequests
     /// Lifted and following the pointer in a reorder.
     var isDragged = false
     /// The list's frame in the window, for the glide; nil where no glide can show.
@@ -1136,7 +1191,7 @@ private struct SidebarThreadRow: View {
         // Snapshots only: the menu builder must not capture the row (its frames, its settle
         // handlers), so the AppKit menu it builds cannot pin row state after dismiss. Settle
         // and reopen go through finishRequest, which the row takes up with its glide below.
-        .contextMenu { [thread, model, weak menuRequests] in
+        .contextMenu { [thread, model, menuRequests] in
             let threadSnapshot = thread
             let modelSnapshot = model
             let requestsSnapshot = menuRequests
@@ -1431,9 +1486,9 @@ private struct ThreadBadge: View {
 /// outlives the right-click that opened it, so its callbacks must never retain a row's
 /// state storage: menu -> closure -> row state -> view node -> menu responder is the back
 /// edge that pinned ContextMenuResponder/NSMenu pairs after dismiss. Menu actions post a
-/// value-type request here while holding this box weakly; the list takes it up.
-/// A plain class like FrameHolder below: owned by the list's @State, touched on the main
-/// thread only.
+/// value-type request here; the list takes it up. The rows and the menu hold this box
+/// strongly: it belongs to the list, so nothing of a row hangs off it, and there is no
+/// cycle back to the menu. Owned by the list's @State, touched on the main thread only.
 @Observable
 private final class SidebarMenuRequests {
     var rename: ChatThread?
@@ -1495,20 +1550,19 @@ private enum ThreadActions {
 
     /// The context menu's items, built from value snapshots with weak captures: the AppKit
     /// menu outlives the right-click, so its callbacks must not retain the row, its frames,
-    /// or its settle handlers. Rename and delete post to `requests` (held weakly); the list
-    /// takes them up. Settle and reopen post a finish request, which the row takes up with
+    /// or its settle handlers. Rename and delete post to `requests`; the list takes them up. Settle and reopen post a finish request, which the row takes up with
     /// its pop and glide, the way the shortcut's and palette's do. Everything else touches
     /// only the model. (The ellipsis popover keeps `make`; it is not an AppKit menu.)
     static func makeContextMenu(
         model: AppModel,
         thread: ChatThread,
         settleFirst: Bool,
-        requests: SidebarMenuRequests?
+        requests: SidebarMenuRequests
     ) -> [RowAction] {
         let threadID = thread.id
-        var items = [RowAction(title: "Rename", symbol: "pencil") { [weak model, weak requests, thread] in
+        var items = [RowAction(title: "Rename", symbol: "pencil") { [weak model, requests, thread] in
             guard model != nil else { return }
-            requests?.rename = thread
+            requests.rename = thread
         }]
         // A helper keeps its place under its parent, and a settled thread its place at the
         // bottom; pinning would pull either out of it.
@@ -1547,9 +1601,9 @@ private enum ThreadActions {
             }
             items += settleFirst ? [settle, archive] : [archive, settle]
         }
-        items.append(RowAction(title: "Delete…", symbol: "trash", isDestructive: true) { [weak model, weak requests, thread] in
+        items.append(RowAction(title: "Delete…", symbol: "trash", isDestructive: true) { [weak model, requests, thread] in
             guard model != nil else { return }
-            requests?.delete = thread
+            requests.delete = thread
         })
         return items
     }

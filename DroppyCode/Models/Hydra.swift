@@ -256,6 +256,11 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
     var baseTree: String?
     /// Where the head's work went the last time it reported.
     var landing: HydraLanding?
+    /// When the auto-merge took this head's work out: the next merge leaves it be. The
+    /// head is what remembers, not the lead's turns: a head can finish between two of the
+    /// lead's turns, and a merge that only counted heads finished since its first
+    /// unmerged turn began skipped exactly those, leaving their files in the checkout.
+    var mergedAt: Date?
 
     var persona: HydraPersona { HydraRoster.persona(at: index) }
     var isFinished: Bool { status.isFinished }
@@ -295,6 +300,7 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
         isBackground = container.value(.isBackground, default: true)
         baseTree = container.value(.baseTree, default: nil)
         landing = container.value(.landing, default: nil)
+        mergedAt = container.value(.mergedAt, default: nil)
     }
 }
 

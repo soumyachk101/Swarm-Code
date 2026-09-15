@@ -100,19 +100,42 @@ struct HydraButton: View {
     @MainActor
     private static func isLeadDelegating(_ entries: [TimelineEntry]) -> Bool {
         guard let lastEntry = entries.last else { return false }
-        let lastTurnID = lastEntry.item.turnID
+        // The row's own turn, fixed for its lifetime: reading it through `item` would make
+        // this button observe the last row of the turn before as well.
+        let lastTurnID = lastEntry.turnID
         for entry in entries.reversed() {
-            guard entry.item.turnID == lastTurnID else { break }
+            guard entry.turnID == lastTurnID else { break }
             switch entry.item.content {
             case .tool(let call) where call.kind == .agent && call.status == .running:
                 return true
-            case .assistant(let message) where HydraPrompts.hasDelegationBlock(in: message.text):
-                return true
+            case .assistant(let message):
+                // The reply still streaming changed with this render, so it is read afresh;
+                // the finished ones before it have not, and their answers are kept.
+                let hasBlock = message.isStreaming
+                    ? HydraPrompts.hasDelegationBlock(in: message.text)
+                    : hasDelegationBlock(in: message.text, rowID: entry.id)
+                if hasBlock { return true }
             default:
                 break
             }
         }
         return false
+    }
+
+    /// Whether a finished reply holds a delegation block, remembered by its row. Every
+    /// streamed token of the turn re-renders this button (the rows it reads are observed),
+    /// and running the fence regex over every finished reply of the turn again for each
+    /// token was a whole turn's worth of text on the main thread per token. The row's id
+    /// is the key rather than its text: a finished reply's text no longer changes, and
+    /// hashing a long reply per render would be a walk over it too.
+    @MainActor private static var delegationChecks = RecentCache<String, Bool>(limit: 32)
+
+    @MainActor
+    private static func hasDelegationBlock(in text: String, rowID: String) -> Bool {
+        if let known = delegationChecks.value(for: rowID) { return known }
+        let found = HydraPrompts.hasDelegationBlock(in: text)
+        delegationChecks.insert(found, for: rowID)
+        return found
     }
 
     private func panelHelp(running: Int, hasHeads: Bool) -> String {

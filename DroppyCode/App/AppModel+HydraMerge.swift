@@ -122,6 +122,8 @@ extension AppModel {
             // The work is on the default branch now, so these turns are spent: the next
             // job merges what comes after them and never this again.
             runtime.markHydraMerged(work.turnIDs)
+            let mergedAt = Date.now
+            for headID in work.headIDs { updateHydraHead(headID) { $0.mergedAt = mergedAt } }
 
             var lines = ["\(url.absoluteString)", "", Self.filesLine(files) + " landed on `\(target)` from `\(branch)`."]
             if work.dropped > 0 {
@@ -260,18 +262,33 @@ extension AppModel {
     /// Paths outside the checkout are dropped rather than passed on: a lead writes to its
     /// own memory files, and `git add -A -- <path>` on one of those fails outright and
     /// takes the whole merge with it.
-    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], dropped: Int, droppedBuildOutputs: Int, droppedIgnored: Int, droppedMissing: Int) {
+    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], headIDs: [UUID], dropped: Int, droppedBuildOutputs: Int, droppedIgnored: Int, droppedMissing: Int) {
         let turns = runtime.hydraUnmergedTurns
-        let startedAt = turns.first?.startedAt
         var reported: [String] = turns.flatMap { $0.touchedPaths ?? [] }
+        // A head counts until a merge has taken its work (see `HydraHeadInfo.mergedAt`).
+        // Heads from before that mark existed have no mark: one that finished before the
+        // last merged turn began went out with an earlier merge and is left alone; the
+        // rest have work in the checkout that no merge has taken yet.
+        let lastMergedTurnStart = runtime.turns.last { $0.hydraMerged }?.startedAt
+        var headIDs: [UUID] = []
         for head in hydraTeam(of: leadID) {
-            guard let info = head.hydra else { continue }
-            // A head that had already finished before this job began went out with the
-            // merge before it; with nothing merged yet, every head still counts.
-            if let startedAt, let finished = info.finishedAt, finished < startedAt { continue }
+            guard let info = head.hydra, info.mergedAt == nil else { continue }
+            if let lastMergedTurnStart, let finished = info.finishedAt, finished < lastMergedTurnStart { continue }
+            headIDs.append(head.id)
             reported += (info.landing?.files ?? []).map(\.path)
-            for entry in self.runtime(for: head.id).entries {
-                guard case .tool(let call) = entry.item.content else { continue }
+            // A head's timeline runs to megabytes. One still open is read as it is; one
+            // that has gone cold is decoded off the main actor rather than brought back
+            // as a runtime, which would parse the whole history on the main thread for
+            // every head of the team, one after another, while the chat sits frozen.
+            let items: [TimelineItem]
+            if let live = existingRuntime(for: head.id) {
+                items = live.entries.map(\.item)
+            } else {
+                let headID = head.id
+                items = await Task.detached(priority: .utility) { Storage.decodeDocument(headID)?.items ?? [] }.value
+            }
+            for item in items {
+                guard case .tool(let call) = item.content else { continue }
                 reported += call.edits.map(\.path)
             }
         }
@@ -305,7 +322,7 @@ extension AppModel {
             !fileManager.fileExists(atPath: checkoutURL.appendingPathComponent(path).path) && !tracked.contains(path)
         })
         paths.subtract(missing)
-        return (paths.sorted(), turns.map(\.id), outside.count, buildOutputs.count, ignored.count, missing.count)
+        return (paths.sorted(), turns.map(\.id), headIDs, outside.count, buildOutputs.count, ignored.count, missing.count)
     }
 
     /// Brings the checkout's default branch up to the merge without touching the working
@@ -321,11 +338,11 @@ extension AppModel {
         let others = changed.filter { !own.contains($0) }
         let dirty = Set(await git.dirtyPaths())
         guard others.allSatisfy({ !dirty.contains($0) }) else { return false }
-        var kept: [String] = []
-        var gone: [String] = []
-        for path in others {
-            if await git.pathExists(path, in: remote) { kept.append(path) } else { gone.append(path) }
-        }
+        // One git process answers for every path at once; a process per path took a
+        // remote that had moved on by thousands of files minutes to sort.
+        let present = await git.presentPaths(among: others, in: remote)
+        let kept = others.filter { present.contains($0) }
+        let gone = others.filter { !present.contains($0) }
         // `reset --soft` moves the branch with no expected old value, so a commit made in
         // a terminal while the merge ran would be left with nothing pointing at it. The
         // checkout is left alone instead, and `git pull` is the user's to run.
