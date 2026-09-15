@@ -4,6 +4,8 @@ import Foundation
 // the composer's model picker lists every pair that is ready to run, and one tap puts the
 // chat in it. Entering a pair is the same move as choosing a model, with the pair's lead
 // model and effort instead of a single model, the pair pinned to the chat, and Hydra on.
+// Choosing a model from the rows below the pairs is the move back out: the pair is
+// unpinned and Hydra goes off.
 
 extension AppModel {
     /// The pairs the model picker offers: the ones whose provider is installed and
@@ -62,5 +64,17 @@ extension AppModel {
         settings.remember(model: modelID, effort: effort, for: provider)
         settings.defaultProvider = provider
         settings.hydraEnabled = true
+    }
+
+    /// Takes a chat out of the pair it leads with, when a model is chosen from the picker's
+    /// model rows: the reverse of `enterHydraPair`. The pinned pair goes, and if the chat
+    /// would still fall under a pair for its provider (see `hydraPair(for:)`), Hydra goes
+    /// off for the app: a model row is the choice of a model on its own, and the chip would
+    /// otherwise keep wearing the pair's mark. With no pair on the provider there is nothing
+    /// to leave, and Hydra stays as Settings has it.
+    func leaveHydraPair(for threadID: UUID) {
+        updateThread(threadID) { $0.hydraPairID = nil }
+        guard let thread = thread(threadID), hydraIsOn(thread), hydraPair(for: thread) != nil else { return }
+        settings.hydraEnabled = false
     }
 }

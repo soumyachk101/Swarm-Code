@@ -205,6 +205,8 @@ private struct ModelEffortPanel: View {
             thread.effort = effort
             thread.fastMode = option.supportsFast && preference.fastMode
         }
+        // A model row is the choice of a model alone: the chat leaves any pair it led with.
+        model.leaveHydraPair(for: thread.id)
         if switchesProvider { model.existingRuntime(for: thread.id)?.stopSession() }
         model.settings.remember(model: option.id, effort: effort, for: provider)
         model.settings.defaultProvider = provider
