@@ -286,7 +286,7 @@ private struct GeneralSettingsPage: View {
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Permissions", detail: settings.defaultRuntimeMode.summary) {
-                    GlassPickerButton(options: RuntimeMode.allCases.map { ($0, $0.title) }, selection: $settings.defaultRuntimeMode)
+                    GlassPickerButton(options: RuntimeMode.allCases.map { ($0, $0.title) }, selection: $settings.defaultRuntimeMode, symbol: { $0.symbol })
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Workspace", detail: "Where a new thread makes its changes") {

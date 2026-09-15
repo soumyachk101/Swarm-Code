@@ -220,7 +220,7 @@ private struct DetailSheetModifier: ViewModifier {
     }
 }
 
-/// One shaped surface for the whole window: glass supplies its own edge, while solid mode keeps the hairline.
+/// One shaped surface for the whole window: glass or a solid fill, a legibility tint and a hairline.
 struct WindowBackdrop: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppModel.self) private var model
@@ -259,11 +259,11 @@ struct WindowBackdrop: View {
         .overlay {
             shape.fill(Chrome.glassTint.opacity(0.12))
         }
-        // Glass supplies the edge; only solid mode gets the explicit hairline.
+        // The hairline sits on the glass as well as on the solid fill, the way Droppy's
+        // settings window draws its edge: on a clear window the glass rim alone reads as
+        // a second line outside the curve.
         .overlay {
-            if isSolid {
-                shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
-            }
+            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
         }
     }
 }
@@ -827,6 +827,9 @@ struct GlassPickerButton<Value: Hashable>: View {
     let options: [(value: Value, title: String)]
     @Binding var selection: Value
     var asset: (Value) -> String? = { _ in nil }
+    /// An SF Symbol per value, shown before the title and on each row, for pickers whose
+    /// values have no image asset.
+    var symbol: (Value) -> String? = { _ in nil }
     var maxWidth: CGFloat? = nil
 
     @State private var isPresented = false
@@ -843,6 +846,11 @@ struct GlassPickerButton<Value: Hashable>: View {
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 14, height: 14)
+                }
+                if let symbol = symbol(selection) {
+                    Image(systemName: symbol)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Chrome.secondaryText)
                 }
                 Text(verbatim: title)
                     .font(.system(size: 12.5, weight: .medium))
@@ -867,7 +875,7 @@ struct GlassPickerButton<Value: Hashable>: View {
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             PopoverMenu {
                 ForEach(Array(options.enumerated()), id: \.offset) { _, option in
-                    PopoverItem(option.title, asset: asset(option.value), isChecked: option.value == selection) {
+                    PopoverItem(option.title, symbol: symbol(option.value), asset: asset(option.value), isChecked: option.value == selection) {
                         selection = option.value
                     }
                 }

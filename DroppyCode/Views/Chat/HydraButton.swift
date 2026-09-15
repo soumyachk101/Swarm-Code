@@ -59,6 +59,8 @@ struct HydraButton: View {
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: running)
             .animation(Chrome.panelSlide, value: isSending)
             .animation(Chrome.panelSlide, value: isDelegating)
+            // Switched on or off for the chat, the charge ring scales and fades rather than popping.
+            .animation(Chrome.panelSlide, value: isOn)
             .onChange(of: running) { old, new in
                 guard new > old else { return }
                 isSending = true

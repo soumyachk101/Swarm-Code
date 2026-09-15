@@ -38,7 +38,9 @@ struct HydraProgressBar: View {
     /// How long a new stave takes to rise to its height.
     private static let rise: TimeInterval = 0.45
     /// One pass of the highlight across the filled staves.
-    private static let sweep: TimeInterval = 1.8
+    private static let sweep: TimeInterval = 2.6
+    /// The rest between two passes, so the bar mostly stands still.
+    private static let sweepRest: TimeInterval = 3.4
     private static let cardWidth: CGFloat = 260
     /// How many of a stave's steps the card lists before "and N more": few enough that
     /// the card clears the strip of a compact panel, where the bar sits under the task.
@@ -50,15 +52,14 @@ struct HydraProgressBar: View {
         let staves = Self.staves(for: events, capacity: capacity)
         let counts = Counts(of: events)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let isScrolling = ScrollActivity.shared.isScrolling
         let isRunning = status == .running
         let elapsed = RelativeTime.duration((isRunning ? Date.now : finishedAt ?? .now).timeIntervalSince(startedAt))
         VStack(alignment: .leading, spacing: 6) {
             // The display's clock drives the rise and the sweep at thirty frames a second,
-            // enough for a sweep this soft; it stands still while the reader scrolls anywhere,
-            // so a scrolled frame is the scroll's alone. With reduced motion, or once the head
-            // is done and settled, the canvas is drawn only when the steps change.
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || isSettled || isScrolling)) { context in
+            // enough for a sweep this soft; it keeps going while the reader scrolls, so a
+            // head at work never looks stalled. With reduced motion, or once the head is
+            // done and settled, the canvas is drawn only when the steps change.
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || isSettled)) { context in
                 Canvas { graphics, size in
                     Self.draw(
                         staves,
@@ -324,7 +325,11 @@ struct HydraProgressBar: View {
         // to the staves, so the slots and the gaps stay as they are.
         let filledWidth = CGFloat(staves.count) * pitch - gap
         let band = max(24, filledWidth / 3)
-        let phase = CGFloat(date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: sweep) / sweep)
+        // One pass, then a rest: the band crosses in `sweep` seconds and the bar holds
+        // still for `sweepRest` before the next.
+        let within = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: sweep + sweepRest)
+        guard within < sweep else { return }
+        let phase = CGFloat(within / sweep)
         let x = -band + phase * (filledWidth + band)
         var highlight = context
         highlight.clip(to: filled)
@@ -381,20 +386,23 @@ private struct HydraWorkingTitle: View {
     let isRunning: Bool
 
     /// One pass of the band across the text.
-    private static let sweep: TimeInterval = 2.6
+    private static let sweep: TimeInterval = 3.2
+    /// The rest between two passes of the band.
+    private static let sweepRest: TimeInterval = 3.0
     /// One breath, in and out.
-    private static let breath: TimeInterval = 2.2
+    private static let breath: TimeInterval = 3.2
     /// Half the band's width, as a share of the text's width.
     private static let reach = 0.3
 
     var body: some View {
         let animates = isRunning && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        // Twenty frames a second is plenty for a band this wide, and it holds still while the reader scrolls.
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !animates || ScrollActivity.shared.isScrolling)) { context in
+        // Twenty frames a second is plenty for a band this wide; it keeps going while the reader scrolls.
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !animates)) { context in
             let now = context.date.timeIntervalSinceReferenceDate
             // The band's centre travels from just left of the text to just right of it, so
-            // it enters and leaves rather than snapping; still, the text is one colour.
-            let phase = now.truncatingRemainder(dividingBy: Self.sweep) / Self.sweep
+            // it enters and leaves rather than snapping; then it rests off the right edge,
+            // where the text is one colour.
+            let phase = min(now.truncatingRemainder(dividingBy: Self.sweep + Self.sweepRest) / Self.sweep, 1)
             let centre = animates ? -Self.reach + phase * (1 + 2 * Self.reach) : 0.5
             let dip = animates ? 0.6 : 1.0
             let breath = animates ? 0.5 + 0.5 * sin(now / Self.breath * 2 * .pi) : 1.0

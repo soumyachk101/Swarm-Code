@@ -1803,6 +1803,14 @@ private struct SettledHeader: View {
     @State private var shown: Int
     @State private var countTask: Task<Void, Never>?
 
+    /// The count's own roll: short and without bounce. The rows fly on `Chrome.settleFlight`,
+    /// whose spring overshoots, and digits rolling on it slid past the new number and back.
+    private static var roll: Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? .easeOut(duration: 0.15)
+            : .smooth(duration: 0.28)
+    }
+
     init(count: Int, isFirst: Bool) {
         self.count = count
         self.isFirst = isFirst
@@ -1829,7 +1837,7 @@ private struct SettledHeader: View {
                     .opacity(0.8)
                     .fixedSize()
                     .contentTransition(.numericText(value: Double(shown)))
-                    .animation(Chrome.settleFlight, value: shown)
+                    .animation(Self.roll, value: shown)
                 Spacer(minLength: 4)
             }
             .foregroundStyle(Chrome.secondaryText)
@@ -1856,7 +1864,7 @@ private struct SettledHeader: View {
             // down at once, as the row leaves at once. With Reduce Motion nothing flies,
             // so nothing waits.
             guard newCount > shown, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-                withAnimation(Chrome.settleFlight) { self.shown = newCount }
+                withAnimation(Self.roll) { self.shown = newCount }
                 return
             }
             countTask = Task { @MainActor in
@@ -1866,7 +1874,7 @@ private struct SettledHeader: View {
                     return
                 }
                 guard !Task.isCancelled else { return }
-                withAnimation(Chrome.settleFlight) { self.shown = newCount }
+                withAnimation(Self.roll) { self.shown = newCount }
             }
         }
         .onDisappear {
