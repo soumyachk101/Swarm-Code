@@ -908,7 +908,7 @@ private struct AboutSettingsPage: View {
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
             ChromeRowDivider()
-            Text("Droppy Code and SwiftTerm are MIT licensed.")
+            Text("Droppy Code is licensed under the GNU AGPL v3.0 with attribution terms; SwiftTerm is MIT licensed.")
                 .font(.system(size: 12))
                 .foregroundStyle(Chrome.secondaryText)
                 .padding(.leading, 16)
@@ -930,7 +930,7 @@ private struct LicensesRow: View {
     ]
 
     var body: some View {
-        ChromeRow(title: "Licenses", detail: "MIT, with the notices for what the app builds on.") {
+        ChromeRow(title: "Licenses", detail: "AGPL-3.0 with attribution terms, and the notices for what the app builds on.") {
             Button("Show") { isPresented = true }
                 .buttonStyle(.glass)
                 .controlSize(.small)
