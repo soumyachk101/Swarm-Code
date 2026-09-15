@@ -78,8 +78,14 @@ final class CodexSession: ProviderSession {
         ]
         if let model = configuration.model { params["model"] = .string(model) }
         if let hydra = configuration.hydra {
-            params["config"] = .object(HydraPrompts.codexConfig(hydra))
-            params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges))
+            if hydra.runsNatively {
+                params["config"] = .object(HydraPrompts.codexConfig(hydra))
+                params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges))
+            } else {
+                // Heads on another provider are Droppy-run: the lead asks for them with the
+                // delegation block, and Codex's own agents stay off.
+                params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
+            }
         }
 
         if let resumeID = configuration.resumeID {

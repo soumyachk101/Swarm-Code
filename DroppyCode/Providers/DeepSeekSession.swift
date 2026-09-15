@@ -805,7 +805,7 @@ final class DeepSeekSession: ProviderSession {
         - Explain briefly what you did after tool calls; keep chat replies concise markdown.
         - If a tool result shows the user declined an action, do not retry it: ask how to proceed.
         - Today's date is \(ISO8601DateFormatter().string(from: Date())).
-        \(configuration.hydra.map { "\n" + HydraPrompts.fallbackPolicy(maxHeads: $0.maxHeads, isolated: $0.isolatesHeads, autoMerges: $0.autoMerges) } ?? "")
+        \(configuration.hydra.map { "\n" + HydraPrompts.fallbackPolicy($0) } ?? "")
         """
     }
 

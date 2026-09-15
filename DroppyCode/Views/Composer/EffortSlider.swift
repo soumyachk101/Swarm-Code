@@ -263,6 +263,7 @@ struct ModelList: View {
                         ForEach(pairs) { pair in
                             let locked = hasHistory && pair.provider != thread.provider
                             HydraPairListRow(
+                                pair: pair,
                                 title: HydraPairSummary.title(pair, registry: model.providers),
                                 detail: locked ? "New chats only" : detail(for: pair),
                                 rowHeight: Self.pairRowHeight,
@@ -300,24 +301,28 @@ struct ModelList: View {
         }
         .padding(6)
         .task {
-            // A pair on another provider names its models from that provider's catalogue,
-            // which this chat may never have loaded.
-            for provider in Set(pairs.map(\.provider)) where provider != thread.provider {
+            // A pair on another provider, or with its heads on one, names its models from
+            // that provider's catalogue, which this chat may never have loaded.
+            for provider in Set(pairs.flatMap { [$0.provider, $0.headsProvider] }) where provider != thread.provider {
                 await model.providers.loadCatalog(provider)
             }
         }
     }
 
-    /// The line under a pair's title: the provider, then what its heads run on.
+    /// The line under a pair's title: the provider, then what its heads run on, and where
+    /// when that is another provider.
     private func detail(for pair: HydraPair) -> String {
         let workers = HydraPairSummary.workers(pair, registry: model.providers)
-        return "\(pair.provider.displayName) · \(workers.prefix(1).lowercased())\(workers.dropFirst())"
+        let lead = pair.sendsHeadsElsewhere ? "\(pair.provider.displayName) lead" : pair.provider.displayName
+        return "\(lead) · \(workers.prefix(1).lowercased())\(workers.dropFirst())"
     }
 }
 
 /// One Hydra pair in the model picker: the Hydra mark, who leads whom, and the provider
-/// with the heads' model under it. Tapping it puts the chat in the pair.
+/// with the heads' model under it; a pair whose heads run on another provider shows both
+/// providers' marks, lead then heads. Tapping it puts the chat in the pair.
 private struct HydraPairListRow: View {
+    let pair: HydraPair
     let title: String
     let detail: String
     let rowHeight: CGFloat
@@ -345,6 +350,16 @@ private struct HydraPairListRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 12)
+                if pair.sendsHeadsElsewhere {
+                    HStack(spacing: 3) {
+                        ProviderIcon(provider: pair.provider, size: 12)
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 7, weight: .semibold))
+                        ProviderIcon(provider: pair.headsProvider, size: 12)
+                    }
+                    .foregroundStyle(Chrome.secondaryText)
+                    .accessibilityHidden(true)
+                }
                 Image(systemName: "checkmark")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)

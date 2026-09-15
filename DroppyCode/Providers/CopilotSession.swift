@@ -124,14 +124,20 @@ final class CopilotSession: ProviderSession {
             "requestPermission": true,
             "requestUserInput": true,
             "requestExitPlanMode": true,
-            "includeSubAgentStreamingEvents": .bool(configuration.hydra != nil),
+            "includeSubAgentStreamingEvents": .bool(configuration.hydra?.runsNatively == true),
             "isExperimentalMode": .bool(configuration.runtimeMode == .auto),
         ]
         if let model, !model.isEmpty { params["model"] = .string(model) }
         if let effort, !effort.isEmpty { params["reasoningEffort"] = .string(effort) }
         if let hydra = configuration.hydra {
-            params["customAgents"] = .array(HydraPrompts.copilotAgents(hydra))
-            params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges))]
+            if hydra.runsNatively {
+                params["customAgents"] = .array(HydraPrompts.copilotAgents(hydra))
+                params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges))]
+            } else {
+                // Heads on another provider are Droppy-run: the lead asks for them with the
+                // delegation block, and no agents of the CLI's own are defined.
+                params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.fallbackPolicy(hydra))]
+            }
         }
         return params
     }

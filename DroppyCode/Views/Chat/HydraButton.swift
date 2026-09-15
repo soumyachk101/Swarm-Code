@@ -218,12 +218,24 @@ private struct HydraRunningBadge: View {
 
 /// One-line summaries of a pair, for tooltips and rows.
 enum HydraPairSummary {
-    /// "Heads on Opus · High effort", or what they inherit.
+    /// The heads' model by name: the pair's own, or, on another provider than the lead's
+    /// with none chosen, that provider's default, which is what the heads run there.
+    @MainActor
+    static func workerModel(_ pair: HydraPair, registry: ProviderRegistry) -> String? {
+        if let model = pair.workerModel { return registry.model(model, for: pair.headsProvider)?.shortName ?? model }
+        guard pair.sendsHeadsElsewhere else { return nil }
+        return registry.defaultModel(for: pair.headsProvider)?.shortName
+    }
+
+    /// "Heads on Opus · High effort", "Heads on Gemini 3.8 Flash (Antigravity)", or what
+    /// they inherit.
     @MainActor
     static func workers(_ pair: HydraPair, registry: ProviderRegistry) -> String {
         var parts: [String] = []
-        if let model = pair.workerModel {
-            parts.append("Heads on " + (registry.model(model, for: pair.provider)?.shortName ?? model))
+        if let model = workerModel(pair, registry: registry) {
+            parts.append("Heads on " + model + (pair.sendsHeadsElsewhere ? " (\(pair.headsProvider.displayName))" : ""))
+        } else if pair.sendsHeadsElsewhere {
+            parts.append("Heads on \(pair.headsProvider.displayName)")
         } else {
             parts.append("Heads on the chat's model")
         }
@@ -231,15 +243,14 @@ enum HydraPairSummary {
         return parts.joined(separator: " · ")
     }
 
-    /// "Fable leads Opus", "Any model leads Sonnet", "Opus leads itself".
+    /// "Fable leads Opus", "Any model leads Sonnet", "Opus leads itself", and across
+    /// providers "Fable leads Gemini 3.8 Flash".
     @MainActor
     static func title(_ pair: HydraPair, registry: ProviderRegistry) -> String {
-        func name(_ id: String?) -> String? {
-            guard let id else { return nil }
-            return registry.model(id, for: pair.provider)?.shortName ?? id
+        let lead = pair.orchestratorModel.map { registry.model($0, for: pair.provider)?.shortName ?? $0 } ?? "Any \(pair.provider.displayName) model"
+        guard let worker = workerModel(pair, registry: registry) ?? (pair.sendsHeadsElsewhere ? pair.headsProvider.displayName : nil) else {
+            return "\(lead) leads itself"
         }
-        let lead = name(pair.orchestratorModel) ?? "Any \(pair.provider.displayName) model"
-        guard let worker = name(pair.workerModel) else { return "\(lead) leads itself" }
         return "\(lead) leads \(worker)"
     }
 }

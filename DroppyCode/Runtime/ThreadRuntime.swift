@@ -613,17 +613,20 @@ final class ThreadRuntime {
             if !files.isEmpty {
                 prompt += "\n\nAttached files:\n" + files.map { "- \($0.path)" }.joined(separator: "\n")
             }
-            // A provider with no heads of its own is told, in front of every message, how to
-            // ask Droppy Code for them.
-            if !AppModel.hydraIsNative(thread.provider), let launch = app.hydraLaunch(for: thread) {
+            // A lead whose heads are Droppy-run is told how to ask Droppy Code for them. A
+            // session that keeps that policy in its system prompt (the API providers, and
+            // the providers with heads of their own sending them out elsewhere) gets only
+            // the note on its team in front of a message; every other CLI gets the policy
+            // in front of every message, having nowhere else to keep it.
+            if let launch = app.hydraLaunch(for: thread), !launch.runsNatively {
                 let team = HydraPrompts.teamStatus(app.hydraTeam(of: threadID).compactMap(\.hydra))
                 let canDelegate = hydraDelegationRounds < HydraPrompts.maxDelegationRounds
-                if thread.provider.isAPIKeyBased {
+                if Self.keepsHydraPolicyInSystemPrompt(thread.provider) {
                     prompt = (hydraHeads == nil ? HydraPrompts.fallbackTurnNote(team: team) : HydraPrompts.fallbackReportNote(team: team, canDelegate: canDelegate)) + prompt
                 } else if hydraHeads == nil {
-                    prompt = HydraPrompts.fallbackPreamble(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, team: team) + prompt
+                    prompt = HydraPrompts.fallbackPreamble(launch, team: team) + prompt
                 } else {
-                    prompt = HydraPrompts.fallbackReportPreamble(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, team: team, canDelegate: canDelegate) + prompt
+                    prompt = HydraPrompts.fallbackReportPreamble(launch, team: team, canDelegate: canDelegate) + prompt
                 }
             }
             phase = .running
@@ -644,6 +647,14 @@ final class ThreadRuntime {
         }
     }
 
+    /// Whether the provider's session carries the lead's Hydra policy from launch: the API
+    /// sessions put it in their system prompt, and the providers with heads of their own
+    /// define the heads, or the policy for Droppy-run ones, at launch. Such a session takes
+    /// the team as part of its signature, so a change to the team restarts it.
+    private static func keepsHydraPolicyInSystemPrompt(_ provider: ProviderKind) -> Bool {
+        AppModel.hydraIsNative(provider) || provider.isAPIKeyBased
+    }
+
     /// Codex takes fast mode per turn as a service tier; models without a fast tier send none.
     private func serviceTier(for thread: ChatThread) -> String? {
         guard thread.provider == .codex,
@@ -656,10 +667,18 @@ final class ThreadRuntime {
         // Copilot switches modes live, except that Auto's assisted-approval judge is a
         // session flag: entering or leaving Auto resumes the session with it set right.
         let copilotLaunchMode: RuntimeMode? = thread.provider == .copilot && thread.runtimeMode == .auto ? .auto : nil
-        // Providers with heads of their own define them at launch; the API providers put
-        // the lead's Hydra policy in their system prompt. Either way the team is part of
-        // the session, and a change to it restarts one.
-        let hydra = AppModel.hydraIsNative(thread.provider) || thread.provider.isAPIKeyBased ? app.hydraLaunch(for: thread) : nil
+        // A pair that sends its heads out on another provider names their model from that
+        // provider's catalogue, which this chat may never have loaded. The lead's brief
+        // names the model, and the brief is part of the session's signature, so the
+        // catalogue loads first rather than the session restarting once it has.
+        if app.hydraIsOn(thread), let pair = app.hydraPair(for: thread), app.hydraHeadsProvider(of: pair) != thread.provider {
+            await app.providers.loadCatalog(app.hydraHeadsProvider(of: pair))
+        }
+        // Providers with heads of their own define them at launch (or, with the heads
+        // sent out elsewhere, the policy for asking Droppy Code for them); the API
+        // providers put the lead's Hydra policy in their system prompt. Either way the
+        // team is part of the session, and a change to it restarts one.
+        let hydra = Self.keepsHydraPolicyInSystemPrompt(thread.provider) ? app.hydraLaunch(for: thread) : nil
         let signature = SessionSignature(
             provider: thread.provider,
             directory: directory,
@@ -1543,8 +1562,7 @@ final class ThreadRuntime {
     /// its tasks go out as Droppy-run heads, up to the pair's limit at a time, and the
     /// block leaves the reply. Returns whether any head went out.
     private func spawnDelegatedHeads(for turnID: UUID) -> Bool {
-        guard let app, let thread, app.hydraIsOn(thread), !AppModel.hydraIsNative(thread.provider),
-              let launch = app.hydraLaunch(for: thread),
+        guard let app, let thread, let launch = app.hydraLaunch(for: thread), !launch.runsNatively,
               let entry = entries.last(where: { $0.turnID == turnID && $0.kind == .assistant }),
               case .assistant(var message) = entry.item.content,
               let delegations = HydraPrompts.delegations(in: message.text) else { return false }
