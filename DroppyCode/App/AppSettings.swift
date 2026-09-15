@@ -123,6 +123,9 @@ final class AppSettings {
 
     @ObservationIgnored private let defaults = WebsiteCaptures.defaults ?? .standard
 
+    /// The provider last chosen in a composer's model picker (or by a Hydra pair): what a
+    /// new thread starts on when there is no thread to follow. Not a setting of its own
+    /// any more; Settings says as much under New threads.
     var defaultProvider: ProviderKind {
         didSet { defaults.set(defaultProvider.rawValue, forKey: Key.defaultProvider) }
     }
