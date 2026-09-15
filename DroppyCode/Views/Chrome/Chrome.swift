@@ -41,7 +41,7 @@ enum Chrome {
     static let veilHeight: CGFloat = 72
     static let titleStartOffset: CGFloat = 10
     static let titleEndOffset: CGFloat = 44
-    static let progressQuantum: CGFloat = 0.02
+    static let progressQuantum: CGFloat = 0.04
 
     // MARK: Sidebar
 
@@ -550,9 +550,13 @@ struct PaneTopVeil: View {
     var body: some View {
         let progress = Double(model.progress)
         let isDark = colorScheme == .dark
-        let scrim = isDark ? 0.42 + 0.28 * progress : 0.48 + 0.30 * progress
+        // Lighter than it was: at full scroll the dark scrim read as a black bar across
+        // the top of the chat, well past the backdrop's own tone. The theme's surface
+        // now carries more of the veil and the black less, so what scrolls under the
+        // chrome dims toward the window's colour instead of toward black.
+        let scrim = isDark ? 0.14 + 0.18 * progress : 0.30 + 0.26 * progress
         let base = isDark ? Color.black : Color.white
-        let tint = Chrome.glassTint.opacity(isDark ? 0.22 : 0.16)
+        let tint = Chrome.glassTint.opacity(isDark ? 0.30 : 0.18)
         ZStack {
             // Only once content has scrolled under the chrome; at rest there is nothing to cover.
             if progress > 0 {
@@ -571,13 +575,15 @@ struct PaneTopVeil: View {
         .allowsHitTesting(false)
     }
 
-    /// A colour held over the top 38% of the veil and fading out by its bottom edge, the
-    /// mask the glass used to wear.
+    /// A colour held over the top 28% of the veil and eased out by its bottom edge, the
+    /// mask the glass used to wear: a shorter plateau and a mid stop, so the veil reads
+    /// as a soft falloff rather than a band with an edge.
     private static func fade(_ color: Color) -> LinearGradient {
         LinearGradient(
             stops: [
                 .init(color: color, location: 0),
-                .init(color: color, location: 0.38),
+                .init(color: color, location: 0.28),
+                .init(color: color.opacity(0.45), location: 0.62),
                 .init(color: color.opacity(0), location: 1),
             ],
             startPoint: .top,

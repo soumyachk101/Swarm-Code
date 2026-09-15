@@ -227,8 +227,18 @@ struct HydraReportRow: View {
             .disabled(details.isEmpty)
             .help(details.isEmpty ? "" : "Show the message")
             .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
-                HydraReportPopover(text: body)
-                    .presentedChrome()
+                // Reports from heads draw the digest; a merge note draws its own card;
+                // every other note keeps the markdown view.
+                if let link, let request = MergeRequestLink(url: link), let note = HydraMergeNote.parse(details, link: request) {
+                    HydraMergePopover(note: note)
+                        .presentedChrome()
+                } else if !personas.isEmpty {
+                    HydraReportsPopover(title: title, text: body, personas: personas)
+                        .presentedChrome()
+                } else {
+                    HydraReportPopover(text: body)
+                        .presentedChrome()
+                }
             }
             if let link {
                 Link(destination: link) {
@@ -2023,6 +2033,26 @@ struct TurnEndRow: View {
 
 /// A finished turn, collapsed to nothing more than its header, its final response
 /// and its file summary. The chevron re-opens the turn's full steps.
+/// The quiet round control on a finished turn's line (revert, changes): a flat overlay
+/// disc with a secondary glyph that comes up to full under the pointer. Solid accent
+/// discs here shouted from every turn of every chat.
+private struct MutedRoundGlyph: View {
+    let symbol: String
+    @State private var isHovering = false
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(Chrome.iconFont)
+            .foregroundStyle(isHovering ? Chrome.primaryText : Chrome.secondaryText)
+            .frame(width: 28, height: 28)
+            .background(Chrome.overlay(isHovering ? 0.18 : 0.1), in: .circle)
+            .contentShape(.circle)
+            .onHover { hovering in
+                withAnimation(Chrome.hover) { isHovering = hovering }
+            }
+    }
+}
+
 struct TurnFinishedBlock: View {
     @Environment(\.chatZoom) private var zoom
     let runtime: ThreadRuntime
@@ -2290,11 +2320,7 @@ private struct TurnFileCard: View {
             Spacer(minLength: 8)
             if canUndo {
                 Button { isConfirmingRevert = true } label: {
-                    Image(systemName: "arrow.uturn.backward")
-                        .font(Chrome.iconFont)
-                        .foregroundStyle(.white)
-                        .frame(width: 28, height: 28)
-                        .background(AnyShapeStyle(.tint), in: .circle)
+                    MutedRoundGlyph(symbol: "arrow.uturn.backward")
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -2326,11 +2352,7 @@ private struct TurnFileCard: View {
                 guard let view = reviewBox?.value else { return }
                 onReview(view)
             } label: {
-                Image(systemName: "plusminus")
-                    .font(Chrome.iconFont)
-                    .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(AnyShapeStyle(.tint), in: .circle)
+                MutedRoundGlyph(symbol: "plusminus")
             }
             .buttonStyle(.plain)
             .focusable(false)

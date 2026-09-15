@@ -82,7 +82,7 @@ private struct HydraCookbookRow: View {
             HydraPairMark(lead: recipe.lead.provider, heads: recipe.heads.provider)
             .frame(width: 52, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
-                Text(verbatim: recipe.title)
+                Text(verbatim: pair.map { HydraPairSummary.title($0, registry: registry) } ?? recipe.title)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)
                 Text(verbatim: recipe.tagline)
@@ -90,7 +90,8 @@ private struct HydraCookbookRow: View {
                     .foregroundStyle(Chrome.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                 if let pair {
-                    Text(verbatim: [HydraPairSummary.title(pair, registry: registry), HydraPairSummary.efforts(pair)].compactMap { $0 }.joined(separator: " · "))
+                    let providersLine: String? = pair.headsProvider == pair.provider ? nil : "\(pair.provider.displayName) lead, \(pair.headsProvider.displayName) heads"
+                    Text(verbatim: [providersLine, HydraPairSummary.efforts(pair)].compactMap { $0 }.joined(separator: " · "))
                         .font(.system(size: 11))
                         .foregroundStyle(Chrome.secondaryText.opacity(0.8))
                         .lineLimit(2)

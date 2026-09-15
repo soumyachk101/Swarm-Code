@@ -92,7 +92,6 @@ private struct TabSlot: View {
                     .transition(.softAppear)
                 }
             }
-            .transition(.softAppear)
         }
     }
 }
@@ -283,6 +282,8 @@ struct ComposerView: View {
             case .escape:
                 suggestions = SuggestionState()
                 return true
+            case .deleteAtStart:
+                return false
             }
         }
         switch key {
@@ -301,6 +302,16 @@ struct ComposerView: View {
             runtime.interrupt()
             return true
         case .tab:
+            return false
+        case .deleteAtStart:
+            if runtime.draft.command != nil {
+                withAnimation(Chrome.panelSlide) { runtime.draft.command = nil }
+                return true
+            }
+            if !runtime.draft.quotes.isEmpty {
+                withAnimation(Chrome.panelSlide) { _ = runtime.draft.quotes.removeLast() }
+                return true
+            }
             return false
         }
     }
@@ -420,13 +431,22 @@ struct ComposerView: View {
         let prefixed = commands.filter { needle.isEmpty || $0.name.lowercased().hasPrefix(needle) }
         let contained = needle.isEmpty ? [] : commands.filter { !$0.name.lowercased().hasPrefix(needle) && $0.name.lowercased().contains(needle) }
         return (prefixed + contained).prefix(8).map { command in
-            Suggestion(value: "/\(command.name) ", title: "/\(command.name)", detail: command.detail, symbol: command.isBuiltIn ? "command" : "sparkles")
+            Suggestion(value: "/\(command.name) ", title: "/\(command.name)", detail: command.detail, symbol: command.isBuiltIn ? "command" : "sparkles", command: command)
         }
     }
 
     private func pick(_ suggestion: Suggestion) {
         let range = suggestions.range
+        let wasCommand = suggestions.kind == .command
         suggestions = SuggestionState()
+        if wasCommand, let c = suggestion.command {
+            controller.replaceCharacters(in: range, with: "")
+            withAnimation(Chrome.panelSlide) {
+                runtime.draft.command = DraftCommand(name: c.name, detail: c.detail, isBuiltIn: c.isBuiltIn)
+            }
+            controller.focus()
+            return
+        }
         controller.replaceCharacters(in: range, with: suggestion.value)
         controller.focus()
     }
@@ -491,6 +511,7 @@ struct ComposerView: View {
 /// The pill's text side: the attachment strip, the notice and the text view. It owns the
 /// draft-text binding and the growth math, so a keystroke never reaches the pill itself.
 private struct ComposerTextColumn: View {
+    @Environment(WindowLiveResize.self) private var liveResize
     @Bindable var runtime: ThreadRuntime
     let controller: ComposerController
     let placeholder: String
@@ -524,7 +545,7 @@ private struct ComposerTextColumn: View {
         // stack it. Reading the draft here would re-render the text view on every
         // keystroke, since text and attachments are one observable property.
         VStack(alignment: .leading, spacing: 0) {
-            DraftQuotes(runtime: runtime)
+            DraftChips(runtime: runtime)
             DraftAttachments(runtime: runtime)
             if let attachmentNotice {
                 Text(verbatim: attachmentNotice)
@@ -554,7 +575,8 @@ private struct ComposerTextColumn: View {
             .transaction { $0.animation = nil }
             .frame(height: composerHeight, alignment: .top)
             .clipped()
-            .animation(.smooth(duration: 0.28), value: composerHeight)
+            // While the window is being dragged the box's height follows the rewrap at once; a spring restarted per frame lagged it behind the window.
+            .animation(liveResize.isActive ? nil : .smooth(duration: 0.28), value: composerHeight)
         }
     }
 }
@@ -818,14 +840,46 @@ private struct SendDraftState: View {
     }
 }
 
-private struct DraftQuotes: View {
+private struct DraftChips: View {
     let runtime: ThreadRuntime
+
+    private struct ChipKey: Equatable {
+        var quoteIDs: [UUID]
+        var commandName: String?
+    }
 
     var body: some View {
         let quotes = runtime.draft.quotes
-        if !quotes.isEmpty {
+        let command = runtime.draft.command
+        if !quotes.isEmpty || command != nil {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
+                    if let command {
+                        HStack(spacing: 5) {
+                            Image(systemName: command.isBuiltIn ? "command" : "sparkles")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Chrome.secondaryText)
+                            Text(verbatim: "/" + command.name)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                            Button {
+                                withAnimation(Chrome.panelSlide) {
+                                    runtime.draft.command = nil
+                                }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(Chrome.secondaryText)
+                            }
+                            .buttonStyle(.plain)
+                            .focusable(false)
+                            .help("Remove command")
+                            .accessibilityLabel(Text("Remove command"))
+                        }
+                        .modifier(ChipChrome())
+                        .help(command.detail)
+                        .accessibilityElement(children: .combine)
+                    }
                     ForEach(quotes) { quote in
                         HStack(spacing: 5) {
                             Image(systemName: "text.quote")
@@ -851,10 +905,7 @@ private struct DraftQuotes: View {
                             .help("Remove quote")
                             .accessibilityLabel(Text("Remove quote"))
                         }
-                        .padding(.leading, 9)
-                        .padding(.trailing, 7)
-                        .padding(.vertical, 5)
-                        .background(Capsule(style: .continuous).fill(Chrome.overlay(0.12)))
+                        .modifier(ChipChrome())
                         .help(quote.text)
                         .accessibilityElement(children: .combine)
                     }
@@ -862,8 +913,19 @@ private struct DraftQuotes: View {
             }
             .padding(.bottom, 8)
             .transition(.softAppear)
-            .animation(Chrome.panelSlide, value: quotes.map(\.id))
+            .animation(Chrome.panelSlide, value: ChipKey(quoteIDs: quotes.map(\.id), commandName: command?.name))
         }
+    }
+}
+
+/// One capsule definition for the reply-quote and command chips above the text.
+private struct ChipChrome: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(.leading, 9)
+            .padding(.trailing, 7)
+            .padding(.vertical, 5)
+            .background(Capsule(style: .continuous).fill(Chrome.overlay(0.12)))
     }
 }
 
@@ -947,6 +1009,7 @@ struct Suggestion: Identifiable, Equatable {
     var title: String
     var detail: String
     var symbol: String
+    var command: SlashCommand? = nil
 
     var id: String { value }
 }
