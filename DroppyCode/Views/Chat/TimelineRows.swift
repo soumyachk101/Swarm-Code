@@ -705,11 +705,21 @@ struct HydraMergingRow: View {
                 .accessibilityHidden(true)
             WorkingSpinner(cellSize: 3)
                 .frame(width: 14)
-            Text(verbatim: stage)
-                .font(.chat(.callout, weight: .medium, zoom: zoom))
-                .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                .modifier(HydraShimmer())
-                .contentTransition(.opacity)
+            // A new stage is a new text: the old one fades up and out as the new one fades in
+            // from below, each with its own shimmer at its own width. A content transition
+            // over the shimmer crossfaded the band's mask between the two lengths, so the
+            // words tore mid-fade.
+            ZStack(alignment: .leading) {
+                Text(verbatim: stage)
+                    .font(.chat(.callout, weight: .medium, zoom: zoom))
+                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                    .modifier(HydraShimmer())
+                    .id(stage)
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(y: 5)),
+                        removal: .opacity.combined(with: .offset(y: -5))
+                    ))
+            }
             Text(RelativeTime.duration(elapsed))
                 .font(.chat(.caption, zoom: zoom))
                 .foregroundStyle(Chrome.secondaryText)
