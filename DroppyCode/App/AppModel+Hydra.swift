@@ -122,7 +122,8 @@ extension AppModel {
             workerEffort: keepsModel ? pair?.workerEffort : nil,
             maxHeads: pair?.maxHeads,
             isolatesHeads: settings.hydraIsolateHeads,
-            autoMerges: settings.hydraAutoMerge
+            autoMerges: settings.hydraAutoMerge,
+            reviewsHeads: settings.hydraReviewHeads
         )
     }
 
@@ -160,6 +161,13 @@ extension AppModel {
     /// How many of a lead's Droppy-run heads are still at work.
     func runningDroppyHeads(of parentID: UUID) -> Int {
         hydraHeads(of: parentID).count { $0.hydra?.kind == .droppy && $0.hydra?.status == .running }
+    }
+
+    /// How many of a lead's heads are still at work, native and Droppy-run alike. A native
+    /// head lives inside the lead's own session, so this is what says whether stopping the
+    /// lead's turn would take heads down with it.
+    func runningHydraHeads(of parentID: UUID) -> Int {
+        hydraHeads(of: parentID).count { $0.hydra?.status == .running }
     }
 
     /// Every head a lead has sent out, in the panel or not, in the order they went.

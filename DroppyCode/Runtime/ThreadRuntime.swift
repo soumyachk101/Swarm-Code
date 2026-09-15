@@ -122,7 +122,12 @@ final class ThreadRuntime {
     @ObservationIgnored private var headBudgetSpent = false
     @ObservationIgnored private var headReportsNext = false
     /// The team's finished work is on its way to the remote (see `AppModel.autoMergeHydraWork`).
-    @ObservationIgnored var isHydraMerging = false
+    var isHydraMerging = false
+    /// What the merge is doing right now, in words, for the timeline: gathering the
+    /// team's files, writing the commit, pushing, opening the merge request, merging.
+    var hydraMergeStage: String?
+    /// When the merge under way began, so the timeline can show how long it has been at it.
+    var hydraMergeStartedAt: Date?
     /// A native head's progress while it runs (its provider's note, its tool count, its
     /// spend), kept here rather than on the thread record: the provider reports it many
     /// times a second, and a write to a thread re-renders everything that lists threads.
@@ -298,6 +303,14 @@ final class ThreadRuntime {
 
     var thread: ChatThread? { app?.thread(threadID) }
 
+    /// Whether any head of this lead, native or Droppy-run, is still at work. The native
+    /// ones run inside the lead's own session, so a turn with heads at work is never
+    /// interrupted on the user's behalf by a new message: only the Stop button and
+    /// Escape stop it, and those are the user stopping the lead on purpose.
+    var hasWorkingHeads: Bool {
+        (app?.runningHydraHeads(of: threadID) ?? 0) > 0
+    }
+
     var sentPrompts: [String] {
         entries.compactMap { entry in
             if case .user(let message) = entry.item.content, !message.isFromHydra { return message.text }
@@ -348,12 +361,23 @@ final class ThreadRuntime {
     /// Interrupts the running turn and sends the draft as soon as the stop
     /// lands, instead of queueing it as a follow-up. The composer clears at
     /// once; the message goes out when the turn fully stops (or immediately,
-    /// if the turn finished on its own in the meantime).
+    /// if the turn finished on its own in the meantime). With heads at work the
+    /// turn is left alone and the draft queues instead: see `hasWorkingHeads`.
     func interruptAndSend() {
         guard !draft.isEmpty, phase != .idle else { return }
         // With every message going to a head, Return while the lead works sends the
         // draft to a head and leaves the lead's turn alone.
         if dispatchSentHead(text: draft.text, attachments: draft.attachments) {
+            draft = ComposerDraft()
+            return
+        }
+        // Heads at work are never stopped by a new message. The native ones run inside
+        // the lead's own session, so interrupting the turn would kill them mid-task and
+        // throw away minutes of their work. The draft goes to a Droppy-run head of its
+        // own when the settings allow it, else it waits as a follow-up behind the
+        // running turn; either way nothing is interrupted.
+        if hasWorkingHeads {
+            enqueueFollowUp(text: draft.text, attachments: draft.attachments)
             draft = ComposerDraft()
             return
         }
@@ -365,6 +389,8 @@ final class ThreadRuntime {
     /// Sends a queued follow-up right away instead of waiting its turn: the running turn
     /// stops and the prompt goes out as soon as the stop lands, exactly as Return does with
     /// the draft; idle, it simply sends. The rest of the queue waits for the new turn.
+    /// With heads at work nothing stops, as with Return: the prompt goes to a head of its
+    /// own when the settings allow it, else it stays at the front of the queue.
     func sendFollowUpNow(_ id: UUID) {
         guard let index = followUps.firstIndex(where: { $0.id == id }) else { return }
         let prompt = followUps.remove(at: index)
@@ -374,6 +400,17 @@ final class ThreadRuntime {
             if handleLocalCommand(prompt.text.trimmingCharacters(in: .whitespacesAndNewlines)) { return }
             Task { await startTurn(text: prompt.text, attachments: prompt.attachments) }
         } else if pendingSend == nil {
+            // Heads at work are never stopped for a queued prompt: the native ones run
+            // inside the lead's session and an interrupt would kill them. The prompt goes
+            // to a Droppy-run head when the settings allow it, else back to the front of
+            // the queue to wait for the turn, and the lead keeps working.
+            if hasWorkingHeads {
+                if !dispatchQueuedHead(prompt) {
+                    followUps.insert(prompt, at: 0)
+                    scheduleSave()
+                }
+                return
+            }
             pendingSend = PendingSend(text: prompt.text, attachments: prompt.attachments)
             interrupt()
         } else {
@@ -1550,7 +1587,7 @@ final class ThreadRuntime {
         let sent = Set(reports.map(\.headIndex))
         hydraPendingReports.removeAll { sent.contains($0.headIndex) }
         let stillWorking = app.workingHydraHeadNames(of: threadID, excluding: sent)
-        let text = HydraPrompts.reportMessage(reports, stillWorking: stillWorking)
+        let text = HydraPrompts.reportMessage(reports, stillWorking: stillWorking, reviewsHeads: app.settings.hydraReviewHeads)
         await startTurn(text: text, attachments: [], hydraHeads: reports.map(\.headIndex))
     }
 
@@ -1558,14 +1595,24 @@ final class ThreadRuntime {
     /// practice, and the pair's cap still decides how many run at a time.
     private static let maxDelegatedTasks = 32
 
-    /// A reply from a provider with no heads of its own may end in a delegation block:
-    /// its tasks go out as Droppy-run heads, up to the pair's limit at a time, and the
-    /// block leaves the reply. Returns whether any head went out.
+    /// A reply on any provider may end in a delegation block: its tasks go out as
+    /// Droppy-run heads, up to the pair's limit at a time, and the block leaves the reply.
+    /// A block Droppy Code cannot read leaves the reply as well, and the lead hears so in
+    /// a turn of its own: a block never stays in a reply doing nothing. Returns whether a
+    /// turn followed the reply, heads going out or the lead being told.
     private func spawnDelegatedHeads(for turnID: UUID) -> Bool {
-        guard let app, let thread, let launch = app.hydraLaunch(for: thread), !launch.runsNatively,
+        guard let app, let thread, let launch = app.hydraLaunch(for: thread),
               let entry = entries.last(where: { $0.turnID == turnID && $0.kind == .assistant }),
-              case .assistant(var message) = entry.item.content,
-              let delegations = HydraPrompts.delegations(in: message.text) else { return false }
+              case .assistant(var message) = entry.item.content else { return false }
+        guard let delegations = HydraPrompts.delegations(in: message.text) else {
+            guard HydraPrompts.hasDelegationBlock(in: message.text) else { return false }
+            message.text = HydraPrompts.withoutDelegationBlock(message.text)
+            if message.text.isEmpty { message.text = "Asking for heads." }
+            entry.item.content = .assistant(message)
+            scheduleSave()
+            Task { await startTurn(text: HydraPrompts.unreadableBlockMessage(reason: nil), attachments: [], hydraHeads: []) }
+            return true
+        }
         message.text = HydraPrompts.withoutDelegationBlock(message.text)
         // One request gets so many rounds of heads; past that the lead hears why none went
         // out and finishes by itself, so no request chains heads without end.

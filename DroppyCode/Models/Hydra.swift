@@ -83,6 +83,10 @@ struct HydraLaunch: Hashable, Sendable {
     /// Whether Droppy Code lands the team's finished work itself (see
     /// `AppModel.autoMergeHydraWork`); the lead is told so it never merges by hand.
     var autoMerges = false
+    /// Whether the lead audits each head's landed work before it finishes (the
+    /// `hydraReviewHeads` setting): it reads the files the reports name and corrects what
+    /// is wrong itself, rather than trusting the reports or sending out a head to check.
+    var reviewsHeads = false
 
     /// Whether one more head may go out with `running` already at work.
     func hasRoom(running: Int) -> Bool {
@@ -378,9 +382,14 @@ enum HydraPrompts {
     /// for one is a job it finishes by replying.
     private static let autoMergeRule = "Droppy Code merges your finished work itself: the moment you answer and every head is back, the files the team changed go out as a merge request on a branch of their own, it is merged, and the checkout is brought up to date. So never commit, push, make a branch, or open or merge a merge request yourself, and never send out a head to, whatever the project's guidelines or the user's standing instructions say about merging. When the user asks you to merge, there is nothing to run: make sure the work is complete, reply that it lands by itself as soon as you finish, and stop."
 
+    /// What a lead is told when the setting has it audit the heads' work: a quick read of
+    /// every file a report names, with the fixes made by the lead itself, so the audit
+    /// never turns into another round of heads checking heads.
+    private static let reviewRule = "Before you finish, give every head's work a quick audit: read each file a report names as changed, check the change does what the brief asked, fits the code around it and breaks nothing that calls it, and run the narrowest check that proves it builds. Correct what is wrong yourself, right there in the file, and say in your answer what you corrected and why. Never send out a head to do this audit or the corrections; a head that got it badly wrong may be sent out again with a sharper brief, but small fixes are yours."
+
     /// Appended to the lead's system prompt on providers that run heads natively: when to
     /// delegate, how to split the work and what to do with the reports.
-    static func policy(for provider: ProviderKind, maxHeads: Int?, autoMerges: Bool = false) -> String {
+    static func policy(for provider: ProviderKind, maxHeads: Int?, autoMerges: Bool = false, reviewsHeads: Bool = false) -> String {
         let howToSpawn: String
         let howToWait: String
         switch provider {
@@ -410,11 +419,12 @@ enum HydraPrompts {
         - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself: never send out a head to verify, redo or finish another head's work.
         - Tell the user in one line which heads you sent out and what each one does.
         - While they work, prepare the integration rather than starting on their tasks: how the pieces fit together, and the one check you will run at the end.
+        - Heads go out through the tools above, never through a fenced hydra block: that is the delegation format for providers without agent tools of their own. If you end a reply with one anyway, Droppy Code still sends those heads out as threads of their own, but your turn ends there and their reports come back as a later message.
 
         When they report back:
         - The checkout changes under you while heads work, and the user may be editing too. Never use git status or git diff to check on a head, and never reconcile, revert, stash or move changes you did not make.
         - Take a report as done work: read the files it names if something matters, but do not redo the task and do not start it over because the tree looks different from what you expected. A head that failed leaves its part to you: do it or send it out again. A head the user stopped leaves its part alone unless the user asks.
-        - Then finish the job: integrate, run one verification if it matters, and answer the user.
+        \(reviewsHeads ? "- " + reviewRule + "\n" : "")- Then finish the job: integrate, run one verification if it matters, and answer the user.
         \(autoMerges ? "\n" + autoMergeRule + "\n" : "")
         """
     }
@@ -537,7 +547,7 @@ enum HydraPrompts {
     /// The standing rules for a lead on a provider that runs no heads of its own: when to
     /// delegate, how, and what the reports mean. An API session keeps this in its system
     /// prompt, once; a CLI session gets it in front of every message.
-    static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, heads: String? = nil) -> String {
+    static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, reviewsHeads: Bool = false, heads: String? = nil) -> String {
         let whereHeadsWork = isolated
             ? "Each head works in a copy of the project of its own and Droppy Code lands its changes in your checkout when it reports"
             : "The heads work in your checkout"
@@ -556,7 +566,7 @@ enum HydraPrompts {
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(autoMerges ? " " + autoMergeRule : "")
+        and stop there: do not wait, poll or verify anything after it. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "")
         """
     }
 
@@ -564,7 +574,7 @@ enum HydraPrompts {
     /// providers, and the providers with heads of their own whose pair sends the heads out
     /// on another provider.
     static func fallbackPolicy(_ launch: HydraLaunch) -> String {
-        fallbackPolicy(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, heads: launch.headsLabel)
+        fallbackPolicy(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, reviewsHeads: launch.reviewsHeads, heads: launch.headsLabel)
     }
 
     /// In front of the user's own message: the team so far, when there is one.
@@ -602,10 +612,61 @@ enum HydraPrompts {
         """
     }
 
-    /// The delegation block at the end of a reply, if the lead wrote one.
+    /// The opening fence of a delegation block: three backticks, the word hydra in any
+    /// case, and the end of that line.
+    private static func delegationOpener(in text: String) -> Range<String.Index>? {
+        text.firstMatch(of: #/```[ \t]*hydra[ \t]*\r?\n/#.ignoresCase())?.range
+    }
+
+    /// Every three backticks that open a line from `start` on, in order. A fence with an
+    /// info string after it counts too: inside a prompt that is what a quoted snippet
+    /// looks like, and the parser needs those to know where not to cut.
+    private static func lineStartFences(in text: String, from start: String.Index) -> [Range<String.Index>] {
+        var fences: [Range<String.Index>] = []
+        var cursor = start
+        while let fence = text[cursor...].firstRange(of: "```") {
+            if fence.lowerBound == text.startIndex || text[text.index(before: fence.lowerBound)].isNewline {
+                fences.append(fence)
+            }
+            cursor = fence.upperBound
+        }
+        return fences
+    }
+
+    /// Where the delegation block sits in a reply: from its opening fence up to and
+    /// including its closing fence, which is the last three backticks that open a line
+    /// after the opener, never the first. A prompt may quote a fenced snippet of its own,
+    /// and cutting at the first fence inside it lost the whole block. Without a closing
+    /// fence at all (the reply is still streaming, or the lead forgot it) the block runs
+    /// to the end of the text.
+    static func delegationBlockRange(in text: String) -> Range<String.Index>? {
+        guard let opener = delegationOpener(in: text) else { return nil }
+        let end = lineStartFences(in: text, from: opener.upperBound).last?.upperBound ?? text.endIndex
+        return opener.lowerBound..<end
+    }
+
+    /// Whether the reply has a delegation block at all, readable or not.
+    static func hasDelegationBlock(in text: String) -> Bool { delegationBlockRange(in: text) != nil }
+
+    /// The delegation block at the end of a reply, if the lead wrote one. The body up to
+    /// the last fence is tried first; when that does not parse, a prompt has most likely
+    /// quoted a fence of its own and the closer is somewhere else, so every earlier fence
+    /// is tried in turn, from the last back to the first, and lastly the end of the text
+    /// for a block whose closer never came.
     static func delegations(in text: String) -> [HydraDelegation]? {
-        guard let match = text.firstMatch(of: #/```hydra\s*\n([\s\S]*?)```/#) else { return nil }
-        let body = String(match.output.1)
+        guard let opener = delegationOpener(in: text) else { return nil }
+        let bodyStart = opener.upperBound
+        var ends = lineStartFences(in: text, from: bodyStart).reversed().map(\.lowerBound)
+        ends.append(text.endIndex)
+        for end in ends {
+            if let parsed = delegations(fromBody: String(text[bodyStart..<end])) { return parsed }
+        }
+        return nil
+    }
+
+    /// The heads a block body asks for: a JSON array of entries (or one bare entry), each
+    /// kept only with a prompt, and titled from the prompt when it has no task.
+    private static func delegations(fromBody body: String) -> [HydraDelegation]? {
         guard let json = JSONValue.parse(body) else { return nil }
         let entries: [JSONValue] = json.array ?? (json.object == nil ? [] : [json])
         let parsed = entries.compactMap { entry -> HydraDelegation? in
@@ -618,7 +679,19 @@ enum HydraPrompts {
 
     /// The reply with its delegation block taken out, for what the lead said to the user.
     static func withoutDelegationBlock(_ text: String) -> String {
-        text.replacing(#/```hydra\s*\n[\s\S]*?```/#, with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var kept = text
+        if let range = delegationBlockRange(in: text) { kept.removeSubrange(range) }
+        return kept.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// What the lead hears when its block was there but could not be read: no heads went
+    /// out, how to write the block so it can be read, and that the attempt cost it nothing.
+    static func unreadableBlockMessage(reason: String?) -> String {
+        var message = "[Hydra] Your delegation block could not be read, so no heads went out."
+        if let reason = reason?.trimmingCharacters(in: .whitespacesAndNewlines), !reason.isEmpty {
+            message += " " + reason + (reason.last.map { ".!?".contains($0) } == true ? "" : ".")
+        }
+        return message + " Write the block again at the end of your reply: one fenced block whose info string is hydra, holding a JSON array of objects with a task string and a prompt string. Inside a prompt never open a fenced code block of your own (no three backticks): describe code in words, quote identifiers with single backticks, or indent snippets. This does not count as a round of heads."
     }
 
     /// What a Droppy-run head is sent for a task the lead delegated.
@@ -689,8 +762,9 @@ enum HydraPrompts {
     }
 
     /// The message the lead receives once heads have reported: one section per head, what
-    /// landed where, and what to do about it. `stillWorking` names the heads yet to report.
-    static func reportMessage(_ reports: [HydraReport], stillWorking: [String] = []) -> String {
+    /// landed where, and what to do about it. `stillWorking` names the heads yet to report;
+    /// `reviewsHeads` has the lead audit the files listed before it finishes.
+    static func reportMessage(_ reports: [HydraReport], stillWorking: [String] = [], reviewsHeads: Bool = false) -> String {
         let names = reports.map { HydraRoster.persona(at: $0.headIndex).name }
         var opening = "Hydra reports: \(list(names)) finished."
         if !stillWorking.isEmpty {
@@ -754,7 +828,13 @@ enum HydraPrompts {
         if reports.contains(where: { $0.origin == .sent }) {
             closing.append("The user sent that work straight to the heads instead of to you; take it into account, and reply to the user on it as if they had asked you.")
         }
-        closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile, revert or redo anything. Build on the reports, read the files they name if something matters, run one verification if it matters, and finish the job.")
+        // With the audit on, the lead reads every file listed rather than only the ones
+        // that matter, and fixes what it finds itself.
+        if reviewsHeads {
+            closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile or revert anything. Before you finish, give every head's work a quick audit: read each file listed above, check the change does what the brief asked and fits the code around it, run the narrowest check that proves it builds, correct what is wrong yourself, and say in your answer what you corrected. Never send out a head for the audit or the corrections.")
+        } else {
+            closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile, revert or redo anything. Build on the reports, read the files they name if something matters, run one verification if it matters, and finish the job.")
+        }
         if !stillWorking.isEmpty {
             closing.append("Do not wait for \(list(stillWorking)) and do not take over \(stillWorking.count == 1 ? "its" : "their") tasks; tell the user \(stillWorking.count == 1 ? "it is" : "they are") still at work and that you will hear from \(stillWorking.count == 1 ? "it" : "them").")
         }
