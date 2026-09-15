@@ -8,6 +8,8 @@ struct TurnInput: Sendable {
     var effort: String?
     /// A Codex service tier for this turn: the fast tier, "default", or nil when the model has none.
     var serviceTier: String? = nil
+    /// Cursor ACP's Fast variant (`model_config` / `fast`); other providers ignore it.
+    var fastMode = false
     var runtimeMode: RuntimeMode
     var interactionMode: InteractionMode
     /// A Hydra head past its budget answering for the last time: the turn is one reply
