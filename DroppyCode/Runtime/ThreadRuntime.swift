@@ -80,6 +80,8 @@ final class ThreadRuntime {
     /// Queued steering prompts. Enqueued while a turn runs, each one is sent as a
     /// direct user chat message once the running turn finishes, in order.
     private(set) var followUps: [FollowUpPrompt] = []
+    /// True from init until a history that was not prefetched has been decoded and installed.
+    private(set) var isLoadingHistory = false
 
     var draft = ComposerDraft()
     var isTerminalVisible = false
@@ -241,6 +243,7 @@ final class ThreadRuntime {
     @ObservationIgnored private var saveRevision = 0
     @ObservationIgnored private var lastSavedRevision = 0
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var historyLoad: Task<Void, Never>?
     @ObservationIgnored private var currentTurnID: UUID?
     @ObservationIgnored private var resumeAnchor: String?
     @ObservationIgnored private var interruptWatchdog: Task<Void, Never>?
@@ -298,17 +301,31 @@ final class ThreadRuntime {
     init(threadID: UUID, app: AppModel) {
         self.threadID = threadID
         self.app = app
-        let document = Storage.loadDocument(threadID)
-        turns = document.turns
-        usage = document.usage
-        followUps = document.followUps.filter { !$0.isEmpty }
+        if let document = DocumentPrefetch.shared.take(threadID) {
+            install(document)
+        } else {
+            // The file is read and decoded off the main thread so the click that
+            // opens the chat paints at once; the runtime shows an empty history
+            // until it lands.
+            isLoadingHistory = true
+            historyLoad = Task.detached(priority: .userInitiated) { [threadID] in
+                let document = Storage.decodeDocument(threadID) ?? ThreadDocument(threadID: threadID)
+                await self.finishLoad(document)
+            }
+        }
+    }
+
+    private func install(_ document: ThreadDocument) {
+        turns = document.turns + turns
+        usage = usage ?? document.usage
+        followUps = document.followUps.filter { !$0.isEmpty } + followUps
         // Thinking with no text is nothing to show or keep: Claude Code redacts its
         // reasoning and streams only empty deltas, which older builds stored as blank
         // entries. They are dropped here and never created below. Threads stored before
         // the app flattened model prose on the way in are cleaned as they are read, so
         // no reply from any earlier build can put an em dash back on screen.
-        entries = document.items.filter { !$0.isEmptyReasoning }.map { TimelineEntry($0.cleanedOfEmDashes) }
-        for entry in entries {
+        let loaded = document.items.filter { !$0.isEmptyReasoning }.map { TimelineEntry($0.cleanedOfEmDashes) }
+        for entry in loaded {
             entryIndex[entry.id] = entry
             endStreaming(entry)
             if case .tool(var call) = entry.item.content, call.status == .running {
@@ -316,12 +333,25 @@ final class ThreadRuntime {
                 entry.item.content = .tool(call)
             }
         }
+        entries = loaded + entries
         for index in turns.indices where turns[index].status == .running {
             turns[index].status = .interrupted
         }
         // The load above normalizes what it read (streaming flags cleared, running
         // tools failed), so memory already differs from disk.
         saveRevision += 1
+    }
+
+    private func finishLoad(_ document: ThreadDocument) {
+        guard isLoadingHistory else { return }
+        install(document)
+        isLoadingHistory = false
+        historyLoad = nil
+    }
+
+    /// Anything that continues the history (a new turn) waits for it first.
+    func ensureLoaded() async {
+        if let historyLoad { await historyLoad.value }
     }
 
     var isRunning: Bool { phase != .idle }
@@ -368,7 +398,7 @@ final class ThreadRuntime {
         draft = ComposerDraft()
         // With every message going to a head, the lead stays idle for the reports.
         if dispatchSentHead(text: text, attachments: attachments) { return }
-        Task { await startTurn(text: text, attachments: attachments) }
+        Task { await ensureLoaded(); await startTurn(text: text, attachments: attachments) }
     }
 
     func sendHydraBrief(_ text: String, attachments: [Attachment]) {
@@ -377,7 +407,7 @@ final class ThreadRuntime {
         draft = ComposerDraft()
         // The head's clock starts with its brief, so one that never answers counts as quiet.
         hydraLastEventAt = .now
-        Task { await startTurn(text: text, attachments: attachments, hydraBrief: true) }
+        Task { await ensureLoaded(); await startTurn(text: text, attachments: attachments, hydraBrief: true) }
     }
 
     // MARK: - Follow-up queue
@@ -455,7 +485,7 @@ final class ThreadRuntime {
         guard !prompt.isEmpty else { return }
         if phase == .idle {
             if handleLocalCommand(prompt.text.trimmingCharacters(in: .whitespacesAndNewlines)) { return }
-            Task { await startTurn(text: prompt.text, attachments: prompt.attachments) }
+            Task { await ensureLoaded(); await startTurn(text: prompt.text, attachments: prompt.attachments) }
         } else if pendingSend == nil {
             // Native heads at work are never stopped for a queued prompt: they run inside
             // the lead's session and an interrupt would kill them. The prompt goes to a
@@ -618,7 +648,7 @@ final class ThreadRuntime {
         if handleLocalCommand(next.text.trimmingCharacters(in: .whitespacesAndNewlines)) {
             return drainFollowUps(after: status)
         }
-        Task { await startTurn(text: next.text, attachments: next.attachments) }
+        Task { await ensureLoaded(); await startTurn(text: next.text, attachments: next.attachments) }
         return true
     }
 
@@ -628,7 +658,7 @@ final class ThreadRuntime {
         entry.item.content = .plan(plan)
         saveRevision += 1
         app?.updateThread(threadID) { $0.interactionMode = .build }
-        Task { await startTurn(text: "Implement the plan.", attachments: []) }
+        Task { await ensureLoaded(); await startTurn(text: "Implement the plan.", attachments: []) }
     }
 
     func dismissPlan(_ entryID: String) {
@@ -1460,7 +1490,7 @@ final class ThreadRuntime {
             headBudgetSpent = false
             if status == .interrupted, thread?.hydra?.kind == .droppy {
                 headReportsNext = true
-                Task { await startTurn(text: HydraBudget.finalNote, attachments: []) }
+                Task { await ensureLoaded(); await startTurn(text: HydraBudget.finalNote, attachments: []) }
                 continues = true
             }
         }
@@ -1493,7 +1523,7 @@ final class ThreadRuntime {
             return false
         }
         if handleLocalCommand(text) { return false }
-        Task { await startTurn(text: pending.text, attachments: pending.attachments) }
+        Task { await ensureLoaded(); await startTurn(text: pending.text, attachments: pending.attachments) }
         return true
     }
 
@@ -1728,6 +1758,7 @@ final class ThreadRuntime {
         hydraPendingReports.removeAll { sent.contains($0.headIndex) }
         let stillWorking = app.workingHydraHeadNames(of: threadID, excluding: sent)
         let text = HydraPrompts.reportMessage(reports, stillWorking: stillWorking, reviewsHeads: app.settings.hydraReviewHeads)
+        await ensureLoaded()
         await startTurn(text: text, attachments: [], hydraHeads: reports.map(\.headIndex))
     }
 
@@ -1823,7 +1854,7 @@ final class ThreadRuntime {
             return .none
         }
         hydraRefusedBlocks += 1
-        Task { await startTurn(text: message, attachments: [], hydraHeads: []) }
+        Task { await ensureLoaded(); await startTurn(text: message, attachments: [], hydraHeads: []) }
         return .turnStarted
     }
 
@@ -2320,6 +2351,8 @@ final class ThreadRuntime {
     }
 
     func saveNow() {
+        // A save before the history is installed would write an empty thread over the file.
+        guard !isLoadingHistory else { return }
         saveTask?.cancel()
         saveTask = nil
         // The periodic save fires every few seconds while a turn runs, even when the

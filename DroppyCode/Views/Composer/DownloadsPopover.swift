@@ -97,10 +97,11 @@ struct DownloadsPopover: View {
 
     var body: some View {
         // A ScrollView in a popover collapses to a couple of rows on its own, so the
-        // rows' own height is forced on it. It is measured rather than fixed: a fixed
-        // one left an empty Downloads folder, and the spinner before the folder is
-        // read, in a popover most of a screen tall.
-        PopoverMenu(maxHeight: 700, idealHeight: idealHeight) {
+        // rows' own height is forced on it. The popover takes its size the moment it
+        // opens and keeps it, so the height is set from the first frame: a full list's
+        // worth while the folder is read (nearly every Downloads folder fills it), the
+        // rows' own height once it is, and only an empty folder sizes itself.
+        PopoverMenu(maxHeight: 700, idealHeight: height) {
             PopoverSectionHeader("Recent downloads")
             if !downloads.isLoaded {
                 HStack {
@@ -132,16 +133,21 @@ struct DownloadsPopover: View {
         }
         // Wide enough for long file names and their sizes: without a fixed width the
         // popover shrinks to PopoverMenu's minimum and truncates every row.
-        .frame(width: 360)
+        .frame(width: 360, height: height)
         .task { await downloads.load() }
     }
 
     /// The rows' own height, so the popover is exactly as tall as it has downloads to
-    /// show. Nil while there is nothing to scroll: the spinner and the empty note size
-    /// themselves.
-    private var idealHeight: CGFloat? {
-        guard downloads.isLoaded, !downloads.items.isEmpty else { return nil }
-        let rows = CGFloat(downloads.items.count) * DownloadRow.height
+    /// show; a full list's worth before the folder is read. Nil only for an empty
+    /// folder, whose note sizes itself.
+    private var height: CGFloat? {
+        guard downloads.isLoaded else { return Self.height(forRows: RecentDownloads.limit) }
+        guard !downloads.items.isEmpty else { return nil }
+        return Self.height(forRows: downloads.items.count)
+    }
+
+    private static func height(forRows count: Int) -> CGFloat {
+        let rows = CGFloat(count) * DownloadRow.height
         // The section header, the divider and the two ways out below the rows.
         return min(700, rows + 106)
     }

@@ -97,7 +97,7 @@ struct HydraPanel: View {
         .animation(nil, value: liveResize.isActive)
         .background {
             // The helper panel's recipe: one glass surface, a scrim for the text over
-            // whatever the panel floats above, the theme's tint, and a hairline.
+            // whatever the panel floats above, and the theme's tint.
             let isDark = colorScheme == .dark
             shape
                 .fill(.clear)
@@ -106,10 +106,9 @@ struct HydraPanel: View {
                     shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
                 }
         }
+        // Glass supplies the edge (as in `WindowBackdrop`): a hairline on top of it
+        // read as a second ring around the panel whenever its window was key.
         .clipShape(shape)
-        .overlay {
-            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
-        }
         // The scrim sits under the glass and carries the panel's shadow: a plain filled
         // shape, so its shadow is drawn once and kept. A shadow on the whole panel was
         // blurred again with every token the transcript streamed under it.
@@ -151,6 +150,9 @@ struct HydraPanel: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Chrome.secondaryText)
                             .lineLimit(1)
+                        // How long the head has been at it, or took: its own clock, so the
+                        // strip itself is still drawn once.
+                        HydraElapsedTime(startedAt: info.startedAt, finishedAt: info.finishedAt, isRunning: info.status == .running)
                     }
                     .padding(.horizontal, Chrome.capsuleHorizontalPadding)
                     .frame(height: Chrome.capsuleContentHeight)

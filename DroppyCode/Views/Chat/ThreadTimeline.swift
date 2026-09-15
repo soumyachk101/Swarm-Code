@@ -75,7 +75,7 @@ struct ThreadTimeline: View, Equatable {
     /// setting elsewhere), and partitioning every entry into blocks again each time is work
     /// the stack throws straight away. It lives in an object, so reusing a build is not a
     /// state write.
-    @State private var blockCache = TimelineBlockCache()
+    private var blockCache: TimelineBlockCache { TimelineBlockCache.cache(for: runtime.threadID) }
 
     var body: some View {
         let entries = runtime.entries
@@ -89,7 +89,11 @@ struct ThreadTimeline: View, Equatable {
             workingHeads: heads.compactMap { $0.hydra?.status == .running ? $0.hydra?.index : nil }
         )
         let hydraMentionPersonas = blockCache.mentionPersonas(for: heads)
-        if blocks.isEmpty && !runtime.isRunning {
+        // A history still being read off the main thread is not an empty thread: the
+        // prompt for a new one would flash for the frames before it lands.
+        if runtime.isLoadingHistory {
+            Color.clear
+        } else if blocks.isEmpty && !runtime.isRunning {
             NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
                 .onAppear {
                     scrollChrome.update(travel: 0)
@@ -108,7 +112,12 @@ struct ThreadTimeline: View, Equatable {
         // The turns a row may offer to revert. Read here, once, so a turn record changing
         // (checkpoints, diffs, anchors) re-runs this body alone; rows get a plain flag that
         // only changes when their own answer does.
-        let rewindable: Set<UUID> = supportsRewind && !runtime.isRunning ? Set(runtime.turns.map(\.id)) : []
+        let rewindable: Set<UUID>
+        if supportsRewind && !runtime.isRunning {
+            rewindable = Set(runtime.turns.lazy.map(\.id))
+        } else {
+            rewindable = []
+        }
         // The rail floats over the timeline's leading gutter instead of taking layout
         // space, so the conversation stays centered exactly like the composer.
         // Ticks centre in the full column height, so the queue tab opening never moves them.
@@ -1220,6 +1229,27 @@ enum DisplayBlock: Identifiable, Equatable {
 /// the stack, whose rows compare them.
 @MainActor
 final class TimelineBlockCache {
+    /// One cache per open thread, kept across the timeline view being rebuilt, so coming
+    /// back to a chat reuses its blocks; the runtime keeps the entries alive so their
+    /// identities stay valid.
+    @MainActor private static var shared: [UUID: TimelineBlockCache] = [:]
+    @MainActor private static var order: [UUID] = []
+    @MainActor static func cache(for threadID: UUID) -> TimelineBlockCache {
+        if let existing = shared[threadID] {
+            order.removeAll { $0 == threadID }
+            order.append(threadID)
+            return existing
+        }
+        let created = TimelineBlockCache()
+        shared[threadID] = created
+        order.append(threadID)
+        while order.count > 24 {
+            let oldest = order.removeFirst()
+            shared.removeValue(forKey: oldest)
+        }
+        return created
+    }
+
     private struct Key: Equatable {
         var entries: [ObjectIdentifier]
         /// The fold: a turn's block folds the moment its end marker lands. The marker is an
@@ -1411,6 +1441,16 @@ private struct DisplayBlockView: View, Equatable {
         lhs.block == rhs.block && lhs.runtime === rhs.runtime && lhs.context == rhs.context
     }
 
+    private static func splitTurnEntries(_ entries: [TimelineEntry]) -> (userEntries: [TimelineEntry], content: [TimelineEntry]) {
+        var userEntries: [TimelineEntry] = []
+        var content: [TimelineEntry] = []
+        content.reserveCapacity(entries.count)
+        for entry in entries {
+            if entry.kind == .user { userEntries.append(entry) } else { content.append(entry) }
+        }
+        return (userEntries, content)
+    }
+
     var body: some View {
         switch block {
         case .group(let group, let summary, let hasReply):
@@ -1420,12 +1460,13 @@ private struct DisplayBlockView: View, Equatable {
             // transition: a fade over a block that can run to thousands of points is a
             // whole-layer composite the renderer may draw as nothing.
             if let summary {
+                let split = Self.splitTurnEntries(entries)
                 TurnFinishedBlock(
                     runtime: runtime,
                     turnID: turnID,
                     summary: summary,
-                    userEntries: entries.filter { $0.kind == .user },
-                    content: entries.filter { $0.kind != .user },
+                    userEntries: split.userEntries,
+                    content: split.content,
                     workingDirectory: context.workingDirectory,
                     canUndo: context.canRewind
                 )

@@ -33,7 +33,7 @@ struct MarkdownView: View, Equatable {
 
     /// Parsed blocks by source. Rows are rebuilt as they scroll into view, but a finished
     /// message parses to the same blocks, so each distinct text parses once.
-    @MainActor private static var blockCache = RecentCache<String, [MarkdownBlock]>(limit: 200)
+    @MainActor private static var blockCache = RecentCache<String, [MarkdownBlock]>(limit: 800)
     /// The one streaming message's latest parse, so re-renders between flushes never parse.
     /// `headCount`/`headBlocks` are the stable prefix both flushes share: the blocks of the
     /// first `headCount` characters, parsed once and reused while the reply grows.
@@ -508,7 +508,7 @@ extension EnvironmentValues {
 /// Kale URL's (`https://…`) kwamen volledig in beeld. Afspraak: toon de titel
 /// (expliciete `[titel](url)` of host+pad zonder scheme) met de favicon ervoor.
 enum RichLink {
-    @MainActor private static var prettyCache = RecentCache<String, AttributedString>(limit: 400)
+    @MainActor private static var prettyCache = RecentCache<String, AttributedString>(limit: 1200)
     /// The paragraph still being streamed, kept apart so its every flush leaves the cache alone.
     @MainActor private static var streamingPretty: (source: String, value: AttributedString)?
 
@@ -784,7 +784,7 @@ enum RichInlineBuilder {
     /// Built runs by source. Paragraphs are rebuilt whenever their row scrolls into view,
     /// and joining the runs is the same work every time, so a settled paragraph keeps its
     /// text. Only link-free paragraphs come through here, so no favicon can go stale in it.
-    private static var textCache = RecentCache<String, Text>(limit: 400)
+    private static var textCache = RecentCache<String, Text>(limit: 1200)
 
     static func text(for source: String, streaming: Bool = false) -> Text {
         if !streaming, let cached = textCache.value(for: source) { return cached }
@@ -1018,7 +1018,7 @@ struct TableBlock: View {
     private static let collapsedRowLimit = 30
 
     /// Cell runs by source text, so a re-layout joins cached runs instead of re-parsing.
-    @MainActor private static var cellCache = RecentCache<String, AttributedString>(limit: 400)
+    @MainActor private static var cellCache = RecentCache<String, AttributedString>(limit: 1200)
 
     @MainActor
     private static func cell(_ source: String) -> AttributedString {
