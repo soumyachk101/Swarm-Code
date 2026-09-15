@@ -71,7 +71,7 @@ struct HydraButton: View {
         .buttonStyle(.plain)
         .chromeGlassCircle()
         .background {
-            HydraRightTap { isHydraSwitchShown = true }
+            HydraRightTap { isHydraSwitchShown.toggle() }
         }
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
@@ -195,11 +195,13 @@ private struct HydraSwitchPopover: View {
 }
 
 /// Catches a right-tap, a right-click or a control-click, on the Hydra mark. A
-/// background with no size of its own, so the button's left-click, badge, hover and
-/// help text are exactly as they were: it only hangs a right-button click recognizer
-/// on the container SwiftUI gives it, which observes without delaying or swallowing
-/// the primary button's events. Control-click arrives as a secondary click, so the
-/// one recognizer covers both.
+/// background with no drawing of its own, sized to the button, so the button's
+/// left-click, badge, hover and help text are exactly as they were. It watches the
+/// window's events rather than hanging a recognizer on itself: the SwiftUI button in
+/// front of it claims every hit over the mark, so a recognizer on the background never
+/// saw a click. A secondary click that lands inside this view's frame fires the action
+/// and goes no further; every other event passes untouched. Control-click counts as a
+/// secondary click too.
 private struct HydraRightTap: NSViewRepresentable {
     var action: () -> Void
 
@@ -214,7 +216,7 @@ private struct HydraRightTap: NSViewRepresentable {
 
 private final class HydraRightTapHost: NSView {
     var action: () -> Void
-    private var installed = false
+    private var monitor: Any?
 
     init(action: @escaping () -> Void) {
         self.action = action
@@ -224,22 +226,36 @@ private final class HydraRightTapHost: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) { nil }
 
-    override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        guard let host = superview else {
-            installed = false
-            return
-        }
-        guard !installed else { return }
-        installed = true
-        let recognizer = NSClickGestureRecognizer(target: self, action: #selector(fire))
-        // `buttonMask` is a plain bit mask: bit 0 is the left button, bit 1 the right.
-        recognizer.buttonMask = 0x2
-        recognizer.delaysPrimaryMouseButtonEvents = false
-        host.addGestureRecognizer(recognizer)
+    deinit { removeMonitor() }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { removeMonitor() } else { installMonitor() }
     }
 
-    @objc private func fire() { action() }
+    private func installMonitor() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { [weak self] event in
+            guard let self, self.catches(event) else { return event }
+            self.action()
+            return nil
+        }
+    }
+
+    private func removeMonitor() {
+        guard let monitor else { return }
+        NSEvent.removeMonitor(monitor)
+        self.monitor = nil
+    }
+
+    /// Whether the event is a secondary click on this view: in its window, over its
+    /// frame, and either the right button or the left one with Control held.
+    private func catches(_ event: NSEvent) -> Bool {
+        guard let window, event.window === window, !isHiddenOrHasHiddenAncestor, !bounds.isEmpty else { return false }
+        let isSecondary = event.type == .rightMouseDown || event.modifierFlags.contains(.control)
+        guard isSecondary else { return false }
+        return bounds.contains(convert(event.locationInWindow, from: nil))
+    }
 }
 
 /// What the Hydra mark says while the team is on but nothing is out: that it is on, which
@@ -407,6 +423,26 @@ enum HydraPairSummary {
         }
         if let effort = pair.workerEffort { parts.append(ModelOption.effortTitle(effort) + " effort") }
         return parts.joined(separator: " · ")
+    }
+
+    /// "Claude lead, Antigravity heads" across providers, or just "Claude".
+    static func providers(_ pair: HydraPair) -> String {
+        pair.sendsHeadsElsewhere ? "\(pair.provider.displayName) lead, \(pair.headsProvider.displayName) heads" : pair.provider.displayName
+    }
+
+    /// The efforts in one phrase: "High effort" when lead and heads share one, "Lead high,
+    /// heads medium effort" when they differ, one side alone when only it is set, and
+    /// nothing when neither is, so a row with defaults says nothing about effort.
+    static func efforts(_ pair: HydraPair) -> String? {
+        let lead = pair.orchestratorEffort.map { ModelOption.effortTitle($0).lowercased() }
+        let heads = pair.workerEffort.map { ModelOption.effortTitle($0).lowercased() }
+        switch (lead, heads) {
+        case let (lead?, heads?) where lead == heads: return "\(lead.capitalized) effort"
+        case let (lead?, heads?): return "Lead \(lead), heads \(heads) effort"
+        case let (lead?, nil): return "Lead \(lead) effort"
+        case let (nil, heads?): return "Heads \(heads) effort"
+        case (nil, nil): return nil
+        }
     }
 
     /// "Fable + Opus", "Any model + Sonnet", "Opus + itself", and across
