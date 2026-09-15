@@ -456,7 +456,7 @@ final class AppModel {
         let preference = settings.preference(for: provider, model: model)
         let effort = carriesModel ? current?.effort : (preference.effort ?? settings.lastEffort(for: provider))
         let fastMode = carriesModel ? (current?.fastMode ?? false) : preference.fastMode
-        let thread = ChatThread(
+        var thread = ChatThread(
             projectID: project.id,
             provider: provider,
             model: model,
@@ -464,6 +464,8 @@ final class AppModel {
             runtimeMode: settings.defaultRuntimeMode,
             fastMode: fastMode
         )
+        // A chat made from one that leads a pair carries the pair along with the model.
+        if carriesModel { thread.hydraPairID = current?.hydraPairID }
         threads.append(thread)
         updateProject(project.id) { $0.isExpanded = true }
         rememberLastProject(project.id)

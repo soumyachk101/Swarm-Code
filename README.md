@@ -30,7 +30,7 @@ It drives the coding agents you already have installed and signed in, on your ow
 - New threads in their own git worktree.
 - Commit, push and pull requests, with generated commit messages and thread titles.
 - A command palette, keyboard shortcuts and notifications when work finishes.
-- Hydra: one chat, many heads. Switch it on and the agent leads a team of helper agents on big jobs, each in a floating panel, on the model and effort you pair it with.
+- Hydra: one chat, many heads. Switch it on and the agent leads a team of helper agents on big jobs, each in a floating panel, on the model and effort you pair it with. A pair can cross providers: a strong lead on one, quick heads on another.
 
 Remote access, mobile apps, cloud sync, telemetry and a web client are left out on purpose.
 

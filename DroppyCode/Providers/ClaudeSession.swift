@@ -74,17 +74,29 @@ final class ClaudeSession: ProviderSession {
         if configuration.fastMode { arguments += ["--settings", #"{"fastMode":true}"#] }
         var environment = configuration.environment
         if let hydra = configuration.hydra {
-            // The heads and the lead's brief. The system prompt is rendered fresh rather
-            // than replayed from the conversation's first request, so switching Hydra on
-            // for an existing chat reaches the model.
-            arguments += [
-                "--agents", HydraPrompts.claudeAgents(hydra).compactString,
-                "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges),
-                "--system-prompt-snapshot", "off",
-                "--forward-subagent-text",
-            ]
-            // Uncapped, the CLI keeps its own limit on heads at once.
-            if let cap = hydra.maxHeads { environment["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] = String(cap) }
+            // The system prompt is rendered fresh rather than replayed from the
+            // conversation's first request, so switching Hydra on for an existing chat
+            // reaches the model.
+            if hydra.runsNatively {
+                // The heads and the lead's brief.
+                arguments += [
+                    "--agents", HydraPrompts.claudeAgents(hydra).compactString,
+                    "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges),
+                    "--system-prompt-snapshot", "off",
+                    "--forward-subagent-text",
+                ]
+                // Uncapped, the CLI keeps its own limit on heads at once.
+                if let cap = hydra.maxHeads { environment["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] = String(cap) }
+            } else {
+                // The heads run on another provider, as threads Droppy Code starts: the
+                // lead asks for them with the delegation block, and its own agent tool goes,
+                // since a head it spawned itself would run on its own model.
+                arguments += [
+                    "--append-system-prompt", HydraPrompts.fallbackPolicy(hydra),
+                    "--system-prompt-snapshot", "off",
+                    "--disallowedTools", "Agent", "Task",
+                ]
+            }
         }
         if let resumeID = configuration.resumeID {
             arguments += ["--resume", resumeID]
@@ -112,7 +124,7 @@ final class ClaudeSession: ProviderSession {
 
         sessionID = id
         var initialize: [String: JSONValue] = ["subtype": "initialize", "hooks": .null]
-        if configuration.hydra != nil {
+        if configuration.hydra?.runsNatively == true {
             // One-line progress notes for the heads, on task_progress.
             initialize["agentProgressSummaries"] = true
             initialize["forwardSubagentText"] = true

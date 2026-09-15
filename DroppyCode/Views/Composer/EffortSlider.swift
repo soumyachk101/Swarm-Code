@@ -152,9 +152,14 @@ private struct ModelEffortPanel: View {
 
     private func slider(for thread: ChatThread) -> some View {
         let option = model.providers.model(thread.model, for: thread.provider)
+        // In a pair the slider is the lead's: it wears the pair's fusion, says whose effort
+        // it sets, and resets to the pair's lead effort rather than the model's default.
+        let pair = model.hydraIsOn(thread) ? model.hydraPair(for: thread) : nil
+        let pairLook = pair.map { EffortPairLook($0, registry: model.providers) }
         return EffortSliderCard(
             modelName: option?.shortName ?? thread.model ?? thread.provider.displayName,
             provider: thread.provider,
+            pair: pairLook,
             efforts: option?.efforts ?? [],
             defaultEffort: option?.defaultEffort,
             supportsFast: option?.supportsFast ?? false,
@@ -174,8 +179,9 @@ private struct ModelEffortPanel: View {
             ),
             onTitleTap: { showsModels = true },
             onReset: {
+                let leadEffort = pair?.orchestratorEffort.flatMap { option?.efforts.contains($0) == true ? $0 : nil }
                 model.updateThread(thread.id) {
-                    $0.effort = nil
+                    $0.effort = leadEffort
                     $0.fastMode = false
                 }
                 remember(thread.id)
@@ -229,7 +235,11 @@ struct ModelList: View {
 
     var body: some View {
         let entries = ModelCatalog.entries(model, including: thread)
-        let pairs = model.hydraPickerPairs
+        // The pairs are Hydra's: on offer while it is on, out of sight otherwise.
+        let pairs = model.hydraIsOn(thread) ? model.hydraPickerPairs : []
+        // A chat leads with one pair or runs one model, never both: the checkmark sits on
+        // the pair while the chat is in one, even though the pair's lead model is a row too.
+        let leadsWithPair = pairs.contains { model.leadsWithHydraPair($0, thread: thread) }
         let showsProviders = Set(entries.map(\.provider)).count > 1
         // Fixed row heights let the popover size itself in one pass instead of measuring and resizing.
         let rowHeight: CGFloat = showsProviders || (hasHistory && entries.contains { $0.provider != thread.provider }) ? 46 : 34
@@ -263,6 +273,7 @@ struct ModelList: View {
                         ForEach(pairs) { pair in
                             let locked = hasHistory && pair.provider != thread.provider
                             HydraPairListRow(
+                                pair: pair,
                                 title: HydraPairSummary.title(pair, registry: model.providers),
                                 detail: locked ? "New chats only" : detail(for: pair),
                                 rowHeight: Self.pairRowHeight,
@@ -281,7 +292,7 @@ struct ModelList: View {
                             detail: locked ? "New chats only" : (showsProviders ? entry.provider.displayName : nil),
                             showsIcon: showsProviders,
                             rowHeight: rowHeight,
-                            isSelected: entry.provider == thread.provider && entry.option.id == thread.model,
+                            isSelected: !leadsWithPair && entry.provider == thread.provider && entry.option.id == thread.model,
                             isEnabled: !locked
                         ) {
                             onChoose(entry)
@@ -300,24 +311,28 @@ struct ModelList: View {
         }
         .padding(6)
         .task {
-            // A pair on another provider names its models from that provider's catalogue,
-            // which this chat may never have loaded.
-            for provider in Set(pairs.map(\.provider)) where provider != thread.provider {
+            // A pair on another provider, or with its heads on one, names its models from
+            // that provider's catalogue, which this chat may never have loaded.
+            for provider in Set(pairs.flatMap { [$0.provider, $0.headsProvider] }) where provider != thread.provider {
                 await model.providers.loadCatalog(provider)
             }
         }
     }
 
-    /// The line under a pair's title: the provider, then what its heads run on.
+    /// The line under a pair's title: the provider, then what its heads run on, and where
+    /// when that is another provider.
     private func detail(for pair: HydraPair) -> String {
         let workers = HydraPairSummary.workers(pair, registry: model.providers)
-        return "\(pair.provider.displayName) · \(workers.prefix(1).lowercased())\(workers.dropFirst())"
+        let lead = pair.sendsHeadsElsewhere ? "\(pair.provider.displayName) lead" : pair.provider.displayName
+        return "\(lead) · \(workers.prefix(1).lowercased())\(workers.dropFirst())"
     }
 }
 
 /// One Hydra pair in the model picker: the Hydra mark, who leads whom, and the provider
-/// with the heads' model under it. Tapping it puts the chat in the pair.
+/// with the heads' model under it; a pair whose heads run on another provider shows both
+/// providers' marks, lead then heads. Tapping it puts the chat in the pair.
 private struct HydraPairListRow: View {
+    let pair: HydraPair
     let title: String
     let detail: String
     let rowHeight: CGFloat
@@ -345,6 +360,16 @@ private struct HydraPairListRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 12)
+                if pair.sendsHeadsElsewhere {
+                    HStack(spacing: 3) {
+                        ProviderIcon(provider: pair.provider, size: 12)
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 7, weight: .semibold))
+                        ProviderIcon(provider: pair.headsProvider, size: 12)
+                    }
+                    .foregroundStyle(Chrome.secondaryText)
+                    .accessibilityHidden(true)
+                }
                 Image(systemName: "checkmark")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)
@@ -427,9 +452,35 @@ private struct ModelListRow: View {
 // MARK: - Slider card
 
 /// Fast mode, the effort title and model name, reset, and the effort slider.
+/// What the slider shows while the chat leads a pair: the pair in words, the colours its
+/// fusion runs between, and what the heads' effort is, for the line that says the slider
+/// sets the lead's.
+struct EffortPairLook: Hashable {
+    /// "Fable leads Opus (1M context)".
+    var title: String
+    var brand: EffortPairBrand
+    /// The heads' effort by name, when the pair sets one.
+    var headsEffort: String?
+
+    @MainActor
+    init(_ pair: HydraPair, registry: ProviderRegistry) {
+        title = HydraPairSummary.title(pair, registry: registry)
+        brand = EffortPairBrand(pair)
+        headsEffort = pair.workerEffort.map { ModelOption.effortTitle($0).lowercased() }
+    }
+
+    /// Whose effort the slider sets, and what the heads run at.
+    var caption: String {
+        if let headsEffort { return "The lead's effort · heads run at \(headsEffort) effort" }
+        return "The lead's effort · heads keep their own"
+    }
+}
+
 struct EffortSliderCard: View {
     let modelName: String
     let provider: ProviderKind?
+    /// The pair the chat leads with, if one: the card is the lead's then.
+    var pair: EffortPairLook? = nil
     let efforts: [String]
     let defaultEffort: String?
     let supportsFast: Bool
@@ -460,13 +511,19 @@ struct EffortSliderCard: View {
     private var brand: EffortBrand { EffortBrand(provider: provider) }
 
     /// The title takes the slider's colour: the provider's brand at maximum, gold in
-    /// fast mode, and both blended when the two are on together.
+    /// fast mode, and both blended when the two are on together. In a pair it runs from
+    /// the lead's colour into the heads', like the track, gold at the end in fast mode.
     private var titleStyle: AnyShapeStyle {
+        if let pair {
+            var colors = [brand.titleColor] + pair.brand.titleColors
+            if isFast { colors.append(EffortPalette.fast) }
+            return AnyShapeStyle(LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing))
+        }
         switch (isMaxEffort, isFast) {
-        case (true, true): AnyShapeStyle(LinearGradient(colors: [brand.titleColor, EffortPalette.fast], startPoint: .leading, endPoint: .trailing))
-        case (true, false): brand.title
-        case (false, true): AnyShapeStyle(EffortPalette.fast)
-        case (false, false): AnyShapeStyle(EffortPalette.title)
+        case (true, true): return AnyShapeStyle(LinearGradient(colors: [brand.titleColor, EffortPalette.fast], startPoint: .leading, endPoint: .trailing))
+        case (true, false): return brand.title
+        case (false, true): return AnyShapeStyle(EffortPalette.fast)
+        case (false, false): return AnyShapeStyle(EffortPalette.title)
         }
     }
 
@@ -512,11 +569,17 @@ struct EffortSliderCard: View {
                     }
                     .help(onTitleTap == nil ? "" : "Choose a model")
 
+                    // In a pair the line under the effort is the pair itself, behind the
+                    // Hydra mark: the slider is the lead's, and the lead is named first.
                     HStack(spacing: 5) {
-                        if let provider {
+                        if pair != nil {
+                            HydraMarkImage()
+                                .foregroundStyle(Chrome.primaryText.opacity(0.75))
+                                .frame(width: 12, height: 12)
+                        } else if let provider {
                             ProviderIcon(provider: provider, size: 12)
                         }
-                        Text(verbatim: modelName)
+                        Text(verbatim: pair?.title ?? modelName)
                             .font(.system(size: 13))
                             .foregroundStyle(Chrome.primaryText.opacity(0.7))
                             .lineLimit(1)
@@ -541,8 +604,19 @@ struct EffortSliderCard: View {
                     ),
                     fastMode: isFast,
                     brand: brand,
+                    pair: pair?.brand,
                     accessibilityTitle: title
                 )
+            }
+
+            // Whose effort this is, so a pair's slider is never taken for the heads'.
+            if let pair, !efforts.isEmpty {
+                Text(verbatim: pair.caption)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .lineLimit(1)
+                    .padding(.top, -6)
+                    .transition(.softAppear)
             }
         }
         .padding(.horizontal, 16)
@@ -614,6 +688,9 @@ struct EffortSlider: View {
     var fastMode = false
     /// The colours maximum effort wears: the provider's brand.
     var brand: EffortBrand = .purple
+    /// The pair the chat leads with, if one: the fill runs from the lead's colour into the
+    /// heads' and the two fuse at a seam, whatever the effort.
+    var pair: EffortPairBrand? = nil
     let accessibilityTitle: String
 
     @State private var dragX: CGFloat?
@@ -626,7 +703,7 @@ struct EffortSlider: View {
         case (false, true): .fast
         case (false, false): .plain
         }
-        return TrackLook(kind: kind, brand: brand)
+        return TrackLook(kind: kind, brand: brand, pair: pair)
     }
 
     var body: some View {
@@ -645,12 +722,12 @@ struct EffortSlider: View {
                     .fill(look.fill)
                     .frame(width: x + inset)
                     .overlay(alignment: .leading) {
-                        if look.kind != .plain {
+                        if look.kind != .plain || look.pair != nil {
                             TrackEffect(look: look)
                                 .frame(width: x + inset, height: Self.trackHeight)
                                 .clipShape(Capsule(style: .continuous))
                                 .transition(.opacity)
-                                .id(look)
+                                .id(look.effectIdentity)
                         }
                     }
                 ForEach(0..<count, id: \.self) { stop in
@@ -707,7 +784,7 @@ struct EffortSlider: View {
         }
         .frame(height: Self.thumbSize)
         .accessibilityElement()
-        .accessibilityLabel(Text("Reasoning effort"))
+        .accessibilityLabel(Text(pair == nil ? "Reasoning effort" : "The lead's reasoning effort"))
         .accessibilityValue(Text(verbatim: accessibilityTitle))
         .accessibilityAdjustableAction { direction in
             switch direction {
@@ -823,6 +900,35 @@ enum EffortBrand: Hashable {
     ]
 }
 
+/// The colours a pair's fusion runs between: the lead's brand at the near end, and at the
+/// far end the heads' provider's brand when they run on another provider than the lead
+/// (Claude's terracotta into the Gemini sweep, say), else the roster's colours, for one
+/// lead over many heads.
+struct EffortPairBrand: Hashable {
+    /// The heads' colours, near end first.
+    var colors: [Color]
+    /// Whether the far end is light, so the knob needs its edge there.
+    var isLight: Bool
+
+    init(_ pair: HydraPair) {
+        if pair.sendsHeadsElsewhere {
+            let brand = EffortBrand(provider: pair.headsProvider)
+            switch brand {
+            case .antigravity: colors = EffortBrand.gemini
+            case .silver: colors = [Color(white: 0.8), Color(white: 0.95)]
+            default: colors = [brand.fillColor, brand.titleColor]
+            }
+            isLight = brand.isLight
+        } else {
+            colors = HydraRoster.personas.prefix(4).map(\.color)
+            isLight = false
+        }
+    }
+
+    /// The heads' colours for the effort's name: lifted a little, like the lead's.
+    var titleColors: [Color] { colors.map { $0.mix(with: .white, by: 0.18) } }
+}
+
 /// How the filled part of the effort track looks.
 struct TrackLook: Hashable {
     enum Kind: Hashable {
@@ -837,13 +943,19 @@ struct TrackLook: Hashable {
 
     var kind: Kind
     var brand: EffortBrand
+    /// The pair the chat leads with: its colours take the fill over, whatever the kind, and
+    /// the kind's own effects play on top.
+    var pair: EffortPairBrand? = nil
 
     var fill: AnyShapeStyle {
+        if let pair {
+            return AnyShapeStyle(LinearGradient(colors: [brand.fillColor] + pair.colors, startPoint: .leading, endPoint: .trailing))
+        }
         switch kind {
-        case .plain: AnyShapeStyle(Chrome.accent)
-        case .supercharged: brand.fill
-        case .fast: AnyShapeStyle(EffortPalette.fastFill)
-        case .fusion: AnyShapeStyle(LinearGradient(
+        case .plain: return AnyShapeStyle(Chrome.accent)
+        case .supercharged: return brand.fill
+        case .fast: return AnyShapeStyle(EffortPalette.fastFill)
+        case .fusion: return AnyShapeStyle(LinearGradient(
             colors: [brand.fillColor, brand.fillColor, EffortPalette.fastFill],
             startPoint: .leading, endPoint: .trailing
         ))
@@ -851,23 +963,32 @@ struct TrackLook: Hashable {
     }
 
     var glow: Color {
+        if let pair, let last = pair.colors.last { return pair.isLight ? .black.opacity(0.35) : last.opacity(0.7) }
         switch kind {
-        case .plain: .black.opacity(0.28)
-        case .supercharged: brand.glow
-        case .fast: EffortPalette.fastFill.opacity(0.7)
-        case .fusion: EffortPalette.fast.opacity(0.75)
+        case .plain: return .black.opacity(0.28)
+        case .supercharged: return brand.glow
+        case .fast: return EffortPalette.fastFill.opacity(0.7)
+        case .fusion: return EffortPalette.fast.opacity(0.75)
         }
     }
 
     /// Whether the fill under the knob is light (a white brand at maximum, not in fusion,
-    /// whose far end is gold).
-    var isLightFill: Bool { kind == .supercharged && brand.isLight }
+    /// whose far end is gold; or a pair whose heads' colours are white).
+    var isLightFill: Bool { pair.map(\.isLight) ?? (kind == .supercharged && brand.isLight) }
 
     /// The passed stops: white on colour, dark on a white fill.
     var stopColor: Color { isLightFill ? .black.opacity(0.35) : .white.opacity(0.6) }
 
     /// The particles' and sheen's colour.
-    var spark: Color { kind == .supercharged || kind == .fusion ? brand.spark : .white }
+    var spark: Color { pair == nil && (kind == .supercharged || kind == .fusion) ? brand.spark : .white }
+
+    /// What one run of the track's animation stands for. A look without a pair starts its
+    /// effect over on every change, crossfading. A pair's fusion is the whole track's
+    /// animation, so it keeps its time through the kind's changes: the seam does not jump
+    /// because the knob reached maximum, and the kind's effects join it in place.
+    var effectIdentity: AnyHashable {
+        pair.map { AnyHashable(TrackLook(kind: .plain, brand: brand, pair: $0)) } ?? AnyHashable(self)
+    }
 }
 
 /// The track's animation, one small Canvas drawn only while the slider needs it.
@@ -884,10 +1005,14 @@ private struct TrackEffect: View {
     var body: some View {
         let kind = look.kind
         let spark = look.spark
-        TimelineView(.animation(minimumInterval: 1.0 / (kind == .supercharged ? 30 : 60), paused: reduceMotion)) { timeline in
+        let pair = look.pair
+        TimelineView(.animation(minimumInterval: 1.0 / (kind == .supercharged && pair == nil ? 30 : 60), paused: reduceMotion)) { timeline in
             let time = timeline.date.timeIntervalSince(startedAt)
             Canvas { context, size in
                 guard size.width > 8 else { return }
+                if let pair {
+                    Self.drawFusion(context, size: size, time: time, lead: look.brand.fillColor, heads: pair.colors)
+                }
                 if kind == .supercharged || kind == .fusion {
                     Self.drawParticles(context, size: size, time: time, color: spark)
                 }
@@ -1005,6 +1130,116 @@ private struct TrackEffect: View {
                 endPoint: CGPoint(x: x + band + 10, y: 0)
             )
         )
+    }
+
+    /// A pair's fusion: the lead's colour streaming in from the near end and the heads'
+    /// from the far end, meeting at a white-hot seam that drifts and breathes. Bands of
+    /// each colour flow on into the other's side and fade there, sparks fly off the seam
+    /// to either side, cooling from white to the colour they land in, and the sheen sweeps
+    /// over it all. The gradient itself is drawn here, over the fill, so the seam can move.
+    private static func drawFusion(_ context: GraphicsContext, size: CGSize, time: TimeInterval, lead: Color, heads: [Color]) {
+        let width = Double(size.width)
+        let height = Double(size.height)
+        let seam = width * (0.5 + 0.13 * sin(time * 0.7) + 0.05 * sin(time * 1.9 + 1))
+        let pulse = 0.5 + 0.5 * sin(time * 2.4)
+        let headsNear = heads.first ?? lead
+
+        // The two colours meeting: each holds its own side and they fuse over a short run
+        // around the seam, whose heart is white.
+        var stops: [Gradient.Stop] = [.init(color: lead, location: 0)]
+        stops.append(.init(color: lead, location: max(0, seam / width - 0.22)))
+        stops.append(.init(color: .white.opacity(0.92), location: seam / width))
+        let farStart = min(1, seam / width + 0.16)
+        if heads.count == 1 {
+            stops.append(.init(color: headsNear, location: farStart))
+            stops.append(.init(color: headsNear, location: 1))
+        } else {
+            for (index, color) in heads.enumerated() {
+                stops.append(.init(color: color, location: min(1, farStart + (1 - farStart) * Double(index) / Double(heads.count - 1))))
+            }
+        }
+        context.fill(
+            Path(CGRect(origin: .zero, size: size)),
+            with: .linearGradient(Gradient(stops: stops), startPoint: CGPoint(x: 0, y: height / 2), endPoint: CGPoint(x: width, y: height / 2))
+        )
+
+        // Plasma: bands of the far side's colour flowing into each side, soft and additive,
+        // brightest at the seam and gone by the fill's end, so each colour keeps reaching
+        // into the other.
+        for band in 0..<3 {
+            let seed = Double(band) + 300
+            let amplitude = height * (0.12 + 0.16 * random(seed, 1))
+            let wavelength = 30 + 34 * random(seed, 2)
+            let speed = 22 + 34 * random(seed, 3)
+            let thickness = 1.8 + 2.2 * random(seed, 4)
+            let phase = time * speed / wavelength * 2 * .pi
+            for stream in 0..<2 {
+                let toNear = stream == 0
+                var path = Path()
+                let steps = Int(width / 3) + 1
+                for step in 0...steps {
+                    let x = min(width, Double(step) * 3)
+                    let y = height / 2 + amplitude * sin(x / wavelength * 2 * .pi + (toNear ? phase : -phase) + seed * (toNear ? 1 : 1.7))
+                    if step == 0 { path.move(to: CGPoint(x: x, y: y)) } else { path.addLine(to: CGPoint(x: x, y: y)) }
+                }
+                var plasma = context
+                plasma.blendMode = .plusLighter
+                plasma.addFilter(.blur(radius: 2.5))
+                let reach = width * 0.55
+                let side = toNear ? CGRect(x: 0, y: 0, width: seam, height: height) : CGRect(x: seam, y: 0, width: width - seam, height: height)
+                plasma.clip(to: Path(side))
+                let color = toNear ? headsNear : lead
+                let brightness = 0.32 + 0.16 * random(seed, 5)
+                plasma.stroke(
+                    path,
+                    with: .linearGradient(
+                        Gradient(colors: toNear ? [color.opacity(0), color.opacity(brightness)] : [color.opacity(brightness), color.opacity(0)]),
+                        startPoint: CGPoint(x: toNear ? seam - reach : seam, y: 0),
+                        endPoint: CGPoint(x: toNear ? seam : seam + reach, y: 0)
+                    ),
+                    style: StrokeStyle(lineWidth: thickness, lineCap: .round, lineJoin: .round)
+                )
+            }
+        }
+
+        // Sparks off the seam, flung to either side on beats of their own, white as they
+        // leave and the colour of the side they land in as they cool.
+        for index in 0..<22 {
+            let seed = Double(index) + 400
+            let life = 0.7 + 0.8 * random(seed, 1)
+            let age = (time + random(seed, 2) * life).truncatingRemainder(dividingBy: life)
+            let progress = age / life
+            let toNear = random(seed, 3) < 0.5
+            let speed = 28 + 74 * random(seed, 4)
+            let x = seam + (toNear ? -1 : 1) * speed * age
+            let y = height * (0.18 + 0.64 * random(seed, 5)) + 5 * sin(age * 8 + seed)
+            let radius = 0.7 + 1.5 * (1 - progress)
+            let opacity = (1 - progress) * (0.5 + 0.5 * random(seed, 6)) * edgeFade(x, width: width)
+            guard opacity > 0.01 else { continue }
+            let color = Color.white.mix(with: toNear ? lead : headsNear, by: progress * 0.8)
+            context.fill(
+                Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)),
+                with: .color(color.opacity(opacity))
+            )
+        }
+
+        // The seam: a white-hot core that breathes, its glow spilling to both sides.
+        var glow = context
+        glow.blendMode = .plusLighter
+        glow.addFilter(.blur(radius: 7))
+        let coreWidth = 9 + 8 * pulse
+        glow.fill(
+            Path(ellipseIn: CGRect(x: seam - coreWidth, y: -height * 0.2, width: coreWidth * 2, height: height * 1.4)),
+            with: .color(.white.opacity(0.32 + 0.3 * pulse))
+        )
+        var core = context
+        core.addFilter(.blur(radius: 0.8))
+        core.fill(
+            Path(roundedRect: CGRect(x: seam - 1.1, y: 2, width: 2.2, height: height - 4), cornerRadius: 1.1),
+            with: .color(.white.opacity(0.5 + 0.4 * pulse))
+        )
+
+        drawSheen(context, size: size, time: time, color: .white)
     }
 
     /// Fades a point out over the last 14 points at either end of the fill.

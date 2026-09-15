@@ -5,16 +5,22 @@ import SwiftUI
 // agents ("heads") that it sends out on the parts of a big job, in parallel. Claude, Codex
 // and Copilot run the heads natively, inside their own session, with the model and effort
 // from the pair the user set up; every other provider gets Droppy-run heads, each a thread
-// of its own, and hands their reports back to the lead as the next message.
+// of its own, and hands their reports back to the lead as the next message. A pair may
+// also send the heads out on another provider than the lead's (a Claude lead over Gemini
+// heads, say): then they are Droppy-run whatever the lead's provider, and the lead asks for
+// them the way the other providers do.
 
 /// A lead-and-heads pairing: which model runs the heads when a chat on this provider leads.
 /// `orchestratorModel` nil means any model on the provider; a nil worker field means the
-/// heads inherit the chat's own model or effort.
+/// heads inherit the chat's own model or effort. `workerProvider` nil keeps the heads on
+/// the lead's provider; set, they run there instead, on `workerModel` or that provider's
+/// default model, with `workerEffort` from that provider's own efforts.
 struct HydraPair: Codable, Hashable, Identifiable, Sendable {
     var id: UUID
     var provider: ProviderKind
     var orchestratorModel: String?
     var orchestratorEffort: String?
+    var workerProvider: ProviderKind?
     var workerModel: String?
     var workerEffort: String?
     /// How many heads may work at once; nil puts no cap on them, as with no pair at all.
@@ -33,10 +39,17 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
         provider = try container.decode(ProviderKind.self, forKey: .provider)
         orchestratorModel = container.value(.orchestratorModel, default: nil)
         orchestratorEffort = container.value(.orchestratorEffort, default: nil)
+        workerProvider = container.value(.workerProvider, default: nil)
         workerModel = container.value(.workerModel, default: nil)
         workerEffort = container.value(.workerEffort, default: nil)
         maxHeads = Self.clampedCap(container.value(.maxHeads, default: nil))
     }
+
+    /// The provider the heads run on: the lead's, unless the pair sends them elsewhere.
+    var headsProvider: ProviderKind { workerProvider ?? provider }
+
+    /// Whether the heads run on another provider than the lead.
+    var sendsHeadsElsewhere: Bool { workerProvider.map { $0 != provider } ?? false }
 
     /// A cap kept inside the range, or none.
     static func clampedCap(_ cap: Int?) -> Int? {
@@ -44,10 +57,22 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
-/// What a session launches with while Hydra is on: the heads' model and effort, resolved
-/// from the pair, and how many may run at once.
+/// What a session launches with while Hydra is on: where the heads run and on what,
+/// resolved from the pair, and how many may run at once.
 struct HydraLaunch: Hashable, Sendable {
-    /// The provider's own model id for the heads, or nil to inherit the lead's model.
+    /// The provider the heads run on: the lead's own, unless the pair sends them out on
+    /// another one (see `HydraPair.workerProvider`).
+    var headsProvider: ProviderKind
+    /// Whether the lead's provider runs the heads inside its own session: only with the
+    /// heads on the lead's provider, and only where it has heads of its own (Claude, Codex,
+    /// Copilot). Otherwise the heads are Droppy-run threads, whatever the lead runs on, and
+    /// the lead asks for them with the delegation block.
+    var runsNatively: Bool
+    /// The heads' model and provider in words, for the lead's brief, when they run on
+    /// another provider than the lead: "Gemini 3.8 Flash on Antigravity".
+    var headsLabel: String?
+    /// The heads' provider's own model id for the heads, or nil to inherit the lead's model
+    /// (on the lead's provider) or take the heads' provider's default (elsewhere).
     var workerModel: String?
     var workerEffort: String?
     /// The pair's cap on heads at work at once; nil, with no pair or an uncapped one,
@@ -512,11 +537,18 @@ enum HydraPrompts {
     /// The standing rules for a lead on a provider that runs no heads of its own: when to
     /// delegate, how, and what the reports mean. An API session keeps this in its system
     /// prompt, once; a CLI session gets it in front of every message.
-    static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false) -> String {
+    static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, heads: String? = nil) -> String {
         let whereHeadsWork = isolated
             ? "Each head works in a copy of the project of its own and Droppy Code lands its changes in your checkout when it reports"
             : "The heads work in your checkout"
         let team = maxHeads.map { "a team of up to \($0) helper agents" } ?? "a team of helper agents"
+        // Heads on another provider are a different model from the lead, chosen for speed
+        // more often than not: the lead hears what they are, so it briefs them as such and
+        // keeps the thinking, and it is told the block is the only way to them, since its own
+        // agent tools would run heads on its own model instead.
+        let whoTheHeadsAre = heads.map {
+            " Your heads run on \($0), a different model from yours: it is quick, so give each one a well-bounded task with everything it needs written down, and keep the design, the judgement calls and the integration for yourself. The block is the only way to send heads out: never use an agent, task or sub-agent tool of your own, which would run heads on your own model instead of the one the user chose."
+        } ?? ""
         return """
         [Hydra is on] You lead \(team) ("heads"). Delegate first, work second: anything bigger than a single obvious change to a single file is a job for heads. Audits, reviews, a feature across several files, a refactor, "check everything", research across many files, several tasks in one message: in your first reply, look at the code only long enough to write good briefs, a minute and a handful of files rather than ten, and then send the heads out, all of them in that one block. Never spend minutes reading before you delegate, and never do inline what heads could be doing in parallel. Only a truly single-focus request, one file and one obvious change, is yours to do alone. Finish your reply with one fenced block
 
@@ -524,8 +556,15 @@ enum HydraPrompts {
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does. The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(autoMerges ? " " + autoMergeRule : "")
+        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(autoMerges ? " " + autoMergeRule : "")
         """
+    }
+
+    /// The policy for a lead whose session keeps it in its system prompt: the API
+    /// providers, and the providers with heads of their own whose pair sends the heads out
+    /// on another provider.
+    static func fallbackPolicy(_ launch: HydraLaunch) -> String {
+        fallbackPolicy(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, heads: launch.headsLabel)
     }
 
     /// In front of the user's own message: the team so far, when there is one.
@@ -546,12 +585,12 @@ enum HydraPrompts {
 
     /// Policy and note together, for a CLI provider with no system prompt to keep the
     /// policy in.
-    static func fallbackPreamble(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, team: String?) -> String {
-        fallbackPolicy(maxHeads: maxHeads, isolated: isolated, autoMerges: autoMerges) + "\n\n" + (fallbackTurnNote(team: team).isEmpty ? "---\n\n" : fallbackTurnNote(team: team))
+    static func fallbackPreamble(_ launch: HydraLaunch, team: String?) -> String {
+        fallbackPolicy(launch) + "\n\n" + (fallbackTurnNote(team: team).isEmpty ? "---\n\n" : fallbackTurnNote(team: team))
     }
 
-    static func fallbackReportPreamble(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, team: String?, canDelegate: Bool) -> String {
-        fallbackPolicy(maxHeads: maxHeads, isolated: isolated, autoMerges: autoMerges) + "\n\n" + fallbackReportNote(team: team, canDelegate: canDelegate)
+    static func fallbackReportPreamble(_ launch: HydraLaunch, team: String?, canDelegate: Bool) -> String {
+        fallbackPolicy(launch) + "\n\n" + fallbackReportNote(team: team, canDelegate: canDelegate)
     }
 
     /// What the lead hears when its delegation block is refused: the request has had its

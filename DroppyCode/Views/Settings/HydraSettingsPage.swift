@@ -70,7 +70,7 @@ struct HydraSettingsPage: View {
         ChromeSection(title: "Pairs") {
             ChromeCard {
                 if settings.hydraPairs.isEmpty {
-                    ChromeRow(title: "No pairs yet", detail: "Heads run on the chat's own model and effort until a pair says otherwise.") {
+                    ChromeRow(title: "No pairs yet", detail: "Heads run on the chat's own model and effort until a chat is put in a pair.") {
                         HydraAddPairButton()
                     }
                 } else {
@@ -86,14 +86,14 @@ struct HydraSettingsPage: View {
                     }
                 }
             }
-            Text("Each chat leads with the pair for its provider: the one whose lead model the chat runs, else one for any model. Every pair also sits at the top of the composer's model picker, where a tap puts the chat in it with Hydra on; a model picked there takes the chat back out, with Hydra off.")
+            Text("With Hydra on, every pair sits at the top of the composer's model picker: a tap puts the chat in it, and a chat made from that one carries the pair along. A model picked there takes the chat back out, its heads on its own model and effort. The effort slider sets the lead's effort while the chat leads a pair.")
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.secondaryText)
                 .padding(.horizontal, 4)
         }
         ChromeSection(title: "Where heads run") {
             ChromeCard {
-                ChromeRow(title: "Claude, Codex and Copilot", detail: "Inside the provider's own session: the heads are defined at launch on the pair's model and effort, and the lead sends them out with its own agent tools. Their transcripts show in the Hydra panel.") {
+                ChromeRow(title: "Claude, Codex and Copilot", detail: "Inside the provider's own session, with the heads on the same provider: they are defined at launch on the pair's model and effort, and the lead sends them out with its own agent tools. Their transcripts show in the Hydra panel.") {
                     HStack(alignment: .center, spacing: 6) {
                         ProviderIcon(provider: .claude, size: 14)
                         ProviderIcon(provider: .codex, size: 14)
@@ -106,6 +106,16 @@ struct HydraSettingsPage: View {
                 ChromeRowDivider()
                 ChromeRow(title: "Every other provider", detail: "The lead asks Droppy Code for heads with a delegation block at the end of its reply. Each head runs as a thread of its own on the pair's model, and their reports come back to the lead as the next message.") {
                     EmptyView()
+                }
+                ChromeRowDivider()
+                ChromeRow(title: "Heads on another provider", detail: "A pair can lead on one provider and run its heads on another: a strong lead that does the thinking over quick heads that do the work. Those heads always run as threads of their own, whatever the lead runs on, each in its own copy of the checkout, and their work lands in the lead's checkout as they report.") {
+                    HStack(alignment: .center, spacing: 5) {
+                        ProviderIcon(provider: .claude, size: 14)
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        ProviderIcon(provider: .antigravity, size: 14)
+                    }
+                    .foregroundStyle(Chrome.secondaryText)
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Heads from the queue", detail: "A queued follow-up always runs as a thread of its own, whatever the provider, and reports back to the lead once it is idle.") {
@@ -163,9 +173,7 @@ private struct HydraPairRow: View {
                 isEditing = true
             } label: {
                 HStack(spacing: 12) {
-                    ProviderIcon(provider: pair.provider, size: 16)
-                        .foregroundStyle(Chrome.primaryText)
-                        .frame(width: 22)
+                    HydraPairIcons(pair: pair)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: HydraPairSummary.title(pair, registry: registry))
                             .font(.system(size: 13))
@@ -204,20 +212,51 @@ private struct HydraPairRow: View {
         .padding(.leading, 16)
         .padding(.trailing, Chrome.rowControlTrailingPadding)
         .padding(.vertical, 9)
-        .task { await registry.loadCatalog(pair.provider) }
+        .task(id: pair.headsProvider) {
+            await registry.loadCatalog(pair.provider)
+            await registry.loadCatalog(pair.headsProvider)
+        }
     }
 
     private func summary(registry: ProviderRegistry) -> String {
-        var parts = [pair.provider.displayName]
+        var parts = [pair.sendsHeadsElsewhere ? "\(pair.provider.displayName) lead, \(pair.headsProvider.displayName) heads" : pair.provider.displayName]
         if let effort = pair.orchestratorEffort { parts.append("Lead at \(ModelOption.effortTitle(effort).lowercased()) effort") }
         parts.append(HydraPairSummary.workers(pair, registry: registry))
         parts.append(pair.maxHeads.map { $0 == 1 ? "1 head at a time" : "Up to \($0) heads at once" } ?? "As many heads as the work takes")
+        // Heads on a provider this Mac cannot run stay on the lead's, on the chat's own
+        // model (see `AppModel.hydraHeadsProvider`); the row says so rather than promising
+        // a team that would fail.
+        if pair.sendsHeadsElsewhere, model.hydraHeadsProvider(of: pair) == pair.provider {
+            parts.append("\(pair.headsProvider.displayName) is not set up, so the heads stay on \(pair.provider.displayName) for now")
+        }
         return parts.joined(separator: " · ")
     }
 }
 
-/// The pair's settings: provider, lead model and effort, heads' model and effort, and how
-/// many heads go out at once. Every choice writes straight to the pair.
+/// A pair's provider mark: the lead's icon, and after it the heads' when they run
+/// elsewhere, so a row says at a glance that this pair crosses providers.
+private struct HydraPairIcons: View {
+    let pair: HydraPair
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ProviderIcon(provider: pair.provider, size: 16)
+                .foregroundStyle(Chrome.primaryText)
+            if pair.sendsHeadsElsewhere {
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(Chrome.secondaryText)
+                ProviderIcon(provider: pair.headsProvider, size: 13)
+                    .foregroundStyle(Chrome.primaryText.opacity(0.8))
+            }
+        }
+        .frame(minWidth: 22, alignment: .leading)
+        .accessibilityLabel(Text(pair.sendsHeadsElsewhere ? "\(pair.provider.displayName) lead, \(pair.headsProvider.displayName) heads" : pair.provider.displayName))
+    }
+}
+
+/// The pair's settings: provider, lead model and effort, the heads' provider, model and
+/// effort, and how many heads go out at once. Every choice writes straight to the pair.
 private struct HydraPairEditor: View {
     @Environment(AppModel.self) private var model
     let pairID: UUID
@@ -226,12 +265,16 @@ private struct HydraPairEditor: View {
         if let pair = model.settings.hydraPair(pairID) {
             let registry = model.providers
             let providers = ProviderKind.allCases.filter { model.settings.isEnabled($0) && (registry.status($0).isInstalled || $0 == pair.provider) }
+            let headsProviders = ProviderKind.allCases.filter { model.settings.isEnabled($0) && (registry.status($0).isInstalled || $0 == pair.headsProvider) }
             let options = registry.models(for: pair.provider)
+            let headsOptions = registry.models(for: pair.headsProvider)
             let leadOption = registry.model(pair.orchestratorModel, for: pair.provider)
-            let workerOption = registry.model(pair.workerModel, for: pair.provider)
+            let workerOption = registry.model(pair.workerModel, for: pair.headsProvider)
             // A lead that may be any model offers every effort the provider's models know.
             let leadEfforts = leadOption?.efforts ?? Self.allEfforts(options)
-            let workerEfforts = workerOption?.efforts ?? leadEfforts
+            // Heads with no model chosen inherit the chat's, and its efforts; on another
+            // provider they run its default model, so its efforts are the ones on offer.
+            let workerEfforts = workerOption?.efforts ?? (pair.sendsHeadsElsewhere ? (registry.defaultModel(for: pair.headsProvider)?.efforts ?? Self.allEfforts(headsOptions)) : leadEfforts)
             VStack(alignment: .leading, spacing: 0) {
                 Text("Pair")
                     .font(.system(size: 13, weight: .semibold))
@@ -250,8 +293,16 @@ private struct HydraPairEditor: View {
                                     $0.provider = provider
                                     $0.orchestratorModel = nil
                                     $0.orchestratorEffort = nil
-                                    $0.workerModel = nil
-                                    $0.workerEffort = nil
+                                    // Heads on the old lead provider go with it; heads on a
+                                    // provider of their own keep their model and effort, and
+                                    // when that provider is the new lead's, they are simply
+                                    // on the lead's provider again.
+                                    if $0.workerProvider == nil {
+                                        $0.workerModel = nil
+                                        $0.workerEffort = nil
+                                    } else if $0.workerProvider == provider {
+                                        $0.workerProvider = nil
+                                    }
                                 }
                                 Task { await registry.loadCatalog(provider) }
                             }
@@ -289,15 +340,35 @@ private struct HydraPairEditor: View {
                     }
                 }
                 Divider().padding(.horizontal, 14).padding(.vertical, 6)
-                editorRow("Heads' model", detail: "What the heads run on") {
+                editorRow("Heads' provider", detail: "Another provider puts quick heads under a strong lead") {
                     GlassPickerButton(
-                        options: [(String?.none, "Same as the chat")] + options.map { (Optional($0.id), $0.shortName) },
+                        options: [(ProviderKind?.none, "Same as the lead")] + headsProviders.filter { $0 != pair.provider }.map { (Optional($0), $0.displayName) },
+                        selection: Binding(
+                            get: { pair.sendsHeadsElsewhere ? pair.workerProvider : nil },
+                            set: { provider in
+                                model.settings.updateHydraPair(pairID) {
+                                    let chosen = provider == $0.provider ? nil : provider
+                                    guard $0.workerProvider != chosen else { return }
+                                    // The heads' model and effort were the old provider's.
+                                    $0.workerProvider = chosen
+                                    $0.workerModel = nil
+                                    $0.workerEffort = nil
+                                }
+                                if let provider { Task { await registry.loadCatalog(provider) } }
+                            }
+                        ),
+                        asset: { ($0 ?? pair.provider).iconName }
+                    )
+                }
+                editorRow("Heads' model", detail: pair.sendsHeadsElsewhere ? "What the heads run on, from \(pair.headsProvider.displayName)'s models" : "What the heads run on") {
+                    GlassPickerButton(
+                        options: [(String?.none, pair.sendsHeadsElsewhere ? "\(pair.headsProvider.displayName)'s default" : "Same as the chat")] + headsOptions.map { (Optional($0.id), $0.shortName) },
                         selection: Binding(
                             get: { pair.workerModel },
                             set: { id in
                                 model.settings.updateHydraPair(pairID) {
                                     $0.workerModel = id
-                                    if let effort = $0.workerEffort, let option = registry.model(id, for: $0.provider), !option.efforts.contains(effort) {
+                                    if let effort = $0.workerEffort, let option = registry.model(id, for: $0.headsProvider), !option.efforts.contains(effort) {
                                         $0.workerEffort = nil
                                     }
                                 }
@@ -309,7 +380,7 @@ private struct HydraPairEditor: View {
                     editorRow("Heads' effort", detail: "Lower effort keeps heads quick and cheap") {
                         effortPicker(
                             efforts: workerEfforts,
-                            inherit: "Same as the chat",
+                            inherit: pair.sendsHeadsElsewhere ? "\(pair.headsProvider.displayName)'s default" : "Same as the chat",
                             selection: Binding(
                                 get: { pair.workerEffort },
                                 set: { effort in model.settings.updateHydraPair(pairID) { $0.workerEffort = effort } }
@@ -327,17 +398,22 @@ private struct HydraPairEditor: View {
                         )
                     )
                 }
-                if options.isEmpty {
-                    Text(registry.loadingCatalogs.contains(pair.provider) ? "Loading models…" : "No models loaded for \(pair.provider.displayName) yet.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.secondaryText)
-                        .padding(.horizontal, 14)
-                        .padding(.top, 8)
+                ForEach(pair.sendsHeadsElsewhere ? [pair.provider, pair.headsProvider] : [pair.provider], id: \.self) { provider in
+                    if registry.models(for: provider).isEmpty {
+                        Text(registry.loadingCatalogs.contains(provider) ? "Loading \(provider.displayName)'s models…" : "No models loaded for \(provider.displayName) yet.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 8)
+                    }
                 }
                 Spacer(minLength: 12)
             }
             .padding(.bottom, 4)
-            .task(id: pair.provider) { await registry.loadCatalog(pair.provider) }
+            .task(id: [pair.provider, pair.headsProvider]) {
+                await registry.loadCatalog(pair.provider)
+                await registry.loadCatalog(pair.headsProvider)
+            }
         }
     }
 

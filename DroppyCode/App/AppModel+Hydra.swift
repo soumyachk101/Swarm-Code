@@ -72,16 +72,30 @@ extension AppModel {
         settings.hydraEnabled && !thread.isHelper
     }
 
-    /// Whether the provider runs heads inside its own session, with the pair's model and
-    /// effort. Every other provider gets Droppy-run heads and the delegation block.
+    /// Whether the provider has heads of its own: it runs them inside its session, with
+    /// the pair's model and effort, and keeps the lead's Hydra policy in its system prompt.
+    /// Every other provider gets Droppy-run heads and the delegation block. Whether a given
+    /// chat's heads actually run natively is `HydraLaunch.runsNatively`: a pair that sends
+    /// the heads out on another provider makes them Droppy-run here too.
     static func hydraIsNative(_ provider: ProviderKind) -> Bool {
         provider == .claude || provider == .codex || provider == .copilot
     }
 
-    /// The pair a chat leads with: the best fit for its provider and model now.
+    /// The pair a chat leads with: the one picked for it in the composer's model picker,
+    /// for as long as the chat stays on that pair's provider. A chat with none leads its
+    /// heads on its own model and effort; no pair applies to a chat on its own.
     func hydraPair(for thread: ChatThread) -> HydraPair? {
-        if let pair = settings.hydraPair(thread.hydraPairID), pair.provider == thread.provider { return pair }
-        return settings.hydraPair(for: thread.provider, model: thread.model)
+        guard let pair = settings.hydraPair(thread.hydraPairID), pair.provider == thread.provider else { return nil }
+        return pair
+    }
+
+    /// The provider a pair's heads go out on, as far as this Mac can run it: a heads'
+    /// provider that is not installed or is switched off would only fail every head, so the
+    /// heads stay on the lead's provider until it is.
+    func hydraHeadsProvider(of pair: HydraPair) -> ProviderKind {
+        guard let provider = pair.workerProvider, provider != pair.provider,
+              providers.status(provider).isInstalled, settings.isEnabled(provider) else { return pair.provider }
+        return provider
     }
 
     /// What the heads run on while the chat leads, or nil with Hydra off. Without a pair
@@ -89,9 +103,23 @@ extension AppModel {
     func hydraLaunch(for thread: ChatThread) -> HydraLaunch? {
         guard hydraIsOn(thread) else { return nil }
         let pair = hydraPair(for: thread)
+        let headsProvider = pair.map(hydraHeadsProvider) ?? thread.provider
+        let elsewhere = headsProvider != thread.provider
+        // A pair's heads' model and effort are its heads' provider's words: with the heads
+        // kept on the lead's provider because that one cannot run here, they mean nothing,
+        // and the heads inherit the chat's own model and effort instead.
+        let keepsModel = pair.map { !$0.sendsHeadsElsewhere || elsewhere } ?? true
+        var label: String?
+        if elsewhere {
+            let model = providers.model(pair?.workerModel, for: headsProvider) ?? providers.defaultModel(for: headsProvider)
+            label = "\(model?.shortName ?? pair?.workerModel ?? "the default model") on \(headsProvider.displayName)"
+        }
         return HydraLaunch(
-            workerModel: pair?.workerModel,
-            workerEffort: pair?.workerEffort,
+            headsProvider: headsProvider,
+            runsNatively: !elsewhere && Self.hydraIsNative(thread.provider),
+            headsLabel: label,
+            workerModel: keepsModel ? pair?.workerModel : nil,
+            workerEffort: keepsModel ? pair?.workerEffort : nil,
             maxHeads: pair?.maxHeads,
             isolatesHeads: settings.hydraIsolateHeads,
             autoMerges: settings.hydraAutoMerge
@@ -202,11 +230,16 @@ extension AppModel {
         let launch = hydraLaunch(for: parent)
         let persona = HydraRoster.persona(at: index)
 
+        // A Droppy-run head goes out on the pair's heads' provider, which may not be the
+        // lead's: there it runs the pair's model or that provider's default, and the lead's
+        // model and effort mean nothing to it. A native head lives in the lead's session.
+        let headsProvider = kind == .droppy ? launch?.headsProvider ?? parent.provider : parent.provider
+        let elsewhere = headsProvider != parent.provider
         var head = ChatThread(
             projectID: parent.projectID,
-            provider: parent.provider,
-            model: native?.model ?? launch?.workerModel ?? parent.model,
-            effort: launch?.workerEffort ?? parent.effort,
+            provider: headsProvider,
+            model: native?.model ?? launch?.workerModel ?? (elsewhere ? providers.defaultModel(for: headsProvider)?.id : parent.model),
+            effort: launch?.workerEffort ?? (elsewhere ? nil : parent.effort),
             runtimeMode: parent.runtimeMode,
             fastMode: false
         )
@@ -238,6 +271,14 @@ extension AppModel {
     private func startDroppyHead(_ id: UUID, attachments: [Attachment], brief: @Sendable (HydraPersona, HydraPrompts.Workplace) -> String) async {
         guard let head = thread(id), let info = head.hydra, let parentID = head.parentThreadID, let lead = thread(parentID),
               let checkout = hydraCheckout(of: lead) else { return }
+        // A head on another provider than its lead, with no model chosen for it, runs that
+        // provider's default: the catalogue it comes from may not have loaded yet.
+        if head.provider != lead.provider, head.model == nil {
+            await providers.loadCatalog(head.provider)
+            if let model = providers.defaultModel(for: head.provider)?.id {
+                updateThread(id) { $0.model = model }
+            }
+        }
         var workplace = HydraPrompts.Workplace.shared(path: checkout)
         if settings.hydraIsolateHeads, let copy = await makeHydraCopy(for: head, of: checkout) {
             updateThread(id) {
