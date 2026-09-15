@@ -210,12 +210,13 @@ final class CommandCodeSession: ProviderSession {
         return text
     }
 
-    /// Whether the effort is one the model takes, per the CLI's table; an unknown model
-    /// is given the benefit of the doubt.
+    /// Whether the effort is one the model takes, per the CLI's table. The CLI refuses a
+    /// run outright for a model with no adjustable effort ("LongCat 2.0 has no adjustable
+    /// reasoning effort", exit 1), so an effort the table does not list for the model
+    /// stays off the command line.
     private static func takesEffort(_ effort: String, model: String?) -> Bool {
-        guard let model else { return true }
-        let efforts = CommandCodeAPI.efforts(for: model)
-        return efforts.isEmpty || efforts.contains(effort)
+        guard let model else { return false }
+        return CommandCodeAPI.efforts(for: model).contains(effort)
     }
 
     func interrupt() async {
