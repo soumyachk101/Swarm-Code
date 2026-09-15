@@ -14,8 +14,6 @@ use std::time::Duration;
 
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 
-use super::text::without_em_dashes;
-
 // ---------------------------------------------------------------------------
 // Tone parameters
 // ---------------------------------------------------------------------------
@@ -41,6 +39,44 @@ pub struct Partial {
 pub struct ChimeBuffer {
     pub samples: Vec<i16>,
     pub sample_rate: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Audio engine
+// ---------------------------------------------------------------------------
+
+/// Holds the rodio audio output stream and handle so sound can be played.
+pub struct AudioEngine {
+    _stream: OutputStream,
+    handle: OutputStreamHandle,
+}
+
+impl std::fmt::Debug for AudioEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioEngine").finish_non_exhaustive()
+    }
+}
+
+impl AudioEngine {
+    fn new() -> Option<Self> {
+        match OutputStream::try_default() {
+            Ok((stream, handle)) => Some(Self {
+                _stream: stream,
+                handle,
+            }),
+            Err(_) => None,
+        }
+    }
+
+    fn play(&self, data: &[u8]) {
+        let cursor = Cursor::new(data.to_vec());
+        if let Ok(source) = Decoder::new(cursor) {
+            if let Ok(sink) = Sink::try_new(&self.handle) {
+                sink.append(source);
+                // Do not block; the sound finishes on its own.
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,52 +142,6 @@ pub fn generate_wave(notes: &[Note], partials: &[Partial], duration: f64) -> Vec
         data.extend_from_slice(&clamped.to_le_bytes());
     }
     data
-}
-
-// ---------------------------------------------------------------------------
-// Audio engine
-// ---------------------------------------------------------------------------
-
-#[derive(Debug)]
-struct AudioEngine {
-    _stream: OutputStream,
-    handle: OutputStreamHandle,
-}
-
-impl AudioEngine {
-    fn new() -> Option<Self> {
-        match OutputStream::try_default() {
-            Ok((stream, handle)) => Some(Self {
-                _stream: stream,
-                handle,
-            }),
-            Err(_) => None,
-        }
-    }
-
-    fn play(&self, data: &[u8]) {
-        let cursor = Cursor::new(data.to_vec());
-        if let Ok(source) = Decoder::new(cursor) {
-            if let Ok(sink) = Sink::try_new(&self.handle) {
-                sink.append(source);
-                // Do not block; the sound finishes on its own.
-            }
-        }
-    }
-}
-
-use std::sync::OnceLock;
-
-static AUDIO_ENGINE: OnceLock<Mutex<Option<AudioEngine>>> = OnceLock::new();
-
-fn audio_engine() -> &'static Mutex<Option<AudioEngine>> {
-    AUDIO_ENGINE.get_or_init(|| Mutex::new(None))
-}
-
-fn ensure_audio_engine() {
-    if audio_engine().lock().unwrap().is_none() {
-        *audio_engine().lock().unwrap() = AudioEngine::new();
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,5 +281,19 @@ mod tests {
         let input = "works — every time";
         let cleaned = without_em_dashes(input);
         assert_eq!(cleaned, "works - every time");
+    }
+}
+
+use std::sync::OnceLock;
+
+static AUDIO_ENGINE: OnceLock<Mutex<Option<AudioEngine>>> = OnceLock::new();
+
+fn audio_engine() -> &'static Mutex<Option<AudioEngine>> {
+    AUDIO_ENGINE.get_or_init(|| Mutex::new(None))
+}
+
+fn ensure_audio_engine() {
+    if audio_engine().lock().unwrap().is_none() {
+        *audio_engine().lock().unwrap() = AudioEngine::new();
     }
 }

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use global_hotkey::{GlobalHotKeyManager, HotKeyState};
+use global_hotkey::{GlobalHotKeyManager, HotKeyState, hotkey::{HotKey, Modifiers}};
 
 // ---------------------------------------------------------------------------
 // Actions
@@ -191,8 +191,8 @@ impl ShortcutStore {
 #[derive(Debug)]
 pub struct ShortcutManager {
     _hotkey_manager: GlobalHotKeyManager,
-    hotkey_ids: RwLock<HashMap<global_hotkey::HotKey, ShortcutAction>>,
-    reverse_ids: RwLock<HashMap<u32, global_hotkey::HotKey>>,
+    hotkey_ids: RwLock<HashMap<HotKey, ShortcutAction>>,
+    reverse_ids: RwLock<HashMap<u32, HotKey>>,
     bindings: RwLock<ShortcutStore>,
     #[allow(dead_code)]
     id_counter: Arc<RwLock<u32>>,
@@ -248,14 +248,9 @@ impl ShortcutManager {
             }
         }
 
-        let id = {
-            let mut counter = self.id_counter.write().unwrap();
-            let id = *counter;
-            *counter += 1;
-            id
-        };
+        let id = key.id();
 
-        if let Err(_) = self._hotkey_manager.register(id, key.clone()) {
+        if self._hotkey_manager.register(key.clone()).is_err() {
             return Err("Failed to register global hotkey".into());
         }
 
@@ -280,7 +275,7 @@ impl ShortcutManager {
                 .find(|(_, k)| **k == key)
                 .map(|(id, _)| *id)
             {
-                let _ = self._hotkey_manager.unregister(id);
+                let _ = self._hotkey_manager.unregister(key);
                 reverse_ids.remove(&id);
             }
         }
@@ -314,11 +309,11 @@ impl ShortcutManager {
         self.bindings.write().unwrap().reset();
         // Unregister all hotkeys.
         let reverse_ids = self.reverse_ids.read().unwrap();
-        for (&id, _) in reverse_ids.iter() {
-            let _ = self._hotkey_manager.unregister(id);
-        }
-        // Drop the read guard before writing.
+        let keys: Vec<HotKey> = reverse_ids.values().cloned().collect();
         drop(reverse_ids);
+        for key in keys {
+            let _ = self._hotkey_manager.unregister(key);
+        }
         self.reverse_ids.write().unwrap().clear();
         self.hotkey_ids.write().unwrap().clear();
     }
@@ -329,36 +324,36 @@ impl ShortcutManager {
 // ---------------------------------------------------------------------------
 
 /// Mac OS / AppKit standard modifier key codes.
-const MAC_MODIFIER_KEY_CODES: [u32; 12] = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63];
-const ADDITIONAL_MODIFIER_CODES: [u32; 11] = [18, 19, 20, 21, 23, 22, 26, 28, 25];
+const MAC_MODIFIER_KEY_CODES: [u32; 10] = [54, 55, 56, 57, 58, 59, 60, 61, 62, 63];
+const ADDITIONAL_MODIFIER_CODES: [u32; 9] = [18, 19, 20, 21, 23, 22, 26, 28, 25];
 /// Keys that type characters without a modifier.
 const TEXT_TYPING_KEY_CODES: [u32; 48] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
     27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 50,
 ];
 
-fn is_reserved_shortcut(key: &global_hotkey::HotKey) -> bool {
+fn is_reserved_shortcut(key: &HotKey) -> bool {
     let reserved_key_codes: [u32; 21] = [12, 13, 4, 46, 8, 9, 7, 0, 6, 18, 19, 20, 21, 23, 22, 26, 28, 25, 1, 2, 29];
     for code in reserved_key_codes {
-        if key.key_code == code
-            && key.modifiers == global_hotkey::ModifiersState::empty()
+        if key.key as u32 == code
+            && key.mods == Modifiers::empty()
         {
             return true;
         }
-        if key.key_code == 6 && key.modifiers.contains(global_hotkey::ModifiersState::SHIFT) {
+        if key.key as u32 == 6 && key.mods.contains(Modifiers::SHIFT) {
             return true;
         }
     }
     false
 }
 
-fn is_text_stealing_shortcut(key: &global_hotkey::HotKey) -> bool {
-    let has_no_real_modifier = key.modifiers == global_hotkey::ModifiersState::empty()
-        || key.modifiers == global_hotkey::ModifiersState::SHIFT;
-    has_no_real_modifier && TEXT_TYPING_KEY_CODES.contains(&key.key_code)
+fn is_text_stealing_shortcut(key: &HotKey) -> bool {
+    let has_no_real_modifier = key.mods == Modifiers::empty()
+        || key.mods == Modifiers::SHIFT;
+    has_no_real_modifier && TEXT_TYPING_KEY_CODES.contains(&(key.key as u32))
 }
 
-fn parse_shortcut(_shortcut: &str) -> Option<global_hotkey::HotKey> {
+fn parse_shortcut(_shortcut: &str) -> Option<HotKey> {
     let _ = _shortcut;
     None
 }
