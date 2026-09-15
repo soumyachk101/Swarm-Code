@@ -120,7 +120,13 @@ struct MarkdownBlockView: View, Equatable {
         case .paragraph(let text):
             InlineText(text)
         case .code(let language, let code):
-            CodeBlock(language: language, code: code)
+            // The lead's delegation block (info string `hydra`) is a brief for the team, not
+            // code: it reads as a card while it streams and whenever it stays in the reply.
+            if language?.lowercased() == "hydra" {
+                HydraDelegationBlock(json: code)
+            } else {
+                CodeBlock(language: language, code: code)
+            }
         case .list(let ordered, let start, let items):
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
