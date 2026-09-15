@@ -1,6 +1,0 @@
-Bad Request: Unsupported protocol version: 
-Provider emitted an oversized protocol frame.
-Read the company, chart of accounts, vendors, customers, invoices, bills, purchases (expenses), payments, journal entries, deposits, transfers, and the P&L / balance sheet / cash flow / transaction-list reports without waiting. Use purchases and the transaction list to reconstruct burn, recurring vendors, and anything that looks unused.
-[PostHog] Push notification publisher: UNUserNotificationCenterDelegate protocol not found
-struct OrbUniforms {
-struct VertexOut {
