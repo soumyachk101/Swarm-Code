@@ -115,6 +115,17 @@ enum WindowChrome {
         window.hasShadow = true
         window.isMovableByWindowBackground = false
         window.invalidateShadow()
+        // AppKit owns the key view loop, rebuilt only when Tab navigation asks for it.
+        // Left off, SwiftUI rebuilds the loop itself, synchronously, every time a
+        // focusable view or an AppKit view in the window changes shape: it walks every
+        // focus item in reading order, and on macOS 26 that walk never ended inside the
+        // composer's follow-up queue tab, so the main thread stood still until a force
+        // quit (the Sept 15 2026 freezes, `FocusBridge.updateDefaultKeyViewLoop` at the
+        // top of every sample). With this on, SwiftUI only marks the loop dirty and keeps
+        // its focus items by the finite, group-based route; nothing is rebuilt during
+        // layout. Full Keyboard Access is what makes Tab move between controls at all,
+        // and the loop is still rebuilt for it, just on demand.
+        window.autorecalculatesKeyViewLoop = true
     }
 
     /// Where the buttons sit with the sidebar hidden: level with the chat's chrome capsules,
