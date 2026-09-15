@@ -201,7 +201,7 @@ final class ProviderRegistry {
             refreshPlanLimits(provider, force: true)
         }
         await withTaskGroup(of: Void.self) { group in
-            for provider in [ProviderKind.codex, .antigravity, .copilot, .commandcode, .deepseek, .meta] where status(provider).isInstalled {
+            for provider in [ProviderKind.codex, .antigravity, .copilot, .commandcode, .pi, .deepseek, .meta] where status(provider).isInstalled {
                 group.addTask { await self.loadCatalog(provider, force: true) }
             }
         }
@@ -315,6 +315,7 @@ final class ProviderRegistry {
         // models, so the account's list is fetched on first use.
         let seeded = (provider == .copilot && models(for: provider) == [Self.copilotAuto])
             || (provider == .commandcode && models(for: provider) == Self.commandcodeSeed)
+            || (provider == .pi && models(for: provider) == Self.piSeed)
         guard force || seeded || models(for: provider).isEmpty, let executable = executable(for: provider) else { return }
         attemptedCatalogs.insert(provider)
         loadingCatalogs.insert(provider)
@@ -325,8 +326,9 @@ final class ProviderRegistry {
         case .antigravity: try? await AntigravitySession.listModels(executable: executable, environment: environment)
         case .copilot: try? await CopilotSession.listModels(executable: executable, environment: environment)
         case .commandcode: try? await CommandCodeAPI.listModels(executable: executable, environment: environment)
+        case .pi: try? await PiCLI.listModels(executable: executable, environment: environment)
         case .cursor, .opencode, .grok, .devin: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
-        case .claude, .deepseek, .meta, .pi: nil
+        case .claude, .deepseek, .meta: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
     }
@@ -460,7 +462,9 @@ final class ProviderRegistry {
             return await CopilotSession.authStatus(executable: executable, environment: environment)
         case .commandcode:
             return await CommandCodeAPI.authStatus(executable: executable, environment: environment)
-        case .opencode, .grok, .deepseek, .meta, .pi:
+        case .pi:
+            return await PiCLI.authStatus(executable: executable, environment: environment)
+        case .opencode, .grok, .deepseek, .meta:
             return .unknown
         }
     }
