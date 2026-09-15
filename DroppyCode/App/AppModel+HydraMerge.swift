@@ -99,7 +99,14 @@ extension AppModel {
 
             let body = mergeRequestBody(for: lead, files: files, runtime: runtime)
             runtime.hydraMergeStage = "Opening the merge request"
-            guard let url = try await git.createPullRequest(title: subject, body: body, source: branch, target: target),
+            let requestURL: URL?
+            do {
+                requestURL = try await hydraCreateMergeRequest(git: git, title: subject, body: body, source: branch, target: target)
+            } catch {
+                note(leadID, "Hydra pushed \(branch) but could not open a merge request.", "\(error.localizedDescription)\n\nOpen one for `\(branch)` into `\(target)` and merge it from there. The work is still in the checkout.")
+                return
+            }
+            guard let url = requestURL,
                   let link = MergeRequestLink(url: url) else {
                 note(leadID, "Hydra pushed \(branch) but could not open a merge request.", "Open one for `\(branch)` into `\(target)` and merge it from there.")
                 return
@@ -137,6 +144,93 @@ extension AppModel {
         } catch {
             note(leadID, "Hydra could not merge the team's work.", "\(error.localizedDescription)\n\nThe work is still in the checkout.")
         }
+    }
+
+    /// Opens the merge request for a Hydra branch. On GitLab this wraps `glab mr create`
+    /// rather than calling `Git.createPullRequest` straight: glab answers a missing or
+    /// expired token with `401 Unauthorized` next to a recovery file, which used to land in
+    /// the timeline as-is. The token is checked with `glab auth status` first, a 401
+    /// re-checks it (it may have been refreshed while the push ran) and otherwise tells
+    /// the user how to sign in again, and any other failure that left a recovery file is
+    /// retried once with `--recover` so its saved options are picked up. Squash and
+    /// remove-source-branch are left to the project's defaults, as before.
+    private func hydraCreateMergeRequest(git: Git, title: String, body: String, source: String, target: String) async throws -> URL? {
+        guard await git.forge() == .gitlab, LoginEnvironment.which("glab") != nil else {
+            return try await git.createPullRequest(title: title, body: body, source: source, target: target)
+        }
+        let host = await git.remoteWebURL()?.host ?? "your GitLab host"
+        // An explicit project keeps glab from resolving the wrong one; it names the same
+        // origin remote glab would use on its own. Any credentials embedded in the remote
+        // stay out of the arguments.
+        var arguments = ["mr", "create", "--title", title, "--description", body, "--yes"]
+        if var web = await git.remoteWebURL(), web.host != nil {
+            if web.user != nil, var components = URLComponents(url: web, resolvingAgainstBaseURL: false) {
+                components.user = nil
+                components.password = nil
+                if let stripped = components.url { web = stripped }
+            }
+            arguments += ["--repo", web.absoluteString]
+        }
+        arguments += ["--source-branch", source, "--target-branch", target]
+
+        // No token on file means `mr create` can only fail with a 401: say how to sign in
+        // instead of running into it.
+        if let detail = await hydraGitLabAuthFailure(in: git.directory) {
+            throw HydraMergeRequestError.gitLabAuth(host: host, branch: source, detail: detail)
+        }
+
+        var failure = try await Shell.run(tool: "glab", arguments, in: git.directory, timeout: 300)
+        if failure.succeeded { return Self.hydraMergeRequestURL(from: failure) }
+        if Self.isGitLabAuthFailure(failure) {
+            // The token may have been refreshed while the push ran: check again before
+            // giving up, and retry with the explicit options when it is good now.
+            if await hydraGitLabAuthFailure(in: git.directory) == nil {
+                let retry = try await Shell.run(tool: "glab", arguments, in: git.directory, timeout: 300)
+                if retry.succeeded { return Self.hydraMergeRequestURL(from: retry) }
+                failure = retry
+            }
+            if Self.isGitLabAuthFailure(failure) {
+                throw HydraMergeRequestError.gitLabAuth(host: host, branch: source, detail: failure.failureMessage)
+            }
+        }
+        // A failure that saved its options is retried once with `--recover`, which loads
+        // them back from the recovery file.
+        if Self.mentionsRecoverFile(failure) {
+            let retry = try await Shell.run(tool: "glab", arguments + ["--recover"], in: git.directory, timeout: 300)
+            if retry.succeeded { return Self.hydraMergeRequestURL(from: retry) }
+            failure = retry
+        }
+        throw HydraMergeRequestError.creationFailed(failure.failureMessage)
+    }
+
+    /// The reason `glab auth status` gives for not being signed in, or nil when the token
+    /// is good. Runs in the checkout so glab checks the host the merge goes to.
+    private func hydraGitLabAuthFailure(in directory: URL) async -> String? {
+        // A throw means glab itself could not run here; let the creation attempt surface
+        // that. A non-zero exit is glab reporting it is not signed in.
+        guard let status = try? await Shell.run(tool: "glab", ["auth", "status"], in: directory, timeout: 30) else { return nil }
+        if status.succeeded { return nil }
+        let message = status.failureMessage
+        return message.isEmpty ? "glab is not signed in to this GitLab host." : message
+    }
+
+    /// Whether glab's output is an authentication refusal: the 401 the merge used to fail with.
+    private static func isGitLabAuthFailure(_ result: ShellResult) -> Bool {
+        let text = (result.output + "\n" + result.errorOutput).lowercased()
+        return text.contains("401") || text.contains("unauthorized")
+            || (text.contains("authentication") && (text.contains("failed") || text.contains("expired") || text.contains("invalid") || text.contains("required")))
+    }
+
+    /// Whether glab's output points at a recovery file its failed creation left behind.
+    private static func mentionsRecoverFile(_ result: ShellResult) -> Bool {
+        (result.output + "\n" + result.errorOutput).lowercased().contains("recover")
+    }
+
+    /// The merge request's page in glab's output, parsed the same way `Git` does.
+    private static func hydraMergeRequestURL(from result: ShellResult) -> URL? {
+        let text = result.output + "\n" + result.errorOutput
+        let match = text.firstMatch(of: #/https://\S+/#)
+        return match.flatMap { URL(string: String($0.output)) }
     }
 
     /// The files a lead's job changed, gathered three ways because no one way sees them
@@ -320,6 +414,23 @@ extension AppModel {
         updateDockBadge()
         if settings.notifyWhenFinished, let lead = thread(leadID) {
             notify(threadID: leadID, title: lead.title, body: title)
+        }
+    }
+}
+
+/// Why a Hydra merge request could not be opened on GitLab.
+private enum HydraMergeRequestError: LocalizedError {
+    /// glab is not signed in, or GitLab answered 401: the token is missing or expired.
+    case gitLabAuth(host: String, branch: String, detail: String)
+    /// glab failed for any other reason, recovery retry included.
+    case creationFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .gitLabAuth(let host, let branch, let detail):
+            return "GitLab refused the login (401 Unauthorized) for \(host): the token glab signs in with is missing or expired.\n\n\(detail)\n\nSign back in with `glab auth login --hostname \(host)` (or export a valid GITLAB_TOKEN), then ask for the merge again. The branch `\(branch)` is already pushed, so the team's work is safe."
+        case .creationFailed(let message):
+            return message
         }
     }
 }

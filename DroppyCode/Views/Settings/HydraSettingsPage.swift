@@ -280,7 +280,7 @@ private struct HydraPairEditor: View {
                     .padding(.horizontal, 14)
                     .padding(.top, 14)
                     .padding(.bottom, 6)
-                editorRow("Provider") {
+                editorRow("Lead provider") {
                     GlassPickerButton(
                         options: providers.map { ($0, $0.displayName) },
                         selection: Binding(

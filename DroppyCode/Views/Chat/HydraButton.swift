@@ -15,6 +15,9 @@ struct HydraButton: View {
     @State private var isHovering = false
     /// With Hydra on and nothing out yet, the button says so rather than doing nothing.
     @State private var isExplaining = false
+    /// Briefly true after heads go out, so the badge first shows the sending pulse
+    /// inside its own box before morphing into the working count.
+    @State private var isSending = false
 
     var body: some View {
         let isOn = model.hydraIsOn(thread)
@@ -39,13 +42,24 @@ struct HydraButton: View {
             // it over everything else in it, so a badge laid over the button after the
             // glass, as an overlay or a later sibling, came out underneath.
             .overlay(alignment: .topTrailing) {
-                if running > 0 {
-                    HydraRunningBadge(running: running)
+                if running > 0 || isSending {
+                    HydraSendWorkingBadge(running: running, isSending: isSending)
                         .offset(x: 3, y: -3)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: running)
+            .animation(Chrome.panelSlide, value: isSending)
+            .onChange(of: running) { old, new in
+                guard new > old else { return }
+                isSending = true
+            }
+            .task(id: isSending) {
+                guard isSending else { return }
+                try? await Task.sleep(for: .seconds(0.9))
+                guard !Task.isCancelled else { return }
+                isSending = false
+            }
         }
         .buttonStyle(.plain)
         .chromeGlassCircle()
@@ -199,20 +213,35 @@ private struct HydraChargeMotion: View {
 }
 
 /// The count of heads at work, above the button's top-right: tapping it is tapping the
-/// button.
-private struct HydraRunningBadge: View {
+/// button. After heads go out it first shows the sending pulse, then morphs in place
+/// into the working count: the same anchor, the same capsule at the same size, the
+/// existing mini spinner and the panel slide for motion, so nothing jumps and no second
+/// row ever appears.
+private struct HydraSendWorkingBadge: View {
     let running: Int
+    let isSending: Bool
 
     var body: some View {
-        Text(verbatim: "\(running)")
-            .font(.system(size: 9, weight: .bold).monospacedDigit())
-            .foregroundStyle(.white)
-            .padding(.horizontal, 4)
-            .frame(minWidth: 14, minHeight: 14)
-            .background(Chrome.accent, in: Capsule())
-            .contentShape(Capsule())
-            .help(running == 1 ? "1 head working · Show or hide the Hydra panel" : "\(running) heads working · Show or hide the Hydra panel")
-            .accessibilityHidden(true)
+        Group {
+            if isSending {
+                MiniSpinner(cellSize: 2.4)
+            } else {
+                Text(verbatim: "\(running)")
+                    .font(.system(size: 9, weight: .bold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .contentTransition(.opacity)
+            }
+        }
+        .frame(minWidth: 14, minHeight: 14)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 1)
+        // The pulse reads on glass, the count on accent: the same capsule either
+        // way, so the send-to-working change is a tint crossfade, never a jump.
+        .background(isSending ? Chrome.glassTint : Chrome.accent, in: Capsule())
+        .contentShape(Capsule())
+        .animation(Chrome.panelSlide, value: isSending)
+        .help(running == 1 ? "1 head working · Show or hide the Hydra panel" : "\(running) heads working · Show or hide the Hydra panel")
+        .accessibilityHidden(true)
     }
 }
 
