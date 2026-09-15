@@ -19,13 +19,32 @@ struct ComposerWorkingDots: View {
     }
 }
 
+/// The same field over a whole surface, once: one wave of dots in `tint` flows through it
+/// from left to right and is gone, the way a head's panel marks its head finishing. With
+/// reduced motion nothing is drawn.
+struct DotFieldSweep: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let tint: NSColor
+
+    var body: some View {
+        if !reduceMotion {
+            DotFieldLayerView.Representable(color: tint, animated: true, sweeps: true)
+                .accessibilityHidden(true)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
 final class DotFieldLayerView: NSView {
     struct Representable: NSViewRepresentable {
         let color: NSColor
         let animated: Bool
+        /// One pass over every row instead of the pill's endless wave along the bottom.
+        var sweeps = false
 
         func makeNSView(context: Context) -> DotFieldLayerView {
             let view = DotFieldLayerView()
+            view.sweeps = sweeps
             view.configure(color: color, animated: animated)
             return view
         }
@@ -41,6 +60,9 @@ final class DotFieldLayerView: NSView {
     private var color: NSColor = .controlAccentColor
     private var animated = true
     private var laidOutSize: CGSize = .zero
+    /// Set once, before the view is configured: a sweep fills every row of its surface
+    /// with one wave that starts when the view appears and ends faded out.
+    fileprivate var sweeps = false
 
     private static let dotSize: CGFloat = 2
     private static let pitch: CGFloat = 8
@@ -52,6 +74,15 @@ final class DotFieldLayerView: NSView {
     private static let columnDelay: Double = 0.045
     private static let rowDelay: Double = 0.09
     private static let animationKey = "pulse"
+    /// The sweep's single pulse, and the delay between its columns: a wave that crosses a
+    /// panel of 400 points in about a second.
+    private static let sweepPeriod: Double = 0.8
+    private static let sweepColumnDelay: Double = 0.022
+    /// How long a sweep takes over a surface `width` wide, from the first column's rise
+    /// to the last one's fade.
+    static func sweepDuration(width: CGFloat) -> TimeInterval {
+        Double(Int(ceil(width / pitch)) + 1) * sweepColumnDelay + sweepPeriod
+    }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -101,7 +132,9 @@ final class DotFieldLayerView: NSView {
         guard size != laidOutSize, size.width > 0, size.height > 0 else { return }
         laidOutSize = size
         let columnCount = Int(ceil(size.width / Self.pitch)) + 1
-        let rowCount = min(Self.maxRows, max(1, Int(ceil(size.height / Self.pitch))))
+        let rowCount = sweeps
+            ? max(1, Int(ceil(size.height / Self.pitch)))
+            : min(Self.maxRows, max(1, Int(ceil(size.height / Self.pitch))))
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         rows.frame = bounds
@@ -111,18 +144,39 @@ final class DotFieldLayerView: NSView {
         dot.position = CGPoint(x: Self.pitch / 2, y: Self.pitch / 2)
         columns.instanceCount = columnCount
         columns.instanceTransform = CATransform3DMakeTranslation(Self.pitch, 0, 0)
-        columns.instanceDelay = Self.columnDelay
+        columns.instanceDelay = sweeps ? Self.sweepColumnDelay : Self.columnDelay
         rows.instanceCount = rowCount
         rows.instanceTransform = CATransform3DMakeTranslation(0, Self.pitch, 0)
-        rows.instanceDelay = Self.rowDelay
-        rows.instanceAlphaOffset = -Float(1) / Float(rowCount)
+        // A sweep's rows move as one front, all the same, so the wave is a wall crossing
+        // the surface rather than the pill's fade-out upward.
+        rows.instanceDelay = sweeps ? 0 : Self.rowDelay
+        rows.instanceAlphaOffset = sweeps ? 0 : -Float(1) / Float(rowCount)
         CATransaction.commit()
     }
 
     private func installAnimation() {
         dot.removeAnimation(forKey: Self.animationKey)
         guard animated else {
-            dot.opacity = 0.28
+            dot.opacity = sweeps ? 0 : 0.28
+            return
+        }
+        if sweeps {
+            // Invisible before and after: the field only exists while the wave crosses it.
+            dot.opacity = 0
+            let sweep = CAKeyframeAnimation(keyPath: "opacity")
+            sweep.values = [0, 0.7, 0]
+            sweep.keyTimes = [0, 0.4, 1]
+            sweep.timingFunctions = [
+                CAMediaTimingFunction(name: .easeOut),
+                CAMediaTimingFunction(name: .easeIn),
+            ]
+            sweep.duration = Self.sweepPeriod
+            sweep.beginTime = dot.convertTime(CACurrentMediaTime(), from: nil)
+            // Kept once played: the replicated columns run it late by their delay, and
+            // would lose it the moment the base dot's own pass ended.
+            sweep.isRemovedOnCompletion = false
+            sweep.fillMode = .forwards
+            dot.add(sweep, forKey: Self.animationKey)
             return
         }
         let animation = CAKeyframeAnimation(keyPath: "opacity")

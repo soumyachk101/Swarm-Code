@@ -96,6 +96,11 @@ final class ThreadRuntime {
     var hydraPoppedPanelDock: PanelDockCorner = .bottomLeading
     /// The Hydra panel was dismissed; the next head to start brings it back.
     var isHydraPanelHidden = false
+    /// The usage panel: the plan's limits and credits floating beside the chat, across the
+    /// column from the heads. Nil follows the setting (see `AppSettings.showsUsagePanel`);
+    /// dismissing it or opening it from the usage popover decides for this chat alone.
+    var isUsagePanelShown: Bool?
+    var usagePanelDock: PanelDockCorner = .bottomLeading
     /// Heads by the tool row that stands for them in this timeline, so the row can show
     /// who was sent out.
     private(set) var hydraToolHeads: [String: UUID] = [:]
@@ -331,6 +336,14 @@ final class ThreadRuntime {
         (app?.runningHydraHeads(of: threadID) ?? 0) > 0
     }
 
+    /// Whether any native head of this lead is still at work: those are the ones stopping
+    /// the lead's turn would take down. A Droppy-run head lives in a thread of its own and
+    /// reports to whatever turn the lead is on, so it survives the lead being stopped.
+    var hasWorkingNativeHeads: Bool {
+        guard let app else { return false }
+        return app.runningHydraHeads(of: threadID) > app.runningDroppyHeads(of: threadID)
+    }
+
     var sentPrompts: [String] {
         entries.compactMap { entry in
             if case .user(let message) = entry.item.content, !message.isFromHydra, !message.isHydraBrief { return message.text }
@@ -430,8 +443,10 @@ final class ThreadRuntime {
     /// Sends a queued follow-up right away instead of waiting its turn: the running turn
     /// stops and the prompt goes out as soon as the stop lands, exactly as Return does with
     /// the draft; idle, it simply sends. The rest of the queue waits for the new turn.
-    /// With heads at work nothing stops, as with Return: the prompt goes to a head of its
-    /// own when the settings allow it, else it stays at the front of the queue.
+    /// With native heads at work nothing stops, as with Return: the prompt goes to a head
+    /// of its own when the settings allow it, else it stays at the front of the queue.
+    /// Droppy-run heads live on through a stop, so with only those out the turn stops for
+    /// the prompt as it would with none: "now" means now.
     func sendFollowUpNow(_ id: UUID) {
         guard let index = followUps.firstIndex(where: { $0.id == id }) else { return }
         let prompt = followUps.remove(at: index)
@@ -442,11 +457,11 @@ final class ThreadRuntime {
             if handleLocalCommand(prompt.text.trimmingCharacters(in: .whitespacesAndNewlines)) { return }
             Task { await startTurn(text: prompt.text, attachments: prompt.attachments) }
         } else if pendingSend == nil {
-            // Heads at work are never stopped for a queued prompt: the native ones run
-            // inside the lead's session and an interrupt would kill them. The prompt goes
-            // to a Droppy-run head when the settings allow it, else back to the front of
-            // the queue to wait for the turn, and the lead keeps working.
-            if hasWorkingHeads {
+            // Native heads at work are never stopped for a queued prompt: they run inside
+            // the lead's session and an interrupt would kill them. The prompt goes to a
+            // Droppy-run head when the settings allow it, else back to the front of the
+            // queue to wait for the turn, and the lead keeps working.
+            if hasWorkingNativeHeads {
                 if !dispatchQueuedHead(prompt) {
                     followUps.insert(prompt, at: 0)
                     saveRevision += 1

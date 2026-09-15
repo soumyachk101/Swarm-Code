@@ -31,7 +31,9 @@ It drives the coding agents you already have installed and signed in, on your ow
 - New threads in their own git worktree.
 - Commit, push and pull requests, with generated commit messages and thread titles.
 - A command palette, keyboard shortcuts and notifications when work finishes.
-- Hydra: one chat, many heads. Switch it on and the agent leads a team of helper agents on big jobs, each in a floating panel, on the model and effort you pair it with. A pair can cross providers: a strong lead on one, quick heads on another.
+- Hydra: one chat, many heads. Switch it on and the agent leads a team of helper agents on big jobs: it writes the briefs, sends the heads out in parallel, each in its own copy of the project, and their work lands back in your checkout as one merge. Each head has a floating panel, and a pair sets the lead's model and the heads' model; a pair can cross providers, a strong lead on one and quick heads on another, with one effort slider fused for both.
+- A welcome tour on first launch, six pages of real captures; the Help menu opens it again.
+- Usage limits and credits: the ring beside the send button opens a popover with the context window, each plan's rolling limits and resets (Codex, Claude, Antigravity, Copilot and Command Code) and the credit left on DeepSeek and Command Code keys; a pair across two providers stacks the lead's over the heads'. A switch in General settings keeps the same in a floating panel beside the chat, and Settings › Providers shows every signed-in account at once.
 
 Remote access, mobile apps, cloud sync, telemetry and a web client are left out on purpose.
 
@@ -54,6 +56,8 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 ## Release
 
 `scripts/release.sh` archives an Apple silicon build, signs it with Developer ID, notarizes and staples both the app and a disk image, and checks Gatekeeper. The disk image lands in `build.noindex/`, a folder Spotlight skips.
+
+`scripts/publish_release.sh` then tags the version from `project.yml`, creates the GitLab release with the notes from `ReleaseNotes/<version>.md` (written as `## New features`, `## Bug fixes` and `## Refinements` bullets, which the app's About page reads into its cards) and points the latest-download permalink at the new disk image, which is what Settings › About and the website's download button resolve to.
 
 ## Layout
 

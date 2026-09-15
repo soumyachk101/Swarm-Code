@@ -513,13 +513,19 @@ extension AppModel {
             }
         }
         // Opt-in: a finished head leaves the panel on its own, for the sidebar under its
-        // lead, instead of waiting for "Clear finished heads". Running heads stay put.
+        // lead, instead of waiting for "Clear finished heads". Running heads stay put. It
+        // goes once its panel has played the head's finish (see `HydraPanel.finishHold`),
+        // not the instant it is done, and only if it is still there to clear.
         if settings.hydraAutoClearFinished {
-            updateThread(id) { $0.isInPanel = false }
-            if let parentID = head.parentThreadID {
-                let leadRuntime = runtime(for: parentID)
-                if leadRuntime.hydraSelectedHeadID == id { leadRuntime.hydraSelectedHeadID = nil }
-                if leadRuntime.hydraPoppedHeadID == id { leadRuntime.hydraPoppedHeadID = nil }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(HydraPanel.finishHold + 0.2))
+                guard let self, let head = self.thread(id), head.isInPanel, head.hydra?.isFinished == true else { return }
+                self.updateThread(id) { $0.isInPanel = false }
+                if let parentID = head.parentThreadID {
+                    let leadRuntime = self.runtime(for: parentID)
+                    if leadRuntime.hydraSelectedHeadID == id { leadRuntime.hydraSelectedHeadID = nil }
+                    if leadRuntime.hydraPoppedHeadID == id { leadRuntime.hydraPoppedHeadID = nil }
+                }
             }
         }
         guard let parentID = head.parentThreadID, let finished = thread(id)?.hydra else { return }

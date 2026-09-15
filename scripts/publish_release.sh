@@ -8,7 +8,9 @@
 # the one scripts/release.sh leaves in build.noindex. The notes come from
 # ReleaseNotes/<version>.md, written as "## New features", "## Bug fixes" and
 # "## Refinements" headings with a bullet per change: the app reads those
-# three sections into its cards. Needs glab signed in as a maintainer.
+# three sections into its cards. The tag goes on HEAD, or on RELEASE_REF when
+# the version bump has landed on main from elsewhere. Needs glab signed in as
+# a maintainer.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -36,7 +38,7 @@ xcrun stapler validate "$DMG" > /dev/null
 
 step "Tagging $TAG"
 if ! git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
-  git tag -a "$TAG" -m "Droppy Code $VERSION"
+  git tag -a "$TAG" "${RELEASE_REF:-HEAD}" -m "Droppy Code $VERSION"
 fi
 git push origin "$TAG"
 

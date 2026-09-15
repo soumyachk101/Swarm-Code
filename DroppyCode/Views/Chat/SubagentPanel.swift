@@ -103,6 +103,12 @@ struct SubagentPanelLayout: Equatable {
     /// to the pane below, so a panel keeps the size it was given while there is room and
     /// gives way as the window shrinks, then takes it back.
     var preferred: CGSize? = nil
+    /// The panels show a head's task and progress bar in place of its conversation (see
+    /// `HydraHeadProgress`), which needs far less height: `compactHeight`, whatever
+    /// height was dragged, though the dragged width still counts.
+    var compact = false
+    /// Room for the strip, a two-line task over the bar, and the chat box under them.
+    static let compactHeight: CGFloat = 280
 
     var panelWidth: CGFloat {
         min(max(preferred?.width ?? Self.width, Self.minWidth), max(Self.minWidth, pane.width - 2 * Self.sideMargin))
@@ -126,7 +132,7 @@ struct SubagentPanelLayout: Equatable {
     }
 
     var panelHeight: CGFloat {
-        let ideal = preferred?.height ?? min(520, max(300, pane.height * 0.5))
+        let ideal = compact ? Self.compactHeight : preferred?.height ?? min(520, max(300, pane.height * 0.5))
         let depth = CGFloat(max(1, stackDepth))
         let share = (verticalRoom - (depth - 1) * Self.gap) / depth
         return max(Self.minHeight, min(ideal, share))
