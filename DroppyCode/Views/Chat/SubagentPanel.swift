@@ -79,6 +79,7 @@ struct SubagentPanelLayout: Equatable {
     /// The panel's width, given the room: the composer's own column width at most.
     static let width: CGFloat = 400
     static let minWidth: CGFloat = 300
+    static let minHeight: CGFloat = 220
     /// Between the panel and the chat box.
     static let gap: CGFloat = 12
     /// The chat box's own margins (see ComposerArea), so the docked panel lines up with it.
@@ -98,9 +99,13 @@ struct SubagentPanelLayout: Equatable {
     /// chrome row and the chat box, so two panels sit one above the other without
     /// overlapping wherever the pane is tall enough for two of the smallest.
     var stackDepth: Int = 1
+    /// The size the user dragged a panel to, if any (see `AppSettings.panelSize`). Fitted
+    /// to the pane below, so a panel keeps the size it was given while there is room and
+    /// gives way as the window shrinks, then takes it back.
+    var preferred: CGSize? = nil
 
     var panelWidth: CGFloat {
-        min(Self.width, max(Self.minWidth, pane.width - 2 * Self.sideMargin))
+        min(max(preferred?.width ?? Self.width, Self.minWidth), max(Self.minWidth, pane.width - 2 * Self.sideMargin))
     }
 
     /// Whether the panel and the chat box fit side by side.
@@ -121,13 +126,22 @@ struct SubagentPanelLayout: Equatable {
     }
 
     var panelHeight: CGFloat {
-        let ideal = min(520, max(300, pane.height * 0.5))
+        let ideal = preferred?.height ?? min(520, max(300, pane.height * 0.5))
         let depth = CGFloat(max(1, stackDepth))
         let share = (verticalRoom - (depth - 1) * Self.gap) / depth
-        return max(220, min(ideal, share))
+        return max(Self.minHeight, min(ideal, share))
     }
 
     var panelSize: CGSize { CGSize(width: panelWidth, height: panelHeight) }
+
+    /// A size the user is dragging a panel to, kept within what the pane can hold: no
+    /// narrower or shorter than the smallest panel, no wider than the pane's margins allow,
+    /// no taller than the room from the chrome row to the chat box at that width.
+    func fitted(_ size: CGSize) -> CGSize {
+        var trial = self
+        trial.preferred = CGSize(width: size.width, height: .greatestFiniteMagnitude)
+        return CGSize(width: trial.panelWidth, height: max(Self.minHeight, min(size.height, trial.panelHeight)))
+    }
 
     /// The docked spot in a corner: beside the chat column, the group centred, at the top
     /// under the chrome row or at the bottom level with the chat box; or, when the pane is
@@ -424,14 +438,109 @@ struct PlacedPanel<Content: View>: View {
     /// The panel's size, which the corner's stack decides.
     let size: CGSize
     let content: Content
+    /// The grips along the panel's two free edges, when it can be resized.
+    var resize: PanelResize? = nil
+    /// True while a grip is held: the size follows the pointer with no animation.
+    var isResizing = false
 
     var body: some View {
         let origin = drag.position ?? rest
-        let settles = drag.position == nil
+        let settles = drag.position == nil && !isResizing
         content
+            .overlay {
+                if let resize {
+                    PanelResizeGrips(resize: resize)
+                }
+            }
             .offset(x: origin.x, y: origin.y)
             .animation(settles ? Chrome.panelSlide : nil, value: origin)
             .animation(settles ? Chrome.panelSlide : nil, value: size)
+    }
+}
+
+/// Which of a panel's dimensions a grip changes.
+struct PanelResizeAxes: OptionSet {
+    let rawValue: Int
+    static let width = PanelResizeAxes(rawValue: 1)
+    static let height = PanelResizeAxes(rawValue: 2)
+    static let both: PanelResizeAxes = [.width, .height]
+}
+
+/// How a docked panel is resized: from the corner it docks in, the two edges facing the
+/// chat are free, and pulling them grows the panel away from its corner.
+struct PanelResize {
+    /// The corner the panel docks in; the grips sit on the opposite edges.
+    let corner: PanelDockCorner
+    /// The pointer's travel since a grip was grabbed, and which dimensions that grip moves.
+    let onResize: (CGSize, PanelResizeAxes) -> Void
+    let onResizeEnd: () -> Void
+    /// A double-click on a grip: back to the automatic size.
+    let onReset: () -> Void
+}
+
+/// The size a panel had when a grip took hold, so each move is measured from there.
+@Observable @MainActor
+final class PanelResizeState {
+    private(set) var start: CGSize?
+
+    var isActive: Bool { start != nil }
+
+    /// The size to measure from: the one remembered from this grab, else `size`, remembered.
+    func begin(at size: CGSize) -> CGSize {
+        if let start { return start }
+        start = size
+        return size
+    }
+
+    func end() { start = nil }
+}
+
+/// The grips: a thin strip along each free edge for one dimension, and a square at the
+/// free corner for both. Invisible, like a window's edges; the cursor says what they do.
+private struct PanelResizeGrips: View {
+    let resize: PanelResize
+
+    private static let edge: CGFloat = 6
+    private static let corner: CGFloat = 16
+
+    var body: some View {
+        let dock = resize.corner
+        // The free edges are the ones away from the dock corner.
+        let freeSide: HorizontalAlignment = dock.side == .leading ? .trailing : .leading
+        let freeEdge: VerticalAlignment = dock.isTop ? .bottom : .top
+        ZStack {
+            grip(.width, position: dock.side == .leading ? .right : .left)
+                .frame(width: Self.edge)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: Alignment(horizontal: freeSide, vertical: .center))
+            grip(.height, position: dock.isTop ? .bottom : .top)
+                .frame(height: Self.edge)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: Alignment(horizontal: .center, vertical: freeEdge))
+            grip(.both, position: Self.cornerPosition(of: dock))
+                .frame(width: Self.corner, height: Self.corner)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: Alignment(horizontal: freeSide, vertical: freeEdge))
+        }
+    }
+
+    private func grip(_ axes: PanelResizeAxes, position: NSCursor.FrameResizePosition) -> some View {
+        PanelDragHandle(
+            onDrag: { resize.onResize($0, axes) },
+            onDragEnd: resize.onResizeEnd,
+            cursor: .frameResize(position: position, directions: .all),
+            dragCursor: .frameResize(position: position, directions: .all),
+            onDoubleClick: resize.onReset
+        )
+        .help("Drag to resize · Double-click for the automatic size")
+        .accessibilityLabel(Text("Drag to resize"))
+    }
+
+    /// The free corner's cursor: opposite the dock corner.
+    private static func cornerPosition(of dock: PanelDockCorner) -> NSCursor.FrameResizePosition {
+        switch dock {
+        case .topLeading: .bottomRight
+        case .topTrailing: .bottomLeft
+        case .bottomLeading: .topRight
+        case .bottomTrailing: .topLeft
+        }
     }
 }
 
@@ -444,6 +553,11 @@ struct PlacedPanel<Content: View>: View {
 struct PanelDragHandle: NSViewRepresentable {
     let onDrag: (CGSize) -> Void
     let onDragEnd: () -> Void
+    /// The cursor over the handle, and the one while it is held: the hand for a move, a
+    /// resize cursor for a grip.
+    var cursor: NSCursor = .openHand
+    var dragCursor: NSCursor = .closedHand
+    var onDoubleClick: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> PanelDragHandleView {
         let view = PanelDragHandleView(frame: .zero)
@@ -458,12 +572,21 @@ struct PanelDragHandle: NSViewRepresentable {
     private func update(_ view: PanelDragHandleView) {
         view.onDrag = onDrag
         view.onDragEnd = onDragEnd
+        view.onDoubleClick = onDoubleClick
+        view.dragCursor = dragCursor
+        if view.cursor !== cursor {
+            view.cursor = cursor
+            view.window?.invalidateCursorRects(for: view)
+        }
     }
 }
 
 final class PanelDragHandleView: NSView {
     var onDrag: ((CGSize) -> Void)?
     var onDragEnd: (() -> Void)?
+    var onDoubleClick: (() -> Void)?
+    var cursor: NSCursor = .openHand
+    var dragCursor: NSCursor = .closedHand
 
     /// How far the pointer travels before a press becomes a drag.
     private static let slop: CGFloat = 2
@@ -478,12 +601,13 @@ final class PanelDragHandleView: NSView {
 
     override func resetCursorRects() {
         super.resetCursorRects()
-        addCursorRect(bounds, cursor: .openHand)
+        addCursorRect(bounds, cursor: cursor)
     }
 
     override func mouseDown(with event: NSEvent) {
         pressOrigin = event.locationInWindow
         isDragging = false
+        if event.clickCount == 2 { onDoubleClick?() }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -491,7 +615,7 @@ final class PanelDragHandleView: NSView {
         if !isDragging {
             guard abs(travel.width) >= Self.slop || abs(travel.height) >= Self.slop else { return }
             isDragging = true
-            NSCursor.closedHand.push()
+            dragCursor.push()
         }
         onDrag?(travel)
     }

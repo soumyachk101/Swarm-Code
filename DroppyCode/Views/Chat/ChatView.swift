@@ -21,6 +21,8 @@ struct ChatView: View {
     @State private var subagentDrag = PanelDragState()
     @State private var hydraDrag = PanelDragState()
     @State private var poppedDrag = PanelDragState()
+    /// One grip held at a time, whichever panel it is on.
+    @State private var panelResize = PanelResizeState()
 
     var body: some View {
         let thread = model.thread(runtime.threadID)
@@ -169,7 +171,7 @@ struct ChatView: View {
             }
         )
         // Inside the offset, so the panel grows in and fades out in place.
-        .transition(Self.panelTransition))
+        .transition(Self.panelTransition), resize: resizer(for: runtime.subagentPanelDock, scene: scene), isResizing: panelResize.isActive)
     }
 
     /// The team's panel: next to the helper panel when that one is in the same corner.
@@ -206,7 +208,11 @@ struct ChatView: View {
                 }
             }
         )
-        .transition(Self.panelTransition))
+        // Where the panel sits, for the tour's captures only: the Hydra page zooms on it.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            if WebsiteCaptures.isEnabled { WebsiteCaptures.hydraPanelFrames[runtime.threadID] = frame }
+        }
+        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelResize.isActive)
     }
 
     /// The popped-out head's panel: beyond whichever panels are in the same corner.
@@ -238,8 +244,32 @@ struct ChatView: View {
                 }
             }
         )
-        .transition(Self.panelTransition))
+        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelResize.isActive)
         .id(popped.id)
+    }
+
+    /// The grips of a panel docked in `corner`. A pull on a free edge grows the panel away
+    /// from its corner; the size is kept in Settings for every chat's panels, fitted to
+    /// this pane's room, so it follows the pointer here and the window's size after.
+    private func resizer(for corner: PanelDockCorner, scene: PanelScene) -> PanelResize {
+        PanelResize(
+            corner: corner,
+            onResize: { translation, axes in
+                let start = panelResize.begin(at: scene.layout.panelSize)
+                // The pointer's travel runs right and down; a panel docked at the right
+                // grows leftwards, one docked at the bottom grows upwards.
+                let acrossSign: CGFloat = corner.side == .trailing ? -1 : 1
+                let downSign: CGFloat = corner.isTop ? 1 : -1
+                var next = start
+                if axes.contains(.width) { next.width += translation.width * acrossSign }
+                if axes.contains(.height) { next.height += translation.height * downSign }
+                model.settings.panelSize = scene.layout.fitted(next)
+            },
+            onResizeEnd: { panelResize.end() },
+            onReset: {
+                withAnimation(Chrome.panelSlide) { model.settings.panelSize = nil }
+            }
+        )
     }
 
     /// A panel grows in and fades out in place.
@@ -310,7 +340,7 @@ private struct PanelScene {
         dockedSides = [PanelDockSide.leading, .trailing].filter(sides.contains)
         // Panels docked in one corner stack, so they share its height between them.
         let stackDepth = Dictionary(grouping: corners, by: { $0 }).values.map(\.count).max() ?? 1
-        layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth)
+        layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth, preferred: model.settings.panelSize)
         reserve = PanelReserve(
             leading: sides.contains(.leading) ? layout.composerReserve : 0,
             trailing: sides.contains(.trailing) ? layout.composerReserve : 0

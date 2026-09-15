@@ -7,6 +7,10 @@ each tour scene as a 16:10 still into build.noindex/tour-captures, and quits. Th
 script then resizes every still to exactly 1320x824 and writes it into the tour
 imagesets (welcome comes from the web hero, themes from a seamless 2x2 collage).
 
+A still's sidecar may name a `focus`, the part of the scene the page is about (the
+open popover with its chip, the team's panel); the page is then cut around that focus
+instead of the whole window, so the slider and Hydra pages zoom on their subject.
+
 The website's set is NOT cut here: scripts/website_captures.py encodes the same
 tour run whole into build.noindex/website-tour and uploads it to the R2 tour/v2
 prefix with per-key verification, so only one uploader writes those keys. With
@@ -47,7 +51,7 @@ CONTENTS = {"info": {"author": "xcode", "version": 1}}
 WINDOW_SIZES = {
     "tour-welcome": (1280, 800),
     "web-hero": (1280, 800),
-    "tour-hydra": (1152, 720),
+    "tour-hydra": (960, 600),
     "tour-pairs": (960, 600),
     "tour-slider": (960, 600),
     "tour-panels": (1280, 800),
@@ -176,6 +180,54 @@ def interior(name, inset=8):
     return image.crop(box)
 
 
+def focus_box(inner, focus, aspect=WIDTH / HEIGHT, min_share=0.55):
+    """The 16:10 box (left, top, right, bottom) in points a page is cut to, inside the
+    window's inside `inner`, around `focus` (x, y, w, h): the focus padded, grown to the
+    aspect about its centre, never narrower than `min_share` of the inside's width, and
+    shifted (never shrunk) to lie inside. With no focus, or a focus the inside cannot
+    hold, the whole inside."""
+    il, it, ir, ib = inner
+    iw, ih = ir - il, ib - it
+    if focus is None:
+        return inner
+    fx, fy, fw, fh = focus
+    pad = max(40, 0.12 * max(fw, fh))
+    w, h = fw + 2 * pad, fh + 2 * pad
+    cx, cy = fx + fw / 2, fy + fh / 2
+    if w / h < aspect:
+        w = h * aspect
+    else:
+        h = w / aspect
+    if w < iw * min_share:
+        w = iw * min_share
+        h = w / aspect
+    if w > iw or h > ih:
+        return inner
+    left, top = cx - w / 2, cy - h / 2
+    left = min(max(left, il), ir - w)
+    top = min(max(top, it), ib - h)
+    return (left, top, left + w, top + h)
+
+
+def frame(name, inset=8):
+    """The tour page's picture: the window's inside, zoomed on the still's focus when the
+    sidecar names one (see `focus_box`); `interior` otherwise."""
+    from PIL import Image
+    sidecar = CAPTURES / f"{name}.json"
+    if not sidecar.exists():
+        return interior(name, inset)
+    image = Image.open(CAPTURES / f"{name}.png").convert("RGB")
+    frames = json.loads(sidecar.read_text())
+    _, _, rect_w, rect_h = frames["rect"]
+    x, y, w, h = frames["window"]
+    scale = image.width / rect_w
+    inner = (x + inset, y + inset, x + w - inset, y + h - inset)
+    focus = frames.get("focus")
+    box = focus_box(inner, focus)
+    print(f"  {name}: {'focus' if focus and box != inner else 'whole window'} {tuple(round(v) for v in box)}")
+    return image.crop(tuple(round(scale * v) for v in box))
+
+
 def theme_mosaic():
     """The four theme windows' insides, two by two with a thin dark seam, for the tour."""
     from PIL import Image
@@ -198,7 +250,7 @@ def encode():
                          ("tour-slider", "tour-slider"), ("tour-panels", "tour-panels")]:
         if not (CAPTURES / f"{source}.png").exists():
             sys.exit(f"The capture run wrote no {source}.png; see {CAPTURES / 'run.log'}")
-        write_imageset(name, fit(interior(source), WIDTH, HEIGHT))
+        write_imageset(name, fit(frame(source), WIDTH, HEIGHT))
     write_imageset("tour-themes", fit(theme_mosaic(), WIDTH, HEIGHT))
 
 

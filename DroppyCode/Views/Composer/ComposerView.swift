@@ -206,6 +206,7 @@ struct ComposerView: View {
                             .font(Chrome.iconFont)
                     }
                     .buttonStyle(.chip(active: showingRecents))
+                    .focusable(false)
                     .help("Attach files")
                     .accessibilityLabel(Text("Attach files"))
                     .popover(isPresented: $showingRecents, arrowEdge: .bottom) {
@@ -573,6 +574,7 @@ private struct ContextMeter: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .focusable(false)
             .help(helpText(fraction: fraction, hasCredits: hasCredits))
             .accessibilityLabel(Text(label(fraction: fraction, hasCredits: hasCredits)))
             // The ring is the only reading of the context window on screen, so the number
@@ -620,6 +622,7 @@ private struct SendButton: View {
                 .background(isEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.quaternary), in: .circle)
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .disabled(!isEnabled)
         .padding(.leading, 4)
         .help(helpText(isRunning: isRunning, headsWorking: headsWorking))
@@ -688,6 +691,7 @@ private struct DraftAttachments: View {
                                     .padding(4)
                             }
                             .buttonStyle(.plain)
+                            .focusable(false)
                             .offset(x: 6, y: -6)
                             .accessibilityLabel(Text("Remove \(attachment.name)"))
                         }
@@ -765,6 +769,7 @@ private struct SuggestionPopoverRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
             if hovering { select() }

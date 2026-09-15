@@ -97,6 +97,7 @@ final class AppSettings {
         static let deepseekAPIKey = "deepseekAPIKey"
         static let metaAPIKey = "metaAPIKey"
         static let hydraEnabled = "hydraEnabled"
+        static let panelSize = "floatingPanelSize"
         static let hydraDefaultEnabled = AppSettings.hydraDefaultEnabledKey
         static let hydraQueueHeads = "hydraQueueHeads"
         static let hydraAlwaysHeads = "hydraAlwaysHeads"
@@ -161,6 +162,19 @@ final class AppSettings {
     /// the chat's chrome row moves. The row and the chat box keep their own size.
     var chatZoom: Int {
         didSet { defaults.set(chatZoom, forKey: Key.chatZoom) }
+    }
+
+    /// The floating panels' size once one has been resized by hand; nil leaves them to
+    /// size themselves to the pane. Every chat's panels share it, and the layout fits it
+    /// to the room there is, so a panel never outgrows the pane it is in.
+    var panelSize: CGSize? {
+        didSet {
+            if let panelSize {
+                defaults.set([panelSize.width, panelSize.height], forKey: Key.panelSize)
+            } else {
+                defaults.removeObject(forKey: Key.panelSize)
+            }
+        }
     }
 
     /// The sidebar lists every thread by when it was last active, instead of by project.
@@ -413,6 +427,9 @@ final class AppSettings {
         hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
         hydraDefaultEnabled = defaults.object(forKey: Key.hydraDefaultEnabled) as? Bool ?? true
         hasSeenTour = defaults.object(forKey: Key.hasSeenTour) as? Bool ?? false
+        if let stored = defaults.array(forKey: Key.panelSize) as? [Double], stored.count == 2 {
+            panelSize = CGSize(width: stored[0], height: stored[1])
+        }
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
         hydraAlwaysHeads = defaults.object(forKey: Key.hydraAlwaysHeads) as? Bool ?? false
         hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
