@@ -44,11 +44,14 @@ struct ApprovalCard: View {
             }
             HStack(spacing: 8) {
                 Spacer()
+                // Only the card at the top of the stack answers to the chord: two cards both
+                // claiming it left neither of them reliably approving.
+                let ownsShortcut = request.id == runtime.approvals.first?.id
                 ForEach(request.options.reversed()) { option in
                     if option.role == .approve {
                         Button(option.title) { runtime.resolve(request, option: option) }
                             .buttonStyle(.glassProminent)
-                            .keyboardShortcut(.return, modifiers: .command)
+                            .keyboardShortcut(ownsShortcut ? KeyboardShortcut(.return, modifiers: .command) : nil)
                     } else {
                         Button(option.title) { runtime.resolve(request, option: option) }
                             .buttonStyle(.glass)
@@ -57,6 +60,7 @@ struct ApprovalCard: View {
             }
         }
         .padding(16)
-        .glassEffect(.regular.tint(.orange.opacity(0.1)), in: .rect(cornerRadius: 20, style: .continuous))
+        // The same hue as the card's symbol, so a theme recolours the whole card together.
+        .glassEffect(.regular.tint(Chrome.warning.opacity(0.1)), in: .rect(cornerRadius: 20, style: .continuous))
     }
 }

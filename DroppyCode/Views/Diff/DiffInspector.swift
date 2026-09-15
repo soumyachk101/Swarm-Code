@@ -59,15 +59,24 @@ struct DiffInspector: View {
                         ChromeMenuButton(symbol: "ellipsis", help: "More") {
                             PopoverItem("Expand all", symbol: "arrow.down.right.and.arrow.up.left") { collapsed.removeAll() }
                             PopoverItem("Collapse all", symbol: "arrow.up.left.and.arrow.down.right") { collapsed = Set(files.map(\.id)) }
-                            if canRevertSelection {
+                            if runtime.diffSelection != nil {
                                 PopoverDivider()
-                                PopoverItem("Revert this turn…", symbol: "arrow.uturn.backward", isDestructive: true) {
+                                // Always there once a turn is picked, disabled with the
+                                // reason when it cannot be reverted right now: a row that
+                                // is simply absent reads as a turn with nothing to undo.
+                                PopoverItem(
+                                    "Revert this turn…",
+                                    symbol: "arrow.uturn.backward",
+                                    isEnabled: canRevertSelection,
+                                    isDestructive: true
+                                ) {
                                     isConfirmingRevert = true
                                 }
+                                .help(revertHelp)
                             }
                         }
                         ChromeDivider()
-                        ChromeIconButton(symbol: "xmark", help: "Hide changes (⌘D)") {
+                        ChromeIconButton(symbol: "xmark", help: "Hide changes" + ShortcutStore.hint(for: .toggleChanges)) {
                             runtime.isDiffVisible = false
                         }
                     }
@@ -80,7 +89,9 @@ struct DiffInspector: View {
             if files.isEmpty {
                 Group {
                     if isLoading {
-                        ProgressView()
+                        // Named, so the panel says what the wait is for instead of
+                        // spinning at the reader in an otherwise empty 640 by 540 pane.
+                        ProgressView("Reading the diff…")
                     } else {
                         ContentUnavailableView(
                             "No changes yet",
@@ -132,6 +143,13 @@ struct DiffInspector: View {
         } message: {
             Text("Files go back to how they were before this turn, and the turn leaves the conversation.")
         }
+    }
+
+    /// Why the revert row is off, and empty when it is on.
+    private var revertHelp: String {
+        if canRevertSelection { return "" }
+        if runtime.isRunning { return "Wait for the turn to finish" }
+        return "This provider cannot rewind a conversation"
     }
 
     private var canRevertSelection: Bool {

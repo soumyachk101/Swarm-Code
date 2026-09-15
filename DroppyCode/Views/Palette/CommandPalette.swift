@@ -3,6 +3,8 @@ import SwiftUI
 struct CommandPalette: View {
     @Environment(AppModel.self) private var model
 
+    @Environment(\.colorScheme) private var colorScheme
+
     @State private var query = ""
     @State private var selection = 0
     @FocusState private var isFocused: Bool
@@ -19,10 +21,13 @@ struct CommandPalette: View {
     var body: some View {
         let items = results
         ZStack(alignment: .top) {
-            Color.black.opacity(0.06)
+            // A dark window needs more of a wash than a light one to push the palette
+            // forward; a single fixed value read as nothing at all in dark themes.
+            Color.black.opacity(colorScheme == .dark ? 0.24 : 0.08)
                 .ignoresSafeArea()
                 .contentShape(.rect)
                 .onTapGesture { close() }
+                .accessibilityHidden(true)
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
                     Image(systemName: "magnifyingglass")
@@ -47,10 +52,26 @@ struct CommandPalette: View {
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 15)
-                if !items.isEmpty {
+                if items.isEmpty {
+                    // Never a blank box: a query that matches nothing says so rather
+                    // than leaving the field alone above an empty panel.
+                    Text("Nothing matches “\(query)”")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 18)
+                        .padding(.bottom, 16)
+                } else {
                     VStack(spacing: 2) {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             row(item, isSelected: index == selection)
+                                // Hovering moves the selection, so the pointer and the
+                                // arrow keys never disagree about what Return will run.
+                                .onHover { hovering in
+                                    if hovering { selection = index }
+                                }
                                 .onTapGesture {
                                     selection = index
                                     run(items)
@@ -96,30 +117,42 @@ struct CommandPalette: View {
         .padding(.vertical, 8)
         .background(isSelected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(Color.clear), in: .rect(cornerRadius: 12, style: .continuous))
         .contentShape(.rect)
+        // A tap gesture on its own is invisible to VoiceOver: the row reads as one
+        // element that says it can be run, and says which one Return will run.
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
     private var results: [Item] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+        // Chords come from the shortcut store, so the column never shows a key the user
+        // has remapped away, and shows nothing at all once a chord is cleared.
         var actions = [
-            Item(id: "new-thread", title: "New thread", symbol: "square.and.pencil", shortcut: "⌘N") { model.newThread() },
-            Item(id: "new-worktree", title: "New thread in worktree", symbol: "arrow.triangle.branch", shortcut: "⇧⌘N") {
+            Item(id: "new-thread", title: "New thread", symbol: "square.and.pencil", shortcut: ShortcutStore.label(for: .newThread)) {
+                model.newThread()
+            },
+            Item(id: "new-worktree", title: "New thread in worktree", symbol: "arrow.triangle.branch", shortcut: ShortcutStore.label(for: .newWorktreeThread)) {
                 model.newThread(workspace: .worktree)
             },
-            Item(id: "add-project", title: "Add project", symbol: "folder.badge.plus", shortcut: "⌘O") { model.chooseProjectFolder() },
+            Item(id: "add-project", title: "Add project", symbol: "folder.badge.plus", shortcut: ShortcutStore.label(for: .addProject)) {
+                model.chooseProjectFolder()
+            },
         ]
         if let threadID = model.selectedThreadID {
             let runtime = model.runtime(for: threadID)
-            actions.append(Item(id: "terminal", title: "Toggle terminal", symbol: "terminal", shortcut: "⌘J") {
+            actions.append(Item(id: "terminal", title: "Toggle terminal", symbol: "terminal", shortcut: ShortcutStore.label(for: .toggleTerminal)) {
                 runtime.isTerminalVisible.toggle()
             })
-            actions.append(Item(id: "changes", title: "Toggle changes", symbol: "plusminus", shortcut: "⌘D") {
+            actions.append(Item(id: "changes", title: "Toggle changes", symbol: "plusminus", shortcut: ShortcutStore.label(for: .toggleChanges)) {
                 runtime.toggleDiff()
             })
-            actions.append(Item(id: "finish", title: model.finishActionTitle, symbol: model.finishActionSymbol, shortcut: "⇧⌘⌫") {
+            actions.append(Item(id: "finish", title: model.finishActionTitle, symbol: model.finishActionSymbol, shortcut: ShortcutStore.label(for: .finishThread)) {
                 model.finishSelectedThread()
             })
         }
-        actions.append(Item(id: "settings", title: "Settings", symbol: "gearshape", shortcut: "⌘,") { WindowManager.shared.showSettings() })
+        actions.append(Item(id: "settings", title: "Settings", symbol: "gearshape", shortcut: ShortcutStore.label(for: .openSettings)) {
+            WindowManager.shared.showSettings()
+        })
 
         let matchingActions = needle.isEmpty ? actions : actions.filter { $0.title.lowercased().contains(needle) }
         let threads = model.threads

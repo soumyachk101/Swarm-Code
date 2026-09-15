@@ -55,12 +55,23 @@ struct QuestionTab: View {
                 .animation(Chrome.panelSlide, value: contentHeight)
 
                 HStack(spacing: 8) {
-                    Spacer(minLength: 0)
-                    Button("Skip") { runtime.answer(request, answers: [:]) }
+                    // Why Send is off, rather than a dead button and no reason for it.
+                    if unansweredCount > 0 {
+                        Text(verbatim: unansweredCount == 1 ? "1 question still to answer" : "\(unansweredCount) questions still to answer")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Button("Skip these questions") { runtime.answer(request, answers: [:]) }
                         .buttonStyle(.glass)
+                        .help("Sends no answers and lets the agent carry on")
                     Button("Send answer") { runtime.answer(request, answers: answers) }
                         .buttonStyle(.glassProminent)
                         .disabled(!isComplete)
+                        .help(isComplete
+                            ? "Sends your answers"
+                            : (count == 1 ? "Answer the question to send" : "Answer all \(count) questions to send"))
                 }
                 .controlSize(.small)
                 .padding(.top, 4)
@@ -83,11 +94,23 @@ struct QuestionTab: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Chrome.secondaryText)
             }
-            Text(verbatim: question.prompt)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Chrome.primaryText.opacity(0.92))
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(verbatim: question.prompt)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Chrome.primaryText.opacity(0.92))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                // A quiet dot marks the questions still waiting, so a long list shows at
+                // a glance which one is holding Send back.
+                if !isAnswered(question) {
+                    Circle()
+                        .fill(Chrome.warning)
+                        .frame(width: 5, height: 5)
+                        .help("Not answered yet")
+                        .accessibilityLabel(Text("Not answered yet"))
+                }
+                Spacer(minLength: 0)
+            }
             ForEach(question.choices, id: \.self) { choice in
                 choiceRow(question, choice)
             }
@@ -171,7 +194,16 @@ struct QuestionTab: View {
         return result
     }
 
+    private func isAnswered(_ question: QuestionRequest.Question) -> Bool {
+        !(answers[question.id] ?? []).isEmpty
+    }
+
+    private var unansweredCount: Int {
+        let answers = answers
+        return request.questions.filter { (answers[$0.id] ?? []).isEmpty }.count
+    }
+
     private var isComplete: Bool {
-        request.questions.allSatisfy { !(answers[$0.id] ?? []).isEmpty }
+        unansweredCount == 0
     }
 }

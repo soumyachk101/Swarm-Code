@@ -52,9 +52,14 @@ struct AppCommands: Commands {
             Button("Stop") { runtime?.interrupt() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .stopTurn))
                 .disabled(!(runtime?.isRunning ?? false))
+            // Off while the thread is waiting on an approval: the approve button ships with
+            // the same ⌘Return, and a menu command always wins over a button's shortcut, so
+            // the queue would swallow the chord the card is asking for.
             Button("Queue a chat") { runtime?.queueDraftAsFollowUp() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .queueChat))
-                .disabled(!(runtime?.isRunning ?? false) || (runtime?.draft.isEmpty ?? true))
+                .disabled(!(runtime?.isRunning ?? false)
+                    || (runtime?.draft.isEmpty ?? true)
+                    || !(runtime?.approvals.isEmpty ?? true))
             Button("Toggle plan mode") {
                 guard let id = model.selectedThreadID else { return }
                 model.updateThread(id) { $0.interactionMode = $0.interactionMode == .plan ? .build : .plan }

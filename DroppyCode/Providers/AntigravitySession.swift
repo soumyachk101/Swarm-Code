@@ -102,7 +102,7 @@ final class AntigravitySession: ProviderSession {
             initContinuation = continuation
             Task { [weak self] in
                 try? await Task.sleep(for: .seconds(30))
-                await self?.failStartAfterTimeout()
+                self?.failStartAfterTimeout()
             }
         }
     }
@@ -154,6 +154,11 @@ final class AntigravitySession: ProviderSession {
     func interrupt() async {
         guard turnActive else { return }
         interruptRequested = true
+        // The process going is the stop, not a crash: without this `didClose`
+        // would follow the interrupted turn with `.exited` and the chat would
+        // read "Antigravity stopped unexpectedly" every time the user stops one.
+        // `start` clears the flag again for the next launch.
+        isStopping = true
         // The stream has no interrupt request: stopping the process ends the
         // turn, and the conversation persists server-side for the next turn's
         // `--conversation` resume.

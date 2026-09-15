@@ -14,11 +14,30 @@ enum PreviewImages {
         extensions.contains((path as NSString).pathExtension.lowercased())
     }
 
+    /// Answers already found, keyed by everything the answer is made of. Every tool row
+    /// asks this on every render, and the answer ends in `FileManager.fileExists`: a disk
+    /// hit, per row, per frame the row is rebuilt. A row's question never changes once its
+    /// call has finished, so it is answered once and remembered.
+    @MainActor private static var resolvedPaths = RecentCache<String, String?>(limit: 600)
+
     /// Finds an image file a tool looked at or made. A read's title (and detail) is the
     /// path itself, spaces included; any other tool's title and detail are searched for a
     /// path among their words, so a screenshot a command took shows too. Relative paths
     /// resolve against the thread's working directory; only a file that exists counts.
+    @MainActor
     static func resolveToolImagePath(for call: ToolCall, workingDirectory: String?) -> String? {
+        // The status is part of the question: a command that makes a file has not made it
+        // yet while it runs, so the answer it gets then must not outlive it.
+        let key = "\(call.kind.rawValue)\u{1}\(call.status.rawValue)\u{1}\(call.title)\u{1}\(call.detail ?? "")\u{1}\(workingDirectory ?? "")"
+        if let hit = resolvedPaths.value(for: key) { return hit }
+        let resolved = search(for: call, workingDirectory: workingDirectory)
+        resolvedPaths.insert(resolved, for: key)
+        return resolved
+    }
+
+    /// The search itself: the string work first, and the disk only for a candidate that
+    /// already looks like an image path.
+    private static func search(for call: ToolCall, workingDirectory: String?) -> String? {
         var candidates: [String] = []
         if call.kind == .read {
             candidates.append(call.title)

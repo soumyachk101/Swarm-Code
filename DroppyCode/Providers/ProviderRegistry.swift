@@ -160,9 +160,24 @@ final class ProviderRegistry {
         }
     }
 
+    /// How many providers are checked at the same time. Every check spawns the provider's
+    /// CLI, and launch checks them all: starting a dozen node processes at once is a
+    /// visible stall in everything else the app is doing just then.
+    private static let probeWidth = 4
+
     func refreshAll() async {
+        let providers = ProviderKind.allCases
+        var next = 0
         await withTaskGroup(of: Void.self) { group in
-            for provider in ProviderKind.allCases {
+            while next < providers.count, next < Self.probeWidth {
+                let provider = providers[next]
+                group.addTask { await self.refresh(provider) }
+                next += 1
+            }
+            for await _ in group {
+                guard next < providers.count else { continue }
+                let provider = providers[next]
+                next += 1
                 group.addTask { await self.refresh(provider) }
             }
         }
@@ -181,9 +196,12 @@ final class ProviderRegistry {
             return
         }
         let environment = environment(for: provider)
-        async let version = Self.version(executable, environment)
-        async let auth = Self.auth(provider, executable, environment)
-        statuses[provider] = ProviderStatus(executable: executable, version: await version, auth: await auth)
+        // Both probes spawn the CLI. One after the other rather than together: the pair
+        // was two processes per provider at the same moment, on top of every other
+        // provider being checked alongside.
+        let version = await Self.version(executable, environment)
+        let auth = await Self.auth(provider, executable, environment)
+        statuses[provider] = ProviderStatus(executable: executable, version: version, auth: auth)
     }
 
     /// API-key providers have no binary: presence (and validity) of the key is the install state.

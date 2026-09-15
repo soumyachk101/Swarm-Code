@@ -96,17 +96,6 @@ final class ThreadRuntime {
     var hydraPoppedPanelDock: PanelDockCorner = .bottomLeading
     /// The Hydra panel was dismissed; the next head to start brings it back.
     var isHydraPanelHidden = false
-    /// The Hydra button's frame in window coordinates: the shape the panel morphs out of
-    /// and back into. Unobserved: written on every layout, read only as the panel toggles.
-    @ObservationIgnored var hydraButtonFrameInWindow: CGRect?
-    /// The Hydra panel's frame in window coordinates, the morph's other shape.
-    /// Unobserved: written on every layout, read only while hiding the panel.
-    @ObservationIgnored var hydraPanelFrameInWindow: CGRect?
-    /// The Hydra panel's next appearance or departure is a morph out of or into the
-    /// button: a ghost surface does the moving, so the panel itself only crossfades with
-    /// it. Set by the button as it toggles the panel, cleared by the panel once it has
-    /// appeared or gone.
-    @ObservationIgnored var hydraPanelMorphs = false
     /// Heads by the tool row that stands for them in this timeline, so the row can show
     /// who was sent out.
     private(set) var hydraToolHeads: [String: UUID] = [:]
@@ -216,6 +205,11 @@ final class ThreadRuntime {
     @ObservationIgnored private weak var app: AppModel?
     @ObservationIgnored private var session: (any ProviderSession)?
     @ObservationIgnored private var sessionSignature: SessionSignature?
+    /// Which session the runtime is listening to. Every session made carries the count it
+    /// was made under, and its events are dropped once the count has moved on: a CLI that
+    /// closes long after it was let go used to end the turn that replaced it, take down
+    /// the live session with it and leave its process running with nothing holding it.
+    @ObservationIgnored private var sessionEpoch = 0
     @ObservationIgnored private var entryIndex: [String: TimelineEntry] = [:]
     @ObservationIgnored private var pendingDeltas: [String: PendingDelta] = [:]
     @ObservationIgnored private var flushTask: Task<Void, Never>?
@@ -227,6 +221,25 @@ final class ThreadRuntime {
     /// the diffs being settled as they finish (see `watchCommand`).
     @ObservationIgnored private var commandTrees: [String: Task<String?, Never>] = [:]
     @ObservationIgnored private var commandSettles: [String: Task<Void, Never>] = [:]
+    /// Snapshots run one after another: each is several git processes over the whole
+    /// checkout, and a turn can have many commands in flight at once.
+    @ObservationIgnored private var treeCaptures: Task<String?, Never>?
+    /// The tree a command left behind, with the count below as it stood when it was taken.
+    /// While that count has not moved, nothing can have changed the working tree since, so
+    /// the next command takes it as its own "before" and snapshots nothing.
+    @ObservationIgnored private var settledTree: (tree: String, epoch: Int)?
+    /// Bumped by anything that could write a file: a command starting, a tool that edits.
+    @ObservationIgnored private var treeEpoch = 0
+    /// The row a turn's todo list lives on, so each update finds it without scanning the
+    /// timeline.
+    @ObservationIgnored private var todosEntryID: String?
+    /// Paths the lead's native heads changed during this turn. Their tools arrive as
+    /// `.agentEvent` and are rehearsed onto the heads' own timelines, so without this the
+    /// lead's turn would count none of their work and a merge would take a fraction of it.
+    @ObservationIgnored private var hydraTouched: Set<String> = []
+    /// Snapshots around a native head's shell commands, by head and tool (see
+    /// `watchHydraCommand`).
+    @ObservationIgnored private var hydraCommandTrees: [String: Task<String?, Never>] = [:]
 
     private struct SessionSignature: Equatable {
         var provider: ProviderKind
@@ -570,18 +583,31 @@ final class ThreadRuntime {
 
         let directory = initialThread.worktreePath ?? project.path
         let git = Git(directory)
-        if await git.isRepository() {
-            let ref = Git.checkpointRef(thread: threadID, turn: turnIndex, phase: "start")
-            if (try? await git.captureCheckpoint(ref)) != nil {
-                updateTurn(turn.id) { $0.baseCheckpoint = ref }
-            }
+        let checkpointRef = Git.checkpointRef(thread: threadID, turn: turnIndex, phase: "start")
+        // Anything could have happened in the checkout since the last turn, so no snapshot
+        // from it stands any more, and the heads' files belong to the turn they worked in.
+        settledTree = nil
+        treeEpoch += 1
+        hydraTouched.removeAll()
+        // The checkpoint is several git processes over the whole checkout. It runs while
+        // the session starts rather than in front of it, and both are waited for before a
+        // word reaches the model, so nothing the agent does can slip past the snapshot.
+        let checkpoint = Task.detached(priority: .userInitiated) { () -> Bool in
+            guard await git.isRepository() else { return false }
+            return (try? await git.captureCheckpoint(checkpointRef)) != nil
         }
-        // The user can stop a turn while it is still starting.
-        guard currentTurnID == turn.id else { return }
 
         do {
-            let session = try await ensureSession(directory: directory)
-            guard currentTurnID == turn.id, let thread = app.thread(threadID) else { return }
+            // The session starts alongside the checkpoint. It is picked up from the
+            // runtime afterwards rather than handed back as a value, because a session is
+            // not Sendable and this task is one of its own.
+            let start = Task { () async throws -> Void in _ = try await self.ensureSession(directory: directory) }
+            if await checkpoint.value {
+                updateTurn(turn.id) { $0.baseCheckpoint = checkpointRef }
+            }
+            try await start.value
+            // The user can stop a turn while it is still starting.
+            guard currentTurnID == turn.id, let session, let thread = app.thread(threadID) else { return }
             var prompt = text
             let files = attachments.filter { !$0.isImage }
             if !files.isEmpty {
@@ -645,8 +671,7 @@ final class ThreadRuntime {
             hydra: hydra
         )
         if let session, session.isRunning, sessionSignature == signature { return session }
-        session?.stop()
-        session = nil
+        releaseSession(stop: true)
         // The session the heads lived in is gone, and so are they.
         stopNativeHeads()
 
@@ -677,7 +702,12 @@ final class ThreadRuntime {
                 case .meta: MetaSession(configuration: configuration)
                 default: DeepSeekSession(configuration: configuration)
                 }
-                created.onEvent = { [weak self] event in self?.handle(event) }
+                // Only the session the runtime still holds is listened to.
+                let epoch = sessionEpoch
+                created.onEvent = { [weak self] event in
+                    guard let self, self.sessionEpoch == epoch else { return }
+                    self.handle(event)
+                }
                 return created
             }
             var candidate = makeAPISession(resumeID: thread.providerSessionID)
@@ -687,9 +717,12 @@ final class ThreadRuntime {
             do {
                 sessionID = try await candidate.start()
             } catch where thread.providerSessionID != nil {
-                candidate.stop()
+                // The session that would not resume is let go of entirely, handler and
+                // all, before the one that starts over takes its place.
+                releaseSession(stop: true)
                 candidate = makeAPISession(resumeID: nil)
                 session = candidate
+                sessionSignature = signature
                 sessionID = try await candidate.start()
             }
             resumeAnchor = nil
@@ -724,7 +757,12 @@ final class ThreadRuntime {
             case .deepseek: DeepSeekSession(configuration: configuration)
             case .meta: MetaSession(configuration: configuration)
             }
-            created.onEvent = { [weak self] event in self?.handle(event) }
+            // Only the session the runtime still holds is listened to.
+            let epoch = sessionEpoch
+            created.onEvent = { [weak self] event in
+                guard let self, self.sessionEpoch == epoch else { return }
+                self.handle(event)
+            }
             return created
         }
 
@@ -735,9 +773,12 @@ final class ThreadRuntime {
         do {
             sessionID = try await candidate.start()
         } catch where thread.providerSessionID != nil {
-            candidate.stop()
+            // The session that would not resume is let go of entirely, handler and all,
+            // before the one that starts over takes its place.
+            releaseSession(stop: true)
             candidate = makeSession(resumeID: nil)
             session = candidate
+            sessionSignature = signature
             sessionID = try await candidate.start()
         }
         resumeAnchor = nil
@@ -789,6 +830,17 @@ final class ThreadRuntime {
     func interrupt() {
         guard phase != .idle else { return }
         let turnID = currentTurnID
+        interruptWatchdog?.cancel()
+        interruptWatchdog = nil
+        // Nothing has been sent yet: the provider has no turn of its own to stop, and
+        // asking it would do nothing at all, leaving the watchdog to kill a session that
+        // is only just starting. The turn ends here instead, and the message it was about
+        // to send never goes.
+        if phase == .starting {
+            currentTurnID = nil
+            Task { await finishTurn(status: .interrupted, turnID: turnID) }
+            return
+        }
         Task {
             if let session {
                 await session.interrupt()
@@ -796,13 +848,10 @@ final class ThreadRuntime {
                 await finishTurn(status: .interrupted)
             }
         }
-        interruptWatchdog?.cancel()
         interruptWatchdog = Task { [weak self] in
             try? await Task.sleep(for: .seconds(8))
             guard let self, !Task.isCancelled, self.currentTurnID == turnID, turnID != nil else { return }
-            self.session?.stop()
-            self.session = nil
-            self.sessionSignature = nil
+            self.releaseSession(stop: true)
             await self.finishTurn(status: .interrupted)
         }
     }
@@ -860,16 +909,20 @@ final class ThreadRuntime {
                 }
             }
         case .claude:
-            session?.stop()
-            session = nil
-            sessionSignature = nil
+            releaseSession(stop: true)
             if index == 0 {
                 app.updateThread(threadID) { $0.providerSessionID = nil }
             } else {
                 resumeAnchor = turns[index - 1].providerAnchor
             }
         default:
-            return
+            // A provider that cannot rewind a conversation of its own starts a new one:
+            // the files, the timeline and the draft are put back all the same, and the
+            // next turn opens from the shortened history rather than the one that was
+            // reverted away.
+            releaseSession(stop: true)
+            resumeAnchor = nil
+            app.updateThread(threadID) { $0.providerSessionID = nil }
         }
 
         if restoreFiles, let base = removed.first?.baseCheckpoint {
@@ -978,11 +1031,24 @@ final class ThreadRuntime {
         DiffParser.parse(patch)
     }
 
-    func stopSession() {
-        session?.stop()
-        session = nil
+    /// Lets a session go: from here on it drives nothing, whatever it still has to say as
+    /// it closes. Its handler is cleared a turn of the loop later, because a session that
+    /// is ending usually says so from inside that very handler.
+    private func releaseSession(stop: Bool) {
+        sessionEpoch += 1
         sessionSignature = nil
+        guard let old = session else { return }
+        session = nil
+        if stop { old.stop() }
+        Task { old.onEvent = nil }
+    }
+
+    func stopSession() {
+        releaseSession(stop: true)
         stopNativeHeads()
+        // A turn cut off here has events its save timer has not written yet, and the timer
+        // may not outlive the runtime.
+        if phase != .idle { saveNow() }
     }
 
     // MARK: - Events
@@ -1009,7 +1075,7 @@ final class ThreadRuntime {
         case .toolStarted(let id, let call):
             flushDeltas()
             upsertTool(id, call)
-            if call.kind == .command { watchCommand(id) }
+            if call.kind == .command { watchCommand(id, call) }
         case .toolOutput(let id, let text):
             queueDelta(id, .toolOutput, text)
         case .toolUpdated(let id, let update):
@@ -1069,8 +1135,7 @@ final class ThreadRuntime {
             Task { await finishTurn(status: status) }
         case .exited(let error):
             flushDeltas()
-            session = nil
-            sessionSignature = nil
+            releaseSession(stop: false)
             approvals.removeAll()
             questions.removeAll()
             stopNativeHeads()
@@ -1093,32 +1158,42 @@ final class ThreadRuntime {
         }
     }
 
-    private func finishTurn(status: TurnStatus) async {
+    /// Closes the running turn. `turnID` names the turn when the caller has already taken
+    /// it out of `currentTurnID`, as a stop during the start of a turn does, so that the
+    /// message on its way can no longer be sent.
+    private func finishTurn(status: TurnStatus, turnID explicitTurnID: UUID? = nil) async {
         interruptWatchdog?.cancel()
         interruptWatchdog = nil
         headBudget?.cancel()
         headBudget = nil
-        guard let turnID = currentTurnID, let turn = turns.first(where: { $0.id == turnID }) else {
+        guard let turnID = explicitTurnID ?? currentTurnID, let turn = turns.first(where: { $0.id == turnID }) else {
             phase = .idle
             turnStartedAt = nil
             drainPendingSend()
             return
         }
         // Command diffs land before the turn's own summary counts them, and
-        // while the turn is still current so the snapshots can be compared.
+        // while the turn is still current so the snapshots can be compared. The heads'
+        // commands settle with them: their files are part of this turn's work.
         for id in Array(commandTrees.keys) { settleCommand(id) }
+        for key in Array(hydraCommandTrees.keys) { settleHydraCommand(key) }
         for task in commandSettles.values { await task.value }
         commandSettles.removeAll()
         currentTurnID = nil
         flushDeltas()
         approvals.removeAll()
         questions.removeAll()
+        // One pass over the turn's rows: they are closed, and the files their tools
+        // reported are collected for the summary below rather than scanned for again.
+        var reportedEdits: [FileEdit] = []
         for entry in entries where entry.item.turnID == turnID {
             endStreaming(entry)
-            if case .tool(var call) = entry.item.content, call.status == .running {
+            guard case .tool(var call) = entry.item.content else { continue }
+            if call.status == .running {
                 call.finish(status == .completed ? .completed : .failed)
                 entry.item.content = .tool(call)
             }
+            reportedEdits.append(contentsOf: call.edits)
         }
         updateTurn(turnID) {
             $0.status = status
@@ -1128,29 +1203,34 @@ final class ThreadRuntime {
         var files: [DiffFile] = []
         if let app, let thread = app.thread(threadID), let project = app.project(thread.projectID) {
             let git = Git(thread.worktreePath ?? project.path)
+            let providerDiff = turns.first(where: { $0.id == turnID })?.providerDiff
+            // Parsed off the main actor, and only once: a turn's patch can be large, and
+            // this lands exactly as the reply appears.
+            var providerFiles: [DiffFile] = []
+            if let providerDiff { providerFiles = await Self.parseDiff(providerDiff) }
             if let base = turn.baseCheckpoint {
                 let ref = Git.checkpointRef(thread: threadID, turn: turn.index, phase: "end")
                 if (try? await git.captureCheckpoint(ref)) != nil {
                     updateTurn(turnID) { $0.endCheckpoint = ref }
                     if let patch = try? await git.diff(from: base, to: ref) {
-                        files = DiffParser.parse(patch)
+                        files = await Self.parseDiff(patch)
                     }
                 }
-            } else if let providerDiff = turns.first(where: { $0.id == turnID })?.providerDiff {
-                files = DiffParser.parse(providerDiff)
+            } else {
+                files = providerFiles
             }
 
             // Only files this thread's agent edited count, never edits made elsewhere in the repository meanwhile.
             let root = thread.worktreePath ?? project.path
             var touched = Set<String>()
-            for entry in entries where entry.kind == .tool && entry.item.turnID == turnID {
-                if case .tool(let call) = entry.item.content {
-                    for edit in call.edits { touched.insert(TouchedPaths.normalize(edit.path, root: root)) }
-                }
+            // A path outside the checkout is no part of the turn: the agent writes to its
+            // own notes and settings too, and git cannot stage a file it does not hold.
+            for edit in reportedEdits {
+                if let path = TouchedPaths.relative(edit.path, root: root) { touched.insert(path) }
             }
-            if let providerDiff = turns.first(where: { $0.id == turnID })?.providerDiff {
-                for file in DiffParser.parse(providerDiff) { touched.insert(file.path) }
-            }
+            for file in providerFiles { touched.insert(file.path) }
+            // What the lead's native heads changed, which their own timelines carry.
+            touched.formUnion(hydraTouched)
             let touchedPaths = touched.sorted()
             updateTurn(turnID) { $0.touchedPaths = touchedPaths }
             files = files.filter { TouchedPaths.matches($0, touched: touched) }
@@ -1168,7 +1248,9 @@ final class ThreadRuntime {
         phase = .idle
         turnStartedAt = nil
         diffRevision += 1
-        scheduleSave()
+        // The turn's own events shared one save every few seconds; whatever they left is
+        // written here, so a finished turn is always on disk.
+        saveNow()
         settleForegroundHeads(after: status)
         // The Return-while-running message jumps the queue: it goes right away
         // and anything queued waits for it. A reply that ends in a delegation block
@@ -1185,6 +1267,10 @@ final class ThreadRuntime {
         } else {
             continues = drainFollowUps(after: status)
         }
+        // Reports that came in while this turn ran are heard whatever became of it. Only a
+        // turn the user stopped is left alone, as their queued messages are: they are in
+        // charge of the chat then, and the reports go out with their next word.
+        if !continues, status != .interrupted, flushHydraReports() { continues = true }
         // Heads still out will report, and the lead will work again: the job is not
         // finished until it has heard from all of them.
         if !continues, status == .completed, let app, app.runningDroppyHeads(of: threadID) > 0 { continues = true }
@@ -1227,6 +1313,24 @@ final class ThreadRuntime {
     }
 
     // MARK: - Hydra
+
+    /// The auto-merge has landed these turns' work: the next merge starts from what came
+    /// after them, rather than offering the same files again.
+    func markHydraMerged(_ turnIDs: [UUID]) {
+        let ids = Set(turnIDs)
+        var changed = false
+        for index in turns.indices where ids.contains(turns[index].id) && !turns[index].hydraMerged {
+            turns[index].hydraMerged = true
+            changed = true
+        }
+        guard changed else { return }
+        saveNow()
+    }
+
+    /// The turns whose work has not been merged yet, oldest first.
+    var hydraUnmergedTurns: [TurnRecord] {
+        turns.filter { !$0.hydraMerged }
+    }
 
     /// The head a tool row in this timeline sent out, if any.
     func hydraHead(forTool toolID: String) -> UUID? {
@@ -1280,9 +1384,15 @@ final class ThreadRuntime {
             }
         case .turnCompleted(let status, _):
             hydraAgentFinished(agentID, status: status, summary: nil)
-        case .toolStarted(_, let call):
+        case .toolStarted(let toolID, let call):
             headRuntime.hydraToolCalls += 1
             headRuntime.hydraActivity = ToolPresentation.label(for: call)
+            noteHydraEdits(call.edits)
+            if call.kind == .command { watchHydraCommand("\(agentID)-\(toolID)", call) }
+            headRuntime.rehearse(event)
+        case .toolUpdated(let toolID, let update):
+            if let edits = update.edits { noteHydraEdits(edits) }
+            if let status = update.status, status != .running { settleHydraCommand("\(agentID)-\(toolID)") }
             headRuntime.rehearse(event)
         case .usage, .sessionReady, .models, .commands, .title, .assistantMessageID:
             break
@@ -1393,23 +1503,41 @@ final class ThreadRuntime {
     /// out as one message, instead of each starting a turn the next one cuts short.
     @discardableResult
     private func flushHydraReports() -> Bool {
-        guard phase == .idle, !hydraPendingReports.isEmpty, hydraBatches.isEmpty, !hydraFlushScheduled else { return false }
+        guard phase == .idle, !hydraFlushScheduled, !flushableHydraReports().isEmpty else { return false }
         hydraFlushScheduled = true
         Task { await startHydraReportTurn() }
         return true
     }
 
+    /// The reports an idle lead can hear now: all of them once no delegation is still out,
+    /// and otherwise only the heads that are no part of one. A head the user queued or
+    /// sent out directly has nothing to do with a batch, and waiting behind one can mean
+    /// waiting out a job of twenty minutes.
+    private func flushableHydraReports() -> [HydraReport] {
+        let ready = hydraBatches.isEmpty ? hydraPendingReports : hydraPendingReports.filter { $0.origin != .delegated }
+        return ready.sorted { $0.headIndex < $1.headIndex }
+    }
+
     /// The turn `flushHydraReports` scheduled. A lead no longer idle (the user got a word
     /// in first) keeps the reports waiting for the end of that turn instead.
     private func startHydraReportTurn() async {
+        // Cleared first and the reports left where they are: a turn that cannot run now
+        // must be able to be asked for again, by the next head to finish or by the end of
+        // whatever the lead is doing instead.
         hydraFlushScheduled = false
-        guard phase == .idle, !hydraPendingReports.isEmpty, hydraBatches.isEmpty, let app else { return }
-        let reports = hydraPendingReports.sorted { $0.headIndex < $1.headIndex }
-        hydraPendingReports.removeAll()
-        let stillWorking = app.workingHydraHeadNames(of: threadID, excluding: Set(reports.map(\.headIndex)))
+        guard phase == .idle, let app else { return }
+        let reports = flushableHydraReports()
+        guard !reports.isEmpty else { return }
+        let sent = Set(reports.map(\.headIndex))
+        hydraPendingReports.removeAll { sent.contains($0.headIndex) }
+        let stillWorking = app.workingHydraHeadNames(of: threadID, excluding: sent)
         let text = HydraPrompts.reportMessage(reports, stillWorking: stillWorking)
         await startTurn(text: text, attachments: [], hydraHeads: reports.map(\.headIndex))
     }
+
+    /// How many tasks one delegation block may send out. Well past what a lead writes in
+    /// practice, and the pair's cap still decides how many run at a time.
+    private static let maxDelegatedTasks = 32
 
     /// A reply from a provider with no heads of its own may end in a delegation block:
     /// its tasks go out as Droppy-run heads, up to the pair's limit at a time, and the
@@ -1436,7 +1564,17 @@ final class ThreadRuntime {
         entry.item.content = .assistant(message)
         let batchID = UUID()
         hydraBatches[batchID] = HydraBatch(pending: [])
-        hydraWaiting += delegations.prefix(HydraPair.maxHeadsRange.upperBound * 2).map { (delegation: $0, batchID: batchID) }
+        // The pair's cap paces these out through `hydraWaiting`, so the ceiling is only on
+        // how many tasks one block may hold. A lead that writes more than that hears which
+        // ones did not go out, rather than losing the tail of its own list in silence.
+        hydraWaiting += delegations.prefix(Self.maxDelegatedTasks).map { (delegation: $0, batchID: batchID) }
+        if delegations.count > Self.maxDelegatedTasks {
+            let dropped = delegations.count - Self.maxDelegatedTasks
+            appendHydraNote("""
+                Not every task went out
+                \(Self.maxDelegatedTasks) of the \(delegations.count) tasks in that block went to heads. The last \(dropped) did not: ask for them again once these report back.
+                """)
+        }
         spawnWaitingHeads(launch: launch)
         settleBatches()
         scheduleSave()
@@ -1600,6 +1738,9 @@ final class ThreadRuntime {
     }
 
     private func upsertTool(_ id: String, _ call: ToolCall) {
+        noteToolMayWrite(call.kind)
+        var call = call
+        call.edits = Self.capped(call.edits)
         guard let entry = entryIndex[id], case .tool(var existing) = entry.item.content else {
             append(TimelineItem(id: id, turnID: currentTurnID, content: .tool(call)))
             return
@@ -1612,7 +1753,17 @@ final class ThreadRuntime {
         entry.item.content = .tool(existing)
     }
 
+    /// A tool that is not plainly a read can have written a file, which makes the tree a
+    /// command left behind no answer for what is on disk now. Commands keep their own
+    /// count in `watchCommand`, which knows whether this one can write at all.
+    private func noteToolMayWrite(_ kind: ToolCall.Kind?) {
+        guard let kind, kind != .read, kind != .search, kind != .web, kind != .command else { return }
+        settledTree = nil
+        treeEpoch += 1
+    }
+
     private func applyToolUpdate(_ id: String, _ update: ToolUpdate) {
+        noteToolMayWrite(update.kind)
         if entryIndex[id] == nil {
             append(TimelineItem(id: id, turnID: currentTurnID, content: .tool(ToolCall(kind: update.kind ?? .other, title: update.title ?? "Tool"))))
         }
@@ -1620,7 +1771,7 @@ final class ThreadRuntime {
         if let title = update.title, !title.isEmpty { call.title = title }
         if let detail = update.detail { call.detail = detail }
         if let kind = update.kind { call.kind = kind }
-        if let edits = update.edits, !edits.isEmpty { call.edits = edits }
+        if let edits = update.edits, !edits.isEmpty { call.edits = Self.capped(edits) }
         if let output = update.output { call.setOutput(output) }
         if let exitCode = update.exitCode { call.exitCode = exitCode }
         if let status = update.status {
@@ -1636,18 +1787,31 @@ final class ThreadRuntime {
     /// never report an edit, so a command's row gets its edits from the
     /// working tree instead: a snapshot as it starts, another as it finishes,
     /// and the diff between the two. Git-backed projects only.
-    private func watchCommand(_ id: String) {
-        guard commandTrees[id] == nil, let git = repositoryGit else { return }
-        commandTrees[id] = Task.detached(priority: .utility) { try? await git.captureTree() }
+    private func watchCommand(_ id: String, _ call: ToolCall) {
+        // A command that cannot write needs no snapshots at all: reading the checkout is
+        // most of what an agent runs, and each snapshot is seconds of git on a big tree.
+        guard commandTrees[id] == nil, ShellCommandKind.mayWriteFiles(call.title), let git = repositoryGit else { return }
+        if let settled = settledTree, settled.epoch == treeEpoch {
+            commandTrees[id] = Task<String?, Never> { settled.tree }
+        } else {
+            commandTrees[id] = captureTree(git)
+        }
+        settledTree = nil
+        treeEpoch += 1
     }
 
     private func settleCommand(_ id: String) {
         guard let before = commandTrees.removeValue(forKey: id), let git = repositoryGit else { return }
+        let epoch = treeEpoch
         commandSettles[id] = Task { [weak self] in
-            guard let base = await before.value, let after = try? await git.captureTree(), base != after,
-                  let patch = try? await git.diff(from: base, to: after), !patch.isEmpty else { return }
-            let edits = Self.fileEdits(from: patch)
-            guard let self, !edits.isEmpty, let entry = entryIndex[id], case .tool(var call) = entry.item.content else { return }
+            guard let base = await before.value, let self else { return }
+            guard let after = await captureTree(git).value else { return }
+            // Nothing else started or ran alongside while the snapshot was taken, so it
+            // still stands for the working tree and the next command starts from it.
+            if treeEpoch == epoch, commandTrees.isEmpty, hydraCommandTrees.isEmpty { settledTree = (after, epoch) }
+            guard base != after, let patch = try? await git.diff(from: base, to: after), !patch.isEmpty else { return }
+            let edits = await Self.fileEdits(from: patch)
+            guard !edits.isEmpty, let entry = entryIndex[id], case .tool(var call) = entry.item.content else { return }
             // A provider that did report its edits keeps them.
             guard call.edits.allSatisfy({ $0.diff == nil }) else { return }
             call.edits = edits
@@ -1656,14 +1820,89 @@ final class ThreadRuntime {
         }
     }
 
+    /// One working-tree snapshot at a time for this thread, each waiting for the one
+    /// before it: they are heavy, and a turn's commands would otherwise run several at
+    /// once, with eight heads doing the same in the same checkout.
+    private func captureTree(_ git: Git) -> Task<String?, Never> {
+        let previous = treeCaptures
+        let capture = Task { () -> String? in
+            _ = await previous?.value
+            return await Task.detached(priority: .utility) { try? await git.captureTree() }.value
+        }
+        treeCaptures = capture
+        return capture
+    }
+
+    /// Files a native head reported editing. They land on the head's own timeline, but the
+    /// work is done in the lead's checkout and counts as the lead's turn.
+    private func noteHydraEdits(_ edits: [FileEdit]) {
+        guard !edits.isEmpty, let root = workingRoot else { return }
+        for edit in edits {
+            if let path = TouchedPaths.relative(edit.path, root: root) { hydraTouched.insert(path) }
+        }
+    }
+
+    /// A native head's shell command, watched exactly as the lead's own are and for the
+    /// same reason: agents edit from the shell without reporting it. What changed goes to
+    /// the turn's files rather than onto a row, because the row lives in the head's
+    /// runtime and it is the lead's turn that a merge takes its files from.
+    private func watchHydraCommand(_ key: String, _ call: ToolCall) {
+        guard hydraCommandTrees[key] == nil, ShellCommandKind.mayWriteFiles(call.title), let git = repositoryGit else { return }
+        if let settled = settledTree, settled.epoch == treeEpoch {
+            hydraCommandTrees[key] = Task<String?, Never> { settled.tree }
+        } else {
+            hydraCommandTrees[key] = captureTree(git)
+        }
+        settledTree = nil
+        treeEpoch += 1
+    }
+
+    private func settleHydraCommand(_ key: String) {
+        guard let before = hydraCommandTrees.removeValue(forKey: key), let git = repositoryGit else { return }
+        let epoch = treeEpoch
+        // Kept with the lead's own settles, so the turn waits for them before it counts
+        // its files.
+        commandSettles[key] = Task { [weak self] in
+            guard let base = await before.value, let self else { return }
+            guard let after = await captureTree(git).value else { return }
+            if treeEpoch == epoch, commandTrees.isEmpty, hydraCommandTrees.isEmpty { settledTree = (after, epoch) }
+            guard base != after, let paths = try? await git.changedPaths(from: base, to: after) else { return }
+            hydraTouched.formUnion(paths.filter { !$0.isEmpty })
+        }
+    }
+
+    /// The folder this thread's agent works in: its own copy of the checkout, or the
+    /// project itself.
+    private var workingRoot: String? {
+        guard let app, let thread = app.thread(threadID), let project = app.project(thread.projectID) else { return nil }
+        return thread.worktreePath ?? project.path
+    }
+
     private var repositoryGit: Git? {
         guard let currentTurnID, let turn = turns.first(where: { $0.id == currentTurnID }), turn.baseCheckpoint != nil,
               let app, let thread = app.thread(threadID), let project = app.project(thread.projectID) else { return nil }
         return Git(thread.worktreePath ?? project.path)
     }
 
+    /// How much of a patch an edit carries. Past it the edit is stats only, so neither the
+    /// timeline nor the thread file grows by the whole of a written file.
+    private nonisolated static let editDiffLimit = 200_000
+
+    /// Edits as a provider reported them, with an outsized patch dropped: a Write tool
+    /// hands over the entire new file, which can be megabytes, and every save would then
+    /// write all of it again. The same cap the edits taken from a command's diff have.
+    private static func capped(_ edits: [FileEdit]) -> [FileEdit] {
+        edits.map { edit in
+            guard let diff = edit.diff, diff.utf8.count > editDiffLimit else { return edit }
+            var capped = edit
+            capped.diff = nil
+            return capped
+        }
+    }
+
     /// One edit per file in a multi-file patch, with the file's own section as its diff.
-    private static func fileEdits(from patch: String) -> [FileEdit] {
+    @concurrent
+    private nonisolated static func fileEdits(from patch: String) async -> [FileEdit] {
         var sections: [String] = []
         for line in patch.split(separator: "\n", omittingEmptySubsequences: false) {
             if line.hasPrefix("diff --git ") {
@@ -1675,20 +1914,27 @@ final class ThreadRuntime {
         return sections.compactMap { section in
             guard let file = DiffParser.parse(section).first else { return nil }
             // Huge sections are stats only, so the thread file stays small.
-            let diff = section.utf8.count <= 200_000 ? section : nil
+            let diff = section.utf8.count <= editDiffLimit ? section : nil
             return FileEdit(path: file.path, diff: diff, additions: file.additions, deletions: file.deletions)
         }
     }
 
     private func upsertTodos(_ steps: [TodoStep]) {
-        if let entry = entries.last(where: { entry in
+        // The row is remembered rather than searched for: a turn rewrites its list many
+        // times, and the timeline behind it can hold thousands of rows.
+        if let id = todosEntryID, let entry = entryIndex[id], entry.item.turnID == currentTurnID {
+            entry.item.content = .todos(steps)
+        } else if let entry = entries.last(where: { entry in
             guard entry.item.turnID == currentTurnID else { return false }
             if case .todos = entry.item.content { return true }
             return false
         }) {
+            todosEntryID = entry.id
             entry.item.content = .todos(steps)
         } else if !steps.isEmpty {
-            append(TimelineItem(turnID: currentTurnID, content: .todos(steps)))
+            let item = TimelineItem(turnID: currentTurnID, content: .todos(steps))
+            todosEntryID = item.id
+            append(item)
         }
         scheduleSave()
     }
@@ -1719,22 +1965,40 @@ final class ThreadRuntime {
     // MARK: - Persistence
 
     func scheduleSave() {
-        saveTask?.cancel()
+        guard phase != .idle else {
+            saveTask?.cancel()
+            saveTask = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(800))
+                guard !Task.isCancelled else { return }
+                self?.saveNow()
+            }
+            return
+        }
+        // A running turn fires this after nearly every event it streams, and every save
+        // rewrites the whole thread file, which runs to megabytes. While the turn runs its
+        // events share one save every few seconds: the timer already running writes
+        // whatever the thread holds by then, and `finishTurn` saves what is left.
+        guard saveTask == nil else { return }
         saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(800))
+            try? await Task.sleep(for: .seconds(5))
             guard !Task.isCancelled else { return }
             self?.saveNow()
         }
     }
 
     func saveNow() {
+        saveTask?.cancel()
+        saveTask = nil
         var document = ThreadDocument(threadID: threadID)
         document.items = entries.map(\.item)
         document.turns = turns
         document.usage = usage
         document.followUps = followUps
         let url = Storage.threadURL(threadID)
-        Task { await DiskWriter.shared.encodeAndWrite(document, to: url) }
+        // Two saves of the same thread are written by separate tasks and can reach the
+        // writer in either order; the revision keeps the newer one on disk.
+        let revision = DiskWriter.nextRevision(for: url)
+        Task { await DiskWriter.shared.encodeAndWrite(document, to: url, revision: revision) }
     }
 }
 

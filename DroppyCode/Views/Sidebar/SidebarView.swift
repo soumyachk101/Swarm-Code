@@ -17,8 +17,10 @@ struct SidebarView: View {
     /// helpers with it, and neighbours slide across as its centre passes theirs.
     @State private var drag = RowDrag<UUID>()
     /// Every row's height by its item id. A thread's slot is its own row plus the helper
-    /// rows under it, so a dragged row crosses a neighbour with helpers in one go.
-    @State private var rowHeights: [String: CGFloat] = [:]
+    /// rows under it, so a dragged row crosses a neighbour with helpers in one go. Kept out
+    /// of observation like the frames below: every row reports its height as the list lays
+    /// out, and only a drag ever reads them, so a report must not re-run the list.
+    @State private var rowHeights = RowHeights()
     /// The list's frame in the window, for a settling row's glide: it is clipped to the
     /// list and heads for its edge when its new place is out of view. Kept out of
     /// observation the way a row's frame is: resizing updates it, only a settle reads it.
@@ -29,6 +31,7 @@ struct SidebarView: View {
     }
 
     var body: some View {
+        let helpers = helpersByParent
         VStack(alignment: .leading, spacing: 0) {
             // Clears the native window buttons that float over the sidebar's top corner.
             if !inPopover {
@@ -38,11 +41,16 @@ struct SidebarView: View {
             }
 
             HStack(spacing: 6) {
-                SidebarSearchField(text: $search, prompt: "Search threads") {
-                    if let first = searchResults.first?.threads.first {
-                        model.selectedThreadID = first.id
-                    }
-                }
+                SidebarSearchField(
+                    text: $search,
+                    prompt: "Search threads",
+                    onSubmit: {
+                        if let first = searchResults(helpers: helpers).first?.threads.first {
+                            model.selectedThreadID = first.id
+                        }
+                    },
+                    onMove: { moveSearchSelection(by: $0, helpers: helpers) }
+                )
                 ActivityViewToggle(isOn: Binding(
                     get: { model.settings.sidebarActivityView },
                     set: { model.settings.sidebarActivityView = $0 }
@@ -56,12 +64,12 @@ struct SidebarView: View {
                     if query.isEmpty {
                         // One list for both layouts: a thread keeps its row when the layout changes, so the
                         // row grows or shrinks and slides to its new place instead of being replaced.
-                        ForEach(model.settings.sidebarActivityView ? activityItems : projectItems) { item in
+                        ForEach(model.settings.sidebarActivityView ? activityItems(helpers: helpers) : projectItems(helpers: helpers)) { item in
                             itemView(item)
                                 .transition(.sidebarRow)
                         }
                     } else {
-                        searchList
+                        searchList(helpers: helpers)
                     }
                 }
                 // Adding or deleting a thread opens and closes its space with the same motion as every other row.
@@ -126,13 +134,13 @@ struct SidebarView: View {
         switch item.kind {
         case .gap(let height):
             Color.clear.frame(height: height)
-        case .project(let project):
-            ProjectRow(project: project)
+        case .project(let project, let count):
+            ProjectRow(project: project, count: count)
         case .header(let title, let isFirst):
             ActivityHeader(title: title, isFirst: isFirst)
-        case .thread(let thread, let projectName, let peers):
-            reorderableRow(thread, projectName: projectName, peers: peers)
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[item.id] = $0 }
+        case .thread(let thread, let projectName, let peers, let hasHelpers):
+            reorderableRow(thread, projectName: projectName, peers: peers, hasHelpers: hasHelpers)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.values[item.id] = $0 }
         case .helper(let thread, let isLast):
             deletePopover(for: thread, on: SidebarHelperRow(
                 thread: thread,
@@ -150,24 +158,35 @@ struct SidebarView: View {
                     }
                 }
             ))
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[item.id] = $0 }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.values[item.id] = $0 }
             .modifier(RidesWithDraggedParent(parentID: thread.parentThreadID, drag: drag))
-        case .helperStub(let parent, let count):
-            HelperStubRow(parent: parent, count: count) { fold(parent.id) }
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[item.id] = $0 }
+        case .helperStub(let parent, let helpers):
+            HelperStubRow(parent: parent, helpers: helpers) { fold(parent.id) }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.values[item.id] = $0 }
                 .modifier(RidesWithDraggedParent(parentID: parent.id, drag: drag))
         }
     }
 
+    /// Every helper by the thread it hangs under, worked out once for the whole list. Asking
+    /// the model per row walked the library once per row, so a long list did that work for
+    /// every row in it; the rows are handed their own helpers instead.
+    private var helpersByParent: [UUID: [ChatThread]] {
+        var grouped: [UUID: [ChatThread]] = [:]
+        for thread in model.threads where !thread.isInPanel && !thread.isArchived {
+            guard let parentID = thread.parentThreadID else { continue }
+            grouped[parentID, default: []].append(thread)
+        }
+        // Newest first, like the threads around them (see `AppModel.helpers(of:)`).
+        return grouped.mapValues { $0.sorted { $0.createdAt > $1.createdAt } }
+    }
+
     /// The helpers under a thread: one small row each, or a single line naming them while
     /// they are folded away.
-    private func helperItems(under thread: ChatThread) -> [SidebarItem] {
+    private func helperItems(under thread: ChatThread, helpers: [ChatThread]) -> [SidebarItem] {
         // A settled thread is one small line; what it spawned comes back when it reopens.
-        guard !thread.isSettled else { return [] }
-        let helpers = model.helpers(of: thread.id)
-        guard !helpers.isEmpty else { return [] }
+        guard !thread.isSettled, !helpers.isEmpty else { return [] }
         if thread.foldsHelpers {
-            return [SidebarItem(id: "helpers-\(thread.id)", kind: .helperStub(parent: thread, count: helpers.count))]
+            return [SidebarItem(id: "helpers-\(thread.id)", kind: .helperStub(parent: thread, helpers: helpers))]
         }
         return helpers.map { helper in
             SidebarItem(id: helper.id.uuidString, kind: .helper(helper, isLast: helper.id == helpers.last?.id))
@@ -185,19 +204,22 @@ struct SidebarView: View {
 
     // MARK: Project layout
 
-    private var projectItems: [SidebarItem] {
+    private func projectItems(helpers: [UUID: [ChatThread]]) -> [SidebarItem] {
         var items: [SidebarItem] = []
         for (index, project) in model.projects.enumerated() {
             if index > 0 {
                 items.append(SidebarItem(id: "gap-\(project.id)", kind: .gap(Chrome.groupGap)))
             }
-            items.append(SidebarItem(id: "project-\(project.id)", kind: .project(project)))
+            let projectThreads = model.threads(in: project)
+            // The count a folded project shows: its threads and everything under them.
+            let count = projectThreads.reduce(0) { $0 + 1 + (helpers[$1.id]?.count ?? 0) }
+            items.append(SidebarItem(id: "project-\(project.id)", kind: .project(project, count: count)))
             guard project.isExpanded else { continue }
             // The settled threads close the project's list (see `threads(in:)`), a small
             // step below the ones still open.
             var hasOpen = false
             var reachedSettled = false
-            for thread in model.threads(in: project) {
+            for thread in projectThreads {
                 if thread.isSettled, !reachedSettled {
                     reachedSettled = true
                     if hasOpen {
@@ -205,8 +227,12 @@ struct SidebarView: View {
                     }
                 }
                 hasOpen = hasOpen || !thread.isSettled
-                items.append(SidebarItem(id: SidebarItem.id(for: thread), kind: .thread(thread, projectName: nil, peers: nil)))
-                items.append(contentsOf: helperItems(under: thread))
+                let own = helpers[thread.id] ?? []
+                items.append(SidebarItem(
+                    id: SidebarItem.id(for: thread),
+                    kind: .thread(thread, projectName: nil, peers: nil, hasHelpers: !thread.isSettled && !own.isEmpty)
+                ))
+                items.append(contentsOf: helperItems(under: thread, helpers: own))
             }
         }
         return items
@@ -214,7 +240,7 @@ struct SidebarView: View {
 
     // MARK: Activity layout
 
-    private var activityItems: [SidebarItem] {
+    private func activityItems(helpers: [UUID: [ChatThread]]) -> [SidebarItem] {
         let shown = model.threads.filter { !$0.isArchived && !$0.isInPanel }
         // A helper whose parent is here sits under it (see helperItems); one whose parent is
         // gone or archived stands on its own.
@@ -226,12 +252,12 @@ struct SidebarView: View {
         var items: [SidebarItem] = []
         if !attention.isEmpty {
             items.append(SidebarItem(id: "attention", kind: .header("Needs attention", isFirst: true)))
-            items.append(contentsOf: activityThreadItems(attention))
+            items.append(contentsOf: activityThreadItems(attention, helpers: helpers))
         }
         for group in Self.activityGroups(rest.filter { !$0.isSettled }) {
             // Without an attention section the day header is the first row, so it takes the tighter top padding.
             items.append(SidebarItem(id: "day-\(group.title)", kind: .header(group.title, isFirst: items.isEmpty)))
-            items.append(contentsOf: activityThreadItems(group.threads))
+            items.append(contentsOf: activityThreadItems(group.threads, helpers: helpers))
         }
         // The settled threads sit under everything, whatever day they were last active,
         // latest settled first. They keep their place: no dragging among them.
@@ -241,7 +267,7 @@ struct SidebarView: View {
             for thread in settled {
                 items.append(SidebarItem(
                     id: SidebarItem.id(for: thread),
-                    kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: nil)
+                    kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: nil, hasHelpers: false)
                 ))
             }
         }
@@ -250,13 +276,14 @@ struct SidebarView: View {
 
     /// Threads of one activity group, each with the helpers under it. A thread can be dragged
     /// to another place within its own group; its helpers follow it.
-    private func activityThreadItems(_ threads: [ChatThread]) -> [SidebarItem] {
+    private func activityThreadItems(_ threads: [ChatThread], helpers: [UUID: [ChatThread]]) -> [SidebarItem] {
         let peers = threads.map(\.id)
         return threads.flatMap { thread in
-            [SidebarItem(
+            let own = helpers[thread.id] ?? []
+            return [SidebarItem(
                 id: thread.id.uuidString,
-                kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: peers)
-            )] + helperItems(under: thread)
+                kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: peers, hasHelpers: !thread.isSettled && !own.isEmpty)
+            )] + helperItems(under: thread, helpers: own)
         }
     }
 
@@ -318,8 +345,8 @@ struct SidebarView: View {
     // MARK: Search
 
     @ViewBuilder
-    private var searchList: some View {
-        let results = searchResults
+    private func searchList(helpers: [UUID: [ChatThread]]) -> some View {
+        let results = searchResults(helpers: helpers)
         if results.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text("No results")
@@ -336,22 +363,37 @@ struct SidebarView: View {
                 if index > 0 {
                     Color.clear.frame(height: Chrome.groupGap)
                 }
-                ProjectRow(project: result.project, togglesExpansion: false)
+                ProjectRow(project: result.project, count: result.count, togglesExpansion: false)
                 // Keyed like the main list, so a thread settled from here changes rows too.
                 ForEach(result.threads, id: \.sidebarItemID) { thread in
-                    threadRow(thread, projectName: nil)
+                    threadRow(thread, projectName: nil, hasHelpers: !thread.isSettled && !(helpers[thread.id] ?? []).isEmpty)
                 }
             }
         }
     }
 
-    private var searchResults: [(project: Project, threads: [ChatThread])] {
+    /// Up and down in the search field walk the results without leaving the keyboard; the
+    /// row highlights exactly as a clicked one does.
+    private func moveSearchSelection(by offset: Int, helpers: [UUID: [ChatThread]]) {
+        guard !query.isEmpty else { return }
+        let results = searchResults(helpers: helpers).flatMap(\.threads)
+        guard !results.isEmpty else { return }
+        guard let current = model.selectedThreadID,
+              let index = results.firstIndex(where: { $0.id == current }) else {
+            model.selectedThreadID = (offset < 0 ? results.last : results.first)?.id
+            return
+        }
+        let next = min(max(index + offset, 0), results.count - 1)
+        model.selectedThreadID = results[next].id
+    }
+
+    private func searchResults(helpers: [UUID: [ChatThread]]) -> [(project: Project, threads: [ChatThread], count: Int)] {
         model.projects.compactMap { project in
-            let all = model.threads(in: project).flatMap { [$0] + model.helpers(of: $0.id) }
+            let all = model.threads(in: project).flatMap { [$0] + (helpers[$0.id] ?? []) }
             let threads = project.name.localizedCaseInsensitiveContains(query)
                 ? all
                 : all.filter { $0.title.localizedCaseInsensitiveContains(query) }
-            return threads.isEmpty ? nil : (project, threads)
+            return threads.isEmpty ? nil : (project, threads, all.count)
         }
     }
 
@@ -360,9 +402,9 @@ struct SidebarView: View {
     /// Drag a row up or down the list and it moves live: within its project in the project
     /// layout, within its group in the activity layout. Ahead of the row's own click, so a
     /// drag never selects the thread on release; a plain click still does.
-    private func reorderableRow(_ thread: ChatThread, projectName: String?, peers: [UUID]?) -> some View {
+    private func reorderableRow(_ thread: ChatThread, projectName: String?, peers: [UUID]?, hasHelpers: Bool) -> some View {
         let isDragged = drag.id == thread.id
-        return threadRow(thread, projectName: projectName, isDragged: isDragged)
+        return threadRow(thread, projectName: projectName, hasHelpers: hasHelpers, isDragged: isDragged)
             .offset(y: isDragged ? drag.visualOffset : 0)
             .zIndex(isDragged ? 1 : 0)
             .highPriorityGesture(
@@ -422,8 +464,8 @@ struct SidebarView: View {
     /// (returned as `group` too, for the move) or its project's top-level threads.
     private func peers(of id: UUID) -> (order: [UUID], group: [UUID]?) {
         if model.settings.sidebarActivityView {
-            for item in activityItems {
-                if case .thread(let thread, _, let peers) = item.kind, thread.id == id, let peers {
+            for item in activityItems(helpers: helpersByParent) {
+                if case .thread(let thread, _, let peers, _) = item.kind, thread.id == id, let peers {
                     return (peers, peers)
                 }
             }
@@ -436,16 +478,17 @@ struct SidebarView: View {
     /// Each peer's slot: its row, the helper rows or folded line under it, and the list's
     /// spacing after each.
     private func slotHeights(for order: [UUID]) -> [UUID: CGFloat] {
+        let grouped = helpersByParent
         var heights: [UUID: CGFloat] = [:]
         for id in order {
-            var height = (rowHeights[id.uuidString] ?? Chrome.rowHeight) + 1
-            let helpers = model.helpers(of: id)
+            var height = (rowHeights.values[id.uuidString] ?? Chrome.rowHeight) + 1
+            let helpers = grouped[id] ?? []
             if !helpers.isEmpty {
                 if model.thread(id)?.foldsHelpers == true {
-                    height += (rowHeights["helpers-\(id)"] ?? ThreadRowMetrics.helperHeight) + 1
+                    height += (rowHeights.values["helpers-\(id)"] ?? ThreadRowMetrics.helperHeight) + 1
                 } else {
                     for helper in helpers {
-                        height += (rowHeights[helper.id.uuidString] ?? ThreadRowMetrics.helperHeight) + 1
+                        height += (rowHeights.values[helper.id.uuidString] ?? ThreadRowMetrics.helperHeight) + 1
                     }
                 }
             }
@@ -454,9 +497,8 @@ struct SidebarView: View {
         return heights
     }
 
-    private func threadRow(_ thread: ChatThread, projectName: String?, isDragged: Bool = false) -> some View {
+    private func threadRow(_ thread: ChatThread, projectName: String?, hasHelpers: Bool, isDragged: Bool = false) -> some View {
         // A thread with helpers under it gets the fold button; a settled one shows none.
-        let hasHelpers = !thread.isSettled && !model.helpers(of: thread.id).isEmpty
         return deletePopover(for: thread, on: SidebarThreadRow(
             thread: thread,
             projectName: projectName,
@@ -505,14 +547,16 @@ private struct DeleteThreadPopover: View {
 private struct SidebarItem: Identifiable {
     enum Kind {
         case gap(CGFloat)
-        case project(Project)
+        /// A project, with what a folded one shows: its threads and their helpers.
+        case project(Project, count: Int)
         case header(String, isFirst: Bool)
-        /// A thread, with its project's name in the activity layout and the threads it can be reordered among.
-        case thread(ChatThread, projectName: String?, peers: [UUID]?)
+        /// A thread, with its project's name in the activity layout, the threads it can be
+        /// reordered among, and whether it has helpers to fold away.
+        case thread(ChatThread, projectName: String?, peers: [UUID]?, hasHelpers: Bool)
         /// A helper under its parent thread; the last one ends the connector.
         case helper(ChatThread, isLast: Bool)
         /// A parent's folded helpers, as one line that unfolds them.
-        case helperStub(parent: ChatThread, count: Int)
+        case helperStub(parent: ChatThread, helpers: [ChatThread])
     }
 
     let id: String
@@ -543,12 +587,14 @@ private extension AnyTransition {
 private struct ProjectRow: View {
     @Environment(AppModel.self) private var model
     let project: Project
+    /// What a folded project shows: its threads and the helpers under them, counted by the
+    /// list once for every row rather than here, per row, over the whole library.
+    let count: Int
     var togglesExpansion = true
 
     @State private var isMenuPresented = false
 
     var body: some View {
-        let count = model.threads(in: project).reduce(0) { $0 + 1 + model.helpers(of: $1.id).count }
         SidebarRow(
             title: project.name,
             accessoryWidth: 40,
@@ -699,13 +745,14 @@ private struct SidebarHelperRow: View {
 private struct HelperStubRow: View {
     @Environment(AppModel.self) private var model
     let parent: ChatThread
-    let count: Int
+    /// Handed in by the list, which groups every helper once per pass.
+    let helpers: [ChatThread]
     let action: () -> Void
 
     @State private var isHovering = false
 
     var body: some View {
-        let helpers = model.helpers(of: parent.id)
+        let count = helpers.count
         let working = helpers.contains { model.existingRuntime(for: $0.id)?.isRunning == true }
         // A team of heads is called that; a mix, or merges alone, stays "helpers".
         let noun = helpers.allSatisfy(\.isHydraHead) ? "head" : "helper"
@@ -890,10 +937,7 @@ private struct SidebarThreadRow: View {
                 } else if isDetailed || isSettled {
                     ActivityStatus(thread: thread)
                 } else {
-                    Text(verbatim: RelativeTime.short(thread.updatedAt))
-                        .font(.system(size: 11).monospacedDigit())
-                        .foregroundStyle(Chrome.secondaryText.opacity(0.8))
-                        .padding(.trailing, 4)
+                    RelativeTimeLabel(date: thread.updatedAt)
                 }
             }
             .padding(.trailing, 6)
@@ -1329,4 +1373,46 @@ private struct ActivityStatus: View {
 /// and only an archive tap ever reads it.
 private final class FrameHolder {
     var frame: CGRect = .zero
+}
+
+/// Every row's measured height, kept out of observation for the same reason: the list writes
+/// one on every layout pass, and only a drag reads them.
+private final class RowHeights {
+    var values: [String: CGFloat] = [:]
+}
+
+/// The minute hand behind the sidebar's relative times. One tick for the whole list, read by
+/// the time labels and nothing else, so an idle app keeps "3m" truthful without re-rendering
+/// the rows around it.
+@MainActor
+@Observable
+final class MinuteClock {
+    static let shared = MinuteClock()
+
+    private(set) var now = Date.now
+
+    @ObservationIgnored private var tick: Task<Void, Never>?
+
+    private init() {
+        tick = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self else { return }
+                self.now = .now
+            }
+        }
+    }
+}
+
+/// How long ago a thread was last active, at the trailing end of its row. A view of its own,
+/// so the minute's tick re-renders this label alone.
+private struct RelativeTimeLabel: View {
+    let date: Date
+
+    var body: some View {
+        Text(verbatim: RelativeTime.short(date, now: MinuteClock.shared.now))
+            .font(.system(size: 11).monospacedDigit())
+            .foregroundStyle(Chrome.secondaryText.opacity(0.8))
+            .padding(.trailing, 4)
+    }
 }

@@ -29,37 +29,6 @@ struct HydraPanel: View {
     /// Dismisses the panel; for a popped-out one, puts its head back in the team panel.
     let dismiss: () -> Void
 
-    /// Out of sight while a surface grows out of the button into the panel's shape. Opened
-    /// from the button, the panel starts unseen, so it never shows for a frame before the
-    /// surface sets off; its first layout starts the morph or, if none can run, shows it.
-    @State private var isArriving: Bool
-
-    init(
-        runtime: ThreadRuntime,
-        heads: [ChatThread],
-        size: CGSize,
-        workingDirectory: String?,
-        projectName: String?,
-        isPoppedOut: Bool = false,
-        onDrag: @escaping (CGSize) -> Void,
-        onDragEnd: @escaping () -> Void,
-        popOut: ((UUID) -> Void)? = nil,
-        dismiss: @escaping () -> Void
-    ) {
-        self.runtime = runtime
-        self.heads = heads
-        self.size = size
-        self.workingDirectory = workingDirectory
-        self.projectName = projectName
-        self.isPoppedOut = isPoppedOut
-        self.onDrag = onDrag
-        self.onDragEnd = onDragEnd
-        self.popOut = popOut
-        self.dismiss = dismiss
-        // Only the team panel grows out of the button; a popped-out head just appears.
-        _isArriving = State(initialValue: !isPoppedOut && runtime.hydraPanelMorphs)
-    }
-
     static let cornerRadius: CGFloat = 22
     private static let stripHeight: CGFloat = Chrome.chromeTopPadding + Chrome.capsuleHeight + 6
 
@@ -111,50 +80,6 @@ struct HydraPanel: View {
                 .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
                 .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
         }
-        .opacity(isArriving ? 0 : 1)
-        .onGeometryChange(for: CGRect.self, of: {
-            $0.frame(in: .named(GenieAnimator.coordinateSpace))
-        }) { frame in
-            // The morph runs to and from the team panel; the popped-out one just fades.
-            if !isPoppedOut {
-                runtime.hydraPanelFrameInWindow = frame
-                if runtime.hydraPanelMorphs { arrive(at: frame) }
-            }
-        }
-        .onDisappear {
-            // Gone into the button: the surface is on its way, and the next showing starts clean.
-            runtime.hydraPanelMorphs = false
-        }
-    }
-
-    /// Opened from the button, the panel appears where it will sit but stays out of sight
-    /// while a surface grows out of the button's circle into the panel's rounded rectangle,
-    /// there; the panel fades in under it as it lands. The panel's first layout is the
-    /// earliest the morph can start, since only then is the destination known. No morph,
-    /// no wait.
-    private func arrive(at frame: CGRect) {
-        runtime.hydraPanelMorphs = false
-        guard let button = runtime.hydraButtonFrameInWindow else {
-            isArriving = false
-            return
-        }
-        let isDark = colorScheme == .dark
-        let grew = GenieAnimator.shared.morph(
-            from: button, radius: button.height / 2,
-            to: frame, radius: Self.cornerRadius,
-            fadeIn: 0.08
-        ) { radius in
-            HydraPanelGhost(isDark: isDark, cornerRadius: radius)
-        }
-        guard grew else {
-            isArriving = false
-            return
-        }
-        isArriving = true
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(GenieAnimator.morphDuration - GenieAnimator.morphCrossfade))
-            withAnimation(.easeOut(duration: GenieAnimator.morphCrossfade)) { isArriving = false }
-        }
     }
 
     /// The handle across the top: the count and the head on stage at the left, the pop-out
@@ -165,6 +90,10 @@ struct HydraPanel: View {
                 if !isPoppedOut {
                     HydraHeadsButton(runtime: runtime, heads: heads, dismiss: dismiss)
                 }
+                // The head's stored record, not its live one: the strip sits over a
+                // streaming chat and shows only the name and the state, neither of which
+                // the runtime's progress changes. Reading that progress here would redraw
+                // the strip on every token the head spends.
                 if let selected, let info = selected.hydra {
                     HStack(spacing: 6) {
                         HydraGlyph(persona: info.persona, size: 16, isRunning: info.status == .running, status: info.status)
@@ -223,26 +152,6 @@ struct HydraPanel: View {
         }
         .animation(Chrome.panelSlide, value: selected?.id)
         .animation(Chrome.panelSlide, value: heads.count > 1)
-    }
-}
-
-/// The flat stand-in the Hydra panel becomes while it morphs out of or into the button:
-/// the panel's scrim, tint, hairline and shadow in its shape at whatever corner radius the
-/// morph has reached, minus its glass and transcript. Glass would sample the chat afresh
-/// on every frame of the morph, so the scrim stands in for it, a little denser to match.
-struct HydraPanelGhost: View {
-    let isDark: Bool
-    var cornerRadius: CGFloat = HydraPanel.cornerRadius
-
-    var body: some View {
-        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-        ZStack {
-            shape.fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.62 : 0.7))
-            shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
-            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
-        }
-        .compositingGroup()
-        .shadow(color: .black.opacity(isDark ? 0.7 : 0.4), radius: 22, y: 8)
     }
 }
 
@@ -342,7 +251,7 @@ private struct HydraHeadRow: View {
         if let stored = head.hydra {
             // A running native head's note and counts live on its runtime, off the thread
             // record; this row is the one view that follows them.
-            let info = model.existingRuntime(for: head.id).map { $0.hydraLiveInfo(stored) } ?? stored
+            let info = HydraLiveInfo.shown(stored, model.existingRuntime(for: head.id))
             HStack(spacing: 10) {
                 Button(action: select) {
                     HStack(spacing: 10) {
@@ -441,7 +350,7 @@ private struct HydraHeadTranscript: View {
                         JumpToLatestButton(scrollState: scrollState)
                     }
             } else if let stored = head.hydra {
-                HydraHeadFooter(info: runtime.hydraLiveInfo(stored))
+                HydraHeadFooter(info: HydraLiveInfo.shown(stored, runtime))
                     .overlay(alignment: .top) {
                         JumpToLatestButton(scrollState: scrollState)
                     }
@@ -484,6 +393,22 @@ private struct HydraHeadFooter: View {
         .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
         .padding(.horizontal, 20)
         .padding(.bottom, 14)
+    }
+}
+
+/// A running head's record with the live progress the panel actually prints on top of it.
+/// Deliberately not the runtime's own `hydraLiveInfo`, which also reads the live token
+/// total: no line in the panel shows tokens, and a provider reports them many times a
+/// second, so following them here would redraw the row and the footer on every token the
+/// head spends. The note and the step count are shown, so those are read.
+@MainActor
+enum HydraLiveInfo {
+    static func shown(_ stored: HydraHeadInfo, _ runtime: ThreadRuntime?) -> HydraHeadInfo {
+        guard stored.status == .running, let runtime else { return stored }
+        var info = stored
+        if let activity = runtime.hydraActivity { info.activity = activity }
+        info.toolCalls = max(info.toolCalls, runtime.hydraToolCalls)
+        return info
     }
 }
 

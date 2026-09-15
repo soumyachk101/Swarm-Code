@@ -74,7 +74,7 @@ private struct LinkPopoverContent: View {
             if let request {
                 PopoverItem(
                     request.title,
-                    text: Text("Merge").fontWeight(.semibold) + Text(verbatim: " \(request.label)"),
+                    text: Text("\(Text("Merge").fontWeight(.semibold)) \(Text(verbatim: request.label))"),
                     symbol: favicon == nil ? "arrow.triangle.merge" : nil,
                     image: favicon
                 ) {

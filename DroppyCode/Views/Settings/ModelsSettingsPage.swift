@@ -339,7 +339,11 @@ private struct ProviderModelsSection: View {
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(!isAdded && isFull)
+                                // A plain button does not dim itself; the same 0.35 as
+                                // every other disabled control on this page.
+                                .opacity(!isAdded && isFull ? 0.35 : 1)
                                 .help(isAdded ? "Remove from the picker" : (isFull ? "The picker holds up to \(AppSettings.modelListLimit) models" : "Add to the picker"))
+                                .accessibilityLabel(Text(isAdded ? "Remove \(option.shortName) from the picker" : "Add \(option.shortName) to the picker"))
                             }
                         }
                         }

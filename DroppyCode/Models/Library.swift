@@ -143,7 +143,10 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         model = container.value(.model, default: nil)
         effort = container.value(.effort, default: nil)
         fastMode = container.value(.fastMode, default: false)
-        runtimeMode = container.value(.runtimeMode, default: .fullAccess)
+        // `value` swallows a type mismatch as well as a missing key, so a mode that
+        // cannot be read falls back to the one that asks before it acts: a thread must
+        // never quietly come back from disk with full access to the machine.
+        runtimeMode = container.value(.runtimeMode, default: .supervised)
         interactionMode = container.value(.interactionMode, default: .build)
         worktreePath = container.value(.worktreePath, default: nil)
         branch = container.value(.branch, default: nil)

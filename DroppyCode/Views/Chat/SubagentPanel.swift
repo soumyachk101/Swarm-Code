@@ -200,6 +200,8 @@ struct SubagentPanel: View {
 
     @State private var scrollChrome = ChromeScrollModel()
     @State private var scrollState = TimelineScrollState()
+    /// Closing while the helper works stops its turn, so that one is asked for first.
+    @State private var isConfirmingClose = false
 
     private static let cornerRadius: CGFloat = 22
     private static let handleHeight: CGFloat = Chrome.chromeTopPadding + Chrome.capsuleHeight + 6
@@ -235,11 +237,19 @@ struct SubagentPanel: View {
                     .frame(height: Self.handleHeight)
                     .help("Drag to move")
                     .accessibilityLabel(Text("Drag to move"))
-                ChromeCircleButton(symbol: "xmark", help: "Close and stop this chat") {
-                    close()
+                // The same mark as the team panel's, which closes nothing that is working:
+                // this one ends a turn, so a helper still at it is asked about first.
+                ChromeCircleButton(
+                    symbol: "xmark",
+                    help: runtime.isRunning ? "Close this chat and stop its turn" : "Close this chat"
+                ) {
+                    if runtime.isRunning { isConfirmingClose = true } else { close() }
                 }
                 .padding(.top, Chrome.chromeTopPadding)
                 .padding(.trailing, Chrome.chromeHorizontalPadding)
+                .popover(isPresented: $isConfirmingClose, arrowEdge: .bottom) {
+                    ClosePanelPopover(title: thread.title) { close() }
+                }
             }
         }
         .frame(width: size.width, height: size.height)
@@ -267,6 +277,25 @@ struct SubagentPanel: View {
                 .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
                 .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
         }
+    }
+}
+
+/// What the helper panel's close mark asks while its turn is running, in the popover the
+/// sidebar's delete question uses: the stop is the destructive row, and clicking away keeps
+/// the helper working.
+private struct ClosePanelPopover: View {
+    let title: String
+    let onClose: () -> Void
+
+    var body: some View {
+        PopoverMenu {
+            PopoverSectionHeader("Stop this helper?")
+            PopoverNote("“\(title)” is still working. Closing the panel stops its turn. What it has done so far stays, and its chat moves to the sidebar under this one.")
+            PopoverDivider()
+            PopoverItem("Close and stop", symbol: "stop.circle", isDestructive: true) { onClose() }
+            PopoverItem("Keep it working", symbol: "arrow.uturn.backward") {}
+        }
+        .frame(width: 300)
     }
 }
 

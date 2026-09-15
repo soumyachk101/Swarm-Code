@@ -92,10 +92,33 @@ struct PopoverDivider: View {
     }
 }
 
+/// The close closure in a box with an identity. A closure can never compare equal to
+/// itself, so an environment value holding one bare tells SwiftUI that every reader of
+/// the environment is out of date on every update; a box compares by reference and only
+/// the popover's own host ever makes a new one.
+final class PopoverCloseBox: Equatable {
+    let close: @MainActor () -> Void
+
+    init(_ close: @escaping @MainActor () -> Void) {
+        self.close = close
+    }
+
+    static func == (lhs: PopoverCloseBox, rhs: PopoverCloseBox) -> Bool {
+        lhs === rhs
+    }
+}
+
 /// How a popover hosted by AppKit closes. SwiftUI's own popovers answer `dismiss`; one shown
 /// through an `NSPopover` sets this instead, and every row in it closes through it.
 extension EnvironmentValues {
-    @Entry var closePopover: (@MainActor () -> Void)?
+    @Entry var closePopoverBox: PopoverCloseBox?
+
+    /// Set and read as a plain closure; kept in the box above, which is what the rows
+    /// actually read, so they are not invalidated by every unrelated environment change.
+    var closePopover: (@MainActor () -> Void)? {
+        get { closePopoverBox?.close }
+        set { closePopoverBox = newValue.map(PopoverCloseBox.init) }
+    }
 }
 
 /// One row. Pass `isChecked` (true or false) for choice lists so every row keeps the checkmark column.
@@ -115,7 +138,7 @@ struct PopoverItem: View {
     let action: @MainActor () -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.closePopover) private var closePopover
+    @Environment(\.closePopoverBox) private var closePopoverBox
     @State private var isHovering = false
 
     init(
@@ -159,7 +182,7 @@ struct PopoverItem: View {
 
     var body: some View {
         Button {
-            if let closePopover { closePopover() } else { dismiss() }
+            if let close = closePopoverBox?.close { close() } else { dismiss() }
             // Runs after the popover closes, so an action that presents a sheet or alert is not swallowed.
             Task { @MainActor in action() }
         } label: {

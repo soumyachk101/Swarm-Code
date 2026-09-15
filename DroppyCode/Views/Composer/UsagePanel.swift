@@ -24,7 +24,7 @@ struct UsagePanel: View {
                         .monospacedDigit()
                 }
                 .font(.system(size: 13))
-                UsageBar(fraction: fraction, tint: Chrome.accent)
+                UsageBar(fraction: fraction, tint: Chrome.accent, label: "Context window")
                     .padding(.top, 10)
             }
 

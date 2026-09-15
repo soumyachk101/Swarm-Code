@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Where the app keeps its library, thread histories and attachments.
 enum Storage {
@@ -62,7 +63,11 @@ enum Storage {
 
     static func deleteDocument(_ id: UUID) {
         DocumentPrefetch.shared.forget(id)
-        try? FileManager.default.removeItem(at: threadURL(id))
+        let url = threadURL(id)
+        // A save of this thread may still be on its way to the writer. The file is marked
+        // gone first, so that save is dropped rather than writing the thread back.
+        DiskWriter.discard(url)
+        try? FileManager.default.removeItem(at: url)
     }
 
     /// Copies a file into app storage so a message keeps its attachment after the original moves.
@@ -181,8 +186,39 @@ final class DocumentPrefetch: @unchecked Sendable {
 actor DiskWriter {
     static let shared = DiskWriter()
 
+    /// The newest revision already written for each file. Two saves of the same file are
+    /// handed over as separate tasks and can reach the actor in either order, so a
+    /// snapshot a newer one has already passed is dropped rather than put back on disk.
+    private var written: [URL: UInt64] = [:]
+
+    /// The order two snapshots of the same file were taken in, counted where the caller
+    /// takes them rather than where they are written, and the files that have since been
+    /// deleted and must not come back.
+    private static let revisions = Mutex<[URL: UInt64]>([:])
+    private static let discarded = Mutex<Set<URL>>([])
+
+    static func nextRevision(for url: URL) -> UInt64 {
+        revisions.withLock { counters in
+            let next = (counters[url] ?? 0) + 1
+            counters[url] = next
+            return next
+        }
+    }
+
+    /// The file is gone for good: writes still on their way to it are dropped.
+    static func discard(_ url: URL) {
+        discarded.withLock { _ = $0.insert(url) }
+    }
+
     /// Encodes off the main actor, so saving a long thread never stalls the interface.
-    func encodeAndWrite<Value: Encodable & Sendable>(_ value: Value, to url: URL) {
+    /// A `revision` from `nextRevision(for:)` keeps two writes of the same file in the
+    /// order they were taken; revision 0 means the caller does not care.
+    func encodeAndWrite<Value: Encodable & Sendable>(_ value: Value, to url: URL, revision: UInt64 = 0) {
+        guard !Self.discarded.withLock({ $0.contains(url) }) else { return }
+        if revision > 0 {
+            guard revision > written[url, default: 0] else { return }
+            written[url] = revision
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]

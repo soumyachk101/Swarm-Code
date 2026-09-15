@@ -76,7 +76,17 @@ enum Shell {
                 }
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                if process.isRunning { process.terminate() }
+                guard process.isRunning else { return }
+                process.terminate()
+                // A process that ignores the signal, or one whose children hold the pipes
+                // open, would otherwise leave the caller waiting for ever: it is killed a
+                // few seconds later, and the caller hears back either way.
+                DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                        once.resume(throwing: ShellError("The command did not finish within \(Int(timeout)) seconds."))
+                    }
+                }
             }
         }
         let output = await collector.finished(within: 3)
@@ -96,6 +106,88 @@ enum Shell {
             throw ShellError("\(name) was not found on your PATH.")
         }
         return try await run(executable, arguments, in: directory, environment: environment, input: input, timeout: timeout)
+    }
+}
+
+/// Whether a shell command could change a file. Agents edit from the shell often enough
+/// that a command's timeline row takes its edits from a snapshot of the working tree
+/// before and after it, and each of those snapshots costs several git processes over the
+/// whole checkout. A command that only reads is not worth them. The list below is what is
+/// known to read; anything else counts as writing, so an edit is never missed.
+enum ShellCommandKind {
+    /// Tools that only ever read. Whatever is not here makes its whole command count as
+    /// writing, and so does a chain with one such part in it.
+    private static let readers: Set<String> = [
+        "ls", "cat", "bat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "tree",
+        "pwd", "echo", "printf", "which", "command", "type", "stat", "file", "du", "df",
+        "ps", "printenv", "date", "whoami", "hostname", "uname", "basename", "dirname",
+        "realpath", "readlink", "column", "uniq", "cut", "tr", "nl", "diff", "cmp", "jq",
+        "yq", "xxd", "od", "md5", "shasum", "cksum", "man", "true", "false", "sleep",
+        "cd", "pushd", "popd",
+    ]
+
+    /// Git subcommands that only report. Anything else git can do stays a writer.
+    private static let gitReaders: Set<String> = [
+        "log", "status", "diff", "show", "branch", "rev-parse", "rev-list", "ls-files",
+        "ls-tree", "blame", "remote", "describe", "shortlog", "cat-file", "tag", "config",
+        "grep", "whatchanged", "reflog", "for-each-ref", "symbolic-ref", "count-objects",
+        "var", "version", "help",
+    ]
+
+    /// Searches that run something of their own, which may well write.
+    private static let searchActions: Set<String> = ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-x", "-X"]
+
+    static func mayWriteFiles(_ text: String) -> Bool {
+        let command = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else { return false }
+        // Redirection writes whatever the tool in front of it does, and a substitution
+        // hides a command this cannot see.
+        guard !command.contains(">"), !command.contains("$("), !command.contains("`") else { return true }
+        for part in parts(of: command) where !onlyReads(part) { return true }
+        return false
+    }
+
+    /// A command line as the separate commands it runs. Quoting is not taken apart: a
+    /// separator inside a quoted argument splits the line into parts that read as
+    /// unfamiliar tools, which is the safe answer anyway.
+    private static func parts(of command: String) -> [String] {
+        var text = command
+        for separator in ["&&", "||", ";", "|", "\n", "&"] {
+            text = text.replacingOccurrences(of: separator, with: "\u{1}")
+        }
+        return text.split(separator: "\u{1}").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    private static func onlyReads(_ part: String) -> Bool {
+        let tokens = part.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let first = tokens.first else { return true }
+        let tool = (first as NSString).lastPathComponent
+        let arguments = Array(tokens.dropFirst())
+        switch tool {
+        case "sed":
+            let prints = arguments.contains { $0.hasPrefix("-") && !$0.hasPrefix("--") && $0.contains("n") }
+            let inPlace = arguments.contains { $0.hasPrefix("-i") || $0.hasPrefix("--in-place") }
+            return prints && !inPlace
+        case "awk", "gawk", "mawk":
+            // Redirection is already ruled out; awk can still shell out through system().
+            return !part.contains("system(")
+        case "find", "fd":
+            return !arguments.contains { searchActions.contains($0) }
+        case "sort":
+            return !arguments.contains { $0.hasPrefix("-o") }
+        case "git":
+            guard let subcommand = arguments.first(where: { !$0.hasPrefix("-") }) else { return true }
+            return gitReaders.contains(subcommand)
+        case "xcodebuild":
+            return arguments.contains { $0 == "-showBuildSettings" || $0 == "-list" || $0 == "-version" || $0 == "-showsdks" }
+        case "swift", "swiftc", "node", "npm", "python", "python3":
+            return arguments == ["--version"] || arguments == ["-version"] || arguments == ["-v"]
+        case "env":
+            // Bare env prints the environment; with a command after it, that command runs.
+            return arguments.allSatisfy { $0.hasPrefix("-") }
+        default:
+            return readers.contains(tool)
+        }
     }
 }
 

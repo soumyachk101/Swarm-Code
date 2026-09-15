@@ -16,6 +16,10 @@ extension AppModel {
               let runtime = existingRuntime(for: leadID), !runtime.isHydraMerging else { return }
         runtime.isHydraMerging = true
         defer { runtime.isHydraMerging = false }
+        // A head's work still going into the checkout finishes first: the snapshot the
+        // commit is built from must hold the patch whole or not at all. Landings that have
+        // not started yet wait for the merge instead (see `waitForSettledCheckout`).
+        await runtime.hydraLanding?.value
 
         let checkout = lead.worktreePath ?? project.path
         let git = Git(checkout)
@@ -29,13 +33,10 @@ extension AppModel {
             return
         }
 
-        // What the team touched: the lead's turns and the heads' landings. Only those
-        // paths go, so a sibling's uncommitted work in the same checkout stays behind.
-        var paths = Set(runtime.turns.flatMap { $0.touchedPaths ?? [] })
-        for head in hydraTeam(of: leadID) {
-            for file in head.hydra?.landing?.files ?? [] { paths.insert(file.path) }
-        }
-        let sorted = paths.sorted()
+        // What the team touched, and only that, so a sibling's uncommitted work in the
+        // same checkout stays behind.
+        let work = await hydraWork(of: leadID, runtime: runtime, checkout: checkout, git: git)
+        let sorted = work.paths
         guard !sorted.isEmpty else { return }
         // A head's landing can leave conflict markers behind (see `Git.apply`), and a lead
         // told not to look at git status may answer without settling them. Those markers
@@ -54,7 +55,9 @@ extension AppModel {
             guard try await tree != git.treeHash(of: "HEAD") else { return }
 
             let patch = (try? await git.diff(from: head, to: tree)) ?? ""
-            let files = DiffParser.parse(patch)
+            // A whole job's patch is big and parsing it counts every line: off the main
+            // actor, so the chat stays live while the work goes out.
+            let files = await Task.detached(priority: .utility) { DiffParser.parse(patch) }.value
             let message = await commitMessage(for: lead, files: files, patch: patch, directory: checkout)
             let subject = TextCleanup.singleLine(message, limit: 72)
 
@@ -66,7 +69,18 @@ extension AppModel {
             let ownBranch = current == nil || current == target
             let branch = ownBranch ? Self.hydraBranchName(for: lead) : current!
             let commit = try await git.commitWork(tree, parent: head, message: message)
-            try await git.updateRef("refs/heads/\(branch)", to: commit)
+            // Writing the branch to a commit built on `head` drops anything committed
+            // since: a minute passes here, and the user may have committed in a terminal.
+            // HEAD is read again so the user gets told in plain words when that happened,
+            // and the move itself names the value it expects, so git refuses the write
+            // outright if the branch shifts in the moment between the two.
+            guard try await git.commitHash() == head else {
+                note(leadID, "Hydra did not merge: the checkout moved while it worked.", "A commit landed on `\(current ?? target)` while the team's work was being prepared, and moving the branch now would orphan it. The work is still in the checkout; ask for the merge again.")
+                return
+            }
+            // A branch of its own must not exist yet; the checkout's own branch must still
+            // be where it was read.
+            try await git.updateRef("refs/heads/\(branch)", to: commit, expecting: ownBranch ? nil : head)
             if !ownBranch {
                 // The branch moved under the checkout: the index catches up, the working
                 // tree already has the content.
@@ -87,7 +101,14 @@ extension AppModel {
                 return
             }
 
+            // The work is on the default branch now, so these turns are spent: the next
+            // job merges what comes after them and never this again.
+            runtime.markHydraMerged(work.turnIDs)
+
             var lines = ["\(url.absoluteString)", "", Self.filesLine(files) + " landed on `\(target)` from `\(branch)`."]
+            if work.dropped > 0 {
+                lines.append("\(work.dropped == 1 ? "One file" : "\(work.dropped) files") the team wrote outside the checkout stayed where they are; only the project's own files can go out.")
+            }
             if ownBranch {
                 let synced = await syncDefaultBranch(git, from: head, target: target, ownPaths: sorted)
                 lines.append(synced ? "The checkout is up to date." : "The checkout was left as it was: `\(target)` moved on in other ways meanwhile, or the team's files changed again; `git pull` when it suits you.")
@@ -103,6 +124,60 @@ extension AppModel {
         } catch {
             note(leadID, "Hydra could not merge the team's work.", "\(error.localizedDescription)\n\nThe work is still in the checkout.")
         }
+    }
+
+    /// The files a lead's job changed, gathered three ways because no one way sees them
+    /// all:
+    ///
+    /// - the turns of this job, meaning the ones no merge has taken yet, and the paths
+    ///   they reported;
+    /// - the heads that worked alongside those turns: what a Droppy-run head landed, and,
+    ///   for a head the provider runs inside the lead's own session, the edits its own
+    ///   timeline reported. A native head works in this very checkout and lands nothing,
+    ///   so without its timeline its files are simply missing and the branch goes out
+    ///   half-written;
+    /// - and, where the first of those turns left a checkpoint, whatever else the checkout
+    ///   holds that it did not then, less whatever was already uncommitted at the time.
+    ///   That catches the edits no tool reported, a head writing through a shell say, and
+    ///   costs nothing for a file whose content matches HEAD anyway.
+    ///
+    /// Paths outside the checkout are dropped rather than passed on: a lead writes to its
+    /// own memory files, and `git add -A -- <path>` on one of those fails outright and
+    /// takes the whole merge with it.
+    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], dropped: Int) {
+        let turns = runtime.hydraUnmergedTurns
+        let startedAt = turns.first?.startedAt
+        var reported: [String] = turns.flatMap { $0.touchedPaths ?? [] }
+        for head in hydraTeam(of: leadID) {
+            guard let info = head.hydra else { continue }
+            // A head that had already finished before this job began went out with the
+            // merge before it; with nothing merged yet, every head still counts.
+            if let startedAt, let finished = info.finishedAt, finished < startedAt { continue }
+            reported += (info.landing?.files ?? []).map(\.path)
+            for entry in self.runtime(for: head.id).entries {
+                guard case .tool(let call) = entry.item.content else { continue }
+                reported += call.edits.map(\.path)
+            }
+        }
+
+        var paths = Set<String>()
+        var outside = Set<String>()
+        for path in reported where !path.isEmpty {
+            if let relative = TouchedPaths.relative(path, root: checkout) {
+                paths.insert(relative)
+            } else {
+                outside.insert(path)
+            }
+        }
+
+        if let base = turns.first?.baseCheckpoint,
+           let alreadyDirty = try? await git.changedPaths(from: "HEAD", to: base),
+           let now = try? await git.captureTree(),
+           let changedSince = try? await git.changedPaths(from: base, to: now) {
+            let theirs = Set(alreadyDirty)
+            paths.formUnion(changedSince.filter { !theirs.contains($0) })
+        }
+        return (paths.sorted(), turns.map(\.id), outside.count)
     }
 
     /// Brings the checkout's default branch up to the merge without touching the working
@@ -123,6 +198,10 @@ extension AppModel {
         for path in others {
             if await git.pathExists(path, in: remote) { kept.append(path) } else { gone.append(path) }
         }
+        // `reset --soft` moves the branch with no expected old value, so a commit made in
+        // a terminal while the merge ran would be left with nothing pointing at it. The
+        // checkout is left alone instead, and `git pull` is the user's to run.
+        guard (try? await git.commitHash()) == head else { return false }
         do {
             try await git.resetSoft(to: remote)
             try await git.resetIndex(paths: ownPaths)
@@ -164,7 +243,7 @@ extension AppModel {
         if !heads.isEmpty {
             lines.append("## Heads")
             for info in heads {
-                var line = "- **\(info.persona.name)** — \(TextCleanup.singleLine(info.task, limit: 120))"
+                var line = "- **\(info.persona.name)**: \(TextCleanup.singleLine(info.task, limit: 120))"
                 if let landing = info.landing, !landing.files.isEmpty {
                     line += " (\(landing.files.count == 1 ? "1 file" : "\(landing.files.count) files"))"
                 }

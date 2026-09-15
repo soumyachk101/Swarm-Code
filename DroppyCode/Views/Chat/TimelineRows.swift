@@ -213,9 +213,9 @@ struct UserBubble: Shape {
 struct AttachmentStrip: View {
     let attachments: [Attachment]
 
-    /// One preview panel for the strip, so every photo opens in a single tap
-    /// no matter how many are attached.
-    @State private var preview = AttachmentPreviewCoordinator()
+    /// One preview panel for the strip, so every photo opens in a single tap no matter
+    /// how many are attached, and made on the first tap rather than with the row.
+    @State private var preview = AttachmentPreviewSlot()
 
     var body: some View {
         // A plain stack hugs the thumbnails, so a trailing-aligned row keeps the
@@ -236,25 +236,50 @@ struct AttachmentStrip: View {
 struct AttachmentThumbnail: View {
     let attachment: Attachment
     var size: CGFloat = 56
-    let preview: AttachmentPreviewCoordinator
+    /// The panel the photo opens in: either a slot, which makes its panel on the first
+    /// tap, or one the caller already holds. A strip that scrolls with the conversation
+    /// wants the slot; the composer's own strips, which are made once, take either.
+    private let slot: AttachmentPreviewSlot?
+    private let panel: AttachmentPreviewCoordinator?
 
     @State private var image: CGImage?
     /// The thumbnail's own NSView, handed to the panel on tap so the arrow
-    /// lands on the tapped photo rather than the strip's middle.
+    /// lands on the tapped photo rather than the strip's middle. Mounted once the
+    /// pointer has been on the photo: a tap always follows a hover, and a strip
+    /// scrolling past should not be building views for a tap that never comes.
     @State private var ownAnchor = WeakView()
+    @State private var needsAnchor = false
+
+    init(attachment: Attachment, size: CGFloat = 56, preview: AttachmentPreviewSlot) {
+        self.init(attachment: attachment, size: size, slot: preview, panel: nil)
+    }
 
     init(attachment: Attachment, size: CGFloat = 56, preview: AttachmentPreviewCoordinator) {
+        self.init(attachment: attachment, size: size, slot: nil, panel: preview)
+    }
+
+    private init(attachment: Attachment, size: CGFloat, slot: AttachmentPreviewSlot?, panel: AttachmentPreviewCoordinator?) {
         self.attachment = attachment
         self.size = size
-        self.preview = preview
+        self.slot = slot
+        self.panel = panel
         // A photo shown before starts out drawn, so scrolling back to it never fades it in again.
         _image = State(initialValue: attachment.isImage ? ThumbnailMemory.image(for: attachment.path, pointSize: size) : nil)
     }
 
+    /// Opens (or closes) the panel for this photo, making one only now if the caller
+    /// handed over a slot.
+    private func togglePanel() {
+        if let slot {
+            slot.panel.toggle(attachment, over: ownAnchor.value)
+        } else {
+            panel?.toggle(attachment, over: ownAnchor.value)
+        }
+    }
+
     var body: some View {
         Button {
-            StripLog.log.notice("thumb tap id=\(attachment.id) name=\(attachment.name, privacy: .public)")
-            preview.toggle(attachment, over: ownAnchor.value)
+            togglePanel()
         } label: {
             if attachment.isImage {
                 ZStack {
@@ -290,8 +315,13 @@ struct AttachmentThumbnail: View {
         // pinning the hit shape to the cell keeps the neighbour's remove badge
         // reachable no matter how hit-testing treats the overflow.
         .contentShape(.rect(cornerRadius: 12, style: .continuous))
+        .onHover { hovering in
+            if hovering, !needsAnchor { needsAnchor = true }
+        }
         .background {
-            AttachmentAnchorCapture { ownAnchor.value = $0 }
+            if needsAnchor {
+                AttachmentAnchorCapture { ownAnchor.value = $0 }
+            }
         }
         .task(id: attachment.path) {
             guard attachment.isImage else { return }
@@ -502,11 +532,16 @@ struct ToolRow: View {
     var workingDirectory: String?
     @State private var isExpanded = false
     /// The row's label (icon through chevron), so the changes popover hangs from the
-    /// text that was tapped. The row itself spans the column, and a popover anchored
-    /// on it centred itself on the empty half with its arrow pointing at nothing.
-    @State private var popoverAnchor = WeakView()
-    /// The image the agent looked at, in the same large preview a sent photo opens in.
-    @State private var imagePreview = AttachmentPreviewCoordinator()
+    /// text that was tapped, and the panel that shows an image the agent looked at.
+    /// Both are made on first use: a thread holds hundreds of tool rows, and building a
+    /// popover and an anchor view for each of them is work the scroll pays for a panel
+    /// almost none of them ever opens.
+    @State private var preview = AttachmentPreviewSlot()
+    /// Whether the pointer has been on the row's label, which is when its anchor view is
+    /// mounted. A click always follows a hover, and hovering is off while the timeline
+    /// scrolls, so a row scrolling past never mounts one. Once mounted it stays: a popover
+    /// is positioned against this view, and taking it away under an open one closes it.
+    @State private var needsAnchor = false
 
     var body: some View {
         if case .tool(let call) = entry.item.content {
@@ -521,81 +556,96 @@ struct ToolRow: View {
             let showsOutput = !opensDiff && (!call.output.isEmpty || !(call.detail ?? "").isEmpty)
             let opensImage = imagePath != nil && (call.kind == .read || !showsOutput)
             let opensPopover = opensDiff || opensImage
+            // A call with no change to show, no image and no output of its own has
+            // nothing to open. Rendered as a line of text rather than a control, so the
+            // pointer and VoiceOver both treat it as what it is.
+            let isTappable = opensPopover || showsOutput
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
-                Button {
-                    if opensDiff {
-                        guard let view = popoverAnchor.value else { return }
-                        runtime.showDiff(on: view, edge: .minY, turn: entry.turnID, focusEdits: edits)
-                    } else if opensImage, let imagePath {
-                        imagePreview.toggle(PreviewImages.attachment(for: imagePath), over: popoverAnchor.value, edge: .minY)
-                    } else if showsOutput {
-                        withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
+                if isTappable {
+                    Button {
+                        if opensDiff {
+                            guard let view = preview.anchor.value else { return }
+                            runtime.showDiff(on: view, edge: .minY, turn: entry.turnID, focusEdits: edits)
+                        } else if opensImage, let imagePath {
+                            preview.panel.toggle(PreviewImages.attachment(for: imagePath), over: preview.anchor.value, edge: .minY)
+                        } else {
+                            withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
+                        }
+                    } label: {
+                        line(call: call, imagePath: imagePath, opensPopover: opensPopover, showsOutput: showsOutput)
+                            .contentShape(.rect)
                     }
-                } label: {
-                    HStack(spacing: TimelineMetrics.iconSpacing) {
-                        HStack(spacing: TimelineMetrics.iconSpacing) {
-                            // A row that sent out a head wears the head's glyph and name.
-                            let head = call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
-                            if let head {
-                                HydraGlyph(persona: head.persona, size: 14, isRunning: call.status == .running && head.status == .running, status: head.status)
-                                    .frame(width: TimelineMetrics.iconWidth)
-                            } else {
-                                ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)
-                            }
-                            // One text run after the icon, so the row reads as
-                            // icon + space + text instead of three spaced items.
-                            Text(head.map { "\(call.status == .running ? "Sending out" : "Sent out") \($0.persona.name): \(call.title)" } ?? ToolPresentation.label(for: call))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            if let stats = ToolPresentation.stats(for: call) {
-                                DiffStatLabel(additions: stats.additions, deletions: stats.deletions)
-                            }
-                            // Beside the subject, not out at the trailing edge: the chevron
-                            // belongs to the row's own text.
-                            if opensPopover {
-                                Image(systemName: "chevron.down")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                            } else if showsOutput {
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2.weight(.semibold))
-                                    .foregroundStyle(.tertiary)
-                                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            }
-                        }
-                        .background {
-                            if opensPopover {
-                                AttachmentAnchorCapture {
-                                    popoverAnchor.value = $0
-                                    imagePreview.setAnchor($0)
-                                }
-                            }
-                        }
-                        Spacer(minLength: 8)
-                        if call.status == .failed, let exitCode = call.exitCode {
-                            Text("exit \(exitCode)")
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(Chrome.danger)
-                        } else if call.status == .declined {
-                            Text("Declined")
-                                .font(.caption)
-                                .foregroundStyle(Chrome.warning)
-                        }
-                    }
-                    .font(.callout)
-                    .padding(.trailing, 12)
-                    .contentShape(.rect)
+                    .buttonStyle(.plain)
+                    .help(helpText(opensDiff: opensDiff, opensImage: opensImage, showsOutput: showsOutput))
+                } else {
+                    line(call: call, imagePath: imagePath, opensPopover: opensPopover, showsOutput: showsOutput)
                 }
-                .buttonStyle(.plain)
-                .help(helpText(opensDiff: opensDiff, opensImage: opensImage, showsOutput: showsOutput))
                 if isExpanded, showsOutput, !opensImage {
                     ToolDetailView(call: call, workingDirectory: workingDirectory)
                         .padding(.trailing, 12)
                 }
             }
-            .onDisappear { imagePreview.close() }
+            .onDisappear { preview.close() }
         }
+    }
+
+    /// The row itself: icon, text, stats and chevron, laid out the same whether or not
+    /// the line can be tapped.
+    @ViewBuilder
+    private func line(call: ToolCall, imagePath: String?, opensPopover: Bool, showsOutput: Bool) -> some View {
+        HStack(spacing: TimelineMetrics.iconSpacing) {
+            HStack(spacing: TimelineMetrics.iconSpacing) {
+                // A row that sent out a head wears the head's glyph and name.
+                let head = call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
+                if let head {
+                    HydraGlyph(persona: head.persona, size: 14, isRunning: call.status == .running && head.status == .running, status: head.status)
+                        .frame(width: TimelineMetrics.iconWidth)
+                } else {
+                    ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)
+                }
+                // One text run after the icon, so the row reads as
+                // icon + space + text instead of three spaced items.
+                Text(head.map { "\(call.status == .running ? "Sending out" : "Sent out") \($0.persona.name): \(call.title)" } ?? ToolPresentation.label(for: call))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let stats = ToolPresentation.stats(for: call) {
+                    DiffStatLabel(additions: stats.additions, deletions: stats.deletions)
+                }
+                // Beside the subject, not out at the trailing edge: the chevron
+                // belongs to the row's own text.
+                if opensPopover {
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                } else if showsOutput {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+            }
+            .onHover { hovering in
+                if hovering, !needsAnchor { needsAnchor = true }
+            }
+            .background {
+                if opensPopover, needsAnchor {
+                    AttachmentAnchorCapture { preview.setAnchor($0) }
+                }
+            }
+            Spacer(minLength: 8)
+            if call.status == .failed, let exitCode = call.exitCode {
+                Text("exit \(exitCode)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Chrome.danger)
+            } else if call.status == .declined {
+                Text("Declined")
+                    .font(.caption)
+                    .foregroundStyle(Chrome.warning)
+            }
+        }
+        .font(.callout)
+        .padding(.trailing, 12)
     }
 
     private func helpText(opensDiff: Bool, opensImage: Bool, showsOutput: Bool) -> String {
@@ -801,13 +851,19 @@ struct PlanCard: View {
                 } else {
                     MarkdownView(text: plan.markdown, isStreaming: plan.state == .drafting).equatable()
                 }
-                if plan.state == .proposed, runtime.pendingPlanApproval == nil, !runtime.isRunning {
+                if plan.state == .proposed {
+                    // The controls stay where they are while the thread is busy, greyed
+                    // rather than gone: a plan whose buttons vanish mid-turn reads as a
+                    // plan that has already been dealt with.
+                    let isBusy = runtime.pendingPlanApproval != nil || runtime.isRunning
                     HStack(spacing: 8) {
                         Button("Implement plan") { runtime.implementPlan(entry.id) }
                             .buttonStyle(.glassProminent)
                         Button("Dismiss") { runtime.dismissPlan(entry.id) }
                             .buttonStyle(.glass)
                     }
+                    .disabled(isBusy)
+                    .help(isBusy ? "Wait for the current turn to finish" : "")
                     .padding(.top, 2)
                 }
             }
@@ -887,19 +943,21 @@ struct NoticeRow: View {
         }
     }
 
+    /// The theme's own status colours, like every other warning and failure in the app,
+    /// rather than the system orange and red.
     private static func color(for level: Notice.Level) -> Color {
         switch level {
         case .info: .secondary
-        case .warning: .orange
-        case .error: .red
+        case .warning: Chrome.warning
+        case .error: Chrome.danger
         }
     }
 
     private static func background(for level: Notice.Level) -> Color {
         switch level {
         case .info: .clear
-        case .warning: .orange.opacity(0.1)
-        case .error: .red.opacity(0.1)
+        case .warning: Chrome.warning.opacity(0.1)
+        case .error: Chrome.danger.opacity(0.1)
         }
     }
 }
@@ -980,9 +1038,11 @@ struct TurnFinishedBlock: View {
             for entry in content {
                 switch entry.kind {
                 case .assistant:
-                    // A message still streaming when its turn failed can be blank.
+                    // A message still streaming when its turn failed can be blank. Asked
+                    // character by character, which stops at the first word: trimming made
+                    // a second copy of every reply in the turn on every render of the block.
                     guard case .assistant(let message) = entry.item.content,
-                          !message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                          message.text.contains(where: { !$0.isWhitespace }) else { continue }
                     assistantEntries.append(entry)
                     answerEntries.append(entry)
                     hasResponse = true
@@ -1122,7 +1182,11 @@ private struct TurnFileCard: View {
     let onUndo: () -> Void
     /// Receives the Review button's own view, for the popover to open on.
     let onReview: (NSView) -> Void
+    /// The Review button's own view, captured once the pointer has been on it: a folded
+    /// turn is a block of the lazy stack, and the anchor is only ever for a click, which
+    /// has to hover the button first.
     @State private var reviewAnchor = WeakView()
+    @State private var needsReviewAnchor = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -1162,8 +1226,13 @@ private struct TurnFileCard: View {
                     onReview(view)
                 }
                 .buttonStyle(.glass)
+                .onHover { hovering in
+                    if hovering, !needsReviewAnchor { needsReviewAnchor = true }
+                }
                 .background {
-                    AttachmentAnchorCapture { reviewAnchor.value = $0 }
+                    if needsReviewAnchor {
+                        AttachmentAnchorCapture { reviewAnchor.value = $0 }
+                    }
                 }
                 .help("Show this turn's changes")
             }

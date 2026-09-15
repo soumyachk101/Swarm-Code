@@ -199,20 +199,32 @@ struct WindowBackdrop: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous)
         let isDark = colorScheme == .dark
-        shape
-            .fill(.clear)
-            .glassEffect(in: shape)
-            .overlay {
+        let opacity = model.settings.backdropOpacity
+        // At the solid end of the slider the scrim covers the glass completely, and a
+        // Liquid Glass surface the size of the window is a full-window sample on every
+        // frame anything over it moves. There it draws as a plain fill instead; the
+        // scrim, the tint and the hairline stay exactly as they are.
+        let isSolid = opacity >= 0.98
+        Group {
+            if isSolid {
+                shape.fill(isDark ? Color.black : Color.white)
+            } else {
                 shape
-                    .fill(isDark ? Color.black : Color.white)
-                    .opacity(Self.scrim(for: model.settings.backdropOpacity, isDark: isDark))
+                    .fill(.clear)
+                    .glassEffect(in: shape)
+                    .overlay {
+                        shape
+                            .fill(isDark ? Color.black : Color.white)
+                            .opacity(Self.scrim(for: opacity, isDark: isDark))
+                    }
             }
-            .overlay {
-                shape.fill(Chrome.glassTint.opacity(0.12))
-            }
-            .overlay {
-                shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
-            }
+        }
+        .overlay {
+            shape.fill(Chrome.glassTint.opacity(0.12))
+        }
+        .overlay {
+            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
+        }
     }
 }
 
@@ -670,6 +682,10 @@ struct SidebarSearchField: View {
     @Binding var text: String
     var prompt = "Search"
     var onSubmit: () -> Void = {}
+    /// Up and down walk the results, one step per press. Last, so a bare trailing closure
+    /// still means `onSubmit`. Left out where there is no list under the field, and the
+    /// arrows are then the field's own again.
+    var onMove: ((Int) -> Void)?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -681,6 +697,8 @@ struct SidebarSearchField: View {
                 .font(.system(size: 13))
                 .frame(maxWidth: .infinity)
                 .onSubmit(onSubmit)
+                .onKeyPress(.upArrow) { move(-1) }
+                .onKeyPress(.downArrow) { move(1) }
             if !text.isEmpty {
                 Button {
                     text = ""
@@ -699,6 +717,14 @@ struct SidebarSearchField: View {
             Capsule(style: .continuous).fill(Chrome.overlay(0.07))
         }
         .contentShape(Capsule(style: .continuous))
+        // Escape empties the field, the way the chrome's search capsule does.
+        .onExitCommand { text = "" }
+    }
+
+    private func move(_ offset: Int) -> KeyPress.Result {
+        guard let onMove else { return .ignored }
+        onMove(offset)
+        return .handled
     }
 }
 

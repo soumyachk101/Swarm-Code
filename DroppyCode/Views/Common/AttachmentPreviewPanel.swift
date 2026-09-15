@@ -1,13 +1,5 @@
 import AppKit
-import os
 import SwiftUI
-
-/// Temporary tap tracing for the strip saga. Remove once taps are proven.
-/// `.notice` on purpose: debug/info never hit the persisted log store, so
-/// `log show` after a live run would come back empty.
-enum StripLog {
-    static let log = Logger(subsystem: "iordv.droppycode", category: "strip")
-}
 
 /// One attachment preview panel per thumbnail strip. A custom NSPopover (not
 /// SwiftUI's `.popover`) because SwiftUI resolves several sibling popovers to
@@ -55,7 +47,6 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     /// `edge` is where the panel opens: above the anchor for a photo in a message, below
     /// a tool row whose chevron points down (`.minY` is below in these flipped views).
     func toggle(_ attachment: Attachment, over view: NSView? = nil, edge: NSRectEdge = .maxY) {
-        StripLog.log.notice("toggle id=\(attachment.id) name=\(attachment.name, privacy: .public) shown=\(self.popover.isShown)")
         if currentID == attachment.id, popover.isShown {
             close()
         } else {
@@ -74,10 +65,7 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         let content = AttachmentLargePreview(attachment: attachment, imageSize: imageSize)
         let size = Self.contentSize(for: attachment, imageSize: imageSize)
         currentID = attachment.id
-        guard let (anchor, rect) = anchorTarget(thumbnailView: view, edge: edge) else {
-            StripLog.log.notice("show BLOCKED id=\(attachment.id) anchorNil=\(self.anchor?.value == nil)")
-            return
-        }
+        guard let (anchor, rect) = anchorTarget(thumbnailView: view, edge: edge) else { return }
         // The panel is sized here, once, and the hosting controller never
         // publishes a size of its own (see setFixedContent): the only size
         // AppKit ever positions against is this one, so the arrow stays on the
@@ -86,7 +74,6 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         // Already open for another photo: re-showing a shown popover moves it
         // above the tapped photo, and the content swap is the backstop so the
         // new photo shows even if a reposition were ever ignored.
-        StripLog.log.notice("show \(self.popover.isShown ? "swap" : "open", privacy: .public) id=\(attachment.id) size=\(size.debugDescription, privacy: .public)")
         popover.setFixedContent(content, size: size)
         if !popover.isShown { startMonitors() }
         popover.show(relativeTo: rect, of: anchor, preferredEdge: edge)
@@ -108,15 +95,12 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
             // A hairline on the edge the panel opens from, at the tap's x.
             let y = edge == .minY ? strip.bounds.minY : strip.bounds.maxY - 1
             let rect = NSRect(x: point.x - 1, y: y, width: 2, height: 1)
-            StripLog.log.notice("show anchor=tap stripFrame=\(strip.frame.debugDescription, privacy: .public)")
             return (strip, rect)
         }
         if let thumbnailView, thumbnailView.window != nil {
-            StripLog.log.notice("show anchor=thumb thumbFrame=\(thumbnailView.frame.debugDescription, privacy: .public)")
             return (thumbnailView, thumbnailView.bounds)
         }
         if let strip = anchor?.value, strip.window != nil {
-            StripLog.log.notice("show anchor=strip stripFrame=\(strip.frame.debugDescription, privacy: .public)")
             return (strip, strip.bounds)
         }
         return nil
@@ -198,6 +182,44 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
 final class WeakView {
     weak var value: NSView?
     init(_ value: NSView? = nil) { self.value = value }
+}
+
+/// A row's preview panel, and the view it hangs from, built only once the row needs them.
+///
+/// A row holds this in `@State`, and SwiftUI builds a row's state defaults every time the
+/// row struct is made, not once per row on screen: a coordinator written as the default
+/// made an `NSPopover` for every tool row on every rebuild of the timeline, hundreds at a
+/// time, for a panel almost none of them ever shows. This box is a pointer and a weak
+/// pointer; the panel behind it is made the first time one is opened.
+@MainActor
+final class AttachmentPreviewSlot {
+    /// The view the panel anchors to, captured while the row is under the pointer.
+    let anchor = WeakView()
+    private var coordinator: AttachmentPreviewCoordinator?
+
+    var panel: AttachmentPreviewCoordinator {
+        if let coordinator { return coordinator }
+        let made = AttachmentPreviewCoordinator()
+        if let view = anchor.value { made.setAnchor(view) }
+        coordinator = made
+        return made
+    }
+
+    func setAnchor(_ view: NSView) {
+        anchor.value = view
+        coordinator?.setAnchor(view)
+    }
+
+    /// Closes a panel that was opened. A slot that never made one does nothing.
+    func close() {
+        coordinator?.close()
+    }
+
+    /// Forgets a panel whose attachment has left the draft. Nothing to forget until one
+    /// has been opened, so a slot that never made a panel does nothing here either.
+    func retire(except ids: Set<Attachment.ID>) {
+        coordinator?.retire(except: ids)
+    }
 }
 
 /// Captures the strip's own NSView so the preview panel can anchor to it.

@@ -46,31 +46,38 @@ struct ModelEffortButton: View {
     var body: some View {
         let registry = model.providers
         let current = registry.model(thread.model, for: thread.provider)
+        // The pair this chat leads with, while Hydra is on: the chip wears its mark, so a
+        // chat that leads a team says so without opening anything.
+        let pair = model.hydraIsOn(thread) ? model.hydraPair(for: thread) : nil
         Button {
             isPresented.toggle()
         } label: {
             HStack(spacing: 5) {
                 ProviderIcon(provider: thread.provider, size: 14)
+                if pair != nil {
+                    HydraMarkImage()
+                        .foregroundStyle(Chrome.primaryText.opacity(0.85))
+                        .frame(width: 12, height: 12)
+                }
                 if thread.fastMode, current?.supportsFast == true {
                     Image(systemName: "bolt.fill")
                         .font(Chrome.inlineIconFont)
                         .foregroundStyle(.yellow)
                 }
                 if !compact {
-                    if isPresented {
-                        Text("Select effort")
+                    // The chip keeps the model and effort while its popover is open: they
+                    // are what the popover edits, and a label that swapped for "Select
+                    // effort" resized the chip under the popover's own arrow. The open
+                    // state reads from the chip style's active look instead.
+                    Text(verbatim: current?.chipName ?? thread.model ?? thread.provider.displayName)
+                        .foregroundStyle(Chrome.primaryText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let current, !current.efforts.isEmpty {
+                        Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
+                            .foregroundStyle(Chrome.primaryText.opacity(0.72))
                             .lineLimit(1)
-                    } else {
-                        Text(verbatim: current?.chipName ?? thread.model ?? thread.provider.displayName)
-                            .foregroundStyle(Chrome.primaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        if let current, !current.efforts.isEmpty {
-                            Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
-                                .foregroundStyle(Chrome.primaryText.opacity(0.72))
-                                .lineLimit(1)
-                                .fixedSize()
-                        }
+                            .fixedSize()
                     }
                     Image(systemName: "chevron.down")
                         .font(Chrome.chevronFont)
@@ -78,9 +85,9 @@ struct ModelEffortButton: View {
                 }
             }
         }
-        .buttonStyle(.chip)
-        .help(helpText(current: current))
-        .accessibilityLabel(Text(helpText(current: current)))
+        .buttonStyle(.chip(active: isPresented))
+        .help(helpText(current: current, pair: pair))
+        .accessibilityLabel(Text(helpText(current: current, pair: pair)))
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ModelEffortPanel(threadID: thread.id, hasHistory: hasHistory)
         }
@@ -93,18 +100,22 @@ struct ModelEffortButton: View {
         .task(id: thread.provider) { await registry.loadCatalog(thread.provider) }
     }
 
-    /// The full model and effort, for the tooltip and VoiceOver when the chip shows only the icon.
-    private func helpText(current: ModelOption?) -> String {
-        let name = current?.shortName ?? thread.model ?? thread.provider.displayName
-        guard let current, !current.efforts.isEmpty else { return name }
-        let effort = ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? "")
-        return "\(name) · \(effort)"
+    /// The full model and effort, plus the pair the chat leads with, for the tooltip and
+    /// VoiceOver when the chip shows only the icon.
+    private func helpText(current: ModelOption?, pair: HydraPair?) -> String {
+        var parts = [current?.shortName ?? thread.model ?? thread.provider.displayName]
+        if let current, !current.efforts.isEmpty {
+            parts.append(ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
+        }
+        if let pair { parts.append(HydraPairSummary.title(pair, registry: model.providers)) }
+        return parts.joined(separator: " · ")
     }
 }
 
 /// The popover behind the chip: the slider, or the model list when its title is tapped.
 private struct ModelEffortPanel: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
     let threadID: UUID
     let hasHistory: Bool
 
@@ -117,6 +128,14 @@ private struct ModelEffortPanel: View {
                     ModelList(thread: thread, hasHistory: hasHistory) { entry in
                         choose(entry, for: thread)
                         showsModels = false
+                    } onEnterPair: { pair in
+                        // Entering a pair settles the chat's model, effort and Hydra in one
+                        // go, so there is nothing left to choose here: the popover closes.
+                        if !model.leadsWithHydraPair(pair, thread: thread) {
+                            model.enterHydraPair(pair, for: thread.id)
+                        }
+                        showsModels = false
+                        dismiss()
                     } onBack: {
                         showsModels = false
                     }
@@ -197,13 +216,24 @@ struct ModelList: View {
     let thread: ChatThread
     let hasHistory: Bool
     let onChoose: (ModelCatalog.Entry) -> Void
+    /// Left out where the list is only shown, as in the website captures.
+    var onEnterPair: (HydraPair) -> Void = { _ in }
     let onBack: () -> Void
+
+    /// A pair row carries two lines, like a model row with its provider under it.
+    private static let pairRowHeight: CGFloat = 46
+    /// What `PopoverSectionHeader` takes: an 11 pt line with its own padding above and below.
+    private static let sectionHeaderHeight: CGFloat = 22
 
     var body: some View {
         let entries = ModelCatalog.entries(model, including: thread)
+        let pairs = model.hydraPickerPairs
         let showsProviders = Set(entries.map(\.provider)).count > 1
         // Fixed row heights let the popover size itself in one pass instead of measuring and resizing.
         let rowHeight: CGFloat = showsProviders || (hasHistory && entries.contains { $0.provider != thread.provider }) ? 46 : 34
+        // The pairs section is part of that one pass: its two headers and its rows are
+        // counted here, so the popover opens at the size it keeps.
+        let pairsHeight = pairs.isEmpty ? 0 : Self.sectionHeaderHeight * 2 + CGFloat(pairs.count) * (Self.pairRowHeight + 1)
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Button(action: onBack) {
@@ -226,6 +256,22 @@ struct ModelList: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
+                    if !pairs.isEmpty {
+                        PopoverSectionHeader("Pairs")
+                        ForEach(pairs) { pair in
+                            let locked = hasHistory && pair.provider != thread.provider
+                            HydraPairListRow(
+                                title: HydraPairSummary.title(pair, registry: model.providers),
+                                detail: locked ? "New chats only" : detail(for: pair),
+                                rowHeight: Self.pairRowHeight,
+                                isSelected: model.leadsWithHydraPair(pair, thread: thread),
+                                isEnabled: !locked
+                            ) {
+                                onEnterPair(pair)
+                            }
+                        }
+                        PopoverSectionHeader("Models")
+                    }
                     ForEach(entries) { entry in
                         let locked = hasHistory && entry.provider != thread.provider
                         ModelListRow(
@@ -248,9 +294,74 @@ struct ModelList: View {
                 }
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(height: min(CGFloat(max(entries.count, 1)) * (rowHeight + 1), 440))
+            .frame(height: min(pairsHeight + CGFloat(max(entries.count, 1)) * (rowHeight + 1), 440))
         }
         .padding(6)
+        .task {
+            // A pair on another provider names its models from that provider's catalogue,
+            // which this chat may never have loaded.
+            for provider in Set(pairs.map(\.provider)) where provider != thread.provider {
+                await model.providers.loadCatalog(provider)
+            }
+        }
+    }
+
+    /// The line under a pair's title: the provider, then what its heads run on.
+    private func detail(for pair: HydraPair) -> String {
+        let workers = HydraPairSummary.workers(pair, registry: model.providers)
+        return "\(pair.provider.displayName) · \(workers.prefix(1).lowercased())\(workers.dropFirst())"
+    }
+}
+
+/// One Hydra pair in the model picker: the Hydra mark, who leads whom, and the provider
+/// with the heads' model under it. Tapping it puts the chat in the pair.
+private struct HydraPairListRow: View {
+    let title: String
+    let detail: String
+    let rowHeight: CGFloat
+    let isSelected: Bool
+    let isEnabled: Bool
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                HydraMarkImage()
+                    .foregroundStyle(Chrome.primaryText)
+                    .frame(width: 14, height: 14)
+                    .frame(width: 18)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(verbatim: title)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Chrome.primaryText)
+                        .lineLimit(1)
+                    Text(verbatim: detail)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 12)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Chrome.primaryText)
+                    .opacity(isSelected ? 1 : 0)
+            }
+            .padding(.horizontal, 10)
+            .frame(height: rowHeight)
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(isHovering && isEnabled ? Chrome.overlay(0.1) : Color.clear)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.45)
+        .onHover { hovering in
+            withAnimation(Chrome.hover) { isHovering = hovering }
+        }
     }
 }
 

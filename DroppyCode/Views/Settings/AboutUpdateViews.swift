@@ -531,8 +531,9 @@ private struct AboutIdentityPill: View {
     }
 }
 
-/// The one control of the update story. Three faces: the green seal while up to date, the blue
-/// Update & restart button while a release waits, and the slider while it installs.
+/// The one control of the update story. The blue Update & restart button while a release
+/// waits, the slider while it installs, and otherwise what the last check actually found:
+/// the green seal, a warning when the check failed, or a plain note before the first one.
 private struct AboutVersionPill: View {
     private let checker = UpdateChecker.shared
     private let progress = UpdateInstallProgress.shared
@@ -540,6 +541,44 @@ private struct AboutVersionPill: View {
 
     private var isReady: Bool {
         checker.updateAvailable && checker.update != nil && !progress.showsProgressUI
+    }
+
+    /// What the pill says when it is not the install button. The seal used to claim "Up to
+    /// date" even when GitLab had never answered, or had answered with an error.
+    private enum Standing {
+        case upToDate
+        case failed
+        case unchecked
+
+        var symbol: String {
+            switch self {
+            case .upToDate: "checkmark.seal.fill"
+            case .failed: "exclamationmark.triangle.fill"
+            case .unchecked: "clock"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .upToDate: "Up to date"
+            case .failed: "Check failed"
+            case .unchecked: "Not checked yet"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .upToDate: Chrome.success
+            case .failed: Chrome.warning
+            case .unchecked: Chrome.secondaryText
+            }
+        }
+    }
+
+    private var standing: Standing {
+        if checker.lastError != nil { return .failed }
+        if checker.lastCheckedAt == nil { return .unchecked }
+        return .upToDate
     }
 
     var body: some View {
@@ -570,10 +609,10 @@ private struct AboutVersionPill: View {
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(Chrome.blue)
                         } else {
-                            Image(systemName: "checkmark.seal.fill")
+                            Image(systemName: standing.symbol)
                                 .font(Chrome.inlineIconFont)
-                                .foregroundStyle(Chrome.success)
-                            Text("Up to date")
+                                .foregroundStyle(standing.tint)
+                            Text(verbatim: standing.title)
                                 .font(.system(size: 12, weight: .semibold))
                                 .foregroundStyle(Chrome.primaryText)
                         }
@@ -595,7 +634,11 @@ private struct AboutVersionPill: View {
                 .buttonStyle(.plain)
                 .allowsHitTesting(isReady)
                 .chromeGlassCapsule()
-                .help(isReady ? "Installs Droppy Code \(checker.update?.version ?? "") and relaunches" : "")
+                // The seal is not a button, but it is still worth saying what it means
+                // rather than showing an empty tooltip.
+                .help(isReady
+                    ? "Installs Droppy Code \(checker.update?.version ?? "") and relaunches"
+                    : standingHelp)
                 .accessibilityLabel(Text(accessibilityLabel))
                 .accessibilityAddTraits(isReady ? .isButton : [])
             }
@@ -607,8 +650,17 @@ private struct AboutVersionPill: View {
         return progress.phase == .celebrating ? 0.72 : 0.3
     }
 
+    /// The seal is not a button, but it is still worth saying what it means.
+    private var standingHelp: String {
+        switch standing {
+        case .upToDate: "Droppy Code \(AppInfo.version) is the latest version"
+        case .failed: checker.lastError ?? "The last check did not reach GitLab"
+        case .unchecked: "Droppy Code has not asked GitLab for a release yet"
+        }
+    }
+
     private var accessibilityLabel: String {
-        isReady ? "Update & restart" : "Droppy Code \(AppInfo.version), up to date"
+        isReady ? "Update & restart" : "Droppy Code \(AppInfo.version), \(standing.title.lowercased())"
     }
 }
 
