@@ -30,7 +30,10 @@ xcodebuild \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED" \
   -skipPackagePluginValidation \
-  build 2>&1 | tail -n 5
+  CODE_SIGN_IDENTITY="-" \
+  CODE_SIGN_STYLE="Manual" \
+  DEVELOPMENT_TEAM="" \
+  build
 
 step "Installing the single copy to $TARGET"
 # Atomic swap: move running bundle aside so ditto installs the fresh build immediately

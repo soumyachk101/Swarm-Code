@@ -1143,8 +1143,7 @@ enum DisplayBlock: Identifiable, Equatable {
 
     /// Whether the timeline already ends with the merge's outcome note, so the merging
     /// pill has already become the merged report and must not linger as a second row.
-    /// Merge notes are Hydra's own (no heads behind them) and titled "Hydra …"; a head's
-    /// landing or patch note leads with the head's name instead.
+    @MainActor
     private static func endsWithMergeOutcome(_ entries: [TimelineEntry]) -> Bool {
         guard let last = entries.last, case .user(let message) = last.item.content,
               message.isFromHydra, (message.hydraHeads ?? []).isEmpty else { return false }
