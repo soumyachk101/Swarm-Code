@@ -864,16 +864,38 @@ struct AssistantMessageRow: View {
     /// Select-text mode: one AppKit view for the whole reply, since SwiftUI's
     /// `.textSelection` stops at each paragraph and a drag cannot span them.
     @State private var isSelecting = false
+    /// Where a drag on the reply began, in the reply's own space: the selectable view
+    /// takes the selection up from there, so a drag across paragraphs just works without
+    /// the menu's Select text first.
+    @State private var dragSelection: SelectableMessageText.DragOrigin?
 
     var body: some View {
         if case .assistant(let message) = entry.item.content {
             VStack(alignment: .leading, spacing: 2) {
-                if isSelecting {
-                    SelectableMessageText(text: message.text, pointSize: pointSize * zoom)
+                ZStack(alignment: .topLeading) {
+                    if isSelecting {
+                        SelectableMessageText(text: message.text, pointSize: pointSize * zoom, dragOrigin: dragSelection) {
+                            // Clicking elsewhere ends the mode; the markdown blocks come back.
+                            isSelecting = false
+                            dragSelection = nil
+                        }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
+                    } else {
+                        MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
+                            // A drag on a finished reply selects across the whole of it: the
+                            // blocks swap for the selectable view, which carries the drag on.
+                            .simultaneousGesture(
+                                DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.replySpace))
+                                    .onChanged { value in
+                                        guard !isSelecting, !message.isStreaming else { return }
+                                        dragSelection = SelectableMessageText.DragOrigin(start: value.startLocation, current: value.location)
+                                        isSelecting = true
+                                    },
+                                including: message.isStreaming ? .subviews : .all
+                            )
+                    }
                 }
+                .coordinateSpace(name: Self.replySpace)
                 // One side for both kinds of message: the summary sits on the trailing
                 // edge, where the copy control used to be.
                 HStack(spacing: 8) {
@@ -884,9 +906,12 @@ struct AssistantMessageRow: View {
                     }
                     Spacer(minLength: 8)
                     if isSelecting {
-                        Button("Done") { isSelecting = false }
-                            .buttonStyle(.glass)
-                            .controlSize(.small)
+                        Button("Done") {
+                            isSelecting = false
+                            dragSelection = nil
+                        }
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
                     }
                 }
                 // Pinned to the hover line's room, so the row keeps it (and the gap math
@@ -903,16 +928,26 @@ struct AssistantMessageRow: View {
             // the controls fill the gap below instead of adding to it. (2 = the
             // VStack's spacing above them.)
             .padding(.bottom, -(TimelineMetrics.hoverLineHeight + 2))
-            .onExitCommand { if isSelecting { isSelecting = false } }
+            .onExitCommand {
+                if isSelecting {
+                    isSelecting = false
+                    dragSelection = nil
+                }
+            }
             .onChange(of: menuRequests.selectText) { _, asked in
                 guard asked else { return }
                 // The menu posts the intent, the row takes it up: select mode swaps the
                 // markdown blocks for one selectable view until Done or Escape.
                 menuRequests.selectText = false
+                dragSelection = nil
                 isSelecting = true
             }
         }
     }
+
+    /// The reply's own coordinate space: a drag's points map straight onto the
+    /// selectable view, which sits at the same origin.
+    private static let replySpace = "assistantReply"
 
     /// The context menu's items, from value snapshots with weak captures: the AppKit menu
     /// outlives the right-click, so its callbacks must not retain the row.

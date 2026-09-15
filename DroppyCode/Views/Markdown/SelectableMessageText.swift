@@ -5,8 +5,19 @@ import SwiftUI
 /// SwiftUI `Text` per block, so a drag stays inside a paragraph; this hosts the whole
 /// reply in one `NSTextView`, where a drag spans paragraphs and Cmd-A / Cmd-C work.
 struct SelectableMessageText: NSViewRepresentable {
+    /// A drag that began on the markdown blocks and is still under way: where it started
+    /// and where the pointer was when the blocks swapped for this view, in this view's
+    /// own coordinates. The selection picks up from the start and follows the mouse.
+    struct DragOrigin: Equatable {
+        let start: CGPoint
+        let current: CGPoint
+    }
+
     let text: String
     var pointSize: CGFloat = 13
+    var dragOrigin: DragOrigin? = nil
+    /// The view stopped being first responder (a click elsewhere): select mode is over.
+    var onResign: (() -> Void)? = nil
 
     func makeNSView(context: Context) -> SelectableMessageTextView {
         SelectableMessageTextView()
@@ -14,6 +25,10 @@ struct SelectableMessageText: NSViewRepresentable {
 
     func updateNSView(_ view: SelectableMessageTextView, context: Context) {
         view.render(Self.attributed(text, pointSize: pointSize))
+        view.onResign = onResign
+        if let dragOrigin {
+            view.continueDrag(dragOrigin)
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SelectableMessageTextView, context: Context) -> CGSize? {
@@ -234,6 +249,11 @@ final class SelectableMessageTextView: NSTextView {
     /// The view owns its text storage (see `LinkTextView`): a bare container keeps
     /// nothing alive behind it and the view comes out blank.
     private let storage = NSTextStorage()
+    /// The drag taken over from the markdown blocks, until the mouse goes up.
+    private var dragMonitor: Any?
+    private var dragAnchor: Int?
+    private var takenDrag: SelectableMessageText.DragOrigin?
+    var onResign: (() -> Void)?
 
     init() {
         let layoutManager = NSLayoutManager()
@@ -274,6 +294,69 @@ final class SelectableMessageTextView: NSTextView {
     }
 
     override var acceptsFirstResponder: Bool { true }
+
+    override func resignFirstResponder() -> Bool {
+        let resigns = super.resignFirstResponder()
+        if resigns { onResign?() }
+        return resigns
+    }
+
+    /// Takes up a drag that began on the markdown blocks: the selection anchors where
+    /// the drag started, runs to where the pointer is now, and follows every drag event
+    /// until the mouse goes up. The events come through a monitor, since the mouse went
+    /// down on a view that is gone. A drag already taken up is left alone.
+    func continueDrag(_ origin: SelectableMessageText.DragOrigin) {
+        guard takenDrag != origin else { return }
+        takenDrag = origin
+        endDragMonitor()
+        let anchor = characterIndexForInsertion(at: origin.start)
+        dragAnchor = anchor
+        select(to: origin.current)
+        // The mouse is already up: the selection stands as it is.
+        guard NSEvent.pressedMouseButtons & 1 != 0 else { return }
+        dragMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp]) { [weak self] event in
+            guard let self else { return event }
+            if event.type == .leftMouseUp {
+                self.endDragMonitor()
+            } else if let window = self.window, event.window == window {
+                self.select(to: self.convert(event.locationInWindow, from: nil))
+                self.autoscroll(with: event)
+            }
+            return event
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else {
+            endDragMonitor()
+            return
+        }
+        // Select mode is for selecting: the view takes the keys (Cmd-A, Cmd-C) as it
+        // appears, whether a drag or the menu brought it. After the update that put it
+        // on screen, not during it, since the chat box gives focus up in the same move.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.window, window.firstResponder !== self else { return }
+            window.makeFirstResponder(self)
+        }
+    }
+
+    isolated deinit {
+        endDragMonitor()
+    }
+
+    private func select(to point: NSPoint) {
+        guard let anchor = dragAnchor else { return }
+        let index = characterIndexForInsertion(at: point)
+        setSelectedRange(NSRange(location: min(anchor, index), length: abs(index - anchor)))
+    }
+
+    private func endDragMonitor() {
+        if let dragMonitor {
+            NSEvent.removeMonitor(dragMonitor)
+            self.dragMonitor = nil
+        }
+    }
 
     /// New content; skips the layout pass when nothing changed.
     func render(_ text: NSAttributedString) {
