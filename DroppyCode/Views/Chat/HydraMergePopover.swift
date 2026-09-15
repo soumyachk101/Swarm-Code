@@ -100,14 +100,16 @@ struct HydraMergePopover: View {
                 stat(value: "+\(note.additions)", label: "added", tint: Chrome.success)
                 stat(value: "−\(note.deletions)", label: "removed", tint: Chrome.danger)
             }
+            // The branch chip spans whatever the arrow and the target leave, so the row
+            // runs the card's full width and the name only shortens once it truly cannot fit.
             HStack(spacing: 6) {
-                chip(note.branch)
-                    .frame(maxWidth: 230, alignment: .leading)
+                chip(note.branch, fills: true)
                     .help(note.branch)
                 Image(systemName: "arrow.right")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Chrome.secondaryText)
                 chip(note.target)
+                    .fixedSize()
             }
             ForEach(Array(note.notes.enumerated()), id: \.offset) { _, entry in
                 HStack(alignment: .top, spacing: 6) {
@@ -165,7 +167,8 @@ struct HydraMergePopover: View {
     }
 
     /// A branch name as a capsule, since branch names read as names rather than prose.
-    private func chip(_ name: String) -> some View {
+    /// A filling chip stretches its capsule across the width it is given.
+    private func chip(_ name: String, fills: Bool = false) -> some View {
         Text(verbatim: name)
             .font(.system(size: 11, design: .monospaced))
             .foregroundStyle(Chrome.primaryText.opacity(0.9))
@@ -173,6 +176,7 @@ struct HydraMergePopover: View {
             .truncationMode(.middle)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
+            .frame(maxWidth: fills ? .infinity : nil, alignment: .leading)
             .background(Capsule(style: .continuous).fill(Chrome.overlay(0.1)))
     }
 }

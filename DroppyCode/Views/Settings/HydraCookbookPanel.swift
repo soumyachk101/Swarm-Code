@@ -94,11 +94,16 @@ private struct HydraCookbookRow: View {
                     .foregroundStyle(Chrome.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
                 if let pair {
+                    // A same-provider pair with no efforts set has nothing to say here; an empty
+                    // Text would still take a line and leave the row with blank space below it.
                     let providersLine: String? = pair.headsProvider == pair.provider ? nil : "\(pair.provider.displayName) lead, \(pair.headsProvider.displayName) heads"
-                    Text(verbatim: [providersLine, HydraPairSummary.efforts(pair)].compactMap { $0 }.joined(separator: " · "))
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.secondaryText.opacity(0.8))
-                        .lineLimit(2)
+                    let detail = [providersLine, HydraPairSummary.efforts(pair)].compactMap { $0 }.joined(separator: " · ")
+                    if !detail.isEmpty {
+                        Text(verbatim: detail)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText.opacity(0.8))
+                            .lineLimit(2)
+                    }
                 } else if let missing {
                     Text(verbatim: "Set up \(missing.displayName) to add this pair.")
                         .font(.system(size: 11))
