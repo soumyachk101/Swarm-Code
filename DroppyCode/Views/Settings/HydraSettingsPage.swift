@@ -86,7 +86,7 @@ struct HydraSettingsPage: View {
                     }
                 }
             }
-            Text("Each chat leads with the pair for its provider: the one whose lead model the chat runs, else one for any model. Every pair also sits at the top of the composer's model picker, where a tap puts the chat in it with Hydra on.")
+            Text("Each chat leads with the pair for its provider: the one whose lead model the chat runs, else one for any model. Every pair also sits at the top of the composer's model picker, where a tap puts the chat in it with Hydra on; a model picked there takes the chat back out, with Hydra off.")
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.secondaryText)
                 .padding(.horizontal, 4)

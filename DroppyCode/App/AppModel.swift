@@ -35,11 +35,11 @@ final class AppModel {
     /// lookups go through the cells below, so the timeline rows, composer and chat header of one
     /// thread are left alone when another thread's title, status or unread flag changes.
     private(set) var projects: [Project] = [] {
-        didSet { Self.sync(&projectCells, with: projects) }
+        didSet { Self.write(Self.sync(&projectCells, with: projects)) }
     }
     private(set) var threads: [ChatThread] = [] {
         didSet {
-            Self.sync(&threadCells, with: threads)
+            Self.write(Self.sync(&threadCells, with: threads))
             syncChildCells()
         }
     }
@@ -86,8 +86,8 @@ final class AppModel {
             threads[index].hydra?.finishedAt = .now
         }
         // Property observers stay quiet inside an initializer, so the cells are built here once.
-        Self.sync(&projectCells, with: projects)
-        Self.sync(&threadCells, with: threads)
+        Self.write(Self.sync(&projectCells, with: projects))
+        Self.write(Self.sync(&threadCells, with: threads))
         syncChildCells()
         autoContinue = AutoContinue(app: self)
         if let lastID = settings.lastProjectID, project(lastID) == nil {
@@ -97,25 +97,38 @@ final class AppModel {
 
     /// Mirrors a list into its cells: values that changed are written to their cell (and only
     /// those, so an untouched item's observers never fire), new items get a cell, and a removed
-    /// item's cell is emptied before it goes, so whoever was showing it re-renders to nothing.
+    /// item's cell is emptied as it goes, so whoever was showing it re-renders to nothing.
+    ///
+    /// Only the dictionary is settled here; the cell writes are handed back for `write` to make
+    /// once the caller's exclusive access to the dictionary is over. A cell write is observed,
+    /// and inside `withAnimation` SwiftUI rebuilds the menu bar's commands on the spot, from
+    /// within the write: they read the selected thread back through `thread(_:)`, which traps
+    /// on exclusivity if the dictionary is still borrowed then.
     private static func sync<Value: Identifiable & Equatable>(
         _ cells: inout [Value.ID: ObservedValue<Value?>],
         with values: [Value]
-    ) {
+    ) -> [(cell: ObservedValue<Value?>, value: Value?)] {
+        var writes: [(cell: ObservedValue<Value?>, value: Value?)] = []
         var seen = Set<Value.ID>(minimumCapacity: values.count)
         for value in values {
             seen.insert(value.id)
             if let cell = cells[value.id] {
-                if cell.value != value { cell.value = value }
+                if cell.value != value { writes.append((cell, value)) }
             } else {
                 cells[value.id] = ObservedValue(value)
             }
         }
-        guard cells.count != seen.count else { return }
+        guard cells.count != seen.count else { return writes }
         for (id, cell) in cells where !seen.contains(id) {
-            cell.value = nil
+            writes.append((cell, nil))
             cells[id] = nil
         }
+        return writes
+    }
+
+    /// Makes the writes `sync` handed back, with no access to the cell dictionaries open.
+    private static func write<Value>(_ writes: [(cell: ObservedValue<Value?>, value: Value?)]) {
+        for (cell, value) in writes { cell.value = value }
     }
 
     /// Mirrors who hangs under whom into the child cells, with the same no-op-write
