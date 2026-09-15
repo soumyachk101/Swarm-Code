@@ -81,10 +81,12 @@ extension AppModel {
         provider == .claude || provider == .codex || provider == .copilot
     }
 
-    /// The pair a chat leads with: the best fit for its provider and model now.
+    /// The pair a chat leads with: the one picked for it in the composer's model picker,
+    /// for as long as the chat stays on that pair's provider. A chat with none leads its
+    /// heads on its own model and effort; no pair applies to a chat on its own.
     func hydraPair(for thread: ChatThread) -> HydraPair? {
-        if let pair = settings.hydraPair(thread.hydraPairID), pair.provider == thread.provider { return pair }
-        return settings.hydraPair(for: thread.provider, model: thread.model)
+        guard let pair = settings.hydraPair(thread.hydraPairID), pair.provider == thread.provider else { return nil }
+        return pair
     }
 
     /// The provider a pair's heads go out on, as far as this Mac can run it: a heads'

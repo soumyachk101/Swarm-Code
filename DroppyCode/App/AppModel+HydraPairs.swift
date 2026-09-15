@@ -1,11 +1,11 @@
 import Foundation
 
-// A pair set up in Settings is somewhere a chat can go, not only a rule it falls under:
-// the composer's model picker lists every pair that is ready to run, and one tap puts the
-// chat in it. Entering a pair is the same move as choosing a model, with the pair's lead
-// model and effort instead of a single model, the pair pinned to the chat, and Hydra on.
-// Choosing a model from the rows below the pairs is the move back out: the pair is
-// unpinned and Hydra goes off.
+// A pair set up in Settings is somewhere a chat goes, not a rule it falls under: with Hydra
+// on, the composer's model picker lists every pair that is ready to run, and one tap puts
+// the chat in it. Entering a pair is the same move as choosing a model, with the pair's
+// lead model and effort instead of a single model and the pair pinned to the chat; a chat
+// made from it carries the pair along. Choosing a model from the rows below the pairs is
+// the move back out: the chat is on that model alone, its heads on it too, Hydra as it was.
 
 extension AppModel {
     /// The pairs the model picker offers: the ones whose provider is installed and
@@ -14,12 +14,10 @@ extension AppModel {
         settings.hydraPairs.filter { providers.status($0.provider).isInstalled && settings.isEnabled($0.provider) }
     }
 
-    /// Whether a chat leads with this pair right now: Hydra on, the chat on the pair's
-    /// provider, and the pair's lead model the chat's own or any model at all.
+    /// Whether a chat leads with this pair right now: Hydra on, and the pair the one picked
+    /// for the chat, which is still on its provider. Exactly one pair, or none, at a time.
     func leadsWithHydraPair(_ pair: HydraPair, thread: ChatThread) -> Bool {
-        guard hydraIsOn(thread), thread.provider == pair.provider else { return false }
-        guard let lead = pair.orchestratorModel else { return true }
-        return lead == thread.model
+        hydraIsOn(thread) && thread.hydraPairID == pair.id && thread.provider == pair.provider
     }
 
     /// Puts a chat in a pair from the model picker: it switches to the pair's provider and
@@ -67,14 +65,10 @@ extension AppModel {
     }
 
     /// Takes a chat out of the pair it leads with, when a model is chosen from the picker's
-    /// model rows: the reverse of `enterHydraPair`. The pinned pair goes, and if the chat
-    /// would still fall under a pair for its provider (see `hydraPair(for:)`), Hydra goes
-    /// off for the app: a model row is the choice of a model on its own, and the chip would
-    /// otherwise keep wearing the pair's mark. With no pair on the provider there is nothing
-    /// to leave, and Hydra stays as Settings has it.
+    /// model rows: the reverse of `enterHydraPair`. The chat is on that model alone, with
+    /// no pair's mark on its chip; Hydra stays as Settings has it, its heads on the chat's
+    /// own model and effort until a pair is picked again.
     func leaveHydraPair(for threadID: UUID) {
         updateThread(threadID) { $0.hydraPairID = nil }
-        guard let thread = thread(threadID), hydraIsOn(thread), hydraPair(for: thread) != nil else { return }
-        settings.hydraEnabled = false
     }
 }

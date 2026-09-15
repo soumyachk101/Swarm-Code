@@ -70,7 +70,7 @@ struct HydraSettingsPage: View {
         ChromeSection(title: "Pairs") {
             ChromeCard {
                 if settings.hydraPairs.isEmpty {
-                    ChromeRow(title: "No pairs yet", detail: "Heads run on the chat's own model and effort until a pair says otherwise.") {
+                    ChromeRow(title: "No pairs yet", detail: "Heads run on the chat's own model and effort until a chat is put in a pair.") {
                         HydraAddPairButton()
                     }
                 } else {
@@ -86,7 +86,7 @@ struct HydraSettingsPage: View {
                     }
                 }
             }
-            Text("Each chat leads with the pair for its provider: the one whose lead model the chat runs, else one for any model. Every pair also sits at the top of the composer's model picker, where a tap puts the chat in it with Hydra on; a model picked there takes the chat back out, with Hydra off.")
+            Text("With Hydra on, every pair sits at the top of the composer's model picker: a tap puts the chat in it, and a chat made from that one carries the pair along. A model picked there takes the chat back out, its heads on its own model and effort. The effort slider sets the lead's effort while the chat leads a pair.")
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.secondaryText)
                 .padding(.horizontal, 4)
