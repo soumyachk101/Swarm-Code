@@ -359,7 +359,7 @@ struct ComposerView: View {
         guard !runtime.draft.isEmpty else { return }
         historyIndex = nil
         suggestions = SuggestionState()
-        if runtime.isRunning,
+        if runtime.canQueue,
            ShortcutStore.shared.chord(for: .queueChat) == KeyChord(keyCode: 36, modifiers: .command) {
             runtime.queueDraftAsFollowUp()
         } else {
@@ -628,7 +628,7 @@ private struct SendButton: View {
             return parts.joined(separator: " · ")
         }
         var parts = [goesToHead ? "Send to a head (Return) · the lead reports back" : "Send (Return)"]
-        if let queues { parts.append("\(queues) queues while running") }
+        if let queues { parts.append(runtime.hasWorkingHeads ? "\(queues) queues until the heads report" : "\(queues) queues while running") }
         return parts.joined(separator: " · ")
     }
 }

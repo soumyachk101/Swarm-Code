@@ -413,6 +413,31 @@ extension AppModel {
         // An API session is memory only, and keeping it is what lets the head be steered
         // on with its brief and its work still in mind; a process goes, and resumes by id.
         if !head.provider.isAPIKeyBased { headRuntime?.stopSession() }
+        // A head that died at the door, before a tool ran (the agent's own store locked
+        // while several started at once, or its process gone before a word), is started
+        // again on its brief after a short pause rather than reported as failed: the lead
+        // never hears of a head that only stumbled on the way out. Two more goes, then it
+        // reports the failure.
+        if status == .failed, Self.isLaunchFailure(report), let headRuntime,
+           headRuntime.entries.contains(where: { $0.kind == .tool }) == false,
+           hydraHeadRetries[head.id, default: 0] < 2,
+           let brief = headRuntime.entries.first(where: { $0.kind == .user }).flatMap({ entry -> String? in
+               guard case .user(let message) = entry.item.content else { return nil }
+               return message.text
+           }) {
+            hydraHeadRetries[head.id, default: 0] += 1
+            let attempt = hydraHeadRetries[head.id, default: 0]
+            let pause = Double(attempt) * 2 + Double(info.index % 4) * 0.5
+            Task {
+                try? await Task.sleep(for: .seconds(pause))
+                // Stopped from the panel, or steered on by hand, meanwhile: leave it.
+                guard let headRuntime = existingRuntime(for: head.id), !headRuntime.isRunning,
+                      thread(head.id)?.hydra?.status == .running else { return }
+                headRuntime.draft = ComposerDraft(text: brief, attachments: [])
+                headRuntime.send()
+            }
+            return
+        }
         Task {
             // Only finished work lands: a stopped or failed head keeps its half-done edits
             // in its copy, where a later turn can carry on from them.
@@ -429,6 +454,14 @@ extension AppModel {
             if thread(head.id)?.hydra?.isFinished == true { updateHydraHead(head.id) { $0.status = .running } }
             finishHydraHead(head.id, status: status, summary: report, landing: landing)
         }
+    }
+
+    /// Whether a head's failure report is the agent failing to get going at all, rather
+    /// than anything about the task: its store locked, no session, or the process gone.
+    private static func isLaunchFailure(_ report: String) -> Bool {
+        let text = report.lowercased()
+        return ["database is locked", "database locked", "sqlite_busy", "did not start a session", "the agent exited", "stopped unexpectedly"]
+            .contains { text.contains($0) }
     }
 
     /// Carries what changed in a head's copy since its base into the lead's checkout: the

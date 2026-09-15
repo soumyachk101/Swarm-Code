@@ -21,10 +21,20 @@ import SwiftUI
 enum WebsiteCaptures {
     nonisolated static let outputDirectory: URL? = {
         let arguments = CommandLine.arguments
-        guard let index = arguments.firstIndex(of: "--website-captures"),
-              arguments.indices.contains(index + 1) else { return nil }
-        return URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
+        for flag in ["--website-captures", "--tour-captures"] {
+            if let index = arguments.firstIndex(of: flag),
+               arguments.indices.contains(index + 1) {
+                return URL(fileURLWithPath: arguments[index + 1], isDirectory: true)
+            }
+        }
+        return nil
     }()
+
+    nonisolated static var isTourRun: Bool {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--tour-captures") else { return false }
+        return arguments.indices.contains(index + 1)
+    }
 
     nonisolated static var isEnabled: Bool { outputDirectory != nil }
 
@@ -43,6 +53,9 @@ enum WebsiteCaptures {
     /// The composer's model chip, captured by the chip itself, so the slider and the
     /// switcher popovers hang from the real control.
     static var modelChipAnchor: WeakView?
+    /// Where each thread's composer chip sits in the window (SwiftUI's global space, which
+    /// is the hosting view's flipped coordinates), for a popover hung from the window itself.
+    static var modelChipFrames: [UUID: CGRect] = [:]
 
     /// Wallpaper around the window in every capture, in points.
     static let margin: CGFloat = 72
@@ -64,7 +77,7 @@ enum WebsiteCaptures {
 
     // MARK: - Mock data
 
-    private enum ID {
+    enum ID {
         static let droppyCode = UUID(uuidString: "A0000000-0000-4000-8000-000000000001")!
         static let site = UUID(uuidString: "A0000000-0000-4000-8000-000000000002")!
         static let ios = UUID(uuidString: "A0000000-0000-4000-8000-000000000003")!
@@ -110,6 +123,7 @@ enum WebsiteCaptures {
         if let data = try? JSONEncoder().encode(pins) { defaults.set(data, forKey: "modelList") }
         defaults.synchronize()
 
+        if isTourRun { defaults.set(true, forKey: "hydraEnabled") }
         let repos = output.appendingPathComponent("repos", isDirectory: true)
         var library = Library()
         library.projects = [
@@ -136,6 +150,9 @@ enum WebsiteCaptures {
             thread(ID.liveActivity, ID.ios, "Live Activity for Pomodoro", .claude, "opus", "high", age: 3 * day, status: .completed, now),
             thread(ID.widgets, ID.ios, "Widget snapshots", .antigravity, "gemini-3.8-flash", "high", age: 6 * day, status: .completed, now),
         ]
+        if isTourRun {
+            TourCaptures.addHydraMocks(to: &library, storageRoot: root, repos: repos, now: now)
+        }
         write(library, to: root.appendingPathComponent("library.json"))
 
         write(composerHistory(now), to: root.appendingPathComponent("threads/\(ID.composer.uuidString).json"))
@@ -167,7 +184,10 @@ enum WebsiteCaptures {
         return project
     }
 
-    private static func thread(
+    static let composerThreadID = ID.composer
+    static let freshThreadID = ID.fresh
+
+    static func thread(
         _ id: UUID, _ projectID: UUID, _ title: String, _ provider: ProviderKind, _ model: String?, _ effort: String?,
         age: TimeInterval, status: TurnStatus?, _ now: Date, plan: Bool = false, unread: Bool = false
     ) -> ChatThread {
@@ -290,6 +310,7 @@ enum WebsiteCaptures {
     // MARK: - Run
 
     static func run(model: AppModel) async {
+        if isTourRun { await TourCaptures.run(model: model); return }
         guard let output = outputDirectory else { return }
         // A capture call that never returns must not leave a recording process behind: the
         // run quits after its budget no matter where it is.
@@ -338,7 +359,7 @@ enum WebsiteCaptures {
 
     /// The composer thread mid-turn: reasoning, a read, an edit, the to-dos, a build running
     /// and the reply streaming in. Ends still running, so the working line stays.
-    private static func editingScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder) async {
+    static func editingScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder, film: Bool = true) async {
         log("scene editingScene")
         model.selectedThreadID = ID.composer
         // The sidebar's other pulse.
@@ -348,7 +369,7 @@ enum WebsiteCaptures {
         try? await Task.sleep(for: .milliseconds(900))
 
         let runtime = model.runtime(for: ID.composer)
-        await recorder.startFilm("editing", stage.captureRect)
+        if film { await recorder.startFilm("editing", stage.captureRect) }
         try? await Task.sleep(for: .milliseconds(600))
         runtime.rehearseTurn(
             "The draft photo in the composer should sit as far from the top as it does from the left.",
@@ -385,7 +406,7 @@ enum WebsiteCaptures {
         runtime.rehearse(.messageCompleted(id: "m1", text: ""))
         runtime.noteDiffChanged()
         try? await Task.sleep(for: .milliseconds(1_400))
-        await recorder.stopFilm()
+        if film { await recorder.stopFilm() }
         await recorder.still("editing", stage.captureRect)
     }
 
@@ -593,7 +614,7 @@ enum WebsiteCaptures {
 /// The two windows a capture composites: the app window, and this run's own backdrop under
 /// it, showing this Mac's desktop picture.
 @MainActor
-private final class Stage {
+final class Stage {
     static let wide = NSSize(width: 1320, height: 860)
     static let narrow = NSSize(width: 860, height: 560)
 
@@ -608,6 +629,55 @@ private final class Stage {
     /// The app window with its wallpaper margin, in screen coordinates.
     var captureRect: NSRect {
         (window?.frame ?? .zero).insetBy(dx: -WebsiteCaptures.margin, dy: -WebsiteCaptures.margin)
+    }
+
+    /// The app window with the tour's 72-point surround, widened or heightened
+    /// symmetrically around the window's centre until exactly 16:10.
+    var tourCaptureRect: NSRect {
+        Self.tourRect(around: window?.frame ?? .zero)
+    }
+
+    /// Whether the app window is out of the way (see `setWindowHidden`); `ensureActive`
+    /// leaves it there.
+    private var isWindowHidden = false
+
+    /// The app window out of the way, for a shot of another window over the backdrop alone.
+    func setWindowHidden(_ hidden: Bool) {
+        guard let window else { return }
+        isWindowHidden = hidden
+        if hidden {
+            window.orderOut(nil)
+        } else {
+            window.makeKeyAndOrderFront(nil)
+            backdrop?.order(.below, relativeTo: window.windowNumber)
+        }
+    }
+
+    /// A 16:10 rect around `frame` with at least the wallpaper margin on every side.
+    static func tourRect(around frame: NSRect) -> NSRect {
+        var rect = frame.insetBy(dx: -WebsiteCaptures.margin, dy: -WebsiteCaptures.margin)
+        let target: CGFloat = 1.6
+        let ratio = rect.width / max(rect.height, 1)
+        if ratio < target {
+            let want = (rect.height * target - rect.width) / 2
+            rect = rect.insetBy(dx: -want, dy: 0)
+        } else if ratio > target {
+            let want = (rect.width / target - rect.height) / 2
+            rect = rect.insetBy(dx: 0, dy: -want)
+        }
+        return NSRect(
+            x: (frame.midX - rect.width / 2).rounded(),
+            y: (frame.midY - rect.height / 2).rounded(),
+            width: rect.width.rounded(),
+            height: rect.height.rounded()
+        )
+    }
+
+    /// Replaces the backdrop window's content with a gradient view, full-screen.
+    func setBackdrop<Content: View>(_ content: Content) {
+        guard let backdrop, let screen = NSScreen.main else { return }
+        backdrop.contentView = NSHostingView(rootView: content.ignoresSafeArea())
+        backdrop.contentView?.frame = NSRect(origin: .zero, size: screen.frame.size)
     }
 
     func show(size: NSSize) {
@@ -635,6 +705,15 @@ private final class Stage {
     /// to a few seconds.
     func ensureActive() async {
         guard let window else { return }
+        // With the app window out of the way, the app only needs to be active: another
+        // window of its own is key then, and ordering this one front would undo the shot.
+        if isWindowHidden {
+            for _ in 0..<24 where !NSApp.isActive {
+                NSApp.activate(ignoringOtherApps: true)
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            return
+        }
         var activated = false
         for _ in 0..<24 {
             if NSApp.isActive, window.isKeyWindow { break }
@@ -685,18 +764,51 @@ private final class Stage {
 
     /// Shows `content` in a popover hanging from the composer's model chip, the way the chip
     /// shows the slider. Sized to the content, as the chip's popover is.
-    func presentPopover<Content: View>(_ content: Content, width: CGFloat) -> NSPopover {
+    /// Where the last popover was hung, so `holdPopover` can hang it there again.
+    private var popoverAnchor: (view: NSView, rect: NSRect)?
+
+    /// Keeps a presented popover up for `seconds`: one that closes on its own meanwhile (a
+    /// re-rendered anchor takes its popover down with it) is shown again where it was.
+    func holdPopover(_ popover: NSPopover, seconds: Double) async {
+        let deadline = Date.now.addingTimeInterval(seconds)
+        while Date.now < deadline {
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !popover.isShown, let anchor = popoverAnchor else { continue }
+            WebsiteCaptures.log("popover closed on its own; showing it again")
+            popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: anchor.view.isFlipped ? .minY : .maxY)
+        }
+    }
+
+    func presentPopover<Content: View>(_ content: Content, width: CGFloat, chipOf threadID: UUID? = nil) -> NSPopover {
         let popover = NSPopover()
         popover.behavior = .applicationDefined
         let probe = NSHostingView(rootView: content.frame(width: width))
         probe.frame = NSRect(x: 0, y: 0, width: width, height: 10)
         let height = probe.fittingSize.height
         popover.setFixedContent(content, size: NSSize(width: width, height: height))
-        if let anchor = WebsiteCaptures.modelChipAnchor?.value, anchor.window === window {
-            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
-        } else if let view = window?.contentView {
-            let rect = NSRect(x: view.bounds.midX + 120, y: 52, width: 10, height: 10)
-            popover.show(relativeTo: rect, of: view, preferredEdge: .maxY)
+        // The chip's view is SwiftUI's to make and remake (the chip turns compact and back
+        // with the composer's width, and a remade view takes a popover hung from it down),
+        // so the popover hangs from the window's own content view instead, at the rect
+        // where the thread's chip is right now.
+        if let threadID, let frame = WebsiteCaptures.modelChipFrames[threadID], let content = window?.contentView {
+            let rect = content.isFlipped ? frame : NSRect(x: frame.minX, y: content.bounds.height - frame.maxY, width: frame.width, height: frame.height)
+            WebsiteCaptures.log("popover \(width)x\(height) at the chip's frame \(rect)")
+            popoverAnchor = (content, rect)
+            popover.show(relativeTo: rect, of: content, preferredEdge: content.isFlipped ? .minY : .maxY)
+        } else if let anchor = WebsiteCaptures.modelChipAnchor?.value, anchor.window === window, !anchor.isHiddenOrHasHiddenAncestor,
+           let content = window?.contentView {
+            let rect = anchor.convert(anchor.bounds, to: content)
+            WebsiteCaptures.log("popover \(width)x\(height) at the chip's rect \(rect)")
+            popoverAnchor = (content, rect)
+            popover.show(relativeTo: rect, of: content, preferredEdge: content.isFlipped ? .minY : .maxY)
+        }
+        // A chip that is no longer on screen refuses the popover: it hangs from where the
+        // composer's chip sits instead, at the right end of the chat box.
+        if !popover.isShown, let view = window?.contentView {
+            WebsiteCaptures.log("popover \(width)x\(height) without a chip anchor")
+            let rect = NSRect(x: view.bounds.maxX - 150, y: view.isFlipped ? view.bounds.maxY - 44 : 44, width: 10, height: 10)
+            popoverAnchor = (view, rect)
+            popover.show(relativeTo: rect, of: view, preferredEdge: view.isFlipped ? .minY : .maxY)
         }
         return popover
     }
@@ -738,7 +850,7 @@ private struct BackdropWallpaper: View {
 /// ScreenCaptureKit stream: while a stream runs, the window server draws the captured app
 /// as if it were inactive, gray traffic lights and all, and screenshots never do that.
 @MainActor
-private final class Recorder {
+final class Recorder {
     private let output: URL
     private weak var stage: Stage?
     private var film: FilmRecorder?

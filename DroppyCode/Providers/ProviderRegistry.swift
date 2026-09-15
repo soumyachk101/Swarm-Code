@@ -112,7 +112,12 @@ final class ProviderRegistry {
     }
 
     func status(_ provider: ProviderKind) -> ProviderStatus {
-        statuses[provider] ?? ProviderStatus()
+        // A capture run never probes the CLIs (see `refresh`), and reads as a Mac with every
+        // provider installed and signed in, so the pairs and pickers show what they offer.
+        if WebsiteCaptures.isEnabled {
+            return ProviderStatus(executable: URL(fileURLWithPath: "/usr/bin/true"), auth: .signedIn(nil), apiKeyConfigured: true)
+        }
+        return statuses[provider] ?? ProviderStatus()
     }
 
     func executable(for provider: ProviderKind) -> URL? {

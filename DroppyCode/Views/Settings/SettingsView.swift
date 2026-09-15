@@ -719,6 +719,7 @@ private struct ArchiveSettingsPage: View {
 }
 
 private struct AboutSettingsPage: View {
+    @Environment(AppModel.self) private var model
     private static let droppyURL = URL(string: "https://getdroppy.app")!
 
     var body: some View {
@@ -735,6 +736,10 @@ private struct AboutSettingsPage: View {
                     ChromeRowDivider()
                     ChromeRow(title: "Terminal", detail: "SwiftTerm by Miguel de Icaza, MIT License.") {
                         CreditLink(title: "SwiftTerm", url: URL(string: "https://github.com/migueldeicaza/SwiftTerm")!)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "Welcome tour", detail: "Ported from TourKit by Ram Patra, MIT License.") {
+                        CreditLink(title: "rampatra/TourKit", url: URL(string: "https://github.com/rampatra/TourKit")!)
                     }
                     ChromeRowDivider()
                     LicensesRow()
@@ -759,6 +764,10 @@ private struct AboutSettingsPage: View {
                 Spacer()
             }
             .padding(16)
+            ChromeRowDivider()
+            ChromeRow(title: "Welcome tour", detail: "The slideshow from the first launch: Hydra, the effort slider, panels and themes.") {
+                Button("Show") { Tour.present(model: model) }.buttonStyle(.glass).controlSize(.small)
+            }
             ChromeRowDivider()
             AboutUpdateCheckRow()
             ChromeRowDivider()

@@ -97,6 +97,7 @@ final class AppSettings {
         static let hydraReviewHeads = "hydraReviewHeads"
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
         static let hydraPairs = "hydraPairs"
+        static let hasSeenTour = "hasSeenTour"
     }
 
     static let modelListLimit = 15
@@ -264,6 +265,10 @@ final class AppSettings {
         didSet { defaults.set(hydraEnabled, forKey: Key.hydraEnabled) }
     }
 
+    var hasSeenTour: Bool {
+        didSet { defaults.set(hasSeenTour, forKey: Key.hasSeenTour) }
+    }
+
     /// With Hydra on, a follow-up queued while a turn runs goes to a head at once
     /// instead of waiting for the turn.
     var hydraQueueHeads: Bool {
@@ -350,6 +355,7 @@ final class AppSettings {
         modelList = Self.load([ModelPin].self, forKey: Key.modelList) ?? []
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
         hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
+        hasSeenTour = defaults.object(forKey: Key.hasSeenTour) as? Bool ?? false
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
         hydraAlwaysHeads = defaults.object(forKey: Key.hydraAlwaysHeads) as? Bool ?? false
         hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
