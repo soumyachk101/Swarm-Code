@@ -19,6 +19,9 @@ import SwiftUI
 final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
     private var anchor: WeakView?
+    /// The strip's place in its window when it has no view of its own to hang from
+    /// (see `WindowRectAnchor`).
+    private var anchorRect: CGRect?
     private var currentID: Attachment.ID?
     private var monitors: [Any] = []
 
@@ -33,6 +36,13 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     /// view per strip: never a recycled row, never a stale id.
     func setAnchor(_ view: NSView) {
         anchor = WeakView(view)
+    }
+
+    /// The strip's frame in the window's hosting view, for a strip that must not mount
+    /// an anchor view of its own. The panel then hangs from that rect on the window's
+    /// content view; a view anchor, when there is one, still wins.
+    func setAnchor(windowRect: CGRect) {
+        anchorRect = windowRect
     }
 
     /// Forget the panel when its attachment left
@@ -109,6 +119,17 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         if let strip = anchor?.value, strip.window != nil {
             return (strip, strip.bounds)
         }
+        if let anchorRect, let target = WindowRectAnchor.target(for: anchorRect) {
+            // The tap's own x again, on the edge the panel opens from, when the click
+            // that opened it is at hand; the whole strip otherwise.
+            if let event = NSApp.currentEvent, event.type == .leftMouseUp, event.window === target.view.window {
+                var point = target.view.convert(event.locationInWindow, from: nil)
+                point.x = min(max(point.x, target.rect.minX + 2), target.rect.maxX - 2)
+                let y = edge == .minY ? target.rect.minY : target.rect.maxY - 1
+                return (target.view, NSRect(x: point.x - 1, y: y, width: 2, height: 1))
+            }
+            return (target.view, target.rect)
+        }
         return nil
     }
 
@@ -143,6 +164,8 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         if let window = event.window,
            let view = anchor?.value, view.window === window, !view.isHiddenOrHasHiddenAncestor,
            view.bounds.contains(view.convert(event.locationInWindow, from: nil)) { return event }
+        if let anchorRect, let target = WindowRectAnchor.target(for: anchorRect), target.view.window === event.window,
+           target.rect.contains(target.view.convert(event.locationInWindow, from: nil)) { return event }
         close()
         return event
     }
@@ -201,12 +224,14 @@ final class WeakView {
 final class AttachmentPreviewSlot {
     /// The view the panel anchors to, captured while the row is under the pointer.
     let anchor = WeakView()
+    private var anchorRect: CGRect?
     private var coordinator: AttachmentPreviewCoordinator?
 
     var panel: AttachmentPreviewCoordinator {
         if let coordinator { return coordinator }
         let made = AttachmentPreviewCoordinator()
         if let view = anchor.value { made.setAnchor(view) }
+        if let anchorRect { made.setAnchor(windowRect: anchorRect) }
         coordinator = made
         return made
     }
@@ -214,6 +239,12 @@ final class AttachmentPreviewSlot {
     func setAnchor(_ view: NSView) {
         anchor.value = view
         coordinator?.setAnchor(view)
+    }
+
+    /// The strip's frame in its window, for a strip with no anchor view (see `WindowRectAnchor`).
+    func setAnchor(windowRect: CGRect) {
+        anchorRect = windowRect
+        coordinator?.setAnchor(windowRect: windowRect)
     }
 
     /// Closes a panel that was opened. A slot that never made one does nothing.
@@ -225,6 +256,42 @@ final class AttachmentPreviewSlot {
     /// has been opened, so a slot that never made a panel does nothing here either.
     func retire(except ids: Set<Attachment.ID>) {
         coordinator?.retire(except: ids)
+    }
+}
+
+/// A popover anchor with no view of its own: where a SwiftUI view sits in its window, as
+/// its geometry reports it, for a popover hung from that rect on the window's content
+/// view instead of from a view mounted in the SwiftUI tree.
+///
+/// Used where an AppKit view must not be placed. An `NSViewRepresentable` joins the walk
+/// SwiftUI makes over a window's focus items to rebuild the key view loop, and inside the
+/// composer's follow-up queue tab that walk never ended on macOS 26: it handed back the
+/// tab's first participant (its chevron, then the anchor view behind its pencil once the
+/// buttons had opted out) forever, and the main thread stood still until a force quit
+/// (the Sept 15 2026 freezes). The tab holds nothing the walk can visit now; this is how
+/// its popovers still find their place.
+enum WindowRectAnchor {
+    /// The window's content view and `rect` (a `.global` SwiftUI frame, in the hosting
+    /// view's flipped coordinates) converted into it. The window is the one the current
+    /// event is in, else the key window: a rect only means something in the window whose
+    /// hosting view reported it.
+    @MainActor
+    static func target(for rect: CGRect) -> (view: NSView, rect: NSRect)? {
+        guard rect.width > 0, rect.height > 0,
+              let window = NSApp.currentEvent?.window ?? NSApp.keyWindow ?? NSApp.mainWindow,
+              let content = window.contentView else { return nil }
+        let converted = content.isFlipped
+            ? rect
+            : NSRect(x: rect.minX, y: content.bounds.height - rect.maxY, width: rect.width, height: rect.height)
+        return (content, converted)
+    }
+}
+
+extension View {
+    /// Reports this view's frame in its window (the hosting view's coordinates) whenever
+    /// it changes, for a `WindowRectAnchor` target. Costs a geometry read, never a view.
+    func windowRectAnchor(_ onChange: @escaping (CGRect) -> Void) -> some View {
+        onGeometryChange(for: CGRect.self, of: { $0.frame(in: .global) }, action: onChange)
     }
 }
 

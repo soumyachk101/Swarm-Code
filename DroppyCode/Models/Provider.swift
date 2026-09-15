@@ -12,6 +12,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case antigravity
     case copilot
     case commandcode
+    case pi
 
     var id: String { rawValue }
 
@@ -28,6 +29,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: "Antigravity"
         case .copilot: "Copilot"
         case .commandcode: "Command Code"
+        case .pi: "Pi"
         }
     }
 
@@ -44,6 +46,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: "agy"
         case .copilot: "copilot"
         case .commandcode: "cmd"
+        case .pi: "pi"
         }
     }
 
@@ -62,6 +65,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: "agy"
         case .copilot: "copilot login"
         case .commandcode: "cmd login"
+        case .pi: "pi, then /login"
         }
     }
 
@@ -78,6 +82,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: URL(string: "https://antigravity.google/docs/cli/overview")!
         case .copilot: URL(string: "https://github.com/github/copilot-cli")!
         case .commandcode: URL(string: "https://commandcode.ai/docs/quickstart")!
+        case .pi: URL(string: "https://pi.dev/docs/latest")!
         }
     }
 

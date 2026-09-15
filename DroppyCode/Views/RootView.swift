@@ -99,7 +99,6 @@ struct DetailView: View {
     var body: some View {
         if let threadID = model.selectedThreadID, model.thread(threadID) != nil {
             ChatView(runtime: model.runtime(for: threadID))
-                .id(threadID)
         } else {
             Group {
                 if model.projects.isEmpty {

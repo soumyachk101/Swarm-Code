@@ -58,7 +58,10 @@ struct SidebarView: View {
     private static let listSpace = "sidebar-list"
 
     var body: some View {
-        let helpers = helpersByParent
+        // Where every thread sits, worked out once per pass: the grouping and the list below
+        // are rebuilt only when this changes, not on every field change of every thread.
+        let placements = threadPlacements
+        let helpers = helpersByParent(placements: placements)
         VStack(alignment: .leading, spacing: 0) {
             // Clears the native window buttons that float over the sidebar's top corner.
             if !inPopover {
@@ -91,7 +94,7 @@ struct SidebarView: View {
                     if query.isEmpty {
                         // One list for both layouts: a thread keeps its row when the layout changes, so the
                         // row grows or shrinks and slides to its new place instead of being replaced.
-                        ForEach(listItems(helpers: helpers)) { item in
+                        ForEach(listItems(placements: placements, helpers: helpers)) { item in
                             itemView(item)
                                 .transition(.sidebarRow)
                         }
@@ -190,7 +193,7 @@ struct SidebarView: View {
             ),
             arrowEdge: .trailing
         ) {
-            DeleteThreadPopover(thread: thread) { removeWorktree in
+            DeleteThreadPopover(thread: model.thread(threadID) ?? thread) { removeWorktree in
                 confirmDeletion(of: threadID, removeWorktree: removeWorktree)
             }
             .onAppear { isDeletePopoverShown = true }
@@ -235,7 +238,7 @@ struct SidebarView: View {
         case .gap(let height):
             Color.clear.frame(height: height)
         case .project(let project, let count):
-            ProjectRow(project: project, count: count)
+            ProjectRow(snapshot: project, count: count)
         case .header(let title, let isFirst):
             ActivityHeader(title: title, isFirst: isFirst)
         case .settledHeader(let count, let isFirst):
@@ -251,13 +254,15 @@ struct SidebarView: View {
                 .onDisappear { rowFrames.forget(thread.id) }
         case .helper(let thread, let isLast):
             deletePopover(for: thread, on: SidebarHelperRow(
-                thread: thread,
+                snapshot: thread,
                 isLast: isLast,
                 menuRequests: menuRequests,
                 onFold: { fold(thread.parentThreadID) },
                 onRename: {
-                    renameText = thread.title
-                    renaming = thread
+                    // The live record: the item's snapshot does not follow a title change.
+                    let live = model.thread(thread.id) ?? thread
+                    renameText = live.title
+                    renaming = live
                 },
                 onDelete: {
                     if model.settings.confirmBeforeDeleting {
@@ -270,21 +275,27 @@ struct SidebarView: View {
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.note(item.id, $0) }
             .modifier(RidesWithDraggedParent(parentID: thread.parentThreadID, drag: drag))
         case .helperStub(let parent, let helpers):
-            HelperStubRow(parent: parent, helpers: helpers) { fold(parent.id) }
+            HelperStubRow(parentSnapshot: parent, helperSnapshots: helpers) { fold(parent.id) }
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.note(item.id, $0) }
                 .modifier(RidesWithDraggedParent(parentID: parent.id, drag: drag))
         }
     }
 
+    /// Where every thread sits in the list (see `ThreadPlacement`): the key the grouping and
+    /// the list below are kept under.
+    private var threadPlacements: [ThreadPlacement] {
+        model.threads.map(ThreadPlacement.init)
+    }
+
     /// Every helper by the thread it hangs under, worked out once for the whole list. Asking
     /// the model per row walked the library once per row, so a long list did that work for
     /// every row in it; the rows are handed their own helpers instead. Kept while the
-    /// threads stand: a render that changed none reuses the last grouping.
-    private var helpersByParent: [UUID: [ChatThread]] {
-        itemCache.helpers(for: model.threads) { threads in
+    /// placements stand: a render that moved no thread reuses the last grouping.
+    private func helpersByParent(placements: [ThreadPlacement]) -> [UUID: [ChatThread]] {
+        itemCache.helpers(for: placements) {
             var grouped: [UUID: [ChatThread]] = [:]
             // Heads count while they are still in the lead's panel too (see `AppModel.helpers(of:)`).
-            for thread in threads where !thread.isArchived && (!thread.isInPanel || thread.isHydraHead) {
+            for thread in model.threads where !thread.isArchived && (!thread.isInPanel || thread.isHydraHead) {
                 guard let parentID = thread.parentThreadID else { continue }
                 grouped[parentID, default: []].append(thread)
             }
@@ -293,14 +304,15 @@ struct SidebarView: View {
         }
     }
 
-    /// The list in the current layout, built only when something it shows has changed:
-    /// the threads or projects themselves, which threads need attention (they head the
-    /// activity layout), the layout flag or the settled fold. Read here, once, so the
-    /// key's inputs are what the list observes.
-    private func listItems(helpers: [UUID: [ChatThread]]) -> [SidebarItem] {
+    /// The list in the current layout, built only when something that places a row has
+    /// changed: where the threads sit (`ThreadPlacement`), the projects, which threads need
+    /// attention (they head the activity layout), the layout flag or the settled fold. A
+    /// title or a head's progress note reaches its row through the model's per-thread cell
+    /// (see `SidebarThreadRow.thread`) without the list being built again.
+    private func listItems(placements: [ThreadPlacement], helpers: [UUID: [ChatThread]]) -> [SidebarItem] {
         let activity = model.settings.sidebarActivityView
         let key = SidebarItemCache.Key(
-            threads: model.threads,
+            placements: placements,
             projects: model.projects,
             attention: activity ? Set(model.threads.filter { needsAttention($0) }.map(\.id)) : [],
             activityView: activity,
@@ -520,7 +532,7 @@ struct SidebarView: View {
                 if index > 0 {
                     Color.clear.frame(height: Chrome.groupGap)
                 }
-                ProjectRow(project: result.project, count: result.count, togglesExpansion: false)
+                ProjectRow(snapshot: result.project, count: result.count, togglesExpansion: false)
                 // Keyed like the main list, so a thread settled from here changes rows too.
                 ForEach(result.threads, id: \.sidebarItemID) { thread in
                     threadRow(thread, projectName: nil, hasHelpers: !thread.isSettled && !(helpers[thread.id] ?? []).isEmpty)
@@ -628,7 +640,8 @@ struct SidebarView: View {
     /// (returned as `group` too, for the move) or its project's top-level threads.
     private func peers(of id: UUID) -> (order: [UUID], group: [UUID]?) {
         if model.settings.sidebarActivityView {
-            for item in listItems(helpers: helpersByParent) {
+            let placements = threadPlacements
+            for item in listItems(placements: placements, helpers: helpersByParent(placements: placements)) {
                 if case .thread(let thread, _, let peers, _) = item.kind, thread.id == id, let peers {
                     return (peers, peers)
                 }
@@ -642,7 +655,7 @@ struct SidebarView: View {
     /// Each peer's slot: its row, the helper rows or folded line under it, and the list's
     /// spacing after each.
     private func slotHeights(for order: [UUID]) -> [UUID: CGFloat] {
-        let grouped = helpersByParent
+        let grouped = helpersByParent(placements: threadPlacements)
         var heights: [UUID: CGFloat] = [:]
         for id in order {
             var height = (rowHeights.values[id.uuidString] ?? Chrome.rowHeight) + 1
@@ -678,7 +691,7 @@ struct SidebarView: View {
     private func threadRow(_ thread: ChatThread, projectName: String?, hasHelpers: Bool, isDragged: Bool = false) -> some View {
         // A thread with helpers under it gets the fold button; a settled one shows none.
         return deletePopover(for: thread, on: SidebarThreadRow(
-            thread: thread,
+            snapshot: thread,
             projectName: projectName,
             menuRequests: menuRequests,
             isDragged: isDragged,
@@ -686,8 +699,10 @@ struct SidebarView: View {
             listFrame: inPopover ? nil : listFrame,
             onToggleFold: hasHelpers ? { fold(thread.id) } : nil,
             onRename: {
-                renameText = thread.title
-                renaming = thread
+                // The live record: the item's snapshot does not follow a title change.
+                let live = model.thread(thread.id) ?? thread
+                renameText = live.title
+                renaming = live
             },
             onDelete: {
                 if model.settings.confirmBeforeDeleting {
@@ -771,7 +786,12 @@ private extension AnyTransition {
 
 private struct ProjectRow: View {
     @Environment(AppModel.self) private var model
-    let project: Project
+    /// The project as the list last built it; `project` below is the live record.
+    let snapshot: Project
+    /// The row reads its own project through the model's per-project cell, so a change to
+    /// it re-renders this row alone and a change to any other project does not reach it.
+    /// The snapshot is the fallback for a project that has just been removed.
+    private var project: Project { model.project(snapshot.id) ?? snapshot }
     /// What a folded project shows: its threads and the helpers under them, counted by the
     /// list once for every row rather than here, per row, over the whole library.
     let count: Int
@@ -927,7 +947,12 @@ private enum ThreadRowMetrics {
 /// helpers away; the folded line (HelperStubRow) unfolds them.
 private struct SidebarHelperRow: View {
     @Environment(AppModel.self) private var model
-    let thread: ChatThread
+    /// The helper as the list last built it; `thread` below is the live record.
+    let snapshot: ChatThread
+    /// The row reads its own thread through the model's per-thread cell, so a change to it
+    /// re-renders this row alone and a change to any other thread does not reach it. The
+    /// snapshot is the fallback for a thread that has just been deleted.
+    private var thread: ChatThread { model.thread(snapshot.id) ?? snapshot }
     /// The last helper under its parent: the connector ends at this row.
     let isLast: Bool
     /// Carries rename/delete intents out of the AppKit menu without retaining row state.
@@ -1020,14 +1045,23 @@ private struct SidebarHelperRow: View {
 /// count, with a pulse when any of them is still working. Clicking it unfolds them.
 private struct HelperStubRow: View {
     @Environment(AppModel.self) private var model
-    let parent: ChatThread
-    /// Handed in by the list, which groups every helper once per pass.
-    let helpers: [ChatThread]
+    /// The parent as the list last built it; `parent` below is the live record.
+    let parentSnapshot: ChatThread
+    /// Handed in by the list, which groups every helper once per pass; the body reads each
+    /// one's live record through the model's per-thread cell.
+    let helperSnapshots: [ChatThread]
     let action: () -> Void
 
     @State private var isHovering = false
 
+    /// The row reads its parent through the model's per-thread cell, so a change to it
+    /// re-renders this row alone and a change to any other thread does not reach it. The
+    /// snapshot is the fallback for a thread that has just been deleted.
+    private var parent: ChatThread { model.thread(parentSnapshot.id) ?? parentSnapshot }
+
     var body: some View {
+        // Each helper's live record, read once per render through its own cell.
+        let helpers = helperSnapshots.map { model.thread($0.id) ?? $0 }
         let count = helpers.count
         let working = helpers.contains { helper in
             let runtime = model.existingRuntime(for: helper.id)
@@ -1137,7 +1171,12 @@ private struct HelperConnectorShape: Shape {
 private struct SidebarThreadRow: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
-    let thread: ChatThread
+    /// The thread as the list last built it; `thread` below is the live record.
+    let snapshot: ChatThread
+    /// The row reads its own thread through the model's per-thread cell, so a change to it
+    /// re-renders this row alone and a change to any other thread does not reach it. The
+    /// snapshot is the fallback for a thread that has just been deleted.
+    private var thread: ChatThread { model.thread(snapshot.id) ?? snapshot }
     /// The project shown under the title in the activity layout; nil in the project layout.
     let projectName: String?
     /// Carries rename/delete intents out of the AppKit menu without retaining row state.
@@ -1905,14 +1944,60 @@ private struct SidebarSearchResult {
     let count: Int
 }
 
+/// The fields that decide where a thread sits in the list and how its group is ordered:
+/// which project or parent it is under, whether it is shown at all, settled, pinned or
+/// folded, and the dates and orders the sorts read. A title, an unread flag or a head's
+/// progress note changes none of them, so those never rebuild the list; the rows read
+/// them through the model's per-thread cells instead.
+private struct ThreadPlacement: Equatable {
+    let id: UUID
+    let projectID: UUID
+    let parentThreadID: UUID?
+    let isArchived: Bool
+    let isInPanel: Bool
+    let isSettled: Bool
+    let settledAt: Date?
+    let isPinned: Bool
+    let sortOrder: Double?
+    /// The activity layout's own order within a day (see `placed`).
+    let activityOrder: Double?
+    let activityOrderDay: Date?
+    let createdAt: Date
+    let updatedAt: Date
+    let foldsHelpers: Bool
+    let isHydraHead: Bool
+    let hydraIndex: Int?
+    let hasUnread: Bool
+
+    init(_ thread: ChatThread) {
+        id = thread.id
+        projectID = thread.projectID
+        parentThreadID = thread.parentThreadID
+        isArchived = thread.isArchived
+        isInPanel = thread.isInPanel
+        isSettled = thread.isSettled
+        settledAt = thread.settledAt
+        isPinned = thread.isPinned
+        sortOrder = thread.sortOrder
+        activityOrder = thread.activityOrder
+        activityOrderDay = thread.activityOrderDay
+        createdAt = thread.createdAt
+        updatedAt = thread.updatedAt
+        foldsHelpers = thread.foldsHelpers
+        isHydraHead = thread.isHydraHead
+        hydraIndex = thread.hydra?.index
+        hasUnread = thread.hasUnread
+    }
+}
+
 /// The sidebar's built list, kept while its inputs stand, the way `TimelineBlockCache`
-/// keeps a chat's blocks. The key holds the thread and project arrays themselves: with the
-/// same storage the comparison is a pointer check, and after a change it stops at the
-/// first thread that differs, so a render that changed nothing costs no filter or sort
-/// and one that did rebuilds exactly once. Owned by the list's @State, main thread only.
+/// keeps a chat's blocks. The key holds each thread's placement (not the thread: a title
+/// or a progress note is the row's to pick up) and the project array itself, so a render
+/// that moved nothing costs one pass of comparisons and no filter or sort, and one that
+/// did rebuilds exactly once. Owned by the list's @State, main thread only.
 private final class SidebarItemCache {
     struct Key: Equatable {
-        var threads: [ChatThread]
+        var placements: [ThreadPlacement]
         var projects: [Project]
         /// The threads heading the activity layout under "Needs attention".
         var attention: Set<UUID>
@@ -1928,7 +2013,7 @@ private final class SidebarItemCache {
 
     private var key: Key?
     private var built: [SidebarItem] = []
-    private var helpersFor: [ChatThread]?
+    private var helpersFor: [ThreadPlacement]?
     private var helpers: [UUID: [ChatThread]] = [:]
     private var searchKey: SearchKey?
     private var found: [SidebarSearchResult] = []
@@ -1944,10 +2029,11 @@ private final class SidebarItemCache {
         return built
     }
 
-    func helpers(for threads: [ChatThread], group: ([ChatThread]) -> [UUID: [ChatThread]]) -> [UUID: [ChatThread]] {
-        if threads == helpersFor { return helpers }
-        helpers = group(threads)
-        helpersFor = threads
+    /// The helper grouping, kept while the placements stand; `group` runs only when they changed.
+    func helpers(for placements: [ThreadPlacement], group: () -> [UUID: [ChatThread]]) -> [UUID: [ChatThread]] {
+        if placements == helpersFor { return helpers }
+        helpers = group()
+        helpersFor = placements
         return helpers
     }
 

@@ -3,9 +3,10 @@ import SwiftUI
 
 enum SettingsPage: String, CaseIterable, Identifiable {
     case general
+    // Second in the sidebar: Hydra is what the app is about, so it sits right under General.
+    case hydra
     case providers
     case models
-    case hydra
     case sourceControl
     case shortcuts
     case archive

@@ -408,7 +408,7 @@ struct ComposerView: View {
     private func commandSuggestions(matching query: String) -> [Suggestion] {
         guard let thread = model.thread(runtime.threadID) else { return [] }
         var commands = [SlashCommand(name: "plan", detail: "Turn plan mode on or off", isBuiltIn: true)]
-        if thread.provider == .codex || thread.provider == .claude || thread.provider == .copilot || thread.provider == .deepseek || thread.provider == .meta {
+        if thread.provider == .codex || thread.provider == .claude || thread.provider == .copilot || thread.provider == .deepseek || thread.provider == .meta || thread.provider == .pi {
             commands.append(SlashCommand(name: "compact", detail: "Summarize the conversation to free up context", isBuiltIn: true))
         }
         for command in model.providers.commands[thread.provider] ?? [] where !commands.contains(where: { $0.name == command.name }) {

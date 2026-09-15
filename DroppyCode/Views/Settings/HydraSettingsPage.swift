@@ -1,89 +1,101 @@
 import SwiftUI
 
-/// Switches Hydra on for the app and sets up its pairs: which model leads and which runs
-/// the heads, per provider, and how many heads go out at once.
+/// Switches Hydra on for the app and sets up its heads: how they work, which messages go
+/// to them, what happens when the team is done, and which model leads which, per provider.
 struct HydraSettingsPage: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var settings = model.settings
-        // A row that is off says why it is off: dimming alone leaves the user guessing.
-        let hydraOff: String? = settings.hydraEnabled ? nil : "Switch Hydra on above first"
-        let queuedOff: String? = if !settings.hydraEnabled {
-            "Switch Hydra on above first"
-        } else if settings.hydraAlwaysHeads {
-            "Every message already goes to a head"
-        } else {
-            nil
-        }
-        ChromeSection(title: "Hydra") {
+        VStack(alignment: .leading, spacing: Chrome.sectionHeaderSpacing) {
             ChromeCard {
                 HStack(spacing: 14) {
-                    HydraSettingsMark()
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("One chat, many heads")
-                            .font(.system(size: 13, weight: .semibold))
+                    HStack(spacing: -9) {
+                        ForEach(0..<5, id: \.self) { index in
+                            HydraGlyph(persona: HydraRoster.persona(at: index), size: 26)
+                        }
+                    }
+                    .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Hydra")
+                            .font(.system(size: 15, weight: .semibold))
                             .foregroundStyle(Chrome.primaryText)
-                        Text("With Hydra on, a chat's agent leads a team of helper agents on big jobs and still does small ones alone. The Hydra mark in the chrome row opens the team's panel.")
+                        Text("One chat leads a team of heads on big jobs.")
                             .font(.system(size: 11))
                             .foregroundStyle(Chrome.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                            .lineLimit(1)
                     }
                     Spacer(minLength: 12)
                     SettingsSwitch(isOn: $settings.hydraEnabled)
                 }
                 .padding(.leading, 16)
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
-                .padding(.vertical, 12)
+                .padding(.vertical, 14)
+            }
+            // One note for the whole page: the sections below dim together rather than
+            // each row repeating why it is off.
+            if !settings.hydraEnabled {
+                Text("Switch Hydra on to set up its heads.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .padding(.horizontal, 4)
             }
         }
-        ChromeSection(title: "Heads") {
-            ChromeCard {
-                toggleRow("Queued follow-ups go to heads", detail: "A prompt queued behind a running turn starts on a head right away.", isOn: $settings.hydraQueueHeads, blockedBy: queuedOff)
-                ChromeRowDivider()
-                toggleRow("Every message goes to a head", detail: "Each message starts on a head of its own; the lead only hears the reports. When a pair's heads are all busy, the message goes to the lead.", isOn: $settings.hydraAlwaysHeads, blockedBy: hydraOff)
-                ChromeRowDivider()
-                toggleRow("Heads work in copies of their own", detail: "Each head gets its own copy of the checkout, and its changes land in the chat's checkout when it reports. Off, heads work in the checkout itself.", isOn: $settings.hydraIsolateHeads, blockedBy: hydraOff)
-                ChromeRowDivider()
-                toggleRow("Clear finished heads automatically", detail: "A finished head leaves the panel for the sidebar under its lead.", isOn: $settings.hydraAutoClearFinished, blockedBy: hydraOff)
-                ChromeRowDivider()
-                toggleRow("Show what heads are doing", detail: "Every step in a head's panel instead of the progress bar.", isOn: $settings.hydraShowsHeadDetails, blockedBy: hydraOff)
-            }
-        }
-        ChromeSection(title: "When the team is done") {
-            ChromeCard {
-                toggleRow("Lead audits the heads' work", detail: "Before it finishes, the lead reads every file the heads changed, checks it does what was asked, and corrects it where needed. Slower, but catches what quick heads miss.", isOn: $settings.hydraReviewHeads, blockedBy: hydraOff)
-                ChromeRowDivider()
-                toggleRow("Merge when the team is done", detail: "Once the lead has finished and every head is back, the team's changes go out as a merge request on their own branch, are merged, and the checkout is brought up to date. Off, the work stays in the checkout.", isOn: $settings.hydraAutoMerge, blockedBy: hydraOff)
-            }
-        }
-        ChromeSection(title: "Pairs") {
-            ChromeCard {
-                if settings.hydraPairs.isEmpty {
-                    ChromeRow(title: "No pairs yet", detail: "Heads run on the chat's own model and effort until a chat is put in a pair.") {
-                        HydraAddPairButton()
-                    }
-                } else {
-                    ForEach(Array(settings.hydraPairs.enumerated()), id: \.element.id) { index, pair in
-                        VStack(spacing: 0) {
-                            if index > 0 { ChromeRowDivider() }
-                            HydraPairRow(pair: pair)
-                        }
-                    }
+        Group {
+            ChromeSection(title: "Heads") {
+                ChromeCard {
+                    toggleRow("Own copy of the checkout", detail: "Changes land in the chat's checkout when the head reports.", isOn: $settings.hydraIsolateHeads)
                     ChromeRowDivider()
-                    ChromeRow(title: "Another pair", detail: "One pair per provider is enough; more let different lead models run different teams.") {
-                        HydraAddPairButton()
-                    }
+                    toggleRow("Clear finished heads", detail: "A finished head moves from the panel to the sidebar.", isOn: $settings.hydraAutoClearFinished)
+                    ChromeRowDivider()
+                    toggleRow("Show every step", detail: "Each step in the head's panel instead of its progress bar.", isOn: $settings.hydraShowsHeadDetails)
                 }
             }
-            Text("With Hydra on, every pair sits at the top of the composer's model picker: a tap puts the chat in it, and a chat made from that one carries the pair along. A model picked there takes the chat back out, its heads on its own model and effort. The effort slider sets the lead's effort while the chat leads a pair.")
-                .font(.system(size: 11))
-                .foregroundStyle(Chrome.secondaryText)
-                .padding(.horizontal, 4)
+            ChromeSection(title: "Messages") {
+                ChromeCard {
+                    toggleRow("Queued follow-ups start on heads", detail: "A prompt queued behind a running turn goes out at once.", isOn: $settings.hydraQueueHeads, blockedBy: settings.hydraAlwaysHeads ? "Every message already goes to a head." : nil)
+                    ChromeRowDivider()
+                    toggleRow("Every message goes to a head", detail: "The lead only hears the reports.", isOn: $settings.hydraAlwaysHeads)
+                }
+            }
+            ChromeSection(title: "When the team is done") {
+                ChromeCard {
+                    toggleRow("Lead checks the heads' work", detail: "Reads every changed file and corrects it. Slower, more careful.", isOn: $settings.hydraReviewHeads)
+                    ChromeRowDivider()
+                    toggleRow("Merge automatically", detail: "The team's changes go out as a merge request and are merged.", isOn: $settings.hydraAutoMerge)
+                }
+            }
+            ChromeSection(title: "Pairs") {
+                ChromeCard {
+                    if settings.hydraPairs.isEmpty {
+                        ChromeRow(title: "No pairs yet", detail: "Heads run on the chat's own model until a chat joins a pair.") {
+                            HydraAddPairButton()
+                        }
+                    } else {
+                        ForEach(Array(settings.hydraPairs.enumerated()), id: \.element.id) { index, pair in
+                            VStack(spacing: 0) {
+                                if index > 0 { ChromeRowDivider() }
+                                HydraPairRow(pair: pair)
+                            }
+                        }
+                        ChromeRowDivider()
+                        ChromeRow(title: "Another pair", detail: "One per provider is enough.") {
+                            HydraAddPairButton()
+                        }
+                    }
+                }
+                Text("Pairs sit at the top of the model picker: a tap puts the chat in one.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .padding(.horizontal, 4)
+            }
         }
+        .disabled(!settings.hydraEnabled)
+        .opacity(settings.hydraEnabled ? 1 : 0.5)
+        .animation(.smooth(duration: 0.2), value: settings.hydraEnabled)
         ChromeSection(title: "Where heads run") {
             ChromeCard {
-                ChromeRow(title: "Claude, Codex and Copilot", detail: "In the provider's own session, on the pair's model and effort, sent out by the lead's own agent tools. Their transcripts show in the Hydra panel.") {
+                ChromeRow(title: "Claude, Codex and Copilot", detail: "In the provider's own session, through the lead's own agent tools.") {
                     HStack(alignment: .center, spacing: 6) {
                         ProviderIcon(provider: .claude, size: 14)
                         ProviderIcon(provider: .codex, size: 14)
@@ -94,11 +106,11 @@ struct HydraSettingsPage: View {
                     .foregroundStyle(Chrome.secondaryText)
                 }
                 ChromeRowDivider()
-                ChromeRow(title: "Every other provider", detail: "The lead asks for heads with a delegation block at the end of its reply. Each runs as a thread of its own on the pair's model and reports back as the lead's next message.") {
+                ChromeRow(title: "Other providers", detail: "As threads of their own, asked for at the end of the lead's reply.") {
                     EmptyView()
                 }
                 ChromeRowDivider()
-                ChromeRow(title: "Heads on another provider", detail: "A pair can lead on one provider and run its heads on another: a strong lead over quick heads. Those heads always run as threads of their own, and their work lands in the lead's checkout as they report.") {
+                ChromeRow(title: "Across providers", detail: "A pair can lead on one provider and run its heads on another.") {
                     HStack(alignment: .center, spacing: 5) {
                         ProviderIcon(provider: .claude, size: 14)
                         Image(systemName: "arrow.right")
@@ -107,38 +119,18 @@ struct HydraSettingsPage: View {
                     }
                     .foregroundStyle(Chrome.secondaryText)
                 }
-                ChromeRowDivider()
-                ChromeRow(title: "Heads from the queue", detail: "A queued follow-up runs as a thread of its own, whatever the provider, and reports to the lead once it is idle.") {
-                    EmptyView()
-                }
             }
         }
     }
 
-    /// A toggle row: the reason it is switched off follows its detail, and the row is dimmed
+    /// A toggle row. A reason it is blocked stands in for its detail, and the row is dimmed
     /// and inert while there is one.
-    private func toggleRow(_ title: String, detail: String, isOn: Binding<Bool>, blockedBy reason: String?) -> some View {
-        ChromeRow(title: title, detail: self.detail(detail, blockedBy: reason)) {
+    private func toggleRow(_ title: String, detail: String, isOn: Binding<Bool>, blockedBy reason: String? = nil) -> some View {
+        ChromeRow(title: title, detail: reason ?? detail) {
             SettingsSwitch(isOn: isOn)
         }
         .disabled(reason != nil)
         .opacity(reason == nil ? 1 : 0.5)
-    }
-
-    /// A row's detail, with the reason it is switched off after it. Nothing is added while
-    /// the row works.
-    private func detail(_ text: String, blockedBy reason: String?) -> String {
-        guard let reason else { return text }
-        return text.hasSuffix(".") ? "\(text) \(reason)." : "\(text). \(reason)."
-    }
-}
-
-/// The lead-and-heads mark, large, for the page's opening card.
-private struct HydraSettingsMark: View {
-    var body: some View {
-        HydraMarkImage()
-            .foregroundStyle(Chrome.primaryText.opacity(0.85))
-            .frame(width: 30, height: 30)
     }
 }
 

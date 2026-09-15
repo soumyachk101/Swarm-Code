@@ -57,6 +57,10 @@ struct ChatView: View {
                     && (paneSize == .zero || paneSize.width - scene.reserve.leading - scene.reserve.trailing >= 900)
             )
             .equatable()
+            // The timeline is the one part swapped per thread: the column around it (chrome
+            // row, chat box, panels, git status, measured sizes) stays mounted, so a switch
+            // re-lays out nothing else.
+            .id(runtime.threadID)
             // The text size set in Settings, for the conversation alone: the row and the
             // chat box keep their own size. macOS ignores Dynamic Type, so the timeline
             // scales its fonts by this factor itself (see `Font.chat`).
@@ -155,8 +159,8 @@ struct ChatView: View {
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         .detailSheet()
-        // A thread switch swaps this whole column for another thread's (see
-        // `DetailView`'s `.id(threadID)`): that swap must replace in place, never
+        // The column stays mounted across a thread switch; only the timeline is swapped
+        // (see its `.id(runtime.threadID)`). That swap must replace in place, never
         // slide or fade. Any transition here displaces every row, the composer and
         // the chrome row mid-flight, clips leading text, unseats the traffic lights
         // the chrome keeps room for, and doubles the title against itself.
@@ -173,6 +177,19 @@ struct ChatView: View {
         }
         .onChange(of: runtime.diffRevision) {
             Task { await git.refresh(directory) }
+        }
+        // The column is not rebuilt on a thread switch, so what belonged to the previous
+        // thread's timeline and panels starts fresh here. The measured sizes
+        // (`columnHeight`, `paneSize`, `composerAreaHeight`) are the pane's, not the
+        // thread's, and stay.
+        .onChange(of: runtime.threadID) {
+            scrollChrome = ChromeScrollModel()
+            scrollState = TimelineScrollState()
+            subagentDrag = PanelDragState()
+            hydraDrag = PanelDragState()
+            poppedDrag = PanelDragState()
+            usageDrag = PanelDragState()
+            panelResize = PanelResizeState()
         }
     }
 

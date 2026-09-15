@@ -16,6 +16,7 @@ It drives the coding agents you already have installed and signed in, on your ow
 | Antigravity | `agy` | stream-json headless |
 | Copilot | `copilot` | headless JSON-RPC (the Copilot SDK protocol) |
 | Command Code | `cmd` | headless print mode (NDJSON events), one run per turn, with a session mod for approvals |
+| Pi | `pi` | RPC mode (JSONL over stdio), one process per thread, with a gate extension for approvals |
 | DeepSeek | `DEEPSEEK_API_KEY` | native API (OpenAI-compatible) |
 | Meta | `MODEL_API_KEY` | native API at `api.meta.ai/v1` (Muse Spark) |
 
@@ -40,7 +41,7 @@ Remote access, mobile apps, cloud sync, telemetry and a web client are left out 
 ## Requirements
 
 - A Mac with Apple silicon running macOS 26 or later
-- At least one provider installed and signed in, for example `codex login`, `claude auth login`, `copilot login` or `cmd login`
+- At least one provider installed and signed in, for example `codex login`, `claude auth login`, `copilot login`, `cmd login` or `pi` (then `/login`)
 - Git, plus `gh` or `glab` for pull requests
 
 ## Build
@@ -64,7 +65,7 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 | Folder | Contents |
 | --- | --- |
 | `DroppyCode/App` | App entry, commands, settings and the project library |
-| `DroppyCode/Providers` | Codex, Claude, ACP, Antigravity, Copilot and Command Code adapters behind one event model |
+| `DroppyCode/Providers` | Codex, Claude, ACP, Antigravity, Copilot, Command Code and Pi adapters behind one event model |
 | `DroppyCode/Runtime` | Per-thread state, streaming, checkpoints and rewind |
 | `DroppyCode/Git` | Git, worktrees, checkpoints and diff parsing |
 | `DroppyCode/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
