@@ -43,12 +43,18 @@ struct ModelEffortButton: View {
 
     @State private var isPresented = false
 
-    /// The chip's content width, in points, before the chip style's own padding. One
-    /// width for every model and every effort: the box never grows or shrinks, whether
-    /// the popover opens, the slider changes the effort's title, or a model with a long
-    /// name is picked; a name that does not fit is cut with an ellipsis, and the full
-    /// name stays in the tooltip.
-    private static let contentWidth: CGFloat = 182
+    /// The chip's content width, in points, as it lays out on its own: a short name and
+    /// effort make a narrow chip, a long one a wide chip. Read only while the chip is
+    /// free to size itself, so the value is always the content's own width and never the
+    /// locked box's.
+    @State private var naturalWidth: CGFloat?
+    /// The width the chip is held at while its popover is open. The popover hangs from
+    /// the chip's center, so a chip that grew or shrank under it, as the slider changes
+    /// the effort's title or the list picks a model with a longer name, would drag the
+    /// popover along. Held at the width the chip had when it opened; a name that no
+    /// longer fits is cut with an ellipsis until the popover closes and the chip is free
+    /// again.
+    @State private var lockedWidth: CGFloat?
 
     var body: some View {
         let registry = model.providers
@@ -93,12 +99,18 @@ struct ModelEffortButton: View {
                         .foregroundStyle(Chrome.secondaryText)
                 }
             }
-            // One fixed box with its content centered in it: the popover hanging from the
-            // chip never moves, and the name and effort read centered whether the popover
-            // is open or the slider is changing the effort's title.
-            .frame(width: compact ? nil : Self.contentWidth)
+            // The chip takes its content's width, and holds it while the popover is open
+            // so the popover hanging from its center never moves; the content stays
+            // centered in the held box while the effort's title or the name changes.
+            .frame(width: compact ? nil : lockedWidth)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                if lockedWidth == nil { naturalWidth = width }
+            }
         }
         .buttonStyle(.chip(active: isPresented))
+        .onChange(of: isPresented) { _, isOpen in
+            lockedWidth = isOpen ? naturalWidth : nil
+        }
         .help(helpText(current: current, pair: pair))
         .accessibilityLabel(Text(helpText(current: current, pair: pair)))
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
