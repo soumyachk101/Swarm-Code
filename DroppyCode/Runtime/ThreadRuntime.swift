@@ -360,6 +360,10 @@ final class ThreadRuntime {
     /// Draft captured by Return while a turn runs: stop the turn, then send this
     /// right away instead of queueing it behind the queue.
     @ObservationIgnored private var pendingSend: PendingSend?
+    /// A queued follow-up's turn is on its way to an idle lead (see
+    /// `flushFollowUpsIfIdle`): a second prompt queued in the meantime waits its
+    /// turn rather than starting one of its own, so two never double-send.
+    @ObservationIgnored private var followUpFlushScheduled = false
 
     private struct PendingSend {
         var text: String
@@ -440,6 +444,11 @@ final class ThreadRuntime {
         if phase != .idle, dispatchQueuedHead(prompt) { return }
         followUps.append(prompt)
         scheduleSave()
+        // An idle lead takes the next queued message at once, even with heads still
+        // out: the queue only ever waits behind a running turn, never behind an
+        // idle lead. Without this a prompt queued while the lead is idle (steered
+        // behind heads at work) sits until the next turn ends, which may be never.
+        flushFollowUpsIfIdle()
     }
 
     /// Hands a queued prompt to a Droppy-run head, when the app and the chat allow it and
@@ -481,6 +490,25 @@ final class ThreadRuntime {
             followUps.removeFirst()
             scheduleSave()
         }
+    }
+
+    /// Sends the next queued follow-up to an idle lead at once, even with heads still
+    /// out. A turn the user stopped waits for them instead (see `drainFollowUps`).
+    private func flushFollowUpsIfIdle() {
+        guard phase == .idle, !followUpFlushScheduled, !followUps.isEmpty,
+              thread?.lastStatus != .interrupted else { return }
+        followUpFlushScheduled = true
+        Task { await startQueuedFollowUpTurn() }
+    }
+
+    /// The turn `flushFollowUpsIfIdle` scheduled. Something that started first (the
+    /// heads' reports, or the user's own word) owns the queue now: its end drains it.
+    private func startQueuedFollowUpTurn() async {
+        followUpFlushScheduled = false
+        guard phase == .idle else { return }
+        // The queue drains exactly as after a completed turn: in order, skipping
+        // prompts that emptied while queued.
+        _ = drainFollowUps(after: .completed)
     }
 
     func removeFollowUp(_ id: UUID) {
@@ -1537,6 +1565,10 @@ final class ThreadRuntime {
             guard let toolID = info.toolUseID, let entry = entryIndex[toolID], case .tool(let call) = entry.item.content, call.status == .running else { return }
             let outcome: ToolCall.Status = status == .completed ? .completed : .failed
             applyToolUpdate(toolID, ToolUpdate(output: summary, status: outcome))
+            // A head back with the lead idle and a prompt still queued (steered
+            // behind the team while the lead sat idle) lets the lead take it now
+            // rather than holding it until some later turn ends.
+            flushFollowUpsIfIdle()
         case .droppy:
             let report = HydraReport(
                 headIndex: info.index, task: info.task, origin: info.origin, status: status, text: summary ?? "",
@@ -1557,6 +1589,9 @@ final class ThreadRuntime {
             settleBatches()
             // An idle lead hears at once; one the user stopped waits for their next word.
             if phase == .idle, thread?.lastStatus != .interrupted { flushHydraReports() }
+            // After the reports: whatever is still queued behind an idle lead goes
+            // next, rather than waiting out the heads still at work.
+            flushFollowUpsIfIdle()
         }
     }
 
@@ -1676,7 +1711,11 @@ final class ThreadRuntime {
         while !hydraWaiting.isEmpty, launch?.hasRoom(running: app.runningDroppyHeads(of: threadID)) ?? true {
             let next = hydraWaiting.removeFirst()
             let delegation = next.delegation
-            guard let head = app.spawnDroppyHead(from: threadID, task: delegation.task, origin: .delegated, batchID: next.batchID, brief: { persona, workplace in
+            // The lead's announced name is authoritative: resolving it here pins the
+            // spawned head to exactly that roster name. Unknown or already-taken names
+            // resolve to nil and the head goes out next in order, as before.
+            let preferredIndex = delegation.name.flatMap(HydraRoster.index(named:))
+            guard let head = app.spawnDroppyHead(from: threadID, task: delegation.task, origin: .delegated, batchID: next.batchID, preferredIndex: preferredIndex, brief: { persona, workplace in
                 HydraPrompts.delegatedHeadPrompt(persona: persona, delegation: delegation, workplace: workplace)
             }) else { continue }
             hydraBatches[next.batchID, default: HydraBatch(pending: [])].pending.insert(head.id)

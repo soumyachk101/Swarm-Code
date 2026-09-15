@@ -227,7 +227,6 @@ struct ThreadTimeline: View, Equatable {
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
-                ThreadTitleHeader(threadID: runtime.threadID)
                 if hidden > 0 {
                     // Older history loads itself as the reader nears the top, a page at a
                     // time, so scrolling back never stops at a button; the pill is still
@@ -1475,62 +1474,6 @@ private struct WorkingIndicator: View {
 struct ThinkingStep: Equatable {
     var text: String
     var isStreaming: Bool
-}
-
-/// The thread's title at the top of the timeline. Tapping it copies the exact
-/// title string to the pasteboard and briefly shows a Copied confirmation.
-/// The confirmation stays in layout and only animates opacity and scale, so
-/// it never shifts the title or anything below it.
-private struct ThreadTitleHeader: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.chatZoom) private var zoom
-    let threadID: UUID
-    @State private var copied = false
-    @State private var resetTask: Task<Void, Never>?
-
-    var body: some View {
-        if let title = model.thread(threadID)?.title, !title.isEmpty {
-            HStack(spacing: 8) {
-                Text(verbatim: title)
-                    .font(.chat(.title3, weight: .semibold, zoom: zoom))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .contentShape(.rect)
-                    .onTapGesture { copy(title) }
-                    .help("Copy title")
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityLabel("Copy thread title")
-                    .accessibilityValue(title)
-                Text("Copied")
-                    .font(.chat(.caption, zoom: zoom))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.quaternary.opacity(0.6), in: Capsule(style: .continuous))
-                    .opacity(copied ? 1 : 0)
-                    .scaleEffect(copied ? 1 : 0.85)
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: copied)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 4)
-            .onDisappear { resetTask?.cancel() }
-        }
-    }
-
-    private func copy(_ title: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(title, forType: .string)
-        resetTask?.cancel()
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { copied = true }
-        resetTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.2))
-            guard !Task.isCancelled else { return }
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { copied = false }
-        }
-    }
 }
 
 /// Whether the reader has scrolled away from the latest message, shared with the composer that shows the jump button.

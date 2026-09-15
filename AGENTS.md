@@ -19,7 +19,18 @@
 - Building inside the worktree is fine; installing to /Applications and relaunching is not.
 - "Finish", "merge", "done" or "test it" do not imply relaunch — only an explicit request to run/relaunch the app does.
 
-## Merging (always via glab)
+## Merging (always via glab, always squash)
 
-- When Jordy says "merge", always merge via `glab`: push the branch, `glab mr create`, `glab mr merge`, then sync the checkout.
-- Never merge locally into `main` and never push straight to `main`.
+- Project history is already bloated: 4,292 commits on GitLab, mostly tiny
+  Hydra head commits plus one merge commit per MR (project `merge_method`
+  is `merge`, `squash_option` is `default_off`). Do not let it grow: every
+  team merge MUST land as exactly one commit on `main`.
+- When Jordy says "merge", always merge via `glab`: push the branch,
+  `glab mr create --squash-before-merge`, `glab mr merge --squash --remove-source-branch`,
+  then sync the checkout.
+- Never merge without `--squash` (create: `--squash-before-merge`, merge:
+  `-s`/`--squash`). Never merge locally into `main` and never push
+  straight to `main`.
+- Do not rewrite existing history (`rebase -i`, `filter-branch`,
+  `filter-repo`, force-push to `main`) to "fix" the 4,292 commits; squash
+  applies to new merges only.

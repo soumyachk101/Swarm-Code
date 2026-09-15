@@ -97,7 +97,10 @@ enum WindowChrome {
     /// inside it in either placement. AppKit only hands a click or a hover to a button within the
     /// title bar's own bounds, and its own bar stops short of buttons level with the chrome; the
     /// clicks fell through to the pane underneath. Being transparent, the bar shows nothing of
-    /// its size; what changes is that the row's gaps drag the window, as a title bar's do.
+    /// its size; what changes is that the row's gaps drag the window, as a title bar's do, while
+    /// the controls on it never do. Every chrome control carries a `NoWindowDragArea` behind its
+    /// content (and native controls refuse the drag on their own), so a press starting on the zoom
+    /// slider or any button, menu or field works only that control and leaves the window in place.
     static var titlebarHeight: CGFloat {
         Chrome.sheetInset + Chrome.chromeTopPadding + Chrome.capsuleHeight
     }
