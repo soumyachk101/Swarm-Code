@@ -9,7 +9,7 @@ struct HydraIntroPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 HStack(spacing: -6) {
                     ForEach(0..<5, id: \.self) { i in
                         HydraGlyph(persona: HydraRoster.persona(at: i), size: 30)
@@ -51,9 +51,10 @@ struct HydraIntroPopover: View {
                     .font(.system(size: 12))
                     .foregroundStyle(Chrome.secondaryText)
             }
-            HStack(alignment: .top, spacing: 6) {
+            HStack(alignment: .center, spacing: 6) {
                 Image(systemName: "cursorarrow.click.2")
-                Text("Right-click the Hydra mark any time to switch Hydra off for a chat, or on again.")
+                Text("Right-click the mark to switch Hydra off or on per chat.")
+                    .lineLimit(1)
             }
             .font(.system(size: 12))
             .foregroundStyle(Chrome.secondaryText)
