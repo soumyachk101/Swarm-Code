@@ -23,6 +23,10 @@ struct TourPage: Identifiable, Hashable {
 struct TourView: View {
     let pages: [TourPage]
     let width: CGFloat
+    /// The card's height, the same on every page: the window measures the tallest page's
+    /// text and passes it, so the card never grows or shrinks between pages. Nil sizes to
+    /// the current page (previews and the empty state).
+    let height: CGFloat?
     let continueButtonTitle: String
     let finishButtonTitle: String
     let onFinish: (() -> Void)?
@@ -34,6 +38,7 @@ struct TourView: View {
     init(
         pages: [TourPage],
         width: CGFloat = 660,
+        height: CGFloat? = nil,
         initialPageIndex: Int = 0,
         continueButtonTitle: String = "Continue",
         finishButtonTitle: String = "Done",
@@ -42,6 +47,7 @@ struct TourView: View {
     ) {
         self.pages = pages
         self.width = width
+        self.height = height
         self.continueButtonTitle = continueButtonTitle
         self.finishButtonTitle = finishButtonTitle
         self.onFinish = onFinish
@@ -64,10 +70,10 @@ struct TourView: View {
                     imageSection
                     bottomPanel
                 }
-                .frame(width: width)
+                .frame(width: width, height: height)
             }
         }
-        .frame(width: width)
+        .frame(width: width, height: height)
         // The floating-panel recipe from SubagentPanel: one shared rounded shape for
         // either state, one glass/tint surface, one clip, and one inset hairline.
         .background {
@@ -114,18 +120,18 @@ struct TourView: View {
                 .id(currentIndex)
                 .transition(.opacity)
 
+            // A short seat for the page indicator only: the picture is the point of the
+            // page, so the scrim never reaches into it.
             LinearGradient(
                 stops: [
                     .init(color: .clear, location: 0),
-                    .init(color: Color(white: 0.08).opacity(0.15), location: 0.25),
-                    .init(color: Color(white: 0.08).opacity(0.45), location: 0.50),
-                    .init(color: Color(white: 0.08).opacity(0.80), location: 0.75),
-                    .init(color: Color(white: 0.08).opacity(0.94), location: 1.0)
+                    .init(color: Color(white: 0.08).opacity(0.28), location: 0.55),
+                    .init(color: Color(white: 0.08).opacity(0.55), location: 1.0)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .frame(height: 220)
+            .frame(height: 96)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .allowsHitTesting(false)
 

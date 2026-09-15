@@ -256,7 +256,8 @@ enum TourCaptures {
         try? await Task.sleep(for: .milliseconds(400))
         // The still is framed around the window and the popover together; the recorder
         // writes the window's place in it beside the PNG, and the import cuts from that.
-        await recorder.still(name, stage.tourCaptureRect(including: popover))
+        // The popover and its chip are the focus, so the page zooms on them.
+        await recorder.still(name, stage.tourCaptureRect(including: popover), focus: stage.popoverFocus(popover))
         popover?.close()
         after()
     }

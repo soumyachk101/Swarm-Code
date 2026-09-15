@@ -56,6 +56,9 @@ enum WebsiteCaptures {
     /// Where each thread's composer chip sits in the window (SwiftUI's global space, which
     /// is the hosting view's flipped coordinates), for a popover hung from the window itself.
     static var modelChipFrames: [UUID: CGRect] = [:]
+    /// Where each lead's docked Hydra panel sits in the window (SwiftUI's global space),
+    /// so the tour's Hydra page can zoom on the team's panel.
+    static var hydraPanelFrames: [UUID: CGRect] = [:]
 
     /// Wallpaper around the window in every capture, in points.
     static let margin: CGFloat = 72
@@ -664,6 +667,24 @@ final class Stage {
         return Self.tourRect(around: frame.union(panel))
     }
 
+    /// A SwiftUI global-space frame (the hosting view's flipped coordinates) as a screen
+    /// rect, for a still's focus.
+    func screenRect(fromGlobal frame: CGRect) -> NSRect? {
+        guard let window, let content = window.contentView else { return nil }
+        let local = content.isFlipped ? frame : NSRect(x: frame.minX, y: content.bounds.height - frame.maxY, width: frame.width, height: frame.height)
+        return window.convertToScreen(content.convert(local, to: nil))
+    }
+
+    /// What a popover scene is about, in screen coordinates: the popover's panel and the
+    /// chip it hangs from, so the tour page can zoom on both. Nil when the popover is not
+    /// showing.
+    func popoverFocus(_ popover: NSPopover?) -> NSRect? {
+        guard let popover, popover.isShown, let panel = popover.contentViewController?.view.window?.frame else { return nil }
+        guard let anchor = popoverAnchor, let window = anchor.view.window else { return panel }
+        let chip = window.convertToScreen(anchor.view.convert(anchor.rect, to: nil))
+        return panel.union(chip)
+    }
+
     /// Whether the app window is out of the way (see `setWindowHidden`); `ensureActive`
     /// leaves it there.
     private var isWindowHidden = false
@@ -888,7 +909,9 @@ final class Recorder {
         self.stage = stage
     }
 
-    func still(_ name: String, _ rect: NSRect) async {
+    /// Photographs `rect` as <name>.png. `focus`, in screen coordinates, names the part of
+    /// the scene the tour page should zoom on; it goes into the sidecar.
+    func still(_ name: String, _ rect: NSRect, focus: NSRect? = nil) async {
         await stage?.ensureActive()
         WebsiteCaptures.log("still \(name)")
         guard let filter = await Self.filter() else { WebsiteCaptures.log("still \(name): no filter"); return }
@@ -899,7 +922,7 @@ final class Recorder {
             let representation = NSBitmapImageRep(cgImage: image)
             guard let data = representation.representation(using: .png, properties: [:]) else { return }
             try data.write(to: output.appendingPathComponent("\(name).png"), options: .atomic)
-            writeSidecar(for: name, rect: rect)
+            writeSidecar(for: name, rect: rect, focus: focus)
         } catch {
             WebsiteCaptures.log("still \(name) failed: \(error.localizedDescription)")
         }
@@ -911,12 +934,18 @@ final class Recorder {
     /// an open popover is wider than the window, and the tour script cuts the window's
     /// inside out of it; guessing that box from the window's size alone cut the
     /// sidebar's edge off the welcome page.
-    private func writeSidecar(for name: String, rect: NSRect) {
+    ///
+    /// `focus`, when given, is written the same way as `window`: the part of the still the
+    /// tour page zooms on, top-left origin, points.
+    private func writeSidecar(for name: String, rect: NSRect, focus: NSRect?) {
         guard let window = stage?.windowFrame else { return }
-        let sidecar: [String: [Double]] = [
+        var sidecar: [String: [Double]] = [
             "rect": [rect.minX, rect.minY, rect.width, rect.height],
             "window": [window.minX - rect.minX, rect.maxY - window.maxY, window.width, window.height],
         ]
+        if let focus {
+            sidecar["focus"] = [focus.minX - rect.minX, rect.maxY - focus.maxY, focus.width, focus.height]
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: sidecar, options: [.sortedKeys]) else { return }
         try? data.write(to: output.appendingPathComponent("\(name).json"), options: .atomic)
     }

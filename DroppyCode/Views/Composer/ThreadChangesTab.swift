@@ -34,6 +34,7 @@ struct ThreadChangesTab: View {
             .contentShape(shape)
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .glassEffect(.regular.interactive(), in: shape)
         .background {
             AttachmentAnchorCapture(onResolve: anchor)

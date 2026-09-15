@@ -144,7 +144,7 @@ extension TourCaptures {
         stage.setBackdrop(TourCaptures.backdropView(.hydra))
         // 16:10 stage, sidebar hidden so the lead's conversation and the team's
         // panel fill the frame with the running heads centered and uncropped.
-        stage.resize(to: NSSize(width: 1152, height: 720))
+        stage.resize(to: NSSize(width: 960, height: 600))
         if model.sidebar.isVisible { model.sidebar.toggle() }
         let leadID = HydraID.lead
         model.selectedThreadID = leadID
@@ -171,6 +171,9 @@ extension TourCaptures {
         runtime.hydraPanelDock = .bottomTrailing
         await stage.ensureActive()
         try? await Task.sleep(for: .seconds(2))
+        // The whole window: the heads going out on the left and the team's panel on the
+        // right are the picture together, and a crop on the panel alone lost the left.
+        // The stage is narrow instead (see above), so everything draws large.
         await recorder.still("tour-hydra", stage.tourCaptureRect)
         runtime.isHydraPanelHidden = true
     }
@@ -254,7 +257,7 @@ extension TourCaptures {
         )
         let popover = stage.presentPopover(card.environment(model), width: 330, chipOf: leadID)
         await stage.holdPopover(popover, seconds: 2.0)
-        await recorder.still("web-hero", stage.tourCaptureRect(including: popover))
+        await recorder.still("web-hero", stage.tourCaptureRect(including: popover), focus: stage.popoverFocus(popover))
         popover.close()
         model.updateThread(leadID) { $0.effort = "high" }
         model.leaveHydraPair(for: leadID)

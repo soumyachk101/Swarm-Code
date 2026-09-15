@@ -629,6 +629,7 @@ struct AttachmentThumbnail: View {
             }
         }
         .buttonStyle(.plain)
+        .focusable(false)
         // The .fill image is drawn wider than the cell before it is clipped;
         // pinning the hit shape to the cell keeps the neighbour's remove badge
         // reachable no matter how hit-testing treats the overflow.

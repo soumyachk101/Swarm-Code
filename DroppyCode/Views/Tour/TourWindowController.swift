@@ -48,6 +48,7 @@ final class TourWindowController {
         let rootView = TourView(
             pages: pages,
             width: width,
+            height: totalHeight,
             continueButtonTitle: continueButtonTitle,
             finishButtonTitle: finishButtonTitle,
             onFinish: {
@@ -66,6 +67,10 @@ final class TourWindowController {
 
         let contentSize = CGSize(width: width, height: totalHeight)
         let hosting = NSHostingView(rootView: rootView)
+        // The window keeps the size computed here. Left to its defaults the hosting view
+        // resized the window to each page's own ideal height, so the card grew and shrank
+        // with the length of the description as the user paged.
+        hosting.sizingOptions = []
         hosting.frame = NSRect(origin: .zero, size: contentSize)
 
         let window = HostWindow(

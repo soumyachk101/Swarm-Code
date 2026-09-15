@@ -108,6 +108,7 @@ struct ModelEffortButton: View {
             }
         }
         .buttonStyle(.chip(active: isPresented))
+        .focusable(false)
         .onChange(of: isPresented) { _, isOpen in
             lockedWidth = isOpen ? naturalWidth : nil
         }

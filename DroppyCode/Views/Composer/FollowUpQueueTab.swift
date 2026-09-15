@@ -46,6 +46,12 @@ struct FollowUpQueueTab: View {
                         .rotationEffect(.degrees(isCollapsed ? 180 : 0))
                 }
                 .buttonStyle(.plain)
+                // Kept out of the key view loop on purpose. SwiftUI's default key-view-loop builder
+                // walks focusable views in reading order, and with this chevron sitting flush above
+                // the row's trash button at the same x it never advanced past the chevron: the main
+                // thread spun in that rebuild forever (the Sept 15 2026 freezes). None of the tab's
+                // controls are meant to be tabbed to, so none of them join the loop.
+                .focusable(false)
                 .help(isCollapsed ? "Expand queued follow-ups" : "Collapse queued follow-ups")
                 .accessibilityLabel(Text(isCollapsed ? "Expand queued follow-ups" : "Collapse queued follow-ups"))
             }
@@ -302,6 +308,7 @@ private struct QueueIconButton: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .disabled(!isEnabled)
         .help(help)
         .accessibilityLabel(Text(help))
@@ -454,6 +461,7 @@ private struct FollowUpEditor: View {
                                             .padding(4)
                                     }
                                     .buttonStyle(.plain)
+                                    .focusable(false)
                                     .offset(x: 6, y: -6)
                                     .accessibilityLabel(Text("Remove \(attachment.name)"))
                                 }
@@ -473,6 +481,7 @@ private struct FollowUpEditor: View {
                                 .contentShape(.rect(cornerRadius: 12, style: .continuous))
                         }
                         .buttonStyle(.plain)
+                        .focusable(false)
                         .help("Add files")
                         .accessibilityLabel(Text("Add files"))
                         .disabled(attachments.count >= 8)
