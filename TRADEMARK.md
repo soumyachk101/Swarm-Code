@@ -7,8 +7,9 @@ Jordy Spruit. All rights reserved.
 
 ## What This Means
 
-The source code of Droppy Code is available under the MIT License, but the names "Droppy" and
-"Droppy Code" and the associated branding are protected and are not licensed with the code.
+The source code of Droppy Code is available under the GNU AGPL v3.0 with additional attribution
+terms (see LICENSE), but the names "Droppy" and "Droppy Code" and the associated branding are
+protected and are not licensed with the code.
 
 ### You MAY:
 - Refer to this project as "Droppy Code" when discussing or reviewing it
