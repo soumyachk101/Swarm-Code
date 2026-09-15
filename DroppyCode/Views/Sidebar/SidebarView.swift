@@ -74,6 +74,7 @@ struct SidebarView: View {
                 }
                 // Adding or deleting a thread opens and closes its space with the same motion as every other row.
                 .animation(Chrome.panelSlide, value: model.threads.count)
+                .animation(Chrome.panelSlide, value: model.settings.settledCollapsed)
                 .padding(.horizontal, Chrome.listInset)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
@@ -82,7 +83,7 @@ struct SidebarView: View {
             .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { listFrame.frame = $0 }
 
             VStack(alignment: .leading, spacing: 1) {
-                SidebarRow(title: "Add project", action: { model.chooseProjectFolder() }) {
+                SidebarRow(title: "Add project", action: { addProject() }) {
                     SidebarIconBadge { SidebarSymbol("plus") }
                 }
                 SidebarRow(title: "Settings", action: { WindowManager.shared.showSettings() }) {
@@ -138,6 +139,8 @@ struct SidebarView: View {
             ProjectRow(project: project, count: count)
         case .header(let title, let isFirst):
             ActivityHeader(title: title, isFirst: isFirst)
+        case .settledHeader(let count, let isFirst):
+            SettledHeader(count: count, isFirst: isFirst)
         case .thread(let thread, let projectName, let peers, let hasHelpers):
             reorderableRow(thread, projectName: projectName, peers: peers, hasHelpers: hasHelpers)
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.values[item.id] = $0 }
@@ -202,6 +205,23 @@ struct SidebarView: View {
         proxy.frame(in: .named(GenieAnimator.coordinateSpace))
     }
 
+    // MARK: Adding projects
+
+    /// New projects join from here: a folder picker, one project per folder, then a
+    /// thread in the last one added. Adding persists through the model.
+    private func addProject() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add project"
+        panel.message = "Choose a folder for your agents to work in."
+        guard panel.runModal() == .OK else { return }
+        var added: Project?
+        for url in panel.urls { added = model.addProject(at: url) }
+        if let added { model.newThread(in: added) }
+    }
+
     // MARK: Project layout
 
     private func projectItems(helpers: [UUID: [ChatThread]]) -> [SidebarItem] {
@@ -216,7 +236,8 @@ struct SidebarView: View {
             items.append(SidebarItem(id: "project-\(project.id)", kind: .project(project, count: count)))
             guard project.isExpanded else { continue }
             // The settled threads close the project's list (see `threads(in:)`), a small
-            // step below the ones still open.
+            // step below the ones still open, under a header that folds them away.
+            let collapsed = model.settings.settledCollapsed
             var hasOpen = false
             var reachedSettled = false
             for thread in projectThreads {
@@ -225,6 +246,11 @@ struct SidebarView: View {
                     if hasOpen {
                         items.append(SidebarItem(id: "settled-gap-\(project.id)", kind: .gap(ThreadRowMetrics.settledGap)))
                     }
+                    let settledCount = projectThreads.count(where: \.isSettled)
+                    if settledCount > 0 {
+                        items.append(SidebarItem(id: "settled-header-\(project.id)", kind: .settledHeader(count: settledCount, isFirst: false)))
+                    }
+                    if collapsed { break }
                 }
                 hasOpen = hasOpen || !thread.isSettled
                 let own = helpers[thread.id] ?? []
@@ -260,15 +286,18 @@ struct SidebarView: View {
             items.append(contentsOf: activityThreadItems(group.threads, helpers: helpers))
         }
         // The settled threads sit under everything, whatever day they were last active,
-        // latest settled first. They keep their place: no dragging among them.
+        // latest settled first, under a header that folds them away. They keep their
+        // place: no dragging among them.
         let settled = rest.filter(\.isSettled).sorted(by: AppModel.settledFirst)
         if !settled.isEmpty {
-            items.append(SidebarItem(id: "settled", kind: .header("Settled", isFirst: items.isEmpty)))
-            for thread in settled {
-                items.append(SidebarItem(
-                    id: SidebarItem.id(for: thread),
-                    kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: nil, hasHelpers: false)
-                ))
+            items.append(SidebarItem(id: "settled", kind: .settledHeader(count: settled.count, isFirst: items.isEmpty)))
+            if !model.settings.settledCollapsed {
+                for thread in settled {
+                    items.append(SidebarItem(
+                        id: SidebarItem.id(for: thread),
+                        kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: nil, hasHelpers: false)
+                    ))
+                }
             }
         }
         return items
@@ -550,6 +579,9 @@ private struct SidebarItem: Identifiable {
         /// A project, with what a folded one shows: its threads and their helpers.
         case project(Project, count: Int)
         case header(String, isFirst: Bool)
+        /// The Settled section's header: the title, how many settled threads it holds,
+        /// and whether they are folded away. The collapsed flag lives in settings.
+        case settledHeader(count: Int, isFirst: Bool)
         /// A thread, with its project's name in the activity layout, the threads it can be
         /// reordered among, and whether it has helpers to fold away.
         case thread(ChatThread, projectName: String?, peers: [UUID]?, hasHelpers: Bool)
@@ -595,6 +627,9 @@ private struct ProjectRow: View {
     @State private var isMenuPresented = false
 
     var body: some View {
+        // The global switch in Settings activates every project at once; only a project
+        // explicitly switched here keeps its own choice, and shows dimmed while off.
+        let isActive = model.settings.isProjectActive(project.id)
         SidebarRow(
             title: project.name,
             accessoryWidth: 40,
@@ -610,7 +645,7 @@ private struct ProjectRow: View {
             accessory: { hovering in
                 if hovering || isMenuPresented {
                     HStack(spacing: 0) {
-                        RowActionsButton(actions: actions, isPresented: $isMenuPresented)
+                        RowActionsButton(actions: actions(isActive: isActive), isPresented: $isMenuPresented)
                         Button {
                             model.newThread(in: project)
                         } label: {
@@ -627,11 +662,12 @@ private struct ProjectRow: View {
                 }
             }
         )
-        .contextMenu { RowActionMenuButtons(actions: actions) }
+        .opacity(isActive ? 1 : 0.55)
+        .contextMenu { RowActionMenuButtons(actions: actions(isActive: isActive)) }
     }
 
-    private var actions: [RowAction] {
-        [
+    private func actions(isActive: Bool) -> [RowAction] {
+        var items = [
             RowAction(title: "New thread", symbol: "square.and.pencil") { model.newThread(in: project) },
             RowAction(title: "New thread in worktree", symbol: "square.stack.3d.up") {
                 model.newThread(in: project, workspace: .worktree)
@@ -641,6 +677,19 @@ private struct ProjectRow: View {
                 model.removeProject(project)
             },
         ]
+        items.append(RowAction(
+            title: isActive ? "Deactivate project" : "Activate project",
+            symbol: "power",
+            startsGroup: true
+        ) {
+            model.settings.setProjectActive(!isActive, for: project.id)
+        })
+        if model.settings.hasProjectActivationOverride(for: project.id) {
+            items.append(RowAction(title: "Follow global setting", symbol: "arrow.uturn.backward") {
+                model.settings.clearProjectActivationOverride(for: project.id)
+            })
+        }
+        return items
     }
 }
 
@@ -1361,6 +1410,46 @@ private struct ActivityHeader: View {
             .padding(.top, isFirst ? 2 : 14)
             .padding(.bottom, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// The Settled section's header: a disclosure chevron, the title and its count. Clicking
+/// it folds the settled threads away or brings them back, with the sidebar's motion. The
+/// choice persists in settings, so the section stays as left across relaunch.
+private struct SettledHeader: View {
+    @Environment(AppModel.self) private var model
+    let count: Int
+    let isFirst: Bool
+
+    var body: some View {
+        let collapsed = model.settings.settledCollapsed
+        Button {
+            withAnimation(Chrome.panelSlide) {
+                model.settings.settledCollapsed.toggle()
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(verbatim: "Settled")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(verbatim: "\(count)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .opacity(0.8)
+                Spacer(minLength: 4)
+            }
+            .foregroundStyle(Chrome.secondaryText)
+            .padding(.horizontal, Chrome.rowHorizontalPadding)
+            .padding(.top, isFirst ? 2 : 14)
+            .padding(.bottom, 4)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help(collapsed ? "Show settled threads" : "Hide settled threads")
+        .accessibilityLabel(Text("Settled, \(count) threads"))
+        .accessibilityValue(Text(collapsed ? "Collapsed" : "Expanded"))
+        .accessibilityAddTraits(.isButton)
     }
 }
 

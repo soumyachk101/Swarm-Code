@@ -41,8 +41,11 @@ struct ChatView: View {
                 workingDirectory: workingDirectory,
                 supportsRewind: thread?.provider.supportsRewind ?? false,
                 columnHeight: columnHeight,
-                // A panel docked on the left takes the rail's edge; the rail goes with it.
+                // A panel docked on the left takes the rail's edge; the rail goes with it. So
+                // does a pane too narrow for both: the column reads at up to 820 points and the
+                // rail floats over its gutter, so under about 900 the two would overlap.
                 showsMinimap: !scene.dockedSides.contains(.leading)
+                    && (paneSize == .zero || paneSize.width - scene.reserve.leading - scene.reserve.trailing >= 900)
             )
             .equatable()
             // The zoom the chrome row's slider sets, for the conversation alone: the row and
@@ -116,6 +119,12 @@ struct ChatView: View {
         }
         .frame(minWidth: 0, maxWidth: .infinity, maxHeight: .infinity)
         .detailSheet()
+        // A thread switch swaps this whole column for another thread's (see
+        // `DetailView`'s `.id(threadID)`): that swap must replace in place, never
+        // slide or fade. Any transition here displaces every row, the composer and
+        // the chrome row mid-flight, clips leading text, unseats the traffic lights
+        // the chrome keeps room for, and doubles the title against itself.
+        .transition(.identity)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { columnHeight = $0 }
         .animation(Chrome.panelSlide, value: runtime.isTerminalVisible)
         // A merge or pull request link in this chat can hand its request to a helper, which
@@ -373,6 +382,10 @@ private struct ChatChromeRow: View {
                     BranchMenu(runtime: runtime, directory: directory, git: git)
                 }
                 ChromeCompactTitle(title: title, model: scrollChrome)
+                    // The thread's title cuts on a switch; it must never crossfade.
+                    // Animated, the old and new titles ghost over each other
+                    // mid-flight. Scroll progress still drives it per frame.
+                    .animation(nil, value: title)
                 HStack(spacing: 8) {
                     ChatZoomSlider(index: $settings.chatZoom)
                     ChromeCapsule {

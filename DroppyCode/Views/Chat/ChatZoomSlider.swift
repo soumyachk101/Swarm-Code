@@ -119,7 +119,7 @@ struct ChatZoomSlider: View {
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
                     .fill(Chrome.overlay(0.1))
-                    .frame(height: Self.trackHeight)
+                    .frame(width: width, height: Self.trackHeight)
                 Capsule(style: .continuous)
                     .fill(Chrome.primaryText.opacity(0.35))
                     .frame(width: x + inset, height: Self.trackHeight)
@@ -135,6 +135,7 @@ struct ChatZoomSlider: View {
                 .scaleEffect(dragX == nil ? 1 : 1.12)
                 .position(x: x, y: proxy.size.height / 2)
             }
+            .frame(width: width, height: proxy.size.height, alignment: .leading)
             .contentShape(.rect)
             .gesture(
                 DragGesture(minimumDistance: 0)

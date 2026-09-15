@@ -5,7 +5,9 @@ The app runs once in its tour capture mode (see DroppyCode/Support/TourCaptures.
 it opens the real window with mock data over a curated gradient backdrop, photographs
 each tour scene as a 16:10 still into build.noindex/tour-captures, and quits. This
 script then resizes every still to exactly 1320x824 and writes it into the tour
-imagesets, composing the four theme stills into one 2x2 collage. Needs Pillow (pip).
+imagesets (welcome comes from the web hero, themes from a seamless 2x2 collage).
+With --website it also exports cropped-on-the-action WebP files plus per-theme shots
+into website/assets/app/tour/. Needs Pillow (pip).
 
     scripts/tour_captures.py                 # build, capture, import into the asset catalog
     scripts/tour_captures.py --website       # ...and export the full-size set for the website
@@ -30,6 +32,62 @@ WIDTH = 1320
 HEIGHT = 824
 SCENES = ["welcome", "hydra", "pairs", "slider", "panels"]
 CONTENTS = {"info": {"author": "xcode", "version": 1}}
+
+# App window size in points for each still. Every still is a 16:10 rect around the
+# window: the frame grown by 72 pt on every side, then widened/heightened to 1.6.
+WINDOW_SIZES = {
+    "tour-welcome": (1200, 660),
+    "web-hero": (1280, 800),
+    "tour-hydra": (1080, 640),
+    "tour-pairs": (900, 600),
+    "tour-slider": (900, 600),
+    "tour-panels": (1200, 740),
+    "tour-window": (660, 600),
+    "web-diff": (1200, 660),
+    "web-palette": (1200, 660),
+    "web-plans": (1200, 660),
+    "web-question": (1200, 660),
+    "web-queue": (1200, 660),
+    "tour-theme-tokyoNight": (900, 560),
+    "tour-theme-gruvbox": (900, 560),
+    "tour-theme-catppuccinLatte": (900, 560),
+    "tour-theme-rosePine": (900, 560),
+    "web-theme-tokyoNight": (900, 560),
+    "web-theme-gruvbox": (900, 560),
+    "web-theme-catppuccinLatte": (900, 560),
+    "web-theme-rosePine": (900, 560),
+}
+THEME_ORDER = ["tokyoNight", "gruvbox", "catppuccinLatte", "rosePine"]
+
+
+def window_box(name):
+    """Return (rw, rh, mx, my, w, h): still rect and margins in points."""
+    stem = name.removesuffix(".png")
+    if stem not in WINDOW_SIZES:
+        raise KeyError(f"No window size for {name}")
+    w, h = WINDOW_SIZES[stem]
+    rw, rh = w + 144, h + 144
+    if rw / rh < 1.6:
+        rw = round(rh * 1.6)
+    else:
+        rh = round(rw / 1.6)
+    return (rw, rh, (rw - w) / 2, (rh - h) / 2, w, h)
+
+
+def crop_points(image, name, x, y, w, h):
+    """Crop a window-points rect (top-left origin, may extend into the margin)."""
+    rw, rh, mx, my, ww, wh = window_box(name)
+    assert abs(image.width - 2 * rw) <= 2 and abs(image.height - 2 * rh) <= 2, \
+        f"{name}: PNG is {image.width}x{image.height}, expected {2 * rw}x{2 * rh}"
+    x0 = round(2 * (mx + x))
+    y0 = round(2 * (my + y))
+    x1 = round(2 * (mx + x + w))
+    y1 = round(2 * (my + y + h))
+    x0 = max(0, min(image.width, x0))
+    y0 = max(0, min(image.height, y0))
+    x1 = max(0, min(image.width, x1))
+    y1 = max(0, min(image.height, y1))
+    return image.crop((x0, y0, x1, y1))
 
 
 def step(title):
@@ -57,7 +115,7 @@ def capture():
     # the run is force-killed at its budget, so a stall can never leave it running.
     marker = "tour-captures " + str(CAPTURES)
     subprocess.run(["open", "-n", str(APP), "--args", "--tour-captures", str(CAPTURES)], check=True)
-    deadline = time.time() + 150
+    deadline = time.time() + 330
     while time.time() < deadline:
         time.sleep(2)
         alive = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.strip()
@@ -100,29 +158,57 @@ def write_imageset(name, image):
     print(f"  {path.relative_to(ROOT)}")
 
 
+def theme_collage():
+    """Seamless 2x2 collage, exactly one still's size, gradient continuous."""
+    from PIL import Image
+    order = [f"tour-theme-{t}.png" for t in THEME_ORDER]
+    sources = [CAPTURES / n for n in order]
+    missing = [s for s in sources if not s.exists()]
+    if missing:
+        sys.exit(f"Missing theme stills: {[p.name for p in missing]}; see {CAPTURES / 'run.log'}")
+    first = Image.open(sources[0]).convert("RGB")
+    full_w, full_h = first.size
+    tile_w, tile_h = full_w // 2, full_h // 2
+    collage = Image.new("RGB", (tile_w * 2, tile_h * 2))
+    for index, source in enumerate(sources):
+        tile = Image.open(source).convert("RGB").resize((tile_w, tile_h), Image.LANCZOS)
+        collage.paste(tile, ((index % 2) * tile_w, (index // 2) * tile_h))
+    return collage
+
+
+def interior(name, inset=8):
+    """The window's inside, `inset` points in from its edges: the tour card rounds its own
+    corners, so a picture that still showed the window's corners would draw a second,
+    tighter corner inside them."""
+    from PIL import Image
+    rw, rh, mx, my, w, h = window_box(name)
+    image = Image.open(CAPTURES / f"{name}.png").convert("RGB")
+    box = (round(2 * (mx + inset)), round(2 * (my + inset)), round(2 * (mx + w - inset)), round(2 * (my + h - inset)))
+    return image.crop(box)
+
+
+def theme_mosaic():
+    """The four theme windows' insides, two by two with a thin dark seam, for the tour."""
+    from PIL import Image
+    tiles = [interior(f"tour-theme-{theme}", inset=8) for theme in THEME_ORDER]
+    gap = 6
+    tile_w = (WIDTH - gap) // 2
+    tile_h = (HEIGHT - gap) // 2
+    mosaic = Image.new("RGB", (tile_w * 2 + gap, tile_h * 2 + gap), (16, 16, 20))
+    for index, tile in enumerate(tiles):
+        mosaic.paste(fit(tile, tile_w, tile_h), ((index % 2) * (tile_w + gap), (index // 2) * (tile_h + gap)))
+    return mosaic
+
+
 def encode():
     from PIL import Image, ImageDraw
     step("Importing")
-    for scene in SCENES:
-        source = CAPTURES / f"tour-{scene}.png"
-        if not source.exists():
-            sys.exit(f"The capture run wrote no tour-{scene}.png; see {CAPTURES / 'run.log'}")
-        write_imageset(f"tour-{scene}", fit(Image.open(source).convert("RGB"), WIDTH, HEIGHT))
-    themes = sorted(CAPTURES.glob("tour-theme-*.png"))
-    if len(themes) != 4:
-        sys.exit(f"Expected 4 tour-theme-*.png, found {len(themes)}; see {CAPTURES / 'run.log'}")
-    gap = 8
-    tile_w = (WIDTH - gap) // 2
-    tile_h = (HEIGHT - gap) // 2
-    radius = 18
-    background = Image.open(themes[0]).convert("RGB").getpixel((0, 0))
-    collage = Image.new("RGB", (WIDTH, HEIGHT), background)
-    mask = Image.new("L", (tile_w, tile_h), 0)
-    ImageDraw.Draw(mask).rounded_rectangle([0, 0, tile_w, tile_h], radius=radius, fill=255)
-    for index, source in enumerate(themes):
-        tile = fit(Image.open(source).convert("RGB"), tile_w, tile_h)
-        collage.paste(tile, ((tile_w + gap) * (index % 2), (tile_h + gap) * (index // 2)), mask)
-    write_imageset("tour-themes", collage)
+    for name, source in [("tour-welcome", "web-hero"), ("tour-hydra", "tour-hydra"), ("tour-pairs", "tour-pairs"),
+                         ("tour-slider", "tour-slider"), ("tour-panels", "tour-panels")]:
+        if not (CAPTURES / f"{source}.png").exists():
+            sys.exit(f"The capture run wrote no {source}.png; see {CAPTURES / 'run.log'}")
+        write_imageset(name, fit(interior(source), WIDTH, HEIGHT))
+    write_imageset("tour-themes", fit(theme_mosaic(), WIDTH, HEIGHT))
 
 
 WEB_OUT = ROOT / "website" / "assets" / "app" / "tour"
@@ -133,45 +219,72 @@ R2_PREFIX = "site-assets/droppy-code/tour"
 WEB_SCENES = SCENES + ["window"]
 
 
+def save_webp(image, dest, quality=92):
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    image.save(dest, "WEBP", quality=quality, method=6)
+    print(f"  {dest.relative_to(ROOT)} {image.size[0]}x{image.size[1]}")
+
+
 def website():
     from PIL import Image, ImageDraw
     step(f"Exporting the website's set to {WEB_OUT.relative_to(ROOT)}")
     WEB_OUT.mkdir(parents=True, exist_ok=True)
-    for name in WEB_SCENES:
-        source = CAPTURES / f"tour-{name}.png"
+
+    def load(stem):
+        source = CAPTURES / f"{stem}.png"
         if not source.exists():
-            print(f"  (no tour-{name}.png)")
-            continue
+            print(f"  (no {stem}.png)")
+            return None
+        return Image.open(source).convert("RGB")
+
+    hero = load("web-hero")
+    if hero is not None:
+        save_webp(hero, WEB_OUT / "hero.webp")
+        save_webp(hero, WEB_OUT / "welcome.webp")
+        # Sidebar: window's left 300 pt plus the left margin, full window height.
+        rw, rh, mx, my, w, h = window_box("web-hero")
+        assert abs(hero.width - 2 * rw) <= 2 and abs(hero.height - 2 * rh) <= 2
+        sidebar = hero.crop((0, round(2 * my), round(2 * (mx + 300)), round(2 * (my + h))))
+        save_webp(sidebar, WEB_OUT / "sidebar.webp")
+    for stem in ["tour-hydra", "tour-panels", "tour-window"]:
+        image = load(stem)
+        if image is not None:
+            save_webp(image, WEB_OUT / f"{stem.removeprefix('tour-')}.webp")
+    slider = load("tour-slider")
+    if slider is not None:
+        save_webp(crop_points(slider, "tour-slider", 900 - 640, 600 - 400, 640, 400),
+                   WEB_OUT / "slider.webp")
+    pairs = load("tour-pairs")
+    if pairs is not None:
+        save_webp(crop_points(pairs, "tour-pairs", 900 - 720, 600 - 450, 720, 450),
+                   WEB_OUT / "pairs.webp")
+    for stem, out in [("web-diff", "diff"), ("web-palette", "palette")]:
+        image = load(stem)
+        if image is not None:
+            save_webp(crop_points(image, stem, (1200 - 880) / 2, 0, 880, 550),
+                       WEB_OUT / f"{out}.webp")
+    plans = load("web-plans")
+    if plans is not None:
+        save_webp(plans, WEB_OUT / "plans.webp")
+    for stem, out in [("web-question", "question"), ("web-queue", "queue")]:
+        image = load(stem)
+        if image is not None:
+            save_webp(crop_points(image, stem, (1200 - 960) / 2, 660 - 600, 960, 600),
+                       WEB_OUT / f"{out}.webp")
+    save_webp(theme_collage(), WEB_OUT / "themes.webp")
+    for source in sorted(CAPTURES.glob("web-theme-*.png")):
+        theme = source.stem.removeprefix("web-theme-")
         image = Image.open(source).convert("RGB")
-        image.save(WEB_OUT / f"{name}.webp", "WEBP", quality=92, method=6)
-        print(f"  {name}.webp {image.size[0]}x{image.size[1]}  {(WEB_OUT / f'{name}.webp').stat().st_size // 1024} KB")
-    themes = sorted(CAPTURES.glob("tour-theme-*.png"))
-    for source in themes:
-        name = source.stem.removeprefix("tour-")
-        image = Image.open(source).convert("RGB")
-        image.save(WEB_OUT / f"{name}.webp", "WEBP", quality=90, method=6)
-        print(f"  {name}.webp {image.size[0]}x{image.size[1]}")
-    if len(themes) == 4:
-        first = Image.open(themes[0]).convert("RGB")
-        gap = 16
-        tile_w = (first.size[0] - gap) // 2
-        tile_h = round(tile_w * 10 / 16)
-        collage = Image.new("RGB", (tile_w * 2 + gap, tile_h * 2 + gap), first.getpixel((0, 0)))
-        for index, source in enumerate(themes):
-            tile = fit(Image.open(source).convert("RGB"), tile_w, tile_h)
-            mask = Image.new("L", tile.size, 0)
-            ImageDraw.Draw(mask).rounded_rectangle((0, 0, tile.size[0] - 1, tile.size[1] - 1), radius=36, fill=255)
-            x = (index % 2) * (tile_w + gap)
-            y = (index // 2) * (tile_h + gap)
-            collage.paste(tile, (x, y), mask)
-        collage.save(WEB_OUT / "themes.webp", "WEBP", quality=92, method=6)
-        print(f"  themes.webp {collage.size[0]}x{collage.size[1]}")
+        want_w = 2080
+        want_h = round(image.height * want_w / image.width)
+        save_webp(image.resize((want_w, want_h), Image.LANCZOS),
+                   WEB_OUT / "themes" / f"{theme}.webp", quality=86)
 
 
 def upload():
     step(f"Uploading to R2 ({R2_BUCKET}/{R2_PREFIX})")
-    for path in sorted(WEB_OUT.glob("*.webp")):
-        key = f"{R2_PREFIX}/{path.name}"
+    for path in sorted(WEB_OUT.rglob("*.webp")):
+        key = f"{R2_PREFIX}/{path.relative_to(WEB_OUT)}"
         subprocess.run([
             "wrangler", "r2", "object", "put", f"{R2_BUCKET}/{key}", "--file", str(path),
             "--content-type", "image/webp", "--cache-control", "public, max-age=31536000, immutable", "--remote",

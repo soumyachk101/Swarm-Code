@@ -605,6 +605,8 @@ struct EffortSliderCard: View {
                             .font(.system(size: 13))
                             .foregroundStyle(Chrome.primaryText.opacity(0.7))
                             .lineLimit(1)
+                            .truncationMode(.tail)
+                            .minimumScaleFactor(0.85)
                     }
                 }
                 .padding(.horizontal, 44)
@@ -637,6 +639,8 @@ struct EffortSliderCard: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Chrome.secondaryText)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .minimumScaleFactor(0.9)
                     .padding(.top, -6)
                     .transition(.softAppear)
             }
@@ -731,7 +735,11 @@ struct EffortSlider: View {
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
-            let inset = Self.trackHeight / 2
+            // The lens is wider than the track: stop centres sit a lens radius in
+            // from each end so the whole knob stays visible at the extremes and
+            // the fill ends flush with its far edge.
+            let inset = Self.thumbSize / 2
+            let midY = proxy.size.height / 2
             let step = count > 1 ? (width - inset * 2) / CGFloat(count - 1) : 0
             let restingX = inset + CGFloat(index) * step
             let x = min(max(dragX ?? restingX, inset), width - inset)
@@ -740,9 +748,10 @@ struct EffortSlider: View {
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
                     .fill(Chrome.overlay(0.1))
+                    .frame(width: width, height: Self.trackHeight)
                 Capsule(style: .continuous)
                     .fill(look.fill)
-                    .frame(width: x + inset)
+                    .frame(width: x + inset, height: Self.trackHeight)
                     .overlay(alignment: .leading) {
                         if look.kind != .plain || look.pair != nil {
                             TrackEffect(look: look)
@@ -757,7 +766,7 @@ struct EffortSlider: View {
                     Circle()
                         .fill(stopX <= x ? look.stopColor : Chrome.overlay(0.32))
                         .frame(width: 5, height: 5)
-                        .position(x: stopX, y: Self.trackHeight / 2)
+                        .position(x: stopX, y: midY)
                 }
                 // The knob is a Liquid Glass lens: it refracts the fill's edge, the stops and
                 // the particles as it slides over them, lit white just enough to read as the
@@ -779,10 +788,9 @@ struct EffortSlider: View {
                 }
                 .frame(width: Self.thumbSize, height: Self.thumbSize)
                 .scaleEffect(dragX == nil ? 1 : 1.06)
-                .position(x: x, y: Self.trackHeight / 2)
+                .position(x: x, y: midY)
             }
-            .frame(height: Self.trackHeight)
-            .frame(maxHeight: .infinity)
+            .frame(width: width, height: proxy.size.height, alignment: .leading)
             .animation(.smooth(duration: 0.3), value: look)
             .contentShape(.rect)
             .gesture(
