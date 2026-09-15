@@ -89,6 +89,7 @@ struct FollowUpQueueTab: View {
                             showsRule: prompt.id != runtime.followUps.last?.id && !isDragged && !bundledWithNext,
                             isBundledWithPrevious: isBundledWithPrevious,
                             isPairTarget: pairTarget == prompt.id,
+                            isPairing: isDragged && pairTarget != nil,
                             onDragChanged: { translation in dragChanged(prompt.id, translation: translation) },
                             onDragEnded: { dragEnded() }
                         )
@@ -98,6 +99,27 @@ struct FollowUpQueueTab: View {
                         .offset(x: pairTarget != nil && isDragged ? 14 : 0, y: isDragged ? drag.visualOffset : 0)
                         .animation(Self.slide, value: pairTarget != nil)
                         .zIndex(isDragged ? 1 : 0)
+                    }
+                }
+                .background {
+                    // One frame around each bundle: the rows inside it go as one prompt. It
+                    // springs in on the drop and follows the rows as they are measured.
+                    let spans = Self.bundleSpans(for: runtime.followUps, heights: rowHeights)
+                    GeometryReader { geometry in
+                        ZStack(alignment: .topLeading) {
+                            ForEach(spans, id: \.id) { span in
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color.accentColor.opacity(0.08))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1)
+                                    }
+                                    .frame(width: geometry.size.width + 16, height: span.height)
+                                    .offset(x: -8, y: span.top)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                            }
+                        }
+                        .animation(Chrome.panelSlide, value: spans)
                     }
                 }
             }
@@ -163,6 +185,10 @@ struct FollowUpQueueTab: View {
     /// Neighbours sliding out of the grabbed row's way.
     private static let slide = Animation.spring(response: 0.28, dampingFraction: 0.82)
 
+    /// The middle share of a neighbour's slot over which the held row pairs with it rather
+    /// than swapping past it: a quarter either side of its centre.
+    private static let pairBand: CGFloat = 0.25
+
     /// One shared number per bundle: the number climbs when a prompt starts a new
     /// bundle or has none at all.
     private static func numbers(for prompts: [FollowUpPrompt]) -> [UUID: Int] {
@@ -181,10 +207,39 @@ struct FollowUpQueueTab: View {
         return numbers
     }
 
-    /// The pointer has moved `translation` since the grab. The grabbed row
-    /// follows it exactly and `RowDrag` swaps it past every neighbour whose
-    /// centre it has crossed. Nudged 28 points or more right the drag pairs
-    /// instead: reordering pauses and the row under the pointer lights up.
+    /// One framed span per bundle of two or more rows, in the rows' own coordinates.
+    private struct BundleSpan: Equatable {
+        let id: UUID
+        let top: CGFloat
+        let height: CGFloat
+    }
+
+    private static func bundleSpans(for prompts: [FollowUpPrompt], heights: [UUID: CGFloat]) -> [BundleSpan] {
+        var spans: [BundleSpan] = []
+        var top: CGFloat = 0
+        var index = 0
+        while index < prompts.count {
+            let prompt = prompts[index]
+            let height = heights[prompt.id] ?? 32
+            if let bundle = prompt.bundleID {
+                var end = index + 1
+                var span = height
+                while end < prompts.count, prompts[end].bundleID == bundle {
+                    span += heights[prompts[end].id] ?? 32
+                    end += 1
+                }
+                if end - index > 1 { spans.append(BundleSpan(id: bundle, top: top, height: span)) }
+                top += span
+                index = end
+            } else {
+                top += height
+                index += 1
+            }
+        }
+        return spans
+    }
+
+    /// The pointer has moved `translation` since the grab. The grabbed row follows it exactly; over the middle of a neighbour it pairs with that row, past the neighbour's far quarter the two swap. Sideways travel plays no part.
     private func dragChanged(_ id: UUID, translation: CGSize) {
         if drag.id != id {
             drag = RowDrag(id: id)
@@ -195,44 +250,38 @@ struct FollowUpQueueTab: View {
         transaction.disablesAnimations = true
         withTransaction(transaction) { drag.translation = translation.height }
 
-        guard translation.width >= 28 else {
-            if pairTarget != nil {
-                withAnimation(Self.slide) { pairTarget = nil }
+        // Past the far quarter of a neighbour the rows swap; over its middle the two pair.
+        let moved = drag.settle(order: runtime.followUps.map(\.id), heights: rowHeights, fallbackHeight: 32, pastCentre: Self.pairBand) { neighbour, placeAfter in
+            // The neighbour slides and the grabbed row's slot moves in the same animation
+            // as its compensation, so it stays put under the pointer while the list flows.
+            withAnimation(Self.slide) {
+                runtime.moveFollowUp(id, to: neighbour, placeAfter: placeAfter)
             }
-            let moved = drag.settle(order: runtime.followUps.map(\.id), heights: rowHeights, fallbackHeight: 32) { neighbour, placeAfter in
-                // The neighbour slides and the grabbed row's slot moves in the
-                // same animation as its compensation, so it stays put under
-                // the pointer while the list flows around it.
-                withAnimation(Self.slide) {
-                    runtime.moveFollowUp(id, to: neighbour, placeAfter: placeAfter)
-                }
-            }
-            if moved {
-                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-            }
-            return
+        }
+        if moved {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
 
-        // Pairing: which other row the held row's centre is over.
+        // Pairing: the held row's centre sits within the middle half of the neighbour it is
+        // heading for, wherever the pointer is sideways.
         let ids = runtime.followUps.map(\.id)
-        guard let heldIndex = ids.firstIndex(of: id) else { return }
-        var top: CGFloat = 0
-        for (index, rowID) in ids.enumerated() {
-            if index == heldIndex { break }
-            top += rowHeights[rowID] ?? 32
-        }
-        let centreY = top + (rowHeights[id] ?? 32) / 2 + drag.visualOffset
-        var cursor: CGFloat = 0
         var target: UUID?
-        for rowID in ids {
-            let height = rowHeights[rowID] ?? 32
-            if centreY >= cursor, centreY < cursor + height {
-                target = rowID == id ? nil : rowID
-                break
+        if let index = ids.firstIndex(of: id) {
+            let own = rowHeights[id] ?? 32
+            let offset = drag.visualOffset
+            var neighbour: UUID?
+            if offset > 0, index + 1 < ids.count { neighbour = ids[index + 1] }
+            if offset < 0, index > 0 { neighbour = ids[index - 1] }
+            if let neighbour {
+                let slot = rowHeights[neighbour] ?? 32
+                let toCentre = (own + slot) / 2
+                if abs(abs(offset) - toCentre) <= slot * Self.pairBand { target = neighbour }
             }
-            cursor += height
         }
         if target != pairTarget {
+            if target != nil, pairTarget == nil {
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            }
             withAnimation(Self.slide) { pairTarget = target }
         }
     }
@@ -265,6 +314,8 @@ private struct FollowUpRow: View {
     let isBundledWithPrevious: Bool
     /// The held row hovers over this row while pairing: light it up.
     let isPairTarget: Bool
+    /// This row is the one held, and it hovers over a row it will pair with.
+    let isPairing: Bool
     let onDragChanged: (CGSize) -> Void
     let onDragEnded: () -> Void
 
@@ -290,11 +341,21 @@ private struct FollowUpRow: View {
         // One shared center line: the number, grip, thumbnails, text and
         // buttons all center on it, so single-line rows read as one line.
         HStack(alignment: .center, spacing: 8) {
-            Text(verbatim: "\(position)")
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(isBundledWithPrevious ? Chrome.secondaryText.opacity(0.5) : Chrome.secondaryText)
-                .frame(width: 14, alignment: .trailing)
-                .accessibilityHidden(true)
+            // A joined row, a pairing target and the held row while pairing all show the
+            // link instead of a number: the bundle goes as one prompt under one number.
+            Group {
+                if isBundledWithPrevious || isPairTarget || isPairing {
+                    Image(systemName: "link")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                } else {
+                    Text(verbatim: "\(position)")
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+            }
+            .frame(width: 14, alignment: .trailing)
+            .accessibilityHidden(true)
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Chrome.secondaryText.opacity(isHoveringGrip ? 1 : 0.7))
@@ -324,7 +385,7 @@ private struct FollowUpRow: View {
                 .onChange(of: isGrabbing) { _, grabbing in
                     if !grabbing, isDragged { onDragEnded() }
                 }
-                .help("Drag to reorder · nudge right onto another to send them together")
+                .help("Drag above or below to reorder · drop onto the middle of another to send them together")
                 .accessibilityLabel(Text("Drag to reorder"))
             if !prompt.attachments.isEmpty {
                 // No anchor view under the thumbnails or the strip: nothing in this tab
@@ -382,13 +443,6 @@ private struct FollowUpRow: View {
         }
         // Tight rows: a one-line follow-up is 32 tall, the grip and buttons 22.
         .padding(.vertical, 5)
-        .overlay(alignment: .leading) {
-            if isBundledWithPrevious {
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(Color.accentColor.opacity(0.7))
-                    .frame(width: 2)
-            }
-        }
         .overlay(alignment: .bottom) {
             if showsRule { Divider().opacity(0.35) }
         }
@@ -396,8 +450,13 @@ private struct FollowUpRow: View {
         // rows sliding underneath never show through.
         .background {
             if isPairTarget {
+                // Lit and framed: the held row will join this one on release.
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.14))
+                    .fill(Color.accentColor.opacity(0.18))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Color.accentColor.opacity(0.65), lineWidth: 1.5)
+                    }
                     .padding(.horizontal, -8)
             }
             if isDragged {

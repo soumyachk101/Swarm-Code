@@ -10,6 +10,9 @@ struct ComposerArea: View {
     var compactModelChip: Bool = false
     /// Whether the box takes typing focus as it appears; a floating panel's does not.
     var takesFocusOnAppear = true
+    /// Whether the thread's changes tab can rise from the box. The main chat's does; a
+    /// floating panel's box never does, since a head's changes land through the lead.
+    var showsChanges = true
 
     /// The changes popover presented from the tab. Driven by
     /// `runtime.isDiffVisible`, so every opener (tab, Review, ⌘D) shares it.
@@ -22,13 +25,16 @@ struct ComposerArea: View {
                     ApprovalCard(request: request, runtime: runtime)
                 }
                 VStack(alignment: .center, spacing: -ThreadChangesTab.overlap) {
-                    TabSlot(runtime: runtime, diffPopover: diffPopover)
+                    TabSlot(runtime: runtime, diffPopover: diffPopover, showsChanges: showsChanges)
                     ComposerView(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: compactModelChip, takesFocusOnAppear: takesFocusOnAppear)
                 }
                 .background {
                     AttachmentAnchorCapture { diffPopover.setFallbackAnchor($0) }
                 }
-                .background { ChangeStatsRefresh(runtime: runtime) }
+                .background {
+                    // A box without the tab never runs git for the stats it would show.
+                    if showsChanges { ChangeStatsRefresh(runtime: runtime) }
+                }
                 .onAppear { diffPopover.sync(isVisible: runtime.isDiffVisible, runtime: runtime) }
                 // The box moved to another thread; the coordinator closes the popover it had and never opens one on arrival.
                 .onChange(of: runtime.threadID) { diffPopover.sync(isVisible: runtime.isDiffVisible, runtime: runtime) }
@@ -45,7 +51,7 @@ struct ComposerArea: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity)
-        .animation(.snappy(duration: 0.25), value: runtime.approvals.map(\.id))
+        .animation(Chrome.panelSlide, value: runtime.approvals.map(\.id))
     }
 }
 
@@ -56,6 +62,7 @@ struct ComposerArea: View {
 private struct TabSlot: View {
     let runtime: ThreadRuntime
     let diffPopover: DiffPopoverCoordinator
+    let showsChanges: Bool
 
     var body: some View {
         // One slot, its tabs stacked on the box's top edge rather than on each
@@ -63,14 +70,14 @@ private struct TabSlot: View {
         // fades in over it, and the slot's height glides from one to the other.
         // The slot exists only while a tab does, or the stack's overlap would
         // pull an empty slot's box up by that much.
-        if !runtime.followUps.isEmpty || runtime.changeStats != nil {
+        if !runtime.followUps.isEmpty || (showsChanges && runtime.changeStats != nil) {
             ZStack(alignment: .bottom) {
                 if !runtime.followUps.isEmpty {
                     // The queued steering prompts take the tab slot while any are queued:
                     // the changes tab hides behind them and reappears once the queue empties.
                     FollowUpQueueTab(runtime: runtime)
                         .transition(.softAppear)
-                } else if let stats = runtime.changeStats {
+                } else if showsChanges, let stats = runtime.changeStats {
                     ThreadChangesTab(
                         stats: stats,
                         anchor: { diffPopover.setAnchor($0) }
@@ -174,6 +181,9 @@ struct ComposerView: View {
             ComposerWorkingDotsSlot(runtime: runtime)
         }
         .modifier(ComposerSurface())
+        // The pill's width glides as the panels take or give room; the text view and the
+        // controls move as one with the glass rather than each on their own frame.
+        .geometryGroup()
         .onChange(of: suggestions) { _, new in
             if new.isVisible {
                 controller.showSuggestions(AnyView(suggestionMenu()), itemCount: new.items.count)

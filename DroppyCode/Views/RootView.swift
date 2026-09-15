@@ -52,10 +52,10 @@ struct RootView: View {
             .frame(width: SidebarResizeHandle.hitWidth)
             .padding(.top, Chrome.trafficLightTop + Chrome.trafficLightDiameter)
         }
-        // Clip the content before each background; WindowBackdrop supplies its own rounded shape and edge.
-        .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
         .background { WindowBackdrop() }
         .background { WindowChromeConfigurator(sidebarVisible: sidebar.holdsTrafficLights) }
+        // Clipped after the backdrop is painted, so the glass and its edge stop at the window's own curve.
+        .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
         .ignoresSafeArea()
         .coordinateSpace(.named(GenieAnimator.coordinateSpace))
         .overlay { GenieLayer() }

@@ -71,6 +71,37 @@ struct HydraSettingsPage: View {
             }
             ChromeSection(title: "Pairs") {
                 ChromeCard {
+                    HStack(alignment: .center, spacing: 14) {
+                        // A lead and the heads it sends out: the pair, drawn with the roster.
+                        HStack(spacing: 6) {
+                            HydraGlyph(persona: HydraRoster.persona(at: 0), size: 30)
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Chrome.secondaryText)
+                            HStack(spacing: -8) {
+                                ForEach(1..<4, id: \.self) { index in
+                                    HydraGlyph(persona: HydraRoster.persona(at: index), size: 22)
+                                }
+                            }
+                        }
+                        .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("One leads, the others build")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Chrome.primaryText)
+                            Text("A pair says which model leads and which runs the heads. Put a deep thinker over quick hands on one provider, or lead on one provider and send the heads out on another: the strongest lead with the fastest team, every time.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Chrome.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 12)
+                        HydraCookbookButton()
+                    }
+                    .padding(.leading, 16)
+                    .padding(.trailing, Chrome.rowControlTrailingPadding)
+                    .padding(.vertical, 14)
+                }
+                ChromeCard {
                     if settings.hydraPairs.isEmpty {
                         ChromeRow(title: "No pairs yet", detail: "Heads run on the chat's own model until a chat joins a pair.") {
                             HydraAddPairButton()
@@ -135,6 +166,24 @@ struct HydraSettingsPage: View {
         }
         .disabled(reason != nil)
         .opacity(reason == nil ? 1 : 0.5)
+    }
+}
+
+/// Opens the cookbook: the best pairs for the providers set up here, added with a click.
+private struct HydraCookbookButton: View {
+    @State private var isOpen = false
+
+    var body: some View {
+        Button {
+            isOpen = true
+        } label: {
+            Label("Open cookbook", systemImage: "book")
+        }
+        .buttonStyle(.glass)
+        .popover(isPresented: $isOpen, arrowEdge: .trailing) {
+            HydraCookbookPanel()
+                .presentedChrome()
+        }
     }
 }
 

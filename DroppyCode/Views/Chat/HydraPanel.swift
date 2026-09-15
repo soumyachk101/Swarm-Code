@@ -81,7 +81,8 @@ struct HydraPanel: View {
         .onChange(of: StageMark(id: selected?.id, status: selected?.hydra?.status)) { old, new in
             // The head on stage just finished: it holds the stage for its wave.
             guard let id = new.id, old.id == id, old.status == .running, new.status != .running else { return }
-            hold = StageHold(id: id, startedAt: .now)
+            // Faded in as it is faded out below, so the wave never pops onto the stage.
+            withAnimation(Chrome.panelSlide) { hold = StageHold(id: id, startedAt: .now) }
         }
         .task(id: hold) {
             guard hold != nil else { return }
@@ -92,9 +93,6 @@ struct HydraPanel: View {
             strip(selected: selected)
         }
         .frame(width: size.width, height: size.height)
-        // Everything inside draws flat over the panel's glass (see `isOnGlassPanel`):
-        // the panel is one glass pass, its controls are not a second one each.
-        .environment(\.isOnGlassPanel, true)
         // The frame follows the pane every frame of a live resize: the strip's
         // swaps settle after, never during.
         .animation(nil, value: liveResize.isActive)
@@ -428,7 +426,7 @@ private struct HydraHeadTranscript: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if head.hydra?.kind == .droppy {
                 // A head of Droppy Code's own can be steered and answered like any chat.
-                ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false)
+                ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false, showsChanges: false)
                     .overlay(alignment: .top) {
                         JumpToLatestButton(scrollState: scrollState)
                     }

@@ -157,11 +157,11 @@ private struct ThemeTint: ViewModifier {
     let theme: AppTheme
 
     func body(content: Content) -> some View {
-        if let accent = theme.spec.accent {
-            content.tint(accent)
-        } else {
-            content
-        }
+        // One branch, never two: an `if` here made the whole window's content a different
+        // view once a theme with an accent replaced one without, so every page was built
+        // afresh and Settings jumped back to its top on a theme change. A nil tint keeps
+        // the system accent.
+        content.tint(theme.spec.accent)
     }
 }
 

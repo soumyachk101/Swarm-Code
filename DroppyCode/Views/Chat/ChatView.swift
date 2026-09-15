@@ -83,7 +83,7 @@ struct ChatView: View {
                         JumpToLatestButton(scrollState: scrollState)
                     }
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerAreaHeight = $0 }
-                    .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !panelResize.isActive))
+                    .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !panelResize.isActive, animatesWidth: true))
             }
             .overlay(alignment: .top) {
                 PaneTopVeil(model: scrollChrome)
@@ -99,44 +99,50 @@ struct ChatView: View {
                 )
             }
             .overlay(alignment: .topLeading) {
-                // Not before the pane has a size: the panel's spot comes from it.
-                if let subagent = scene.subagent, scene.isMeasured {
-                    subagentPanel(subagent, scene: scene, project: project)
+                ZStack(alignment: .topLeading) {
+                    // Not before the pane has a size: the panel's spot comes from it.
+                    if let subagent = scene.subagent, scene.isMeasured {
+                        subagentPanel(subagent, scene: scene, project: project)
+                    }
                 }
+                .animation(Chrome.panelSlide, value: scene.subagent?.id)
             }
-            .animation(Chrome.panelSlide, value: scene.subagent?.id)
             .overlay(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {
                     if scene.showsHydra {
                         hydraPanel(scene: scene, workingDirectory: workingDirectory, project: project)
                     }
                 }
-                // Toggled from the Hydra button or dismissed, the panel fades and scales
-                // in place while the chat slides to make room or take it back.
+                // Toggled from the Hydra button or dismissed, the panel fades and scales in
+                // place. Keyed to the heads, not to whether the panel is on screen yet: that
+                // also flips as the pane is first measured. The room the chat makes for it is
+                // animated by `ReserveSlide` on its own, so nothing here reaches the column.
                 .animation(Chrome.panelSlide, value: scene.hasHeads)
             }
-            // Keyed to the heads, not to whether the panel is on screen yet: that also flips
-            // as the pane is first measured, and slid the whole chat into place from its
-            // unmeasured layout every time a thread opened.
-            .animation(Chrome.panelSlide, value: scene.hasHeads)
             .overlay(alignment: .topLeading) {
-                if let popped = scene.popped, scene.showsPopped {
-                    poppedPanel(popped, scene: scene, workingDirectory: workingDirectory, project: project)
+                ZStack(alignment: .topLeading) {
+                    if let popped = scene.popped, scene.showsPopped {
+                        poppedPanel(popped, scene: scene, workingDirectory: workingDirectory, project: project)
+                    }
                 }
+                .animation(Chrome.panelSlide, value: scene.popped?.id)
             }
-            .animation(Chrome.panelSlide, value: scene.popped?.id)
             .overlay(alignment: .topLeading) {
-                ForEach(scene.autoPopped) { auto in
-                    autoPoppedPanel(auto, scene: scene, workingDirectory: workingDirectory, project: project)
+                ZStack(alignment: .topLeading) {
+                    ForEach(scene.autoPopped) { auto in
+                        autoPoppedPanel(auto, scene: scene, workingDirectory: workingDirectory, project: project)
+                    }
                 }
+                .animation(Chrome.panelSlide, value: scene.autoPopped.map(\.id))
             }
-            .animation(Chrome.panelSlide, value: scene.autoPopped.map(\.id))
             .overlay(alignment: .topLeading) {
-                if let usage = scene.usage, scene.showsUsage {
-                    usagePanel(usage, scene: scene)
+                ZStack(alignment: .topLeading) {
+                    if let usage = scene.usage, scene.showsUsage {
+                        usagePanel(usage, scene: scene)
+                    }
                 }
+                .animation(Chrome.panelSlide, value: scene.usage)
             }
-            .animation(Chrome.panelSlide, value: scene.usage)
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { paneSize = $0 }
             // Free-floating panels are kept inside the pane while it shrinks, with no
             // animation; when the resize ends they land docked exactly (see below).
@@ -572,6 +578,10 @@ struct ChatView: View {
 private struct ReserveSlide: ViewModifier {
     let reserve: PanelReserve
     let slides: Bool
+    /// Whether the padding itself glides. The box is one pill and cheap to lay out, so
+    /// its width follows the room; the conversation's rows are not, so its padding
+    /// snaps and the offset below carries it.
+    var animatesWidth = false
 
     @State private var offset: CGFloat = 0
 
@@ -579,12 +589,15 @@ private struct ReserveSlide: ViewModifier {
         content
             .padding(.leading, reserve.leading)
             .padding(.trailing, reserve.trailing)
+            // Only a dock or undock glides; while a panel is dragged or resized the room
+            // changes every frame, and the box follows the pointer without a spring.
+            .animation(animatesWidth && slides ? Chrome.panelSlide : nil, value: reserve)
             .offset(x: offset)
             .onChange(of: reserve) { old, new in
                 // The column centres in the room left, so its centre moves by half the
                 // change in the room on either side: start from where it was and glide.
                 let shift = ((new.leading - new.trailing) - (old.leading - old.trailing)) / 2
-                guard slides, shift != 0 else {
+                guard slides, !animatesWidth, shift != 0 else {
                     offset = 0
                     return
                 }
@@ -759,7 +772,11 @@ private struct PanelScene {
         // steps over.
         let usageLift = max(0, (usageHeight ?? 0) - slotHeight)
         var autoPopped: [ChatThread] = []
-        let natural = max(1, Int((single.verticalRoom + gap) / (slotHeight + gap)))
+        // How many panels a side can hold at the smallest they shrink to, three at most:
+        // the slots a panel can be dropped in. Counted at the ideal height a tall pane
+        // gave one slot a side, and a second panel could only ever take the other corner.
+        let smallest = compact ? SubagentPanelLayout.compactHeight : SubagentPanelLayout.minHeight
+        let natural = min(3, max(1, Int((single.verticalRoom + gap) / (smallest + gap))))
         if model.settings.hydraAutoPopsHeads, showsHydra, members.heads.count > 1 {
             var candidates = Array(members.heads.dropFirst()).filter { !runtime.hydraAutoPopHeld.contains($0.id) }
             for candidate in candidates where runtime.hydraAutoPanelDocks[candidate.id] != nil {
@@ -801,10 +818,23 @@ private struct PanelScene {
         for side in [PanelDockSide.leading, PanelDockSide.trailing] {
             slotsOnSide[side] = max(natural, placed.count { $0.corner.side == side })
         }
-        // A side holding more panels than fit at their natural height shares its room
-        // between them; fewer keep the natural height, since the layout only shrinks
-        // past the natural share.
-        let stackDepth = max(1, [PanelDockSide.leading, PanelDockSide.trailing].map { side in placed.count { $0.corner.side == side } }.max() ?? 1)
+        // The height the panels share comes from how tightly a side's slots are taken:
+        // slots are spread evenly between the top and bottom spots, so the closest two
+        // occupied slots set the tallest panel that leaves them clear. Neighbours share
+        // the room by the slot count; panels a slot apart keep half each; one alone keeps
+        // its full height. The larger of the two sides' depths, since one layout serves both.
+        var stackDepth = 1
+        for side in [PanelDockSide.leading, PanelDockSide.trailing] {
+            let n = slotsOnSide[side] ?? 1
+            let indices = slotsByID.values
+                .filter { $0.corner.side == side }
+                .map { $0.corner.isTop ? $0.below : n - 1 - $0.below }
+                .sorted()
+            guard indices.count > 1 else { continue }
+            let closest = zip(indices, indices.dropFirst()).map { $1 - $0 }.min() ?? 1
+            let depth = Int((Double(n - 1) / Double(max(1, closest))).rounded(.up)) + 1
+            stackDepth = max(stackDepth, depth)
+        }
         let layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth, preferred: model.settings.panelSize, compact: compact)
         let reserve = PanelReserve(
             leading: sides.contains(.leading) ? layout.composerReserve : 0,

@@ -108,9 +108,10 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
            event.window === strip.window {
             var point = strip.convert(event.locationInWindow, from: nil)
             point.x = min(max(point.x, strip.bounds.minX + 2), strip.bounds.maxX - 2)
-            // A hairline on the edge the panel opens from, at the tap's x.
-            let y = edge == .minY ? strip.bounds.minY : strip.bounds.maxY - 1
-            let rect = NSRect(x: point.x - 1, y: y, width: 2, height: 1)
+            // A hairline the strip's full height, at the tap's x: the panel opens off
+            // whichever edge AppKit picks. Anchored to the edge it was asked for, a panel
+            // flipped to the other side for want of room opened over the photo itself.
+            let rect = NSRect(x: point.x - 1, y: strip.bounds.minY, width: 2, height: strip.bounds.height)
             return (strip, rect)
         }
         if let thumbnailView, thumbnailView.window != nil {
@@ -120,13 +121,12 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
             return (strip, strip.bounds)
         }
         if let anchorRect, let target = WindowRectAnchor.target(for: anchorRect) {
-            // The tap's own x again, on the edge the panel opens from, when the click
-            // that opened it is at hand; the whole strip otherwise.
+            // The tap's own x again, the strip's full height, when the click that opened
+            // it is at hand; the whole strip otherwise.
             if let event = NSApp.currentEvent, event.type == .leftMouseUp, event.window === target.view.window {
                 var point = target.view.convert(event.locationInWindow, from: nil)
                 point.x = min(max(point.x, target.rect.minX + 2), target.rect.maxX - 2)
-                let y = edge == .minY ? target.rect.minY : target.rect.maxY - 1
-                return (target.view, NSRect(x: point.x - 1, y: y, width: 2, height: 1))
+                return (target.view, NSRect(x: point.x - 1, y: target.rect.minY, width: 2, height: target.rect.height))
             }
             return (target.view, target.rect)
         }

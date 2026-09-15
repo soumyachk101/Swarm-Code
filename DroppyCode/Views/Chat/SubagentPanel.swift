@@ -284,7 +284,7 @@ struct SubagentPanel: View {
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false)
+            ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false, showsChanges: false)
                 .overlay(alignment: .top) {
                     JumpToLatestButton(scrollState: scrollState)
                 }
@@ -321,9 +321,6 @@ struct SubagentPanel: View {
             }
         }
         .frame(width: size.width, height: size.height)
-        // Everything inside draws flat over the panel's glass (see `isOnGlassPanel`):
-        // the panel is one glass pass, its controls are not a second one each.
-        .environment(\.isOnGlassPanel, true)
         // The frame follows the pane every frame of a live resize: any content keyed
         // to it settles after, never during.
         .animation(nil, value: liveResize.isActive)

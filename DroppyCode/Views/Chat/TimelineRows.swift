@@ -2323,7 +2323,8 @@ private struct TurnFileCard: View {
             .help("Show this turn's changes")
         }
         .padding(.leading, 12)
-        .padding(.trailing, 10)
+        // The round buttons sit in the card with the same clearance on every side.
+        .padding(.trailing, 6)
         .padding(.vertical, 6)
         .background(.quaternary.opacity(0.32), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
