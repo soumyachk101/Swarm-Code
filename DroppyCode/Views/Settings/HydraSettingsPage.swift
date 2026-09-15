@@ -195,7 +195,7 @@ private struct HydraPairRow: View {
                     .frame(width: 360)
             }
             Button {
-                withAnimation(Chrome.panelSlide) { model.settings.removeHydraPair(pair.id) }
+                withAnimation(Chrome.panelSlide) { model.removeHydraPair(pair.id) }
             } label: {
                 Image(systemName: "minus.circle")
                     .font(.system(size: 12, weight: .medium))
@@ -291,7 +291,7 @@ private struct HydraPairEditor: View {
                         selection: Binding(
                             get: { pair.provider },
                             set: { provider in
-                                model.settings.updateHydraPair(pairID) {
+                                model.updateHydraPair(pairID) {
                                     guard $0.provider != provider else { return }
                                     $0.provider = provider
                                     $0.orchestratorModel = nil
@@ -320,7 +320,7 @@ private struct HydraPairEditor: View {
                         selection: Binding(
                             get: { pair.orchestratorModel },
                             set: { id in
-                                model.settings.updateHydraPair(pairID) {
+                                model.updateHydraPair(pairID) {
                                     $0.orchestratorModel = id
                                     if let effort = $0.orchestratorEffort, let option = registry.model(id, for: $0.provider), !option.efforts.contains(effort) {
                                         $0.orchestratorEffort = nil
@@ -338,7 +338,7 @@ private struct HydraPairEditor: View {
                             inherit: "Chat's effort",
                             selection: Binding(
                                 get: { pair.orchestratorEffort },
-                                set: { effort in model.settings.updateHydraPair(pairID) { $0.orchestratorEffort = effort } }
+                                set: { effort in model.updateHydraPair(pairID) { $0.orchestratorEffort = effort } }
                             )
                         )
                     }
@@ -350,7 +350,7 @@ private struct HydraPairEditor: View {
                         selection: Binding(
                             get: { pair.sendsHeadsElsewhere ? pair.workerProvider : nil },
                             set: { provider in
-                                model.settings.updateHydraPair(pairID) {
+                                model.updateHydraPair(pairID) {
                                     let chosen = provider == $0.provider ? nil : provider
                                     guard $0.workerProvider != chosen else { return }
                                     // The heads' model and effort were the old provider's.
@@ -370,7 +370,7 @@ private struct HydraPairEditor: View {
                         selection: Binding(
                             get: { pair.workerModel },
                             set: { id in
-                                model.settings.updateHydraPair(pairID) {
+                                model.updateHydraPair(pairID) {
                                     $0.workerModel = id
                                     if let effort = $0.workerEffort, let option = registry.model(id, for: $0.headsProvider), !option.efforts.contains(effort) {
                                         $0.workerEffort = nil
@@ -388,7 +388,7 @@ private struct HydraPairEditor: View {
                             inherit: pair.sendsHeadsElsewhere ? "\(pair.headsProvider.displayName)'s default" : "Same as the chat",
                             selection: Binding(
                                 get: { pair.workerEffort },
-                                set: { effort in model.settings.updateHydraPair(pairID) { $0.workerEffort = effort } }
+                                set: { effort in model.updateHydraPair(pairID) { $0.workerEffort = effort } }
                             )
                         )
                     }
@@ -399,7 +399,7 @@ private struct HydraPairEditor: View {
                         options: [(Int?.none, "No cap")] + HydraPair.maxHeadsRange.map { (Optional($0), String($0)) },
                         selection: Binding(
                             get: { pair.maxHeads },
-                            set: { count in model.settings.updateHydraPair(pairID) { $0.maxHeads = count } }
+                            set: { count in model.updateHydraPair(pairID) { $0.maxHeads = count } }
                         )
                     )
                 }

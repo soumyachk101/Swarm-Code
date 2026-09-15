@@ -28,6 +28,30 @@ extension AppModel {
         guard let thread = thread(threadID) else { return }
         let provider = pair.provider
         let switchesProvider = provider != thread.provider
+        let lead = hydraLead(of: pair, for: thread)
+        updateThread(threadID) { thread in
+            if switchesProvider {
+                thread.provider = provider
+                thread.providerSessionID = nil
+            }
+            thread.model = lead.model
+            thread.effort = lead.effort
+            thread.fastMode = lead.fastMode
+            thread.hydraPairID = pair.id
+            thread.hydraEnabled = true
+        }
+        // A chat that changes provider leaves its old session behind, as a model choice does.
+        if switchesProvider { existingRuntime(for: threadID)?.stopSession() }
+        settings.remember(model: lead.model, effort: lead.effort, for: provider)
+        settings.defaultProvider = provider
+        settings.hydraEnabled = true
+        settings.hydraDefaultEnabled = true
+    }
+
+    /// The model, effort and fast mode a chat runs on as a pair's lead.
+    private func hydraLead(of pair: HydraPair, for thread: ChatThread) -> (model: String?, effort: String?, fastMode: Bool) {
+        let provider = pair.provider
+        let switchesProvider = provider != thread.provider
         // A pair with no lead model runs on any model, so the chat keeps the one it is on;
         // arriving from another provider there is nothing to keep and it takes that
         // provider's default.
@@ -38,7 +62,10 @@ extension AppModel {
         } else {
             providers.model(thread.model, for: provider)
         }
-        let modelID = option?.id ?? (switchesProvider ? nil : thread.model)
+        // The pair's lead model is the chat's even before the provider's catalog lists it:
+        // the chip shows the id until the list arrives, rather than staying on the model
+        // the chat had, with the pair's checkmark on a model it is not on.
+        let modelID = option?.id ?? pair.orchestratorModel ?? (switchesProvider ? nil : thread.model)
         let preference = settings.preference(for: provider, model: modelID)
         // The pair's own effort wins. Without one the chat picks up what this model was
         // last left on, the way choosing the model by hand does.
@@ -47,23 +74,41 @@ extension AppModel {
         } else {
             preference.effort.flatMap { (option?.efforts.contains($0) ?? false) ? $0 : nil }
         }
-        updateThread(threadID) { thread in
-            if switchesProvider {
-                thread.provider = provider
-                thread.providerSessionID = nil
+        return (modelID, effort, (option?.supportsFast ?? false) && preference.fastMode)
+    }
+
+    /// Edits a pair in Settings and moves the chats leading with it along: the pair is
+    /// where those chats are, so a new lead model or effort is theirs at once, the way
+    /// entering the pair set them, and the chip says so. A pair whose lead provider
+    /// changes lets its chats go instead: a chat does not change provider under a
+    /// conversation, so it stays on its own model, Hydra as it was, out of the pair.
+    func updateHydraPair(_ id: UUID, _ change: (inout HydraPair) -> Void) {
+        let before = settings.hydraPair(id)
+        settings.updateHydraPair(id, change)
+        guard let pair = settings.hydraPair(id), pair != before else { return }
+        for thread in threads where thread.hydraPairID == id && hydraIsOn(thread) {
+            guard pair.provider == thread.provider else {
+                updateThread(thread.id) { $0.hydraPairID = nil }
+                continue
             }
-            thread.model = modelID
-            thread.effort = effort
-            thread.fastMode = (option?.supportsFast ?? false) && preference.fastMode
-            thread.hydraPairID = pair.id
-            thread.hydraEnabled = true
+            let lead = hydraLead(of: pair, for: thread)
+            guard lead.model != thread.model || lead.effort != thread.effort || lead.fastMode != thread.fastMode else { continue }
+            updateThread(thread.id) {
+                $0.model = lead.model
+                $0.effort = lead.effort
+                $0.fastMode = lead.fastMode
+            }
+            settings.remember(model: lead.model, effort: lead.effort, for: pair.provider)
         }
-        // A chat that changes provider leaves its old session behind, as a model choice does.
-        if switchesProvider { existingRuntime(for: threadID)?.stopSession() }
-        settings.remember(model: modelID, effort: effort, for: provider)
-        settings.defaultProvider = provider
-        settings.hydraEnabled = true
-        settings.hydraDefaultEnabled = true
+    }
+
+    /// Removes a pair and takes every chat out of it, so no chat keeps pointing at a pair
+    /// that is gone: each stays on its own model, Hydra as it was.
+    func removeHydraPair(_ id: UUID) {
+        settings.removeHydraPair(id)
+        for thread in threads where thread.hydraPairID == id {
+            updateThread(thread.id) { $0.hydraPairID = nil }
+        }
     }
 
     /// Takes a chat out of the pair it leads with, when a model is chosen from the picker's

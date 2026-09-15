@@ -164,9 +164,10 @@ private struct ModelEffortPanel: View {
                     } onEnterPair: { pair in
                         // Entering a pair settles the chat's model, effort and Hydra in one
                         // go, so there is nothing left to choose here: the popover closes.
-                        if !model.leadsWithHydraPair(pair, thread: thread) {
-                            model.enterHydraPair(pair, for: thread.id)
-                        }
+                        // A tap on the pair the chat already leads with settles them again:
+                        // it is the way back onto the pair's lead model and effort after the
+                        // slider or a pair edit moved the chat off them.
+                        model.enterHydraPair(pair, for: thread.id)
                         showsModels = false
                         dismiss()
                     } onBack: {
