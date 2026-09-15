@@ -33,6 +33,16 @@ struct ChatView: View {
     @State private var usageContentHeight: CGFloat?
     /// One grip held at a time, whichever panel it is on.
     @State private var panelResize = PanelResizeState()
+    /// When the team's panel came on screen, and whether it is lingering past its heads.
+    /// Heads that go out and fall at the door leave the panel within a frame or two of
+    /// its arrival, and a panel that flashed on and straight off again read as a glitch:
+    /// once shown it stays at least `hydraMinimumPresence`, then goes with the same slide
+    /// a finished head's panel goes with.
+    @State private var hydraShownSince: Date?
+    @State private var hydraLingers = false
+    @State private var hydraLingerTask: Task<Void, Never>?
+
+    private static let hydraMinimumPresence: TimeInterval = 1.6
 
     var body: some View {
         let thread = model.thread(runtime.threadID)
@@ -108,16 +118,35 @@ struct ChatView: View {
                 .animation(Chrome.panelSlide, value: scene.subagent?.id)
             }
             .overlay(alignment: .topLeading) {
+                let showsHydraPanel = scene.showsHydra || hydraLingers
                 ZStack(alignment: .topLeading) {
-                    if scene.showsHydra {
+                    if showsHydraPanel {
                         hydraPanel(scene: scene, workingDirectory: workingDirectory, project: project)
                     }
                 }
-                // Toggled from the Hydra button or dismissed, the panel fades and scales in
-                // place. Keyed to the heads, not to whether the panel is on screen yet: that
-                // also flips as the pane is first measured. The room the chat makes for it is
-                // animated by `ReserveSlide` on its own, so nothing here reaches the column.
-                .animation(Chrome.panelSlide, value: scene.hasHeads)
+                // Toggled from the Hydra button, dismissed, or its heads gone, the panel
+                // fades and scales in place, whatever flipped it: keyed to the same flag
+                // that shows it, so it can never leave in a frame under some other
+                // transaction. The room the chat makes for it is animated by
+                // `ReserveSlide` on its own, so nothing here reaches the column.
+                .animation(Chrome.panelSlide, value: showsHydraPanel)
+                .onChange(of: scene.showsHydra) { _, shows in
+                    hydraLingerTask?.cancel()
+                    if shows {
+                        hydraShownSince = .now
+                        hydraLingers = false
+                        return
+                    }
+                    let shown = hydraShownSince.map { Date.now.timeIntervalSince($0) } ?? .infinity
+                    let remaining = Self.hydraMinimumPresence - shown
+                    guard remaining > 0 else { return }
+                    hydraLingers = true
+                    hydraLingerTask = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(remaining))
+                        guard !Task.isCancelled else { return }
+                        withAnimation(Chrome.panelSlide) { hydraLingers = false }
+                    }
+                }
             }
             .overlay(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {

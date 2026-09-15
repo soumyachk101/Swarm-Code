@@ -48,12 +48,37 @@ extension TimelineEntry: Equatable {
     }
 }
 
+/// A message from earlier in the chat that the next message talks about: shown as a
+/// chip in the chat box, sent ahead of the typed words as a quote.
+struct ReplyQuote: Identifiable, Equatable, Sendable {
+    var id = UUID()
+    var text: String
+
+    var excerpt: String {
+        guard let line = text.split(separator: "\n", omittingEmptySubsequences: false).map({ $0.trimmingCharacters(in: .whitespaces) }).first(where: { !$0.isEmpty }) else { return "" }
+        let collapsed = line.split(omittingEmptySubsequences: true, whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        guard collapsed.count > 72 else { return collapsed }
+        return String(collapsed.prefix(72)) + "…"
+    }
+}
+
 struct ComposerDraft: Equatable {
     var text = ""
     var attachments: [Attachment] = []
+    var quotes: [ReplyQuote] = []
 
     var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+    }
+
+    /// What actually goes out: every quote as a markdown blockquote, a blank line, then
+    /// the typed words.
+    var outgoingText: String {
+        guard !quotes.isEmpty else { return text }
+        let blocks = quotes.map { quote in
+            quote.text.split(separator: "\n", omittingEmptySubsequences: false).map { $0.isEmpty ? ">" : "> " + $0 }.joined(separator: "\n")
+        }
+        return blocks.joined(separator: "\n\n") + "\n\n" + text
     }
 }
 
@@ -398,14 +423,15 @@ final class ThreadRuntime {
         guard !draft.isEmpty, phase == .idle else { return }
         let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let attachments = draft.attachments
+        let outgoing = draft.outgoingText.trimmingCharacters(in: .whitespacesAndNewlines)
         if handleLocalCommand(text) {
             draft = ComposerDraft()
             return
         }
         draft = ComposerDraft()
         // With every message going to a head, the lead stays idle for the reports.
-        if dispatchSentHead(text: text, attachments: attachments) { return }
-        Task { await ensureLoaded(); await startTurn(text: text, attachments: attachments) }
+        if dispatchSentHead(text: outgoing, attachments: attachments) { return }
+        Task { await ensureLoaded(); await startTurn(text: outgoing, attachments: attachments) }
     }
 
     func sendHydraBrief(_ text: String, attachments: [Attachment]) {
@@ -437,7 +463,7 @@ final class ThreadRuntime {
             send()
             return
         }
-        enqueueFollowUp(text: draft.text, attachments: draft.attachments)
+        enqueueFollowUp(text: draft.outgoingText, attachments: draft.attachments)
         draft = ComposerDraft()
     }
 
@@ -463,7 +489,7 @@ final class ThreadRuntime {
         guard !draft.isEmpty, phase != .idle else { return }
         // With every message going to a head, Return while the lead works sends the
         // draft to a head and leaves the lead's turn alone.
-        if dispatchSentHead(text: draft.text, attachments: draft.attachments) {
+        if dispatchSentHead(text: draft.outgoingText, attachments: draft.attachments) {
             draft = ComposerDraft()
             return
         }
@@ -473,11 +499,11 @@ final class ThreadRuntime {
         // own when the settings allow it, else it waits as a follow-up behind the
         // running turn; either way nothing is interrupted.
         if hasWorkingHeads {
-            enqueueFollowUp(text: draft.text, attachments: draft.attachments)
+            enqueueFollowUp(text: draft.outgoingText, attachments: draft.attachments)
             draft = ComposerDraft()
             return
         }
-        pendingSend = PendingSend(text: draft.text, attachments: draft.attachments)
+        pendingSend = PendingSend(text: draft.outgoingText, attachments: draft.attachments)
         draft = ComposerDraft()
         interrupt()
     }

@@ -44,12 +44,6 @@ private func lastCodeBlock(in text: String) -> String? {
     return last
 }
 
-/// The message as a quote after the composer's draft, with a blank line between.
-private func quotedForReply(_ text: String, after draft: String) -> String {
-    let quote = text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
-    return draft.isEmpty ? quote : draft + "\n\n" + quote
-}
-
 /// Carries a message row's context-menu intents outside its @State, the way the sidebar's
 /// menuRequests does: the AppKit menu outlives the right-click, so its callbacks must not
 /// retain the row. The row takes the request up below.
@@ -157,8 +151,8 @@ struct UserMessageRow: View {
     private static func messageActions(text: String, canRevert: Bool, confirmRevert: Binding<Bool>) -> [RowAction] {
         let textSnapshot = text
         var items = [
-            RowAction(title: "Copy message", symbol: "doc.on.doc") { copyMessageText(MessageText.plain(textSnapshot)) },
-            RowAction(title: "Copy as markdown", symbol: "number") { copyMessageText(textSnapshot) },
+            RowAction(title: "Copy message", symbol: "doc.on.doc", confirms: "Copied") { copyMessageText(MessageText.plain(textSnapshot)) },
+            RowAction(title: "Copy as markdown", symbol: "number", confirms: "Copied") { copyMessageText(textSnapshot) },
         ]
         if canRevert {
             items.append(RowAction(title: "Edit from here", symbol: "arrow.uturn.backward", startsGroup: true) { [confirm = confirmRevert] in
@@ -1052,17 +1046,18 @@ struct AssistantMessageRow: View {
         let textSnapshot = text
         let codeSnapshot = code
         var items = [
-            RowAction(title: "Copy message", symbol: "doc.on.doc") { copyMessageText(MessageText.plain(textSnapshot)) },
-            RowAction(title: "Copy as markdown", symbol: "number") { copyMessageText(textSnapshot) },
+            RowAction(title: "Copy message", symbol: "doc.on.doc", confirms: "Copied") { copyMessageText(MessageText.plain(textSnapshot)) },
+            RowAction(title: "Copy as markdown", symbol: "number", confirms: "Copied") { copyMessageText(textSnapshot) },
         ]
         if let codeSnapshot {
-            items.append(RowAction(title: "Copy last code block", symbol: "chevron.left.forwardslash.chevron.right") { [code = codeSnapshot] in
+            items.append(RowAction(title: "Copy last code block", symbol: "chevron.left.forwardslash.chevron.right", confirms: "Copied") { [code = codeSnapshot] in
                 copyMessageText(code)
             })
         }
-        items.append(RowAction(title: "Add to reply", symbol: "arrow.turn.down.left", startsGroup: true) { [weak runtime] in
+        items.append(RowAction(title: "Add to reply", symbol: "arrow.turn.down.left", startsGroup: true, confirms: "Added") { [weak runtime] in
             guard let runtime else { return }
-            runtime.draft.text = quotedForReply(textSnapshot, after: runtime.draft.text)
+            guard !runtime.draft.quotes.contains(where: { $0.text == textSnapshot }) else { return }
+            runtime.draft.quotes.append(ReplyQuote(text: textSnapshot))
         })
         if let selectText {
             items.append(RowAction(title: "Select text", symbol: "character.cursor.ibeam", startsGroup: true) { [select = selectText] in

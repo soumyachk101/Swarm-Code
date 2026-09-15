@@ -146,11 +146,18 @@ struct PopoverItem: View {
     var isChecked: Bool?
     var isEnabled = true
     var isDestructive = false
+    /// What the row says once tapped ("Copied"), in place with a checkmark, before the
+    /// popover closes on its own. The action runs at once, so it must not present anything.
+    var confirmation: String?
     let action: @MainActor () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.closePopoverBox) private var closePopoverBox
     @State private var isHovering = false
+    @State private var isConfirmed = false
+
+    /// How long the confirmation shows before the popover closes.
+    private static let confirmationHold: Duration = .milliseconds(650)
 
     init(
         _ title: String,
@@ -162,6 +169,7 @@ struct PopoverItem: View {
         isChecked: Bool? = nil,
         isEnabled: Bool = true,
         isDestructive: Bool = false,
+        confirmation: String? = nil,
         action: @escaping @MainActor () -> Void
     ) {
         self.title = title
@@ -173,6 +181,7 @@ struct PopoverItem: View {
         self.isChecked = isChecked
         self.isEnabled = isEnabled
         self.isDestructive = isDestructive
+        self.confirmation = confirmation
         self.action = action
     }
 
@@ -193,6 +202,18 @@ struct PopoverItem: View {
 
     var body: some View {
         Button {
+            if confirmation != nil, !isConfirmed {
+                // The row answers in place first: the deed is done, the words say so, and
+                // the popover goes a beat later once the checkmark has been seen.
+                action()
+                withAnimation(.snappy(duration: 0.22)) { isConfirmed = true }
+                Task { @MainActor in
+                    try? await Task.sleep(for: Self.confirmationHold)
+                    if let close = closePopoverBox?.close { close() } else { dismiss() }
+                }
+                return
+            }
+            guard !isConfirmed else { return }
             if let close = closePopoverBox?.close { close() } else { dismiss() }
             // Runs after the popover closes, so an action that presents a sheet or alert is not swallowed.
             Task { @MainActor in action() }
@@ -217,15 +238,23 @@ struct PopoverItem: View {
                         .resizable()
                         .interpolation(.high)
                         .frame(width: 16, height: 16)
+                } else if isConfirmed {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Chrome.success)
+                        .frame(width: 16)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                 } else if let symbol {
                     Image(systemName: symbol)
                         .font(.system(size: 12))
                         .frame(width: 16)
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                 }
-                (titleText ?? Text(verbatim: title))
+                (isConfirmed ? Text(verbatim: confirmation ?? title) : (titleText ?? Text(verbatim: title)))
                     .font(.system(size: 13))
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .contentTransition(.numericText())
                 Spacer(minLength: 16)
                 if let detail {
                     Text(verbatim: detail)
@@ -284,6 +313,8 @@ struct RowAction: Identifiable {
     var symbol: String?
     var isDestructive = false
     var startsGroup = false
+    /// What the popover row says in place once tapped ("Copied"); see `PopoverItem.confirmation`.
+    var confirms: String?
     let action: @MainActor () -> Void
 
     var id: String { title }
@@ -295,7 +326,7 @@ struct RowActionItems: View {
     var body: some View {
         ForEach(actions) { item in
             if item.startsGroup { PopoverDivider() }
-            PopoverItem(item.title, symbol: item.symbol, isDestructive: item.isDestructive, action: item.action)
+            PopoverItem(item.title, symbol: item.symbol, isDestructive: item.isDestructive, confirmation: item.confirms, action: item.action)
         }
     }
 }

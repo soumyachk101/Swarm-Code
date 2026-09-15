@@ -149,12 +149,7 @@ struct HydraSettingsPage: View {
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Across providers", detail: "A pair can lead on one provider and run its heads on another.") {
-                    HStack(alignment: .center, spacing: 5) {
-                        ProviderIcon(provider: .claude, size: 14)
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 9, weight: .semibold))
-                        ProviderIcon(provider: .antigravity, size: 14)
-                    }
+                    HydraPairMark(lead: .claude, heads: .antigravity, leadSize: 14)
                     .foregroundStyle(Chrome.secondaryText)
                 }
             }
@@ -287,25 +282,15 @@ private struct HydraPairRow: View {
     }
 }
 
-/// A pair's provider mark: the lead's icon, and after it the heads' when they run
-/// elsewhere, so a row says at a glance that this pair crosses providers.
+/// A pair's provider marks: the lead's larger and the heads' smaller after an arrow,
+/// the same mark wherever a pair is drawn, so a same-provider pair shows
+/// provider → provider too and a row reads the same everywhere.
 private struct HydraPairIcons: View {
     let pair: HydraPair
 
     var body: some View {
-        HStack(spacing: 4) {
-            ProviderIcon(provider: pair.provider, size: 16)
-                .foregroundStyle(Chrome.primaryText)
-            if pair.sendsHeadsElsewhere {
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(Chrome.secondaryText)
-                ProviderIcon(provider: pair.headsProvider, size: 13)
-                    .foregroundStyle(Chrome.primaryText.opacity(0.8))
-            }
-        }
+        HydraPairMark(lead: pair.provider, heads: pair.headsProvider)
         .frame(minWidth: 22, alignment: .leading)
-        .accessibilityLabel(Text(pair.sendsHeadsElsewhere ? "\(pair.provider.displayName) lead, \(pair.headsProvider.displayName) heads" : pair.provider.displayName))
     }
 }
 

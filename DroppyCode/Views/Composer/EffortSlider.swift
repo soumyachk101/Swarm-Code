@@ -394,12 +394,7 @@ private struct HydraPairListRow: View {
                 }
                 Spacer(minLength: 12)
                 if pair.sendsHeadsElsewhere {
-                    HStack(spacing: 3) {
-                        ProviderIcon(provider: pair.provider, size: 12)
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 7, weight: .semibold))
-                        ProviderIcon(provider: pair.headsProvider, size: 12)
-                    }
+                    HydraPairMark(lead: pair.provider, heads: pair.headsProvider, leadSize: 13)
                     .foregroundStyle(Chrome.secondaryText)
                     .accessibilityHidden(true)
                 }
