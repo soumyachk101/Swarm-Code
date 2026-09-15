@@ -38,10 +38,24 @@ struct SidebarView: View {
     /// list and heads for its edge when its new place is out of view. Kept out of
     /// observation the way a row's frame is: resizing updates it, only a settle reads it.
     @State private var listFrame = FrameHolder()
+    /// Every open thread row's frame in the list, by thread id, for the one drag gesture
+    /// below to find the row under the pointer at the grab. Kept out of observation like
+    /// the heights: the rows report as they lay out, only a grab reads them.
+    @State private var rowFrames = RowFrames()
+    /// The grabbed row's peers and their slot heights, taken once at the grab and again
+    /// after each swap, so a pointer move never rebuilds the list to find them.
+    @State private var dragPeers: DragPeers?
+    /// The built list, kept while its inputs stand (see `SidebarItemCache`): a render
+    /// that changed no thread, project or setting hands back the same items.
+    @State private var itemCache = SidebarItemCache()
 
     private var query: String {
         search.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// The list's own coordinate space: the rows report their frames in it and the drag
+    /// gesture reads its locations in it, whatever the scroll position.
+    private static let listSpace = "sidebar-list"
 
     var body: some View {
         let helpers = helpersByParent
@@ -77,7 +91,7 @@ struct SidebarView: View {
                     if query.isEmpty {
                         // One list for both layouts: a thread keeps its row when the layout changes, so the
                         // row grows or shrinks and slides to its new place instead of being replaced.
-                        ForEach(model.settings.sidebarActivityView ? activityItems(helpers: helpers) : projectItems(helpers: helpers)) { item in
+                        ForEach(listItems(helpers: helpers)) { item in
                             itemView(item)
                                 .transition(.sidebarRow)
                         }
@@ -91,9 +105,23 @@ struct SidebarView: View {
                 .padding(.horizontal, Chrome.listInset)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
+                .coordinateSpace(name: Self.listSpace)
+                // One drag gesture for the whole list, ahead of every row's own click: the
+                // row under the pointer at the grab is the one that moves (a settled or
+                // helper row reports no frame, so a drag from one goes nowhere), and a
+                // plain click still reaches the row. Off while searching: nothing to reorder.
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 4, coordinateSpace: .named(Self.listSpace))
+                        .onChanged { value in
+                            guard let id = drag.id ?? rowFrames.thread(at: value.startLocation) else { return }
+                            dragChanged(id, translation: value.translation.height)
+                        }
+                        .onEnded { _ in dragEnded() },
+                    isEnabled: query.isEmpty
+                )
             }
             .scrollIndicators(.never)
-            .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { listFrame.frame = $0 }
+            .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { listFrame.note($0) }
 
             VStack(alignment: .leading, spacing: 1) {
                 SidebarRow(title: "Add project", action: { addProject() }) {
@@ -113,7 +141,8 @@ struct SidebarView: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .background { if !inPopover { WindowDragArea() } }
-        .onChange(of: model.selectedThreadID) { if inPopover { dismiss?() } }
+        // Read only in the popover: the list itself has no reason to re-render on selection.
+        .onChange(of: inPopover ? model.selectedThreadID : nil) { if inPopover { dismiss?() } }
         .onChange(of: menuRequests.rename) { _, thread in
             guard let thread else { return }
             menuRequests.rename = nil
@@ -213,7 +242,13 @@ struct SidebarView: View {
             SettledHeader(count: count, isFirst: isFirst)
         case .thread(let thread, let projectName, let peers, let hasHelpers):
             reorderableRow(thread, projectName: projectName, peers: peers, hasHelpers: hasHelpers)
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.values[item.id] = $0 }
+                .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(Self.listSpace)) }) { frame in
+                    rowHeights.note(item.id, frame.height)
+                    // A settled row keeps its place among the settled; there is nothing to reorder.
+                    if !thread.isSettled { rowFrames.note(thread.id, frame) }
+                }
+                // A row that has left the list (scrolled out, settled, deleted) is not there to grab.
+                .onDisappear { rowFrames.forget(thread.id) }
         case .helper(let thread, let isLast):
             deletePopover(for: thread, on: SidebarHelperRow(
                 thread: thread,
@@ -232,26 +267,48 @@ struct SidebarView: View {
                     }
                 }
             ))
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.values[item.id] = $0 }
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.note(item.id, $0) }
             .modifier(RidesWithDraggedParent(parentID: thread.parentThreadID, drag: drag))
         case .helperStub(let parent, let helpers):
             HelperStubRow(parent: parent, helpers: helpers) { fold(parent.id) }
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.values[item.id] = $0 }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.note(item.id, $0) }
                 .modifier(RidesWithDraggedParent(parentID: parent.id, drag: drag))
         }
     }
 
     /// Every helper by the thread it hangs under, worked out once for the whole list. Asking
     /// the model per row walked the library once per row, so a long list did that work for
-    /// every row in it; the rows are handed their own helpers instead.
+    /// every row in it; the rows are handed their own helpers instead. Kept while the
+    /// threads stand: a render that changed none reuses the last grouping.
     private var helpersByParent: [UUID: [ChatThread]] {
-        var grouped: [UUID: [ChatThread]] = [:]
-        for thread in model.threads where !thread.isInPanel && !thread.isArchived {
-            guard let parentID = thread.parentThreadID else { continue }
-            grouped[parentID, default: []].append(thread)
+        itemCache.helpers(for: model.threads) { threads in
+            var grouped: [UUID: [ChatThread]] = [:]
+            // Heads count while they are still in the lead's panel too (see `AppModel.helpers(of:)`).
+            for thread in threads where !thread.isArchived && (!thread.isInPanel || thread.isHydraHead) {
+                guard let parentID = thread.parentThreadID else { continue }
+                grouped[parentID, default: []].append(thread)
+            }
+            // Newest first, like the threads around them (see `AppModel.helpers(of:)`).
+            return grouped.mapValues { $0.sorted { $0.createdAt > $1.createdAt } }
         }
-        // Newest first, like the threads around them (see `AppModel.helpers(of:)`).
-        return grouped.mapValues { $0.sorted { $0.createdAt > $1.createdAt } }
+    }
+
+    /// The list in the current layout, built only when something it shows has changed:
+    /// the threads or projects themselves, which threads need attention (they head the
+    /// activity layout), the layout flag or the settled fold. Read here, once, so the
+    /// key's inputs are what the list observes.
+    private func listItems(helpers: [UUID: [ChatThread]]) -> [SidebarItem] {
+        let activity = model.settings.sidebarActivityView
+        let key = SidebarItemCache.Key(
+            threads: model.threads,
+            projects: model.projects,
+            attention: activity ? Set(model.threads.filter { needsAttention($0) }.map(\.id)) : [],
+            activityView: activity,
+            settledCollapsed: model.settings.settledCollapsed
+        )
+        return itemCache.items(for: key) {
+            activity ? activityItems(helpers: helpers) : projectItems(helpers: helpers)
+        }
     }
 
     /// The helpers under a thread: one small row each, or a single line naming them while
@@ -487,33 +544,35 @@ struct SidebarView: View {
         model.selectedThreadID = results[next].id
     }
 
-    private func searchResults(helpers: [UUID: [ChatThread]]) -> [(project: Project, threads: [ChatThread], count: Int)] {
-        model.projects.compactMap { project in
-            let all = model.threads(in: project).flatMap { [$0] + (helpers[$0.id] ?? []) }
-            let threads = project.name.localizedCaseInsensitiveContains(query)
-                ? all
-                : all.filter { $0.title.localizedCaseInsensitiveContains(query) }
-            return threads.isEmpty ? nil : (project, threads, all.count)
+    /// The projects and threads matching the query, kept for the query and library they
+    /// were found in: the field's submit, arrows and list all ask, and only a keystroke or
+    /// a thread change looks again. Titles are matched lowercased, from a table the cache
+    /// keeps per thread, so a keystroke lowercases the query once and nothing else.
+    private func searchResults(helpers: [UUID: [ChatThread]]) -> [SidebarSearchResult] {
+        let key = SidebarItemCache.SearchKey(threads: model.threads, projects: model.projects, query: query)
+        return itemCache.search(for: key) { titles in
+            let needle = query.lowercased()
+            return model.projects.compactMap { project in
+                let all = model.threads(in: project).flatMap { [$0] + (helpers[$0.id] ?? []) }
+                let threads = project.name.lowercased().contains(needle)
+                    ? all
+                    : all.filter { titles[$0.id]?.contains(needle) ?? $0.title.lowercased().contains(needle) }
+                return threads.isEmpty ? nil : SidebarSearchResult(project: project, threads: threads, count: all.count)
+            }
         }
     }
 
     // MARK: Rows
 
     /// Drag a row up or down the list and it moves live: within its project in the project
-    /// layout, within its group in the activity layout. Ahead of the row's own click, so a
-    /// drag never selects the thread on release; a plain click still does.
+    /// layout, within its group in the activity layout. The list's one gesture drives it
+    /// (see `body`), ahead of the row's own click, so a drag never selects the thread on
+    /// release; a plain click still does. The row only lifts and follows here.
     private func reorderableRow(_ thread: ChatThread, projectName: String?, peers: [UUID]?, hasHelpers: Bool) -> some View {
         let isDragged = drag.id == thread.id
         return threadRow(thread, projectName: projectName, hasHelpers: hasHelpers, isDragged: isDragged)
             .offset(y: isDragged ? drag.visualOffset : 0)
             .zIndex(isDragged ? 1 : 0)
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 4, coordinateSpace: .global)
-                    .onChanged { value in dragChanged(thread.id, translation: value.translation.height) }
-                    .onEnded { _ in dragEnded() },
-                // A settled row keeps its place among the settled; there is nothing to reorder.
-                isEnabled: !thread.isSettled
-            )
     }
 
     // MARK: Reorder
@@ -526,16 +585,17 @@ struct SidebarView: View {
     private func dragChanged(_ id: UUID, translation: CGFloat) {
         if drag.id != id {
             drag = RowDrag(id: id)
+            // Taken once at the grab: the peers and their slots stand until a swap.
+            dragPeers = DragPeers(peers(of: id), heights: slotHeights)
             NSCursor.closedHand.push()
         }
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { drag.translation = translation }
 
-        // The row's peers as the list stands now, not as it stood at the grab: every swap
-        // reorders them.
-        let (order, group) = peers(of: id)
-        let moved = drag.settle(order: order, heights: slotHeights(for: order), fallbackHeight: Chrome.rowHeight + 1) { neighbour, placeAfter in
+        guard let snapshot = dragPeers else { return }
+        let (order, group) = (snapshot.order, snapshot.group)
+        let moved = drag.settle(order: order, heights: snapshot.heights, fallbackHeight: Chrome.rowHeight + 1) { neighbour, placeAfter in
             // The neighbour slides and the grabbed row's slot moves in the same animation
             // as its compensation, so it stays put under the pointer while the list flows
             // around it.
@@ -548,6 +608,9 @@ struct SidebarView: View {
             }
         }
         if moved {
+            // The row's peers as the list stands now, not as it stood at the grab: every
+            // swap reorders them. The slots are by id and stand.
+            dragPeers = DragPeers(peers(of: id), heights: slotHeights)
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
     }
@@ -555,6 +618,7 @@ struct SidebarView: View {
     private func dragEnded() {
         guard drag.id != nil else { return }
         NSCursor.pop()
+        dragPeers = nil
         // The offset animates from wherever the pointer let go to the row's slot, so the
         // row settles instead of snapping.
         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { drag = RowDrag() }
@@ -564,7 +628,7 @@ struct SidebarView: View {
     /// (returned as `group` too, for the move) or its project's top-level threads.
     private func peers(of id: UUID) -> (order: [UUID], group: [UUID]?) {
         if model.settings.sidebarActivityView {
-            for item in activityItems(helpers: helpersByParent) {
+            for item in listItems(helpers: helpersByParent) {
                 if case .thread(let thread, _, let peers, _) = item.kind, thread.id == id, let peers {
                     return (peers, peers)
                 }
@@ -595,6 +659,20 @@ struct SidebarView: View {
             heights[id] = height
         }
         return heights
+    }
+
+    /// What a drag reuses between pointer moves: the grabbed row's peers in their order,
+    /// the group they form in the activity layout, and each peer's slot height.
+    private struct DragPeers {
+        let order: [UUID]
+        let group: [UUID]?
+        let heights: [UUID: CGFloat]
+
+        init(_ peers: (order: [UUID], group: [UUID]?), heights: ([UUID]) -> [UUID: CGFloat]) {
+            order = peers.order
+            group = peers.group
+            self.heights = heights(peers.order)
+        }
     }
 
     private func threadRow(_ thread: ChatThread, projectName: String?, hasHelpers: Bool, isDragged: Bool = false) -> some View {
@@ -864,7 +942,9 @@ private struct SidebarHelperRow: View {
     @State private var isMenuPresented = false
 
     var body: some View {
-        let isSelected = model.selectedThreadID == thread.id
+        // Through the thread's own cell: a selection change re-renders the two rows it
+        // touches, not every row in the list.
+        let isSelected = model.isSelected(thread.id)
         let showsActions = isHovering || isMenuPresented
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         HStack(spacing: 0) {
@@ -1077,10 +1157,17 @@ private struct SidebarThreadRow: View {
     @State private var isMenuPresented = false
     /// The check was just clicked: it pops green for a beat before the row takes off.
     @State private var isSettling = false
+    /// The beat between the pop and the take-off, held so a row that goes away first
+    /// (or is asked again) cancels it rather than settling from beyond the list.
+    @State private var settleTask: Task<Void, Never>?
     @State private var windowFrame = FrameHolder()
 
     var body: some View {
-        let isSelected = model.selectedThreadID == thread.id
+        // Through the thread's own cell (see `AppModel.isSelected`): a selection change
+        // re-renders the row that lost it and the row that gained it, no other. The
+        // runtime read below is this thread's alone; `existingRuntime` observes nothing
+        // of the model, and the runtime's fields are observed per runtime.
+        let isSelected = model.isSelected(thread.id)
         let isSettled = thread.isSettled
         let isDetailed = projectName != nil && !isSettled
         let showsActions = (isHovering || isMenuPresented) && !isDragged
@@ -1168,7 +1255,7 @@ private struct SidebarThreadRow: View {
             if hovering { model.warmDocuments([thread.id]) }
         }
         .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { frame in
-            windowFrame.frame = frame
+            windowFrame.note(frame)
             // A row that has just arrived where a ghost of it is headed tells the ghost where to land.
             RowGlideAnimator.shared.land(threadID: thread.id, at: frame)
         }
@@ -1212,6 +1299,9 @@ private struct SidebarThreadRow: View {
         }
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
         .accessibilityValue(Text(isSettled ? "Settled" : ""))
+        .onDisappear {
+            settleTask?.cancel()
+        }
     }
 
     private static func fill(isSelected: Bool, isHovering: Bool) -> Double {
@@ -1243,8 +1333,14 @@ private struct SidebarThreadRow: View {
         guard !isSettling, !thread.isSettled else { return }
         if model.settings.settleSound { SettleChime.play() }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.45)) { isSettling = true }
-        Task {
-            try? await Task.sleep(for: .milliseconds(260))
+        settleTask?.cancel()
+        settleTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(260))
+            } catch {
+                return
+            }
+            guard !Task.isCancelled else { return }
             glide(.settle)
             model.settleAnimated(thread.id, sounds: false)
         }
@@ -1759,15 +1855,126 @@ private struct ActivityStatus: View {
 }
 
 /// A row's latest frame, kept out of SwiftUI's observation: scrolling updates it on every frame,
-/// and only an archive tap ever reads it.
+/// and only an archive tap ever reads it. Writes skip when unchanged, so a resize frame
+/// that moved nothing in the row costs nothing.
 private final class FrameHolder {
     var frame: CGRect = .zero
+
+    func note(_ frame: CGRect) {
+        guard frame != self.frame else { return }
+        self.frame = frame
+    }
 }
 
 /// Every row's measured height, kept out of observation for the same reason: the list writes
-/// one on every layout pass, and only a drag reads them.
+/// one on every layout pass, and only a drag reads them. Unchanged reports are skipped,
+/// so a width-only pass never touches the table.
 private final class RowHeights {
     var values: [String: CGFloat] = [:]
+
+    func note(_ id: String, _ height: CGFloat) {
+        guard values[id] != height else { return }
+        values[id] = height
+    }
+}
+
+/// Every open thread row's frame in the list's space, kept out of observation like the
+/// heights: the rows write as they lay out, and only the grab of a drag reads them.
+private final class RowFrames {
+    private var frames: [UUID: CGRect] = [:]
+
+    func note(_ id: UUID, _ frame: CGRect) {
+        guard frames[id] != frame else { return }
+        frames[id] = frame
+    }
+
+    func forget(_ id: UUID) {
+        frames[id] = nil
+    }
+
+    /// The thread whose row is under `point`, if an open one is.
+    func thread(at point: CGPoint) -> UUID? {
+        frames.first { $0.value.contains(point) }?.key
+    }
+}
+
+/// One project's search hits: the threads matching, and how many it has in all.
+private struct SidebarSearchResult {
+    let project: Project
+    let threads: [ChatThread]
+    let count: Int
+}
+
+/// The sidebar's built list, kept while its inputs stand, the way `TimelineBlockCache`
+/// keeps a chat's blocks. The key holds the thread and project arrays themselves: with the
+/// same storage the comparison is a pointer check, and after a change it stops at the
+/// first thread that differs, so a render that changed nothing costs no filter or sort
+/// and one that did rebuilds exactly once. Owned by the list's @State, main thread only.
+private final class SidebarItemCache {
+    struct Key: Equatable {
+        var threads: [ChatThread]
+        var projects: [Project]
+        /// The threads heading the activity layout under "Needs attention".
+        var attention: Set<UUID>
+        var activityView: Bool
+        var settledCollapsed: Bool
+    }
+
+    struct SearchKey: Equatable {
+        var threads: [ChatThread]
+        var projects: [Project]
+        var query: String
+    }
+
+    private var key: Key?
+    private var built: [SidebarItem] = []
+    private var helpersFor: [ChatThread]?
+    private var helpers: [UUID: [ChatThread]] = [:]
+    private var searchKey: SearchKey?
+    private var found: [SidebarSearchResult] = []
+    /// Each thread's title lowercased once, for the search to match against; a thread
+    /// keeps its entry until its title changes.
+    private var titlesFor: [ChatThread]?
+    private var titles: [UUID: String] = [:]
+
+    func items(for wanted: Key, build: () -> [SidebarItem]) -> [SidebarItem] {
+        if wanted == key { return built }
+        built = build()
+        key = wanted
+        return built
+    }
+
+    func helpers(for threads: [ChatThread], group: ([ChatThread]) -> [UUID: [ChatThread]]) -> [UUID: [ChatThread]] {
+        if threads == helpersFor { return helpers }
+        helpers = group(threads)
+        helpersFor = threads
+        return helpers
+    }
+
+    func search(for wanted: SearchKey, find: ([UUID: String]) -> [SidebarSearchResult]) -> [SidebarSearchResult] {
+        if wanted == searchKey { return found }
+        found = find(lowercasedTitles(for: wanted.threads))
+        searchKey = wanted
+        return found
+    }
+
+    private func lowercasedTitles(for threads: [ChatThread]) -> [UUID: String] {
+        if threads == titlesFor { return titles }
+        var next: [UUID: String] = [:]
+        next.reserveCapacity(threads.count)
+        // Only a title that changed is lowercased again; the rest carry over.
+        let previous = titlesFor.map { Dictionary($0.map { ($0.id, $0.title) }, uniquingKeysWith: { first, _ in first }) } ?? [:]
+        for thread in threads {
+            if previous[thread.id] == thread.title, let kept = titles[thread.id] {
+                next[thread.id] = kept
+            } else {
+                next[thread.id] = thread.title.lowercased()
+            }
+        }
+        titles = next
+        titlesFor = threads
+        return titles
+    }
 }
 
 /// The minute hand behind the sidebar's relative times. One tick for the whole list, read by

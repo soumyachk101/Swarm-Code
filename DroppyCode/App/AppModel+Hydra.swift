@@ -158,6 +158,26 @@ private enum HydraTreeCache {
     }
 }
 
+/// What the watchdog over the Droppy-run heads remembers between looks (see
+/// `AppModel.startHydraWatchdog`): its one loop, each head's tool count at the last
+/// look, the heads it has labelled as thinking, and the heads it stopped, whose reports
+/// open with why.
+@MainActor
+private enum HydraWatchdog {
+    /// How often it looks, and how long a head is quiet before it is called thinking,
+    /// then stalled.
+    static let tick: Duration = .seconds(30)
+    static let thinkingAfter: TimeInterval = 180
+    static let stalledAfter: TimeInterval = 600
+
+    static var loop: Task<Void, Never>?
+    static var toolCounts: [UUID: Int] = [:]
+    static var labelled: Set<UUID> = []
+    static var stalledHeadIDs: Set<UUID> = []
+
+    static let stalledNote = "Stalled: no edits for 10 minutes; stopped by Droppy Code. Resend with a sharper brief."
+}
+
 extension AppModel {
     /// Whether a chat leads a team right now: Hydra on for the app (the master) and on
     /// for this chat's own switch. Helpers lead no team of their own.
@@ -334,14 +354,30 @@ extension AppModel {
         let sequential = hydraTeam(of: parentID).isEmpty ? 0 : parent.hydraSpawnCount
         // A delegation that announced its head by name is authoritative: the spawned head
         // carries exactly the announced roster name, so "Sent Gus" never spawns Otto.
-        // The pin holds only while no head on the team already carries that index: two
-        // heads sharing one index would merge each other's reports, so a reused or
-        // unknown name falls back to the next head in order. The spawn count still moves
-        // forward either way, so ordering and future names never shift for a pin.
-        let taken = Set(hydraTeam(of: parentID).compactMap { $0.hydra?.index })
-        let pinned = preferredIndex.flatMap { $0 >= 0 && !taken.contains($0) ? $0 : nil }
-        let index = pinned ?? sequential
-        updateThread(parentID) { $0.hydraSpawnCount = max(sequential + 1, parent.hydraSpawnCount + 1) }
+        // Two heads sharing one index would merge each other's reports, so a name a
+        // finished head of the team already carries goes to the next round of that name
+        // ("Tova" is done, so this one is "Tova 2"), and a name a head still at work
+        // carries, or an unknown one, falls back to the next free head in order. The team
+        // counts finished heads too, so the fallback skips every index a pinned head ever
+        // took: the counter alone would name a second Tova. The spawn count moves past
+        // the index the fallback used, and by one for a pin, so ordering and future
+        // names never shift for a pin: "Gus" on a fresh team does not make the next head
+        // "Ezra 2".
+        let team = hydraTeam(of: parentID)
+        let taken = Set(team.compactMap { $0.hydra?.index })
+        let rounds = HydraRoster.personas.count
+        var pinned: Int?
+        if let base = preferredIndex, base >= 0 {
+            var candidate = base
+            while taken.contains(candidate), team.contains(where: { $0.hydra?.index == candidate && $0.hydra?.isFinished == true }) {
+                candidate += rounds
+            }
+            if !taken.contains(candidate) { pinned = candidate }
+        }
+        var fallback = sequential
+        while taken.contains(fallback) { fallback += 1 }
+        let index = pinned ?? fallback
+        updateThread(parentID) { $0.hydraSpawnCount = max((pinned == nil ? index : sequential) + 1, parent.hydraSpawnCount + 1) }
         let launch = hydraLaunch(for: parent)
         let persona = HydraRoster.persona(at: index)
 
@@ -378,7 +414,6 @@ extension AppModel {
         let leadRuntime = runtime(for: parentID)
         leadRuntime.isHydraPanelHidden = false
         leadRuntime.hydraSelectedHeadID = head.id
-        updateThread(parentID) { $0.foldsHelpers = false }
         return head
     }
 
@@ -406,8 +441,7 @@ extension AppModel {
         // Stopped while its copy was being made: it never starts.
         guard thread(id)?.hydra?.status == .running else { return }
         let headRuntime = runtime(for: id)
-        headRuntime.draft = ComposerDraft(text: brief(info.persona, workplace), attachments: attachments)
-        headRuntime.send()
+        headRuntime.sendHydraBrief(brief(info.persona, workplace), attachments: attachments)
     }
 
     /// A worktree for `head` holding the checkout exactly as it is, uncommitted and
@@ -454,6 +488,11 @@ extension AppModel {
     /// report is relayed by the lead's runtime, which waits for the rest of a batch.
     func finishHydraHead(_ id: UUID, status: TurnStatus, summary: String?, landing: HydraLanding? = nil) {
         guard let head = thread(id), let info = head.hydra, !info.isFinished else { return }
+        // A head the watchdog stopped tells its lead why, ahead of whatever it had said.
+        var summary = summary
+        if HydraWatchdog.stalledHeadIDs.remove(id) != nil {
+            summary = [HydraWatchdog.stalledNote, summary ?? ""].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
         let outcome: HydraHeadInfo.Status = switch status {
         case .completed: .completed
         case .failed: .failed
@@ -478,7 +517,6 @@ extension AppModel {
         if settings.hydraAutoClearFinished {
             updateThread(id) { $0.isInPanel = false }
             if let parentID = head.parentThreadID {
-                updateThread(parentID) { $0.foldsHelpers = false }
                 let leadRuntime = runtime(for: parentID)
                 if leadRuntime.hydraSelectedHeadID == id { leadRuntime.hydraSelectedHeadID = nil }
                 if leadRuntime.hydraPoppedHeadID == id { leadRuntime.hydraPoppedHeadID = nil }
@@ -768,7 +806,6 @@ extension AppModel {
             updateThread(head.id) { $0.isInPanel = false }
             releaseHydraCopy(of: head.id)
         }
-        updateThread(parentID) { $0.foldsHelpers = false }
     }
 
     /// Removes the copy of the checkout a head worked in. Its work has landed, or its
@@ -815,12 +852,64 @@ extension AppModel {
         """)
     }
 
+    // MARK: - Watchdog
+
+    /// Keeps an eye on the Droppy-run heads at work, every half minute. One quiet for
+    /// three minutes (no tool, no word of a reply) says so in its row, "Thinking for 3
+    /// min…", rather than sitting on its last tool; one quiet for ten with nothing edited
+    /// and no tool since the last look has stalled, and is stopped the way the panel's
+    /// Stop stops it, with a report that opens by telling the lead why (see
+    /// `finishHydraHead`). Native heads are their provider's to watch. One loop for the
+    /// app; calling this again does nothing.
+    func startHydraWatchdog() {
+        guard HydraWatchdog.loop == nil else { return }
+        HydraWatchdog.loop = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: HydraWatchdog.tick)
+                guard let self else { return }
+                self.watchHydraHeads()
+            }
+        }
+    }
+
+    /// One look at the heads: the label goes on and comes off, a stalled head is stopped.
+    private func watchHydraHeads() {
+        var toolCounts: [UUID: Int] = [:]
+        for head in threads where head.isHydraHead && head.hydra?.kind == .droppy && head.hydra?.status == .running {
+            guard let headRuntime = existingRuntime(for: head.id), headRuntime.isRunning else { continue }
+            let idle = headRuntime.hydraIdleSeconds
+            let tools = headRuntime.hydraToolCalls
+            toolCounts[head.id] = tools
+            if idle >= HydraWatchdog.stalledAfter, headRuntime.hydraEditCount == 0, HydraWatchdog.toolCounts[head.id] == tools {
+                HydraWatchdog.stalledHeadIDs.insert(head.id)
+                HydraWatchdog.labelled.remove(head.id)
+                stopHydraHead(head.id)
+                continue
+            }
+            if idle >= HydraWatchdog.thinkingAfter {
+                // Written only when the minute changes, so the row is not redrawn each look.
+                let label = "Thinking for \(Int(idle / 60)) min…"
+                if headRuntime.hydraActivity != label { headRuntime.hydraActivity = label }
+                HydraWatchdog.labelled.insert(head.id)
+            } else if HydraWatchdog.labelled.remove(head.id) != nil, headRuntime.hydraActivity?.hasPrefix("Thinking for ") == true {
+                // Back at work: the label comes off, and the row says "working" again.
+                headRuntime.hydraActivity = nil
+            }
+        }
+        HydraWatchdog.toolCounts = toolCounts
+        HydraWatchdog.labelled.formIntersection(toolCounts.keys)
+    }
+
     /// Heads whose copies are gone from disk (deleted by hand, say) work in the checkout
-    /// from now on, instead of failing every tool call.
+    /// from now on, instead of failing every tool call. And the other way round: a copy
+    /// on disk that no chat names any more (the app quit with a head half-way made, or
+    /// removing it failed) is swept away.
     func sweepHydraCopies() {
         // Copies deleted from disk still hold their names in the registry until pruned.
-        for project in projects {
-            Task { await Git(project.path).pruneWorktrees() }
+        let projects = self.projects
+        Task {
+            for project in projects { await Git(project.path).pruneWorktrees() }
+            await sweepOrphanHydraCopies(of: projects)
         }
         for head in threads where head.hydra?.hasOwnCopy == true {
             guard let copy = head.worktreePath, !FileManager.default.fileExists(atPath: copy) else { continue }
@@ -829,6 +918,38 @@ extension AppModel {
                 $0.branch = nil
             }
             updateHydraHead(head.id) { $0.baseTree = nil }
+        }
+        startHydraWatchdog()
+    }
+
+    /// Removes the folders in the worktrees root that were made for heads of `projects`
+    /// and that no thread names. Only a head's copy goes: its folder is named for its
+    /// project, its persona and its thread ("droppycode-gus-daa2ebed", see
+    /// `makeHydraCopy`), and nothing else in that root matches. A chat's own worktree
+    /// (kept on purpose when the chat was deleted) and folders other tools made there are
+    /// never touched, nor is a folder a thread names, nor one young enough to be a copy
+    /// still being made.
+    private func sweepOrphanHydraCopies(of projects: [Project]) async {
+        let root = Storage.worktreesDirectory
+        guard let folders = try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: [.creationDateKey], options: [.skipsHiddenFiles]) else { return }
+        let named = Set(threads.compactMap { $0.worktreePath.map { URL(fileURLWithPath: $0).lastPathComponent } })
+        let slugs = projects.map { (project: $0, slug: $0.name.replacingOccurrences(of: " ", with: "-").lowercased()) }
+        let personas = Set(HydraRoster.personas.map { $0.name.replacingOccurrences(of: " ", with: "-").lowercased() })
+        for folder in folders where !named.contains(folder.lastPathComponent) {
+            let name = folder.lastPathComponent
+            // The longest project slug that opens the name is its project.
+            guard let owner = slugs.filter({ name.hasPrefix($0.slug + "-") }).max(by: { $0.slug.count < $1.slug.count }) else { continue }
+            // What follows the slug is "<persona>-<8 hex>", or "<persona>-<round>-<8 hex>".
+            var parts = name.dropFirst(owner.slug.count + 1).split(separator: "-").map(String.init)
+            guard parts.count >= 2, let suffix = parts.popLast(), suffix.count == 8, suffix.allSatisfy(\.isHexDigit) else { continue }
+            if parts.count == 2, Int(parts[1]) != nil { parts.removeLast() }
+            guard parts.count == 1, personas.contains(parts[0]) else { continue }
+            if let born = try? folder.resourceValues(forKeys: [.creationDateKey]).creationDate, Date.now.timeIntervalSince(born) < 600 { continue }
+            // Git takes it out of its registry along with the folder; a folder git does
+            // not know (the app quit between making it and registering it) goes by hand.
+            if (try? await Git(owner.project.path).removeWorktree(at: folder.path)) == nil {
+                try? FileManager.default.removeItem(at: folder)
+            }
         }
     }
 

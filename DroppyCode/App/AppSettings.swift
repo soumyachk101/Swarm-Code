@@ -106,6 +106,7 @@ final class AppSettings {
         static let hydraAutoMerge = "hydraAutoMerge"
         static let hydraReviewHeads = "hydraReviewHeads"
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
+        static let hydraShowsHeadDetails = "hydraShowsHeadDetails"
         static let hydraPairs = "hydraPairs"
         static let hasSeenTour = "hasSeenTour"
     }
@@ -386,6 +387,13 @@ final class AppSettings {
         didSet { defaults.set(hydraAutoClearFinished, forKey: Key.hydraAutoClearFinished) }
     }
 
+    /// A head's panel shows its whole conversation instead of the progress bar. Off unless
+    /// asked: the bar says how far it is and how long it took, the steps are the sidebar's
+    /// to show.
+    var hydraShowsHeadDetails: Bool {
+        didSet { defaults.set(hydraShowsHeadDetails, forKey: Key.hydraShowsHeadDetails) }
+    }
+
     /// The lead-and-heads pairings, in the order they were added.
     private(set) var hydraPairs: [HydraPair] {
         didSet { store(hydraPairs, forKey: Key.hydraPairs) }
@@ -450,6 +458,7 @@ final class AppSettings {
         hydraAutoMerge = defaults.object(forKey: Key.hydraAutoMerge) as? Bool ?? false
         hydraReviewHeads = defaults.object(forKey: Key.hydraReviewHeads) as? Bool ?? false
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
+        hydraShowsHeadDetails = defaults.object(forKey: Key.hydraShowsHeadDetails) as? Bool ?? false
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
     }
 

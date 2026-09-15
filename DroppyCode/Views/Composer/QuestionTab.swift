@@ -52,7 +52,8 @@ struct QuestionTab: View {
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(height: min(contentHeight, Self.maxHeight))
-                .animation(Chrome.panelSlide, value: contentHeight)
+                // Discrete value: animating on the measured float re-triggered every frame.
+                .animation(Chrome.panelSlide, value: isComplete)
 
                 HStack(spacing: 8) {
                     // Why Send is off, rather than a dead button and no reason for it.
@@ -111,7 +112,8 @@ struct QuestionTab: View {
                 }
                 Spacer(minLength: 0)
             }
-            ForEach(question.choices, id: \.self) { choice in
+            // Keyed by index, so two identically worded choices both work.
+            ForEach(Array(question.choices.enumerated()), id: \.offset) { _, choice in
                 choiceRow(question, choice)
             }
             if question.allowsOther || question.choices.isEmpty {

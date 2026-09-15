@@ -25,6 +25,9 @@ final class MetaSession: ProviderSession {
     private var isStopping = false
     private var approveAllRemaining = false
     private var roundTask: Task<StreamRound, Error>?
+    /// The detached SSE drain for the in-flight round, so a stop cancels it
+    /// directly instead of waiting for the next chunk to reach the consumer.
+    private var sseDrain: Task<Void, Never>?
     /// The tool running right now, in a task of its own so a stop can cancel it.
     /// A shell command can hold the turn for two minutes, and nothing it produced
     /// should reach the timeline or the history once the user has stopped the turn.
@@ -59,6 +62,91 @@ final class MetaSession: ProviderSession {
         var id: String
         var name: String
         var arguments: String
+    }
+
+    /// One parsed SSE value, ready for the main actor to emit.
+    private enum StreamChunk: Sendable {
+        case text(String)
+        case reasoning(String)
+        case toolCall(index: Int, id: String, name: String, arguments: String)
+        case usage(ContextUsage)
+        case streamError(String)
+        case transportError(Error)
+    }
+
+    /// Holds consecutive text off the main actor and yields it as one larger
+    /// delta, at most 30 ms after the first piece, so the main actor hops less.
+    private actor StreamCoalescer {
+        private let continuation: AsyncStream<StreamChunk>.Continuation
+        private var pendingText = ""
+        private var pendingReasoning = ""
+        private var finished = false
+
+        init(continuation: AsyncStream<StreamChunk>.Continuation) {
+            self.continuation = continuation
+        }
+
+        func appendText(_ value: String) {
+            if !pendingReasoning.isEmpty { flush() }
+            let idle = pendingText.isEmpty
+            pendingText += value
+            if idle { scheduleFlush() }
+        }
+
+        func appendReasoning(_ value: String) {
+            if !pendingText.isEmpty { flush() }
+            let idle = pendingReasoning.isEmpty
+            pendingReasoning += value
+            if idle { scheduleFlush() }
+        }
+
+        func emitToolCall(index: Int, id: String, name: String, arguments: String) {
+            flush()
+            continuation.yield(.toolCall(index: index, id: id, name: name, arguments: arguments))
+        }
+
+        func emitUsage(_ value: ContextUsage) {
+            flush()
+            continuation.yield(.usage(value))
+        }
+
+        func emitStreamError(_ message: String) {
+            flush()
+            continuation.yield(.streamError(message))
+        }
+
+        func finish() {
+            guard !finished else { return }
+            finished = true
+            flush()
+            continuation.finish()
+        }
+
+        func fail(chunkError error: Error) {
+            guard !finished else { return }
+            finished = true
+            flush()
+            continuation.yield(.transportError(error))
+            continuation.finish()
+        }
+
+        private func flush() {
+            if !pendingText.isEmpty {
+                continuation.yield(.text(pendingText))
+                pendingText = ""
+            }
+            if !pendingReasoning.isEmpty {
+                continuation.yield(.reasoning(pendingReasoning))
+                pendingReasoning = ""
+            }
+        }
+
+        private func scheduleFlush() {
+            Task.detached {
+                try? await Task.sleep(for: .milliseconds(30))
+                await self.flush()
+            }
+        }
     }
 
     init(configuration: SessionConfiguration) {
@@ -233,6 +321,8 @@ final class MetaSession: ProviderSession {
         interrupted = true
         roundTask?.cancel()
         roundTask = nil
+        sseDrain?.cancel()
+        sseDrain = nil
         toolTask?.cancel()
         toolTask = nil
         for (_, continuation) in pendingApprovals { continuation.resume(returning: false) }
@@ -267,6 +357,8 @@ final class MetaSession: ProviderSession {
         interrupted = true
         roundTask?.cancel()
         roundTask = nil
+        sseDrain?.cancel()
+        sseDrain = nil
         toolTask?.cancel()
         toolTask = nil
         for (_, continuation) in pendingApprovals { continuation.resume(returning: false) }
@@ -353,42 +445,54 @@ final class MetaSession: ProviderSession {
             return round
         }
 
-        for try await line in bytes.lines {
-            if Task.isCancelled || interrupted { throw CancellationError() }
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard trimmed.hasPrefix("data:") else { continue }
-            let data = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if data == "[DONE]" { break }
-            guard let json = JSONValue.parse(String(data)) else { continue }
-            if let err = json["error"], !err.isNull {
-                streamError = err["message"]?.string ?? err.displayText
-                continue
-            }
-            if let u = json["usage"], !u.isNull {
-                let total = u["total_tokens"]?.int ?? 0
-                if total > 0 {
-                    usage = ContextUsage(usedTokens: total, windowTokens: MetaAPI.contextWindow)
+        // The byte loop and JSON parsing run in a detached task; only
+        // coalesced chunks hop back here to emit.
+        sseDrain?.cancel()
+        let stream = AsyncStream<StreamChunk> { continuation in
+            let coalescer = StreamCoalescer(continuation: continuation)
+            let drain = Task.detached(priority: .userInitiated) {
+                do {
+                    try await Self.drainSSE(bytes: bytes, into: coalescer, contextWindow: MetaAPI.contextWindow)
+                } catch is CancellationError {
+                    await coalescer.finish()
+                } catch {
+                    await coalescer.fail(chunkError: error)
                 }
             }
-            guard let choice = json["choices"]?.array?.first else { continue }
-            let delta = choice["delta"] ?? .null
-            if let text = delta["content"]?.string, !text.isEmpty {
+            // A stop cancels the drain directly, so its per-line
+            // Task.isCancelled check fires instead of it reading on. (Cancelling the
+            // waiting task alone would leave the detached drain reading.)
+            sseDrain = Task {
+                await withTaskCancellationHandler { await drain.value } onCancel: { drain.cancel() }
+            }
+            // A stop cancels the consumer; cancelling the drain makes its
+            // per-line Task.isCancelled check fire instead of reading on.
+            continuation.onTermination = { _ in drain.cancel() }
+        }
+        defer { sseDrain = nil }
+        for await chunk in stream {
+            if Task.isCancelled || interrupted { throw CancellationError() }
+            switch chunk {
+            case .text(let text):
                 content += text
                 if !sawContent { sawContent = true }
                 onEvent?(.messageDelta(id: messageID, text: text))
-            }
-            if let think = (delta["reasoning_content"]?.string ?? delta["reasoning"]?.string), !think.isEmpty {
+            case .reasoning(let think):
                 reasoning += think
                 if !sawReasoning { sawReasoning = true }
                 onEvent?(.reasoningDelta(id: thoughtID, text: think))
-            }
-            for call in delta["tool_calls"]?.array ?? [] {
-                let index = call["index"]?.int ?? 0
+            case .toolCall(let index, let id, let name, let args):
                 var acc = accumulators[index] ?? Accumulator()
-                if let id = call["id"]?.string, !id.isEmpty { acc.id = id }
-                if let name = call["function"]?["name"]?.string, !name.isEmpty { acc.name = name }
-                if let args = call["function"]?["arguments"]?.string { acc.arguments += args }
+                if !id.isEmpty { acc.id = id }
+                if !name.isEmpty { acc.name = name }
+                acc.arguments += args
                 accumulators[index] = acc
+            case .usage(let value):
+                usage = value
+            case .streamError(let message):
+                streamError = message
+            case .transportError(let error):
+                throw error
             }
         }
 
@@ -415,6 +519,53 @@ final class MetaSession: ProviderSession {
             ))
         }
         return round
+    }
+
+    /// Runs off the main actor: trims, parses and picks apart each SSE line,
+    /// then feeds chunks to the coalescer. A transport failure is delivered as
+    /// a chunk; CancellationError is rethrown for the stop path.
+    private nonisolated static func drainSSE(bytes: URLSession.AsyncBytes, into coalescer: StreamCoalescer, contextWindow: Int) async throws {
+        do {
+            for try await line in bytes.lines {
+                if Task.isCancelled { throw CancellationError() }
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmed.hasPrefix("data:") else { continue }
+                let data = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                if data == "[DONE]" { break }
+                guard let json = JSONValue.parse(String(data)) else { continue }
+                if let err = json["error"], !err.isNull {
+                    await coalescer.emitStreamError(err["message"]?.string ?? err.displayText)
+                    continue
+                }
+                if let u = json["usage"], !u.isNull {
+                    let total = u["total_tokens"]?.int ?? 0
+                    if total > 0 {
+                        await coalescer.emitUsage(ContextUsage(usedTokens: total, windowTokens: contextWindow))
+                    }
+                }
+                guard let choice = json["choices"]?.array?.first else { continue }
+                let delta = choice["delta"] ?? .null
+                if let text = delta["content"]?.string, !text.isEmpty {
+                    await coalescer.appendText(text)
+                }
+                if let think = (delta["reasoning_content"]?.string ?? delta["reasoning"]?.string), !think.isEmpty {
+                    await coalescer.appendReasoning(think)
+                }
+                for call in delta["tool_calls"]?.array ?? [] {
+                    let index = call["index"]?.int ?? 0
+                    let id = call["id"]?.string ?? ""
+                    let name = call["function"]?["name"]?.string ?? ""
+                    let args = call["function"]?["arguments"]?.string ?? ""
+                    await coalescer.emitToolCall(index: index, id: id, name: name, arguments: args)
+                }
+            }
+            await coalescer.finish()
+        } catch is CancellationError {
+            await coalescer.finish()
+            throw CancellationError()
+        } catch {
+            await coalescer.fail(chunkError: error)
+        }
     }
 
     private static func errorMessage(fromBody body: String, statusCode: Int) -> String {

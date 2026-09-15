@@ -1,6 +1,17 @@
 import AppKit
 import SwiftUI
 
+extension View {
+    /// What every SwiftUI-presented tree (popover, sheet, hosted view) gets so its
+    /// buttons match the window's capsules: the tree hangs off the window's own,
+    /// so it needs the window root's capsule shape and tint restated here.
+    func presentedChrome() -> some View {
+        self
+            .buttonBorderShape(.capsule)
+            .tint(ThemeManager.spec.accent)
+    }
+}
+
 extension NSPopover {
     /// Installs SwiftUI content at a fixed size and makes that size the only
     /// one the panel ever has. A hosting controller normally publishes its
@@ -18,8 +29,7 @@ extension NSPopover {
     func setFixedContent<Content: View>(_ content: Content, size: NSSize) {
         let root = content
             .frame(width: size.width, height: size.height)
-            .buttonBorderShape(.capsule)
-            .tint(ThemeManager.spec.accent)
+            .presentedChrome()
         let host = NSHostingController(rootView: root)
         host.sizingOptions = []
         contentViewController = host
@@ -46,6 +56,7 @@ struct PopoverMenu<Content: View>: View {
         .scrollBounceBehavior(.basedOnSize)
         .scrollIndicators(.automatic)
         .frame(idealHeight: idealHeight, maxHeight: maxHeight)
+        .presentedChrome()
     }
 }
 

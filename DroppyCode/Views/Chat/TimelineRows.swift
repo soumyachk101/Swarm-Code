@@ -18,6 +18,48 @@ enum TimelineMetrics {
     static let iconSpacing: CGFloat = 8
 }
 
+/// The pasteboard half of `CopyButton` (see MarkdownView.swift), for the message menus.
+private func copyMessageText(_ text: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(text, forType: .string)
+}
+
+/// The last whole fenced code block's code, if the text holds one: a simple scan for
+/// lines starting with three backticks.
+private func lastCodeBlock(in text: String) -> String? {
+    var last: String?
+    var open: [String]?
+    for line in text.components(separatedBy: "\n") {
+        if line.hasPrefix("```") {
+            if let done = open {
+                last = done.joined(separator: "\n")
+                open = nil
+            } else {
+                open = []
+            }
+        } else {
+            open?.append(line)
+        }
+    }
+    return last
+}
+
+/// The message as a quote after the composer's draft, with a blank line between.
+private func quotedForReply(_ text: String, after draft: String) -> String {
+    let quote = text.split(separator: "\n", omittingEmptySubsequences: false).map { "> " + $0 }.joined(separator: "\n")
+    return draft.isEmpty ? quote : draft + "\n\n" + quote
+}
+
+/// Carries a message row's context-menu intents outside its @State, the way the sidebar's
+/// menuRequests does: the AppKit menu outlives the right-click, so its callbacks must not
+/// retain the row. The row takes the request up below.
+@Observable
+private final class MessageMenuRequests {
+    var confirmRevert = false
+    /// The 'Select text' intent: the menu posts it, the row takes it up into select mode.
+    var selectText = false
+}
+
 struct UserMessageRow: View {
     let entry: TimelineEntry
     let runtime: ThreadRuntime
@@ -27,10 +69,14 @@ struct UserMessageRow: View {
 
     @State private var isHovering = false
     @State private var isConfirmingRevert = false
+    /// Carries the edit-from-here intent out of the context menu without retaining the row.
+    @State private var menuRequests = MessageMenuRequests()
 
     var body: some View {
         if case .user(let message) = entry.item.content, message.isFromHydra {
             HydraReportRow(message: message)
+        } else if case .user(let message) = entry.item.content, message.isHydraBrief {
+            HydraBriefRow(message: message, entry: entry, runtime: runtime)
         } else if case .user(let message) = entry.item.content {
             VStack(alignment: .trailing, spacing: 6) {
                 if !message.attachments.isEmpty {
@@ -58,8 +104,10 @@ struct UserMessageRow: View {
                         .foregroundStyle(.secondary)
                         .help("Edit from here")
                     }
-                    CopyButton(text: message.text)
                 }
+                // Pinned to the hover line's room, so the row keeps it (and the gap
+                // math below holds) with no copy button left to size it.
+                .frame(height: TimelineMetrics.hoverLineHeight)
                 .opacity(isHovering ? 1 : 0)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
@@ -67,11 +115,29 @@ struct UserMessageRow: View {
             // The binding alone, so the hover responder never keeps this row (and its
             // message) alive after it scrolls away.
             .onHover { [hovering = $isHovering] in hovering.wrappedValue = $0 }
+            // Snapshots only: the menu builder must not capture the row, so the AppKit
+            // menu cannot pin the row's state storage after dismiss. The revert intent
+            // goes through the binding alone, the way the hover responder does below.
+            .contextMenu { [message, canRevert, confirming = $menuRequests.confirmRevert] in
+                let textSnapshot = message.text
+                RowActionMenuButtons(actions: Self.messageActions(
+                    text: textSnapshot,
+                    canRevert: canRevert,
+                    confirmRevert: confirming
+                ))
+            }
             // The room for the hover line lives inside the row but is taken back out
             // of its height, so the controls show up in the gap to the next row and
             // that gap stays the same whether or not they are showing. (6 = the
             // VStack's spacing above them.)
             .padding(.bottom, -(TimelineMetrics.hoverLineHeight + 6))
+            .onChange(of: menuRequests.confirmRevert) { _, asked in
+                guard asked else { return }
+                // The menu posts the intent, the row takes it up, like the sidebar's
+                // menuRequests: the confirmation dialog then opens on the row itself.
+                menuRequests.confirmRevert = false
+                isConfirmingRevert = true
+            }
             .confirmationDialog("Edit from this message?", isPresented: $isConfirmingRevert) {
                 Button("Revert and keep file changes") { revert(restoreFiles: false) }
                 Button("Revert files too", role: .destructive) { revert(restoreFiles: true) }
@@ -84,6 +150,22 @@ struct UserMessageRow: View {
     private func revert(restoreFiles: Bool) {
         guard let turnID = entry.turnID else { return }
         Task { await runtime.revert(to: turnID, restoreFiles: restoreFiles) }
+    }
+
+    /// The context menu's items, from value snapshots with weak captures: the AppKit menu
+    /// outlives the right-click, so its callbacks must not retain the row.
+    private static func messageActions(text: String, canRevert: Bool, confirmRevert: Binding<Bool>) -> [RowAction] {
+        let textSnapshot = text
+        var items = [
+            RowAction(title: "Copy", symbol: "doc.on.doc") { copyMessageText(textSnapshot) },
+            RowAction(title: "Copy as plain text", symbol: "doc.plaintext") { copyMessageText(MessageText.plain(textSnapshot)) },
+        ]
+        if canRevert {
+            items.append(RowAction(title: "Edit from here", symbol: "arrow.uturn.backward", startsGroup: true) { [confirm = confirmRevert] in
+                confirm.wrappedValue = true
+            })
+        }
+        return items
     }
 }
 
@@ -101,13 +183,12 @@ struct HydraReportRow: View {
     var body: some View {
         let personas = (message.hydraHeads ?? []).map(HydraRoster.persona(at:))
         let names = personas.map(\.name)
-        let who = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
         // A note from Hydra itself says what it is on its first line; the rest is the message.
         // That line ends like a sentence, and the pill reads it as a label.
         // A heads' report keeps its full text for the popover, but the pill reads a
         // short human summary with the heads first, never the file-heavy detail.
         let parts = message.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
-        let title = personas.isEmpty ? Self.withoutTrailingStop(String(parts.first ?? "Hydra")) : Self.reportSummary(who: who, text: message.text)
+        let title = personas.isEmpty ? Self.withoutTrailingStop(String(parts.first ?? "Hydra")) : Self.reportSummary(names: names, text: message.text)
         let body = personas.isEmpty ? String(parts.count > 1 ? parts[1] : "").trimmingCharacters(in: .whitespacesAndNewlines) : message.text
         // A merge note puts the merge request's address on the body's first line: that becomes
         // a link on the pill, and the chevron stays only for what the note says after it.
@@ -162,6 +243,7 @@ struct HydraReportRow: View {
         .help(details.isEmpty ? "" : "Show the message")
         .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
             HydraReportPopover(text: body)
+                .presentedChrome()
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 96)
@@ -174,77 +256,43 @@ struct HydraReportRow: View {
         title.hasSuffix(".") ? String(title.dropLast()) : title
     }
 
-    /// The pill for heads reporting back: the heads first, then what they did in
-    /// a few words. Tasks come from the report's own `## Name: task` sections,
-    /// so landing lines and file counts stay in the popover. Falls back to the
-    /// first line that is not report scaffolding, and only then to "reported back".
-    private static func reportSummary(who: String, text: String) -> String {
-        let tasks = reportTasks(in: text)
-        if !tasks.isEmpty {
-            let joined = tasks.joined(separator: "; ")
-            return TextCleanup.singleLine("\(who): \(joined)", limit: 140)
+    /// The pill for heads reporting back: just who is done, since the report itself is
+    /// one tap away in the popover. "Hank is done", "Hank and Walter are done"; a head
+    /// whose `## Name: task (failed)` section says otherwise is named with its outcome
+    /// instead, so a failure never hides behind "done".
+    private static func reportSummary(names: [String], text: String) -> String {
+        let outcomes = reportOutcomes(in: text)
+        let done = names.filter { outcomes[$0] == nil }
+        let others = names.filter { outcomes[$0] != nil }
+        var parts: [String] = []
+        if !done.isEmpty {
+            parts.append("\(list(done)) \(done.count == 1 ? "is" : "are") done")
         }
-        if let line = firstSummaryLine(in: text) {
-            return TextCleanup.singleLine("\(who): \(line)", limit: 140)
+        for name in others {
+            parts.append("\(name) \(outcomes[name] ?? "failed")")
         }
-        if text.split(whereSeparator: \.isNewline).contains(where: {
-            $0.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("changed nothing")
-        }) {
-            return TextCleanup.singleLine("\(who): changed nothing", limit: 140)
-        }
-        return TextCleanup.singleLine("\(who) reported back", limit: 140)
+        return TextCleanup.singleLine(parts.joined(separator: ", "), limit: 140)
     }
 
-    /// One short task per `## Name: task (outcome) (took)` section, in order.
-    private static func reportTasks(in text: String) -> [String] {
-        var tasks: [String] = []
+    /// "Hank", "Hank and Walter", "Hank, Walter and Ada".
+    private static func list(_ names: [String]) -> String {
+        if names.count <= 1 { return names.first ?? "" }
+        return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
+    }
+
+    /// Each head's outcome off its `## Name: task (failed)` / `(stopped)` section, by
+    /// name; a head that finished has no entry.
+    private static func reportOutcomes(in text: String) -> [String: String] {
+        var outcomes: [String: String] = [:]
         for rawLine in text.split(whereSeparator: \.isNewline) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard line.hasPrefix("## ") else { continue }
-            var task = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-            if let colon = task.firstIndex(of: ":") {
-                task = String(task[task.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-            }
-            task = withoutTrailingParentheticals(task)
-            task = TextCleanup.singleLine(task, limit: 60).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !task.isEmpty { tasks.append(task) }
+            guard line.hasPrefix("## "), let colon = line.firstIndex(of: ":") else { continue }
+            let name = String(line[line.index(line.startIndex, offsetBy: 3)..<colon]).trimmingCharacters(in: .whitespaces)
+            let lower = line[colon...].lowercased()
+            if lower.contains("(failed") { outcomes[name] = "failed" }
+            else if lower.contains("(stopped") { outcomes[name] = "stopped" }
         }
-        return tasks
-    }
-
-    /// The outcome and effort suffixes (`(failed)`, `(2 tools)`, `(1m 3s, 4 tools)`)
-    /// off the end of a section's task.
-    private static func withoutTrailingParentheticals(_ task: String) -> String {
-        var result = task.trimmingCharacters(in: .whitespaces)
-        while result.hasSuffix(")"), let open = result.lastIndex(of: "(") {
-            let inner = String(result[result.index(after: open)..<result.index(before: result.endIndex)])
-            guard !inner.isEmpty, !inner.contains(where: { $0.isNewline }),
-                  inner.range(of: #"(failed|stopped|tool|\ds|\dm )"#, options: .regularExpression) != nil
-            else { break }
-            result = String(result[..<open]).trimmingCharacters(in: .whitespaces)
-        }
-        return result
-    }
-
-    /// The first line worth saying out loud: not the "Hydra reports:" opening,
-    /// a section header, a landing or file-count line, or report scaffolding.
-    private static func firstSummaryLine(in text: String) -> String? {
-        for rawLine in text.split(whereSeparator: \.isNewline) {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty, !line.hasPrefix("## "), !line.hasPrefix("#"),
-                  line != "No report." else { continue }
-            let lower = line.lowercased()
-            if lower.hasPrefix("hydra reports:") || lower.hasPrefix("landed in your checkout:")
-                || lower == "changed nothing." || lower.hasPrefix("did not land")
-                || lower.hasPrefix("nothing landed") || lower.hasPrefix("the changes listed above")
-                || lower.hasPrefix("the heads worked in your checkout") || lower.hasPrefix("do not check")
-                || lower.hasPrefix("do not wait") { continue }
-            // A bare file line (`path (+a −d)`) or bullet is detail, not summary.
-            if line.range(of: #"\(\+\d+.*−\d+\)"#, options: .regularExpression) != nil { continue }
-            if line.hasPrefix("- ") || line.hasPrefix("· ") { continue }
-            return TextCleanup.singleLine(line, limit: 80)
-        }
-        return nil
+        return outcomes
     }
 
     /// The address on the body's first line, when that line is an address and nothing else.
@@ -266,6 +314,7 @@ struct HydraReportRow: View {
 /// The report pill's twin while the work is still on.
 struct HydraHeadsWorkingRow: View {
     @Environment(\.chatZoom) private var zoom
+    @Environment(AppModel.self) private var model
     let heads: [Int]
     let runtime: ThreadRuntime
 
@@ -277,26 +326,105 @@ struct HydraHeadsWorkingRow: View {
             if names.count == 1 { return names[0] }
             return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
         }()
-        let title = names.isEmpty ? "Heads are working" : "\(who) \(names.count == 1 ? "is" : "are") working"
-        HStack(spacing: 8) {
-            HStack(spacing: -4) {
-                ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
-                    HydraGlyph(persona: persona, size: 18, isRunning: true)
-                }
-            }
-            Text(verbatim: title)
-                .font(.chat(.callout, weight: .medium, zoom: zoom))
-                .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                .modifier(HydraShimmer())
-                .contentTransition(.opacity)
+        // Every head out has gone quiet for three minutes (no tool, no word): the pill
+        // says so. The watchdog labels a head's row at the same moment, and that label is
+        // what redraws this one (see `AppModel.startHydraWatchdog`).
+        let team = model.hydraHeads(of: runtime.threadID)
+        let running = team.filter { $0.hydra?.status == .running && heads.contains($0.hydra?.index ?? -1) }
+        let thinking = !running.isEmpty && running.allSatisfy { head in
+            guard let live = model.existingRuntime(for: head.id) else { return false }
+            return live.hydraActivity?.hasPrefix("Thinking for") == true || live.hydraIdleSeconds >= 180
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 14)
-        .padding(.vertical, 8)
-        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .animation(.smooth(duration: 0.3), value: heads)
+        let title = (names.isEmpty ? "Heads are working" : "\(who) \(names.count == 1 ? "is" : "are") working") + (thinking ? " · thinking" : "")
+        // Heads already finished while the rest of their batch still works: one small
+        // pill each below, with the report one tap away.
+        let finished = Self.finishedHeads(in: team)
+        VStack(alignment: .trailing, spacing: 6) {
+            HStack(spacing: 8) {
+                HStack(spacing: -4) {
+                    ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
+                        HydraGlyph(persona: persona, size: 18, isRunning: true)
+                    }
+                }
+                Text(verbatim: title)
+                    .font(.chat(.callout, weight: .medium, zoom: zoom))
+                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                    .modifier(HydraShimmer())
+                    .contentTransition(.opacity)
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 14)
+            .padding(.vertical, 8)
+            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .animation(.smooth(duration: 0.3), value: heads)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(Text(title))
+            ForEach(finished, id: \.index) { head in
+                FinishedHeadPill(head: head)
+            }
+        }
+        .animation(.smooth(duration: 0.3), value: finished.map(\.index))
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 96)
+    }
+
+    /// The finished heads whose report has not reached the lead yet: a finished head whose
+    /// batch still has a head at work, or — with no batch — any finished head while any
+    /// head still works. In roster order.
+    private static func finishedHeads(in threads: [ChatThread]) -> [HydraHeadInfo] {
+        let infos = threads.compactMap(\.hydra)
+        let running = infos.filter { $0.status == .running }
+        guard !running.isEmpty else { return [] }
+        return infos.filter { info in
+            guard info.isFinished else { return false }
+            guard let batch = info.batchID else { return true }
+            return running.contains { $0.batchID == batch }
+        }
+    }
+}
+
+/// A head finished while its batch still works: its outcome now, its report one tap away.
+/// The working pill's small twin, without the shimmer.
+private struct FinishedHeadPill: View {
+    @Environment(\.chatZoom) private var zoom
+    let head: HydraHeadInfo
+
+    @State private var isShowingReport = false
+
+    var body: some View {
+        let title: String = switch head.status {
+        case .failed: "\(head.persona.name) failed"
+        case .stopped: "\(head.persona.name) was stopped"
+        default: "\(head.persona.name) finished working"
+        }
+        let summary = head.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let text = "## \(head.persona.name): \(head.task)\n" + (summary.isEmpty ? "No report yet." : summary)
+        Button {
+            isShowingReport.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                HydraGlyph(persona: head.persona, size: 18, status: head.status)
+                Text(verbatim: title)
+                    .font(.chat(.callout, weight: .medium, zoom: zoom))
+                    .foregroundStyle(Chrome.primaryText.opacity(0.75))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Image(systemName: "chevron.right")
+                    .font(.chat(.caption2, weight: .semibold, zoom: zoom))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.leading, 12)
+            .padding(.trailing, 14)
+            .padding(.vertical, 8)
+            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help("Show the report")
+        .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
+            HydraReportPopover(text: text)
+                .presentedChrome()
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(title))
     }
@@ -344,19 +472,86 @@ private struct HydraShimmer: ViewModifier {
     }
 }
 
+/// The lead's brief to a head, as the report pill's twin: a small pill where the user's
+/// message would sit, with the full brief one tap away in a popover. While the brief's
+/// turn has no assistant output yet the head is still cooking, so the pill reads so with
+/// the thinking shimmer; once the head has answered it reads as the brief.
+struct HydraBriefRow: View {
+    @Environment(\.chatZoom) private var zoom
+    let message: UserMessage
+    let entry: TimelineEntry
+    let runtime: ThreadRuntime
+
+    @State private var isShowingBrief = false
+
+    var body: some View {
+        let persona = runtime.thread?.hydra?.persona ?? HydraRoster.persona(at: 0)
+        // The brief's turn has produced nothing of its own yet: no entry past the brief
+        // itself on the same turn means the head is still cooking.
+        let hasOutput = entry.turnID != nil && runtime.entries.contains { $0.turnID == entry.turnID && $0.id != entry.id }
+        let cooking = !hasOutput && runtime.isRunning
+        let title = cooking ? "\(persona.name) is starting to cook…" : "\(persona.name)'s brief"
+        VStack(alignment: .trailing, spacing: 6) {
+            if !message.attachments.isEmpty {
+                AttachmentStrip(attachments: message.attachments)
+            }
+            Button {
+                isShowingBrief.toggle()
+            } label: {
+                HStack(spacing: 8) {
+                    HydraGlyph(persona: persona, size: 18, isRunning: cooking)
+                    Group {
+                        if cooking {
+                            Text(verbatim: title)
+                                .modifier(HydraShimmer())
+                        } else {
+                            Text(verbatim: title)
+                        }
+                    }
+                    .font(.chat(.callout, weight: .medium, zoom: zoom))
+                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    Image(systemName: "chevron.right")
+                        .font(.chat(.caption2, weight: .semibold, zoom: zoom))
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.leading, 12)
+                .padding(.trailing, 14)
+                .padding(.vertical, 8)
+                .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .help("Show the brief")
+            .popover(isPresented: $isShowingBrief, arrowEdge: .bottom) {
+                HydraReportPopover(text: message.text, width: 520)
+                    .presentedChrome()
+            }
+            .accessibilityLabel(Text(title))
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, 96)
+        .accessibilityElement(children: .contain)
+    }
+}
+
 /// A head's report in the popover its pill opens: the markdown at reading width, scrolling
 /// past the panel's height rather than pushing the timeline apart.
 private struct HydraReportPopover: View {
     let text: String
+    var width: CGFloat = 440
 
     var body: some View {
         ScrollView {
             MarkdownView(text: text)
+                .textSelection(.enabled)
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollBounceBehavior(.basedOnSize)
-        .frame(width: 440)
+        .frame(width: width)
         .frame(idealHeight: 320, maxHeight: 460)
     }
 }
@@ -657,19 +852,30 @@ struct AttachmentThumbnail: View {
 
 struct AssistantMessageRow: View {
     @Environment(\.chatZoom) private var zoom
+    @Environment(\.markdownPointSize) private var pointSize
     let entry: TimelineEntry
     /// The turn's summary, set only on the turn's last reply. Precomputed by the
     /// timeline, so rows never scan the thread.
     let summary: TurnSummary?
+    let runtime: ThreadRuntime
     @State private var isHovering = false
+    /// Carries the select-text intent out of the context menu without retaining the row.
+    @State private var menuRequests = MessageMenuRequests()
+    /// Select-text mode: one AppKit view for the whole reply, since SwiftUI's
+    /// `.textSelection` stops at each paragraph and a drag cannot span them.
+    @State private var isSelecting = false
 
     var body: some View {
         if case .assistant(let message) = entry.item.content {
             VStack(alignment: .leading, spacing: 2) {
-                MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
-                // One side for both kinds of message: the copy control sits on the trailing
-                // edge. On the leading edge it landed in the tool rows' icon column, where a
-                // step below the answer drew right under it.
+                if isSelecting {
+                    SelectableMessageText(text: message.text, pointSize: pointSize * zoom)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
+                }
+                // One side for both kinds of message: the summary sits on the trailing
+                // edge, where the copy control used to be.
                 HStack(spacing: 8) {
                     if let summary {
                         Text(TurnEndRow.label(for: summary))
@@ -677,18 +883,115 @@ struct AssistantMessageRow: View {
                             .foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 8)
-                    CopyButton(text: message.text)
+                    if isSelecting {
+                        Button("Done") { isSelecting = false }
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                    }
                 }
-                .opacity(isHovering && !message.isStreaming ? 1 : 0)
+                // Pinned to the hover line's room, so the row keeps it (and the gap math
+                // below holds) with no copy button left to size it.
+                .frame(height: TimelineMetrics.hoverLineHeight)
+                .opacity(isSelecting ? 1 : (isHovering && !message.isStreaming ? 1 : 0))
             }
             .onHover { [hovering = $isHovering] isOver in
                 withAnimation(.easeOut(duration: 0.12)) { hovering.wrappedValue = isOver }
             }
+            .messageMenu(text: message.text, runtime: runtime, selectText: message.isStreaming ? nil : $menuRequests.selectText)
             // Same trade as the user row: the hover line's room stays inside the row
             // (so hovering it works and text never moves), but not in its height, so
             // the controls fill the gap below instead of adding to it. (2 = the
             // VStack's spacing above them.)
             .padding(.bottom, -(TimelineMetrics.hoverLineHeight + 2))
+            .onExitCommand { if isSelecting { isSelecting = false } }
+            .onChange(of: menuRequests.selectText) { _, asked in
+                guard asked else { return }
+                // The menu posts the intent, the row takes it up: select mode swaps the
+                // markdown blocks for one selectable view until Done or Escape.
+                menuRequests.selectText = false
+                isSelecting = true
+            }
+        }
+    }
+
+    /// The context menu's items, from value snapshots with weak captures: the AppKit menu
+    /// outlives the right-click, so its callbacks must not retain the row.
+    static func messageActions(text: String, code: String?, runtime: ThreadRuntime, selectText: Binding<Bool>? = nil) -> [RowAction] {
+        let textSnapshot = text
+        let codeSnapshot = code
+        var items = [
+            RowAction(title: "Copy", symbol: "doc.on.doc") { copyMessageText(textSnapshot) },
+            RowAction(title: "Copy as plain text", symbol: "doc.plaintext") { copyMessageText(MessageText.plain(textSnapshot)) },
+        ]
+        if let codeSnapshot {
+            items.append(RowAction(title: "Copy last code block", symbol: "chevron.left.forwardslash.chevron.right") { [code = codeSnapshot] in
+                copyMessageText(code)
+            })
+        }
+        items.append(RowAction(title: "Add to reply", symbol: "arrow.turn.down.left", startsGroup: true) { [weak runtime] in
+            guard let runtime else { return }
+            runtime.draft.text = quotedForReply(textSnapshot, after: runtime.draft.text)
+        })
+        if let selectText {
+            items.append(RowAction(title: "Select text", symbol: "character.cursor.ibeam", startsGroup: true) { [select = selectText] in
+                select.wrappedValue = true
+            })
+        }
+        return items
+    }
+}
+
+extension View {
+    /// The right-click menu of a reply, wherever its text is shown: copy, the last code
+    /// block, quoting it into the chat box, select-text mode. Snapshots only: the menu
+    /// builder must not capture the row, so the AppKit menu cannot pin the row's state
+    /// storage after dismiss. A nil select binding leaves 'Select text' out (streaming rows).
+    func messageMenu(text: String, runtime: ThreadRuntime, selectText: Binding<Bool>? = nil) -> some View {
+        contextMenu { [text, runtime, select = selectText] in
+            RowActionMenuButtons(actions: AssistantMessageRow.messageActions(
+                text: text,
+                code: lastCodeBlock(in: text),
+                runtime: runtime,
+                selectText: select
+            ))
+        }
+    }
+}
+
+/// The folded turn's answer, with the same select-text mode as a reply row: its own
+/// request box and flag, since the shared modifier cannot hold row state.
+private struct FoldedAnswerView: View {
+    @Environment(\.markdownPointSize) private var pointSize
+    @Environment(\.chatZoom) private var zoom
+    let text: String
+    let runtime: ThreadRuntime
+    @State private var menuRequests = MessageMenuRequests()
+    @State private var isSelecting = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if isSelecting {
+                SelectableMessageText(text: text, pointSize: pointSize * zoom)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                MarkdownView(text: text).equatable()
+            }
+            if isSelecting {
+                HStack {
+                    Spacer(minLength: 8)
+                    Button("Done") { isSelecting = false }
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                }
+                .frame(height: TimelineMetrics.hoverLineHeight)
+            }
+        }
+        .messageMenu(text: text, runtime: runtime, selectText: $menuRequests.selectText)
+        .onExitCommand { if isSelecting { isSelecting = false } }
+        .onChange(of: menuRequests.selectText) { _, asked in
+            guard asked else { return }
+            menuRequests.selectText = false
+            isSelecting = true
         }
     }
 }
@@ -1026,6 +1329,7 @@ private struct HeadStepsPopoverModifier: ViewModifier {
         if let headID {
             content.popover(isPresented: $isPresented, arrowEdge: .bottom) {
                 HydraHeadStepsPopover(headID: headID)
+                    .presentedChrome()
             }
         } else {
             content
@@ -1697,7 +2001,7 @@ struct TurnFinishedBlock: View {
                         case .single(let entry):
                             switch entry.kind {
                             case .assistant:
-                                AssistantMessageRow(entry: entry, summary: nil)
+                                AssistantMessageRow(entry: entry, summary: nil, runtime: runtime)
                             case .tool:
                                 WorkGroup(entries: [entry], runtime: runtime, workingDirectory: workingDirectory)
                             case .plan:
@@ -1722,7 +2026,8 @@ struct TurnFinishedBlock: View {
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(derived.answerEntries) { entry in
                         if case .assistant(let message) = entry.item.content, !message.text.isEmpty {
-                            MarkdownView(text: message.text).equatable()
+                            // The answer of a folded turn: the same menu as a reply row.
+                            FoldedAnswerView(text: message.text, runtime: runtime)
                         }
                     }
                     ForEach(derived.collapsedPlans) { entry in

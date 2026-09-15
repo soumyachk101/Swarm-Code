@@ -16,59 +16,15 @@ struct ComposerArea: View {
     @State private var diffPopover = DiffPopoverCoordinator()
 
     var body: some View {
-        // The top of the box is the tabs' slot: the agent's question while it asks one, else
-        // the queue while any follow-ups are queued, else the changes.
-        let question = runtime.questions.first
-        let slotHasTab = question != nil || !runtime.followUps.isEmpty || runtime.changeStats != nil
         GlassEffectContainer(spacing: 8) {
             VStack(spacing: 12) {
                 ForEach(runtime.approvals) { request in
                     ApprovalCard(request: request, runtime: runtime)
                 }
                 VStack(alignment: .center, spacing: -ThreadChangesTab.overlap) {
-                    // One slot, its tabs stacked on the box's top edge rather than on each
-                    // other: the tab leaving fades where it stood while the one arriving
-                    // fades in over it, and the slot's height glides from one to the other.
-                    // The slot exists only while a tab does, or the stack's overlap would
-                    // pull an empty slot's box up by that much.
-                    if slotHasTab {
-                        ZStack(alignment: .bottom) {
-                            if let question {
-                                // A question takes the slot from whatever held it and stays until
-                                // it is answered; the answer hands the slot straight back.
-                                QuestionTab(request: question, runtime: runtime)
-                                    .id(question.id)
-                                    .transition(.softAppear)
-                            } else if !runtime.followUps.isEmpty {
-                                // The queued steering prompts take the tab slot while any are queued:
-                                // the changes tab hides behind them and reappears once the queue empties.
-                                FollowUpQueueTab(runtime: runtime)
-                                    .transition(.softAppear)
-                            } else if let stats = runtime.changeStats {
-                                ThreadChangesTab(
-                                    stats: stats,
-                                    anchor: { diffPopover.setAnchor($0) }
-                                ) {
-                                    runtime.clearDiffFocus()
-                                    runtime.diffAnchor = nil
-                                    if runtime.diffSelection != nil { runtime.diffSelection = nil }
-                                    // Set last so a redundant write never restarts the diff load
-                                    // or steals the presentation.
-                                    if !runtime.isDiffVisible { runtime.isDiffVisible = true }
-                                }
-                                .transition(.softAppear)
-                            }
-                        }
-                        .transition(.softAppear)
-                    }
+                    TabSlot(runtime: runtime, diffPopover: diffPopover)
                     ComposerView(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: compactModelChip, takesFocusOnAppear: takesFocusOnAppear)
                 }
-                // NB: no .animation(..., value: changeStats) here on purpose: the tab's
-                // insertion animates via its .softAppear transition, and opening the
-                // popover moves nothing, so there is nothing else to drive. A question is
-                // the exception: it is taller than the tab it replaces and the one that
-                // comes back, so the box and the conversation above it slide to fit.
-                .animation(Chrome.panelSlide, value: question?.id)
                 .background {
                     AttachmentAnchorCapture { diffPopover.setFallbackAnchor($0) }
                 }
@@ -88,7 +44,57 @@ struct ComposerArea: View {
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity)
         .animation(.snappy(duration: 0.25), value: runtime.approvals.map(\.id))
-        .animation(.snappy(duration: 0.25), value: runtime.questions.map(\.id))
+    }
+}
+
+/// The tab above the pill: the agent's question while it asks one, else the queue while
+/// any follow-ups are queued, else the changes. Reading them here keeps stats refreshes
+/// and question arrivals off the area, whose body watches approvals alone.
+private struct TabSlot: View {
+    let runtime: ThreadRuntime
+    let diffPopover: DiffPopoverCoordinator
+
+    var body: some View {
+        // One slot, its tabs stacked on the box's top edge rather than on each
+        // other: the tab leaving fades where it stood while the one arriving
+        // fades in over it, and the slot's height glides from one to the other.
+        // The slot exists only while a tab does, or the stack's overlap would
+        // pull an empty slot's box up by that much.
+        let question = runtime.questions.first
+        if question != nil || !runtime.followUps.isEmpty || runtime.changeStats != nil {
+            ZStack(alignment: .bottom) {
+                if let question {
+                    // A question takes the slot from whatever held it and stays until
+                    // it is answered; the answer hands the slot straight back.
+                    QuestionTab(request: question, runtime: runtime)
+                        .id(question.id)
+                        .transition(.softAppear)
+                } else if !runtime.followUps.isEmpty {
+                    // The queued steering prompts take the tab slot while any are queued:
+                    // the changes tab hides behind them and reappears once the queue empties.
+                    FollowUpQueueTab(runtime: runtime)
+                        .transition(.softAppear)
+                } else if let stats = runtime.changeStats {
+                    ThreadChangesTab(
+                        stats: stats,
+                        anchor: { diffPopover.setAnchor($0) }
+                    ) {
+                        runtime.clearDiffFocus()
+                        runtime.diffAnchor = nil
+                        if runtime.diffSelection != nil { runtime.diffSelection = nil }
+                        // Set last so a redundant write never restarts the diff load
+                        // or steals the presentation.
+                        if !runtime.isDiffVisible { runtime.isDiffVisible = true }
+                    }
+                    .transition(.softAppear)
+                }
+            }
+            .transition(.softAppear)
+            // The question is taller than the tab it replaces and the one that comes back,
+            // so the box and the conversation above it slide to fit; a tab's own arrival
+            // animates via its .softAppear transition instead.
+            .animation(Chrome.panelSlide, value: question?.id)
+        }
     }
 }
 
@@ -107,13 +113,14 @@ private struct ChangeStatsRefresh: View {
 
 struct ComposerView: View {
     @Environment(AppModel.self) private var model
-    @Bindable var runtime: ThreadRuntime
+    /// Plain reference: the pill itself never binds the draft, so a keystroke only
+    /// reaches the text column and the send button's draft reader below.
+    let runtime: ThreadRuntime
     let workingDirectory: String?
     /// Floating panels are narrow: the model chip collapses to the provider's icon.
     var compactModelChip: Bool = false
     var takesFocusOnAppear = true
 
-    @State private var textHeight: CGFloat = 20
     @State private var controller = ComposerController()
     @State private var suggestions = SuggestionState()
     @State private var historyIndex: Int?
@@ -126,100 +133,42 @@ struct ComposerView: View {
     /// How many files one message carries.
     static let maxAttachments = 8
 
-    private static let minComposerHeight: CGFloat = 20
-    private static let maxComposerLines = 5
-    private static var maxComposerHeight: CGFloat {
-        let font = NSFont.systemFont(ofSize: 14)
-        let line = ceil(font.ascender - font.descender + font.leading)
-        // Matches ComposerTextView's textContainerInset.height * 2.
-        return line * CGFloat(maxComposerLines) + 4
-    }
-
-    private var composerHeight: CGFloat {
-        min(max(textHeight, Self.minComposerHeight), Self.maxComposerHeight)
-    }
-
     var body: some View {
+        // Layout only: the resolved thread and help strings are plain values handed down,
+        // so neither a keystroke nor a thread write re-evaluates the pill itself.
         let thread = model.thread(runtime.threadID)
         // One pill: the text on the left, the controls tucked into its trailing end. The
         // controls sit on the pill's bottom line, so they stay put while the text grows upward.
         HStack(alignment: .bottom, spacing: 8) {
-            // Spacing 0 and the strip carries its own gap: the strip reads the draft
-            // itself, so it stays a zero-height subview while there is nothing attached
-            // and the composer never has to look at the draft to decide whether to
-            // stack it. Reading the draft here would re-render the text view on every
-            // keystroke, since text and attachments are one observable property.
-            VStack(alignment: .leading, spacing: 0) {
-                DraftAttachments(runtime: runtime)
-                if let attachmentNotice {
-                    Text(verbatim: attachmentNotice)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.warning)
-                        .lineLimit(1)
-                        .padding(.bottom, 6)
-                        .transition(.softAppear)
-                }
-                ComposerTextView(
-                    text: $runtime.draft.text,
-                    height: $textHeight,
-                    placeholder: placeholder(for: thread),
-                    controller: controller,
-                    onKey: handleKey,
-                    onFiles: attach(urls:),
-                    onImage: attach(imageData:),
-                    onCursorChange: cursorMoved(to:),
-                    onBlur: {
-                        // Clicking a row focuses the popover; only dismiss when
-                        // focus truly left both the text and the suggestions.
-                        if !controller.isClickInsideSuggestions() {
-                            // A search still under way for the last keystroke would put
-                            // the popover back over a field that no longer has focus.
-                            controller.suggestionRefresh?.cancel()
-                            suggestions = SuggestionState()
-                        }
-                    },
-                    takesFocusOnAppear: takesFocusOnAppear
-                )
-                // The text view itself takes its new height at once, so it lays out
-                // every line with nothing to scroll; only the clip around it grows
-                // and shrinks. Animating the scroll view's own frame made AppKit
-                // scroll the caret into a too-short view and then snap back.
-                .frame(height: composerHeight)
-                .transaction { $0.animation = nil }
-                .frame(height: composerHeight, alignment: .top)
-                .clipped()
-                .animation(.smooth(duration: 0.28), value: composerHeight)
-            }
+            ComposerTextColumn(
+                runtime: runtime,
+                controller: controller,
+                placeholder: placeholder(for: thread),
+                takesFocusOnAppear: takesFocusOnAppear,
+                attachmentNotice: attachmentNotice,
+                onKey: handleKey,
+                onFiles: attach(urls:),
+                onImage: attach(imageData:),
+                onCursorChange: cursorMoved(to:),
+                onBlur: blur
+            )
             // A single line of text is as tall as the send button, so an empty pill is 44 high.
             .padding(.vertical, 4)
 
             if let thread {
-                HStack(spacing: 2) {
-                    Button {
-                        if model.settings.recentDownloadsPicker {
-                            showingRecents.toggle()
-                        } else {
-                            chooseFiles()
-                        }
-                    } label: {
-                        Image(systemName: "paperclip")
-                            .font(Chrome.iconFont)
-                    }
-                    .buttonStyle(.chip(active: showingRecents))
-                    .focusable(false)
-                    .help("Attach files")
-                    .accessibilityLabel(Text("Attach files"))
-                    .popover(isPresented: $showingRecents, arrowEdge: .bottom) {
-                        DownloadsPopover(
-                            pick: { showingRecents = false; attach(urls: [$0]) },
-                            chooseOther: { showingRecents = false; chooseFiles() }
-                        )
-                    }
-                    ModelEffortSlot(runtime: runtime, thread: thread, compact: compactModelChip)
-                    ContextMeter(runtime: runtime, provider: thread.provider)
-                    SendButton(runtime: runtime, goesToHead: goesToHead(thread), queueGoesToHead: queueGoesToHead(thread)) { send() }
-                }
-                .fixedSize()
+                ComposerControls(
+                    runtime: runtime,
+                    thread: thread,
+                    compact: compactModelChip,
+                    recentDownloadsPicker: model.settings.recentDownloadsPicker,
+                    goesToHead: goesToHead(thread),
+                    queueGoesToHead: queueGoesToHead(thread),
+                    headsProvider: headsProvider(thread),
+                    showingRecents: $showingRecents,
+                    onAttach: attach(urls:),
+                    onChooseFiles: chooseFiles,
+                    onSend: send
+                )
             }
         }
         .padding(.leading, 14)
@@ -230,15 +179,7 @@ struct ComposerView: View {
         // own pass above ordinary siblings, so glass as a separate background layer
         // covered the composer instead of sitting under it.
         .background {
-            if runtime.isRunning {
-                GeometryReader { proxy in
-                    ComposerWorkingDots()
-                        .frame(height: proxy.size.height * 0.4)
-                        .frame(maxHeight: .infinity, alignment: .bottom)
-                }
-                .clipShape(.rect(cornerRadius: 22, style: .continuous))
-                .transition(.opacity.animation(.easeInOut(duration: 0.4)))
-            }
+            ComposerWorkingDotsSlot(runtime: runtime)
         }
         .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
         .onChange(of: suggestions) { _, new in
@@ -259,6 +200,17 @@ struct ComposerView: View {
             try? await Task.sleep(for: .seconds(5))
             guard !Task.isCancelled else { return }
             withAnimation(Chrome.panelSlide) { attachmentNotice = nil }
+        }
+    }
+
+    private func blur() {
+        // Clicking a row focuses the popover; only dismiss when
+        // focus truly left both the text and the suggestions.
+        if !controller.isClickInsideSuggestions() {
+            // A search still under way for the last keystroke would put
+            // the popover back over a field that no longer has focus.
+            controller.suggestionRefresh?.cancel()
+            suggestions = SuggestionState()
         }
     }
 
@@ -302,6 +254,14 @@ struct ComposerView: View {
     /// rather than waiting for the lead.
     private func queueGoesToHead(_ thread: ChatThread) -> Bool {
         (model.settings.hydraQueueHeads || model.settings.hydraAlwaysHeads) && model.hydraIsOn(thread)
+    }
+
+    /// The pair's heads provider when it differs from the lead's, so the usage popover
+    /// can show both plans' limits at once. Nil keeps it to the chat's own provider.
+    private func headsProvider(_ thread: ChatThread) -> ProviderKind? {
+        guard model.hydraIsOn(thread), let pair = model.hydraPair(for: thread) else { return nil }
+        let heads = model.hydraHeadsProvider(of: pair)
+        return heads == thread.provider ? nil : heads
     }
 
     // MARK: - Keys
@@ -524,6 +484,142 @@ struct ComposerView: View {
     }
 }
 
+// MARK: - Pill
+
+/// The pill's text side: the attachment strip, the notice and the text view. It owns the
+/// draft-text binding and the growth math, so a keystroke never reaches the pill itself.
+private struct ComposerTextColumn: View {
+    @Bindable var runtime: ThreadRuntime
+    let controller: ComposerController
+    let placeholder: String
+    let takesFocusOnAppear: Bool
+    let attachmentNotice: String?
+    let onKey: (ComposerKey) -> Bool
+    let onFiles: ([URL]) -> Void
+    let onImage: (Data) -> Void
+    let onCursorChange: (Int) -> Void
+    let onBlur: () -> Void
+
+    @State private var textHeight: CGFloat = 20
+
+    private static let minComposerHeight: CGFloat = 20
+    private static let maxComposerLines = 5
+    private static var maxComposerHeight: CGFloat {
+        let font = NSFont.systemFont(ofSize: 14)
+        let line = ceil(font.ascender - font.descender + font.leading)
+        // Matches ComposerTextView's textContainerInset.height * 2.
+        return line * CGFloat(maxComposerLines) + 4
+    }
+
+    private var composerHeight: CGFloat {
+        min(max(textHeight, Self.minComposerHeight), Self.maxComposerHeight)
+    }
+
+    var body: some View {
+        // Spacing 0 and the strip carries its own gap: the strip reads the draft
+        // itself, so it stays a zero-height subview while there is nothing attached
+        // and the composer never has to look at the draft to decide whether to
+        // stack it. Reading the draft here would re-render the text view on every
+        // keystroke, since text and attachments are one observable property.
+        VStack(alignment: .leading, spacing: 0) {
+            DraftAttachments(runtime: runtime)
+            if let attachmentNotice {
+                Text(verbatim: attachmentNotice)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.warning)
+                    .lineLimit(1)
+                    .padding(.bottom, 6)
+                    .transition(.softAppear)
+            }
+            ComposerTextView(
+                text: $runtime.draft.text,
+                height: $textHeight,
+                placeholder: placeholder,
+                controller: controller,
+                onKey: onKey,
+                onFiles: onFiles,
+                onImage: onImage,
+                onCursorChange: onCursorChange,
+                onBlur: onBlur,
+                takesFocusOnAppear: takesFocusOnAppear
+            )
+            // The text view itself takes its new height at once, so it lays out
+            // every line with nothing to scroll; only the clip around it grows
+            // and shrinks. Animating the scroll view's own frame made AppKit
+            // scroll the caret into a too-short view and then snap back.
+            .frame(height: composerHeight)
+            .transaction { $0.animation = nil }
+            .frame(height: composerHeight, alignment: .top)
+            .clipped()
+            .animation(.smooth(duration: 0.28), value: composerHeight)
+        }
+    }
+}
+
+/// The pill's trailing controls: the attach button, the model chip, the context ring
+/// and send. It takes the resolved thread and help values as plain values, so a thread
+/// write repaints the controls without reaching the pill or the text.
+private struct ComposerControls: View {
+    let runtime: ThreadRuntime
+    let thread: ChatThread
+    let compact: Bool
+    let recentDownloadsPicker: Bool
+    let goesToHead: Bool
+    let queueGoesToHead: Bool
+    let headsProvider: ProviderKind?
+    @Binding var showingRecents: Bool
+    let onAttach: ([URL]) -> Void
+    let onChooseFiles: () -> Void
+    let onSend: () -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Button {
+                if recentDownloadsPicker {
+                    showingRecents.toggle()
+                } else {
+                    onChooseFiles()
+                }
+            } label: {
+                Image(systemName: "paperclip")
+                    .font(Chrome.iconFont)
+            }
+            .buttonStyle(.chip(active: showingRecents))
+            .focusable(false)
+            .help("Attach files")
+            .accessibilityLabel(Text("Attach files"))
+            .popover(isPresented: $showingRecents, arrowEdge: .bottom) {
+                DownloadsPopover(
+                    pick: { showingRecents = false; onAttach([$0]) },
+                    chooseOther: { showingRecents = false; onChooseFiles() }
+                )
+            }
+            ModelEffortSlot(runtime: runtime, thread: thread, compact: compact)
+            ContextMeter(runtime: runtime, provider: thread.provider, headsProvider: headsProvider)
+            SendButton(runtime: runtime, goesToHead: goesToHead, queueGoesToHead: queueGoesToHead, send: onSend)
+        }
+        .fixedSize()
+    }
+}
+
+/// The working dots behind the text. Reading `isRunning` here keeps the pill's body
+/// off the run flag, so starting and stopping a turn repaints the dots alone.
+private struct ComposerWorkingDotsSlot: View {
+    let runtime: ThreadRuntime
+
+    var body: some View {
+        if runtime.isRunning {
+            GeometryReader { proxy in
+                ComposerWorkingDots()
+                    .frame(height: proxy.size.height * 0.4)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+            }
+            .clipShape(.rect(cornerRadius: 22, style: .continuous))
+            .transition(.opacity.animation(.easeInOut(duration: 0.4)))
+        }
+    }
+}
+
 // MARK: - Controls
 
 /// The model and effort chip. It reads the thread's turns itself rather than taking a flag
@@ -547,6 +643,7 @@ private struct ContextMeter: View {
     @Environment(AppModel.self) private var model
     let runtime: ThreadRuntime
     let provider: ProviderKind
+    let headsProvider: ProviderKind?
 
     @State private var isPresented = false
 
@@ -581,7 +678,8 @@ private struct ContextMeter: View {
             // behind it is spoken rather than left to the tooltip.
             .accessibilityValue(Text(fraction.map { "\(Int($0 * 100))% of the context window used" } ?? ""))
             .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-                UsagePanel(usage: usage, provider: provider)
+                UsagePanel(usage: usage, provider: provider, headsProvider: headsProvider)
+                    .presentedChrome()
             }
         }
     }
@@ -597,6 +695,14 @@ private struct ContextMeter: View {
     }
 }
 
+/// The send shortcuts as plain text, cached once per process: the help reads them without
+/// touching the shortcut store on every render, so a keystroke never pays for a lookup.
+@MainActor
+private enum SendShortcutText {
+    static let queue = ShortcutStore.label(for: .queueChat)
+    static let stop = ShortcutStore.hint(for: .stopTurn)
+}
+
 private struct SendButton: View {
     let runtime: ThreadRuntime
     /// With every message going to a head, the send hands the message on rather than
@@ -608,9 +714,40 @@ private struct SendButton: View {
     let send: () -> Void
 
     var body: some View {
+        SendRunState(runtime: runtime, goesToHead: goesToHead, queueGoesToHead: queueGoesToHead, send: send)
+    }
+}
+
+/// The send/run state reader: watches `isRunning` and heads state, so starting and
+/// stopping a turn repaint the button without ever looking at the draft text.
+private struct SendRunState: View {
+    let runtime: ThreadRuntime
+    let goesToHead: Bool
+    let queueGoesToHead: Bool
+    let send: () -> Void
+
+    var body: some View {
         let isRunning = runtime.isRunning
         let headsWorking = isRunning && runtime.hasWorkingHeads
-        let isEnabled = isRunning || !runtime.draft.isEmpty
+        // The queue tail of the idle help depends on heads working, which this reader
+        // already watches; the empty state comes from the child below alone.
+        SendDraftState(runtime: runtime, isRunning: isRunning, headsWorking: headsWorking, goesToHead: goesToHead, queueGoesToHead: queueGoesToHead, send: send)
+    }
+}
+
+/// The draft-empty reader: watches `draft.isEmpty` alone, so a keystroke toggles the
+/// button without re-running the heads state or the help text above it.
+private struct SendDraftState: View {
+    let runtime: ThreadRuntime
+    let isRunning: Bool
+    let headsWorking: Bool
+    let goesToHead: Bool
+    let queueGoesToHead: Bool
+    let send: () -> Void
+
+    var body: some View {
+        let draftEmpty = runtime.draft.isEmpty
+        let isEnabled = isRunning || !draftEmpty
         Button {
             if isRunning { runtime.interrupt() } else { send() }
         } label: {
@@ -629,10 +766,10 @@ private struct SendButton: View {
         .accessibilityLabel(Text(isRunning ? "Stop" : (goesToHead ? "Send to a head" : "Send")))
     }
 
-    /// The chords come from the shortcut store, so a remap or a cleared chord never leaves
-    /// the help promising a key the app no longer answers to.
+    /// The chords come from the one cached lookup above, so the help never promises
+    /// a key the store no longer answers to within a launch.
     private func helpText(isRunning: Bool, headsWorking: Bool) -> String {
-        let queues = ShortcutStore.label(for: .queueChat)
+        let queues = SendShortcutText.queue
         if isRunning {
             // Return does not steer while heads work, it queues: the help says where the
             // message lands rather than promising a stop that never comes.
@@ -641,12 +778,12 @@ private struct SendButton: View {
                     ? "Heads are at work: your message goes to a head"
                     : "Heads are at work: your message waits for the lead"
             }
-            var parts = ["Stop\(ShortcutStore.hint(for: .stopTurn))", "Return steers"]
+            var parts = ["Stop\(SendShortcutText.stop)", "Return steers"]
             if let queues { parts.append("\(queues) queues") }
             return parts.joined(separator: " · ")
         }
         var parts = [goesToHead ? "Send to a head (Return) · the lead reports back" : "Send (Return)"]
-        if let queues { parts.append(runtime.hasWorkingHeads ? "\(queues) queues until the heads report" : "\(queues) queues while running") }
+        if let queues { parts.append(headsWorking ? "\(queues) queues until the heads report" : "\(queues) queues while running") }
         return parts.joined(separator: " · ")
     }
 }

@@ -54,7 +54,7 @@ struct ModelsSettingsPage: View {
                                             onDragEnded: { dragEnded() }
                                         )
                                     }
-                                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[pin] = $0 }
+                                    .modifier(PinnedRowHeightReporter(pin: pin, isActive: drag.id != nil, heights: $rowHeights))
                                     .offset(y: isDragged ? drag.visualOffset : 0)
                                     .zIndex(isDragged ? 1 : 0)
                                 }
@@ -122,6 +122,23 @@ struct ModelsSettingsPage: View {
         guard drag.id != nil else { return }
         NSCursor.pop()
         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { drag = RowDrag() }
+    }
+
+    /// Reports its row's height only while a drag is active: settling is the only reader.
+    private struct PinnedRowHeightReporter: ViewModifier {
+        let pin: ModelPin
+        let isActive: Bool
+        @Binding var heights: [ModelPin: CGFloat]
+
+        func body(content: Content) -> some View {
+            if isActive {
+                content.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                    if heights[pin] != height { heights[pin] = height }
+                }
+            } else {
+                content
+            }
+        }
     }
 
     /// Whether a model matches the search by name, description or provider.
@@ -228,6 +245,7 @@ private struct PinnedModelRow: View {
                     onReset: { settings.setPreference(ModelPreference(), for: pin.provider, model: pin.modelID) }
                 )
                 .frame(width: 330)
+                .presentedChrome()
             }
 
             RowControl(symbol: "minus.circle", help: "Remove from the picker", isEnabled: true) {
@@ -248,7 +266,6 @@ private struct PinnedModelRow: View {
         }
         .scaleEffect(isDragged ? 1.02 : 1)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isDragged)
-        .task { await model.providers.loadCatalog(pin.provider) }
     }
 
     private func summary(option: ModelOption?, preference: ModelPreference) -> String {

@@ -142,6 +142,13 @@ final class ThreadRuntime {
     var hydraActivity: String?
     var hydraToolCalls = 0
     var hydraTokens = 0
+    /// When the head last did anything (a tool, a word of its reply or its reasoning),
+    /// and how many file edits its tools have made: what the watchdog reads to tell a
+    /// head that is thinking from one that has stalled (see `AppModel.startHydraWatchdog`).
+    var hydraLastEventAt: Date?
+    var hydraEditCount = 0
+    /// How long the head has been quiet, in seconds; zero before it has done anything.
+    var hydraIdleSeconds: TimeInterval { hydraLastEventAt.map { Date.now.timeIntervalSince($0) } ?? 0 }
 
     /// The head's record with its live progress on top, for the views that show it.
     func hydraLiveInfo(_ stored: HydraHeadInfo) -> HydraHeadInfo {
@@ -224,6 +231,10 @@ final class ThreadRuntime {
     @ObservationIgnored private var entryIndex: [String: TimelineEntry] = [:]
     @ObservationIgnored private var pendingDeltas: [String: PendingDelta] = [:]
     @ObservationIgnored private var flushTask: Task<Void, Never>?
+    /// Bumped by anything that changes what `saveNow` writes, so the periodic save
+    /// during a quiet stretch finds nothing new and does no work.
+    @ObservationIgnored private var saveRevision = 0
+    @ObservationIgnored private var lastSavedRevision = 0
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var currentTurnID: UUID?
     @ObservationIgnored private var resumeAnchor: String?
@@ -303,6 +314,9 @@ final class ThreadRuntime {
         for index in turns.indices where turns[index].status == .running {
             turns[index].status = .interrupted
         }
+        // The load above normalizes what it read (streaming flags cleared, running
+        // tools failed), so memory already differs from disk.
+        saveRevision += 1
     }
 
     var isRunning: Bool { phase != .idle }
@@ -319,7 +333,7 @@ final class ThreadRuntime {
 
     var sentPrompts: [String] {
         entries.compactMap { entry in
-            if case .user(let message) = entry.item.content, !message.isFromHydra { return message.text }
+            if case .user(let message) = entry.item.content, !message.isFromHydra, !message.isHydraBrief { return message.text }
             return nil
         }
     }
@@ -342,6 +356,15 @@ final class ThreadRuntime {
         // With every message going to a head, the lead stays idle for the reports.
         if dispatchSentHead(text: text, attachments: attachments) { return }
         Task { await startTurn(text: text, attachments: attachments) }
+    }
+
+    func sendHydraBrief(_ text: String, attachments: [Attachment]) {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty,
+              phase == .idle else { return }
+        draft = ComposerDraft()
+        // The head's clock starts with its brief, so one that never answers counts as quiet.
+        hydraLastEventAt = .now
+        Task { await startTurn(text: text, attachments: attachments, hydraBrief: true) }
     }
 
     // MARK: - Follow-up queue
@@ -412,6 +435,7 @@ final class ThreadRuntime {
     func sendFollowUpNow(_ id: UUID) {
         guard let index = followUps.firstIndex(where: { $0.id == id }) else { return }
         let prompt = followUps.remove(at: index)
+        saveRevision += 1
         scheduleSave()
         guard !prompt.isEmpty else { return }
         if phase == .idle {
@@ -425,6 +449,7 @@ final class ThreadRuntime {
             if hasWorkingHeads {
                 if !dispatchQueuedHead(prompt) {
                     followUps.insert(prompt, at: 0)
+                    saveRevision += 1
                     scheduleSave()
                 }
                 return
@@ -435,6 +460,7 @@ final class ThreadRuntime {
             // Return already has a message going out the moment the turn stops; this one
             // goes right behind it.
             followUps.insert(prompt, at: 0)
+            saveRevision += 1
             scheduleSave()
         }
     }
@@ -449,6 +475,7 @@ final class ThreadRuntime {
         // with a note on what the lead is doing, instead of waiting its turn.
         if phase != .idle, dispatchQueuedHead(prompt) { return }
         followUps.append(prompt)
+        saveRevision += 1
         scheduleSave()
         // An idle lead takes the next queued message at once, even with heads still
         // out: the queue only ever waits behind a running turn, never behind an
@@ -494,6 +521,7 @@ final class ThreadRuntime {
         guard phase != .idle else { return }
         while let next = followUps.first, dispatchQueuedHead(next) {
             followUps.removeFirst()
+            saveRevision += 1
             scheduleSave()
         }
     }
@@ -519,6 +547,7 @@ final class ThreadRuntime {
 
     func removeFollowUp(_ id: UUID) {
         followUps.removeAll { $0.id == id }
+        saveRevision += 1
         scheduleSave()
     }
 
@@ -535,6 +564,7 @@ final class ThreadRuntime {
         guard from != dest else { return false }
         let prompt = followUps.remove(at: from)
         followUps.insert(prompt, at: dest)
+        saveRevision += 1
         scheduleSave()
         return true
     }
@@ -548,6 +578,7 @@ final class ThreadRuntime {
             followUps[index].text = text
             followUps[index].attachments = attachments
         }
+        saveRevision += 1
         scheduleSave()
     }
 
@@ -557,10 +588,12 @@ final class ThreadRuntime {
     private func drainFollowUps(after status: TurnStatus) -> Bool {
         guard status == .completed, phase == .idle, !followUps.isEmpty else { return false }
         var next = followUps.removeFirst()
+        saveRevision += 1
         // Skip prompts that emptied while queued (an attachment file deleted on disk still counts,
         // so only the text+attachment check applies).
         while next.isEmpty, !followUps.isEmpty {
             next = followUps.removeFirst()
+            saveRevision += 1
         }
         guard !next.isEmpty else {
             scheduleSave()
@@ -578,6 +611,7 @@ final class ThreadRuntime {
         guard phase == .idle, let entry = entryIndex[entryID], case .plan(var plan) = entry.item.content else { return }
         plan.state = .accepted
         entry.item.content = .plan(plan)
+        saveRevision += 1
         app?.updateThread(threadID) { $0.interactionMode = .build }
         Task { await startTurn(text: "Implement the plan.", attachments: []) }
     }
@@ -586,6 +620,7 @@ final class ThreadRuntime {
         guard let entry = entryIndex[entryID], case .plan(var plan) = entry.item.content else { return }
         plan.state = .dismissed
         entry.item.content = .plan(plan)
+        saveRevision += 1
         scheduleSave()
     }
 
@@ -603,14 +638,16 @@ final class ThreadRuntime {
     }
 
     /// Starts a turn on `text`. `hydraHeads` marks the message as heads reporting back to
-    /// their lead rather than the user's own words.
-    private func startTurn(text: String, attachments: [Attachment], hydraHeads: [Int]? = nil) async {
+    /// their lead rather than the user's own words; `hydraBrief` marks it as the lead's
+    /// brief to a head, shown as a pill rather than a plain bubble.
+    private func startTurn(text: String, attachments: [Attachment], hydraHeads: [Int]? = nil, hydraBrief: Bool = false) async {
         guard let app, let initialThread = app.thread(threadID), let project = app.project(initialThread.projectID) else { return }
         let turnIndex = (turns.map(\.index).max() ?? -1) + 1
         var turn = TurnRecord(index: turnIndex)
-        let userItem = TimelineItem(turnID: turn.id, content: .user(UserMessage(text: text, attachments: attachments, hydraHeads: hydraHeads)))
+        let userItem = TimelineItem(turnID: turn.id, content: .user(UserMessage(text: text, attachments: attachments, hydraHeads: hydraHeads, hydraBrief: hydraBrief ? true : nil)))
         turn.userItemID = userItem.id
         turns.append(turn)
+        saveRevision += 1
         currentTurnID = turn.id
         append(userItem)
         phase = .starting
@@ -895,21 +932,36 @@ final class ThreadRuntime {
     /// was said and done. Tool calls stay out; the replies say what they did. Bounded, so
     /// a long thread does not send its whole past with every relaunch.
     private func apiTranscript() -> [TranscriptMessage] {
-        var transcript: [TranscriptMessage] = []
-        for entry in entries where entry.item.turnID != currentTurnID {
+        // One pass to collect the exchanges, then the runs are joined rather than
+        // appended into one another: repeated `+=` on array elements copies the whole
+        // reply for every fragment, which is quadratic on fragmented history.
+        let exclude = currentTurnID
+        var fragments: [(assistant: Bool, text: String)] = []
+        fragments.reserveCapacity(entries.count)
+        for entry in entries where entry.item.turnID != exclude {
             switch entry.item.content {
             case .user(let message) where !message.text.isEmpty:
-                transcript.append(TranscriptMessage(role: .user, text: message.text))
+                fragments.append((assistant: false, text: message.text))
             case .assistant(let message) where !message.text.isEmpty:
-                // The status lines a turn streams between its tools read as one reply.
-                if let last = transcript.last, last.role == .assistant {
-                    transcript[transcript.count - 1].text += "\n\n" + message.text
-                } else {
-                    transcript.append(TranscriptMessage(role: .assistant, text: message.text))
-                }
+                fragments.append((assistant: true, text: message.text))
             default:
                 break
             }
+        }
+        var transcript: [TranscriptMessage] = []
+        transcript.reserveCapacity(fragments.count)
+        var index = 0
+        while index < fragments.count {
+            if !fragments[index].assistant {
+                transcript.append(TranscriptMessage(role: .user, text: fragments[index].text))
+                index += 1
+                continue
+            }
+            // The status lines a turn streams between its tools read as one reply.
+            let runStart = index
+            while index < fragments.count, fragments[index].assistant { index += 1 }
+            let joined = fragments[runStart..<index].map(\.text).joined(separator: "\n\n")
+            transcript.append(TranscriptMessage(role: .assistant, text: joined))
         }
         var kept = Array(transcript.suffix(40))
         var budget = 60_000
@@ -965,6 +1017,7 @@ final class ThreadRuntime {
            let entry = entryIndex[itemID], case .plan(var plan) = entry.item.content {
             plan.state = option.role == .approve ? .accepted : .dismissed
             entry.item.content = .plan(plan)
+            saveRevision += 1
             scheduleSave()
         }
         session?.resolveApproval(request.id, optionID: option.id)
@@ -1046,6 +1099,7 @@ final class ThreadRuntime {
         }
         entryIndex = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
         turns.removeSubrange(index...)
+        saveRevision += 1
         diffSelection = nil
         diffRevision += 1
         scheduleSave()
@@ -1211,6 +1265,7 @@ final class ThreadRuntime {
             questions.removeAll { $0.id == id }
         case .usage(let usage):
             self.usage = usage
+            saveRevision += 1
             // The turn just spent from the account, so the balance read before it is stale.
             if let provider = thread?.provider { app?.providers.invalidateCredits(provider) }
         case .diff(let diff):
@@ -1256,6 +1311,7 @@ final class ThreadRuntime {
             if let summary, !summary.isEmpty { headRuntime.hydraActivity = summary } else if let lastTool { headRuntime.hydraActivity = lastTool }
             if let tokens { headRuntime.hydraTokens = tokens }
             if let toolCalls { headRuntime.hydraToolCalls = toolCalls }
+            headRuntime.hydraLastEventAt = .now
         case .agentFinished(let agentID, let status, let summary):
             hydraAgentFinished(agentID, status: status, summary: summary)
         }
@@ -1295,6 +1351,7 @@ final class ThreadRuntime {
             if call.status == .running {
                 call.finish(status == .completed ? .completed : .failed)
                 entry.item.content = .tool(call)
+                saveRevision += 1
             }
             reportedEdits.append(contentsOf: call.edits)
         }
@@ -1437,6 +1494,7 @@ final class ThreadRuntime {
             changed = true
         }
         guard changed else { return }
+        saveRevision += 1
         saveNow()
     }
 
@@ -1505,6 +1563,7 @@ final class ThreadRuntime {
         case .toolStarted(let toolID, let call):
             headRuntime.hydraToolCalls += 1
             headRuntime.hydraActivity = ToolPresentation.label(for: call)
+            headRuntime.hydraLastEventAt = .now
             noteHydraEdits(call.edits)
             if call.kind == .command { watchHydraCommand("\(agentID)-\(toolID)", call) }
             headRuntime.rehearse(event)
@@ -1690,6 +1749,7 @@ final class ThreadRuntime {
             message.text = HydraPrompts.withoutDelegationBlock(message.text)
             if message.text.isEmpty { message.text = "Asking for heads." }
             entry.item.content = .assistant(message)
+            saveRevision += 1
             scheduleSave()
             return refuseBlock(HydraPrompts.unreadableBlockMessage(reason: nil), dropped: "Its delegation block could not be read, and it had been told so already.")
         }
@@ -1699,6 +1759,7 @@ final class ThreadRuntime {
         if delegations.isEmpty {
             if message.text.isEmpty { message.text = "Done, with no heads." }
             entry.item.content = .assistant(message)
+            saveRevision += 1
             scheduleSave()
             appendHydraNote("No heads went out: the lead did this itself.")
             return .none
@@ -1708,12 +1769,14 @@ final class ThreadRuntime {
         guard hydraDelegationRounds < HydraPrompts.maxDelegationRounds else {
             if message.text.isEmpty { message.text = "Asking for more heads." }
             entry.item.content = .assistant(message)
+            saveRevision += 1
             scheduleSave()
             return refuseBlock(HydraPrompts.heldBackMessage(count: delegations.count), dropped: "This request has had all \(HydraPrompts.maxDelegationRounds) of its rounds of heads, and the lead had been told so already.")
         }
         hydraDelegationRounds += 1
         if message.text.isEmpty { message.text = "Sending out heads." }
         entry.item.content = .assistant(message)
+        saveRevision += 1
         let batchID = UUID()
         hydraBatches[batchID] = HydraBatch(pending: [])
         // The pair's cap paces these out through `hydraWaiting`, so the ceiling is only on
@@ -1783,11 +1846,13 @@ final class ThreadRuntime {
         let entry = TimelineEntry(item)
         entries.append(entry)
         entryIndex[item.id] = entry
+        saveRevision += 1
     }
 
     private func remove(_ id: String) {
         entries.removeAll { $0.id == id }
         entryIndex[id] = nil
+        saveRevision += 1
     }
 
     private func endStreaming(_ entry: TimelineEntry) {
@@ -1828,9 +1893,49 @@ final class ThreadRuntime {
         let prose = kind == .toolOutput ? text : TextCleanup.withoutEmDashes(text)
         pendingDeltas[id, default: PendingDelta(kind: kind, text: "")].text += prose
         guard flushTask == nil else { return }
+        // The copy in `flushDeltas` below is O(n) in the row's text: as the reply
+        // grows the flush waits longer, so long replies flush half or a third as
+        // often with no visible effect. The copy itself cannot go away while the
+        // row's content is a value-typed enum behind an observed property.
         flushTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(45))
+            let delay = Self.flushDelay(for: self?.pendingFlushLength())
+            try? await Task.sleep(for: .milliseconds(delay))
             self?.flushDeltas()
+        }
+    }
+
+    /// The text the next flush will write onto its row, used to pace the flush:
+    /// short replies refresh fast, long ones less often.
+    private func pendingFlushLength() -> Int {
+        var longest = 0
+        for (id, delta) in pendingDeltas {
+            switch delta.kind {
+            case .toolOutput:
+                continue
+            default:
+                break
+            }
+            switch entryIndex[id]?.item.content {
+            case .assistant(let message):
+                longest = max(longest, message.text.count + delta.text.count)
+            case .reasoning(let block):
+                longest = max(longest, block.text.count + delta.text.count)
+            case .plan(let plan):
+                longest = max(longest, plan.markdown.count + delta.text.count)
+            default:
+                break
+            }
+        }
+        return longest
+    }
+
+    /// How long to wait before flushing deltas onto their rows: 45 ms up to 4 KB,
+    /// 90 ms up to 32 KB, 150 ms beyond.
+    private nonisolated static func flushDelay(for length: Int?) -> Int {
+        switch length ?? 0 {
+        case ..<4_096: 45
+        case ..<32_768: 90
+        default: 150
         }
     }
 
@@ -1840,25 +1945,35 @@ final class ThreadRuntime {
         guard !pendingDeltas.isEmpty else { return }
         let deltas = pendingDeltas
         pendingDeltas.removeAll()
+        var heard = false
         for (id, delta) in deltas {
             guard let entry = entryIndex[id] else { continue }
             switch (delta.kind, entry.item.content) {
             case (.message, .assistant(var message)):
                 message.text += delta.text
                 entry.item.content = .assistant(message)
+                saveRevision += 1
+                heard = true
             case (.reasoning, .reasoning(var block)):
                 block.text += delta.text
                 entry.item.content = .reasoning(block)
+                saveRevision += 1
+                heard = true
             case (.toolOutput, .tool(var call)):
                 call.appendOutput(delta.text)
                 entry.item.content = .tool(call)
+                saveRevision += 1
+                heard = true
             case (.plan, .plan(var plan)):
                 plan.markdown += delta.text
                 entry.item.content = .plan(plan)
+                saveRevision += 1
             default:
                 break
             }
         }
+        // Once per flush, not per word: a head still talking is a head still at work.
+        if heard { noteHydraHeadEvent() }
         scheduleSave()
     }
 
@@ -1876,6 +1991,7 @@ final class ThreadRuntime {
             remove(id)
         } else {
             entry.item.content = .assistant(message)
+            saveRevision += 1
         }
         scheduleSave()
     }
@@ -1893,6 +2009,7 @@ final class ThreadRuntime {
             remove(id)
         } else {
             entry.item.content = .reasoning(block)
+            saveRevision += 1
         }
         scheduleSave()
     }
@@ -1903,6 +2020,7 @@ final class ThreadRuntime {
             if !markdown.isEmpty { plan.markdown = markdown }
             plan.state = .proposed
             entry.item.content = .plan(plan)
+            saveRevision += 1
         } else if !markdown.isEmpty {
             append(TimelineItem(id: id, turnID: currentTurnID, content: .plan(ProposedPlan(markdown: markdown, state: .proposed))))
         }
@@ -1915,14 +2033,31 @@ final class ThreadRuntime {
         call.edits = Self.capped(call.edits)
         guard let entry = entryIndex[id], case .tool(var existing) = entry.item.content else {
             append(TimelineItem(id: id, turnID: currentTurnID, content: .tool(call)))
+            noteHydraHeadEvent(edits: call.edits.count, tool: true)
             return
         }
         if !call.title.isEmpty { existing.title = call.title }
         existing.detail = call.detail ?? existing.detail
         existing.kind = call.kind
+        // Edits count once, when they first land on the call.
+        let landed = !call.edits.isEmpty && existing.edits.isEmpty ? call.edits.count : 0
         if !call.edits.isEmpty { existing.edits = call.edits }
         if existing.status == .running, call.status != .running { existing.finish(call.status) }
         entry.item.content = .tool(existing)
+        saveRevision += 1
+        noteHydraHeadEvent(edits: landed)
+    }
+
+    /// Something happened on this runtime's own timeline, and it is a head's: its
+    /// watchdog clock restarts and the edits that landed count (see
+    /// `AppModel.startHydraWatchdog`). A Droppy-run head counts its tools here, where
+    /// its own session reports them; a native head's count comes with its lead's events
+    /// (see `hydraAgentEvent`), which also rehearse here, so it is not counted twice.
+    private func noteHydraHeadEvent(edits: Int = 0, tool: Bool = false) {
+        guard let info = thread?.hydra else { return }
+        hydraLastEventAt = .now
+        hydraEditCount += edits
+        if tool, info.kind == .droppy { hydraToolCalls += 1 }
     }
 
     /// A tool that is not plainly a read can have written a file, which makes the tree a
@@ -1943,13 +2078,19 @@ final class ThreadRuntime {
         if let title = update.title, !title.isEmpty { call.title = title }
         if let detail = update.detail { call.detail = detail }
         if let kind = update.kind { call.kind = kind }
-        if let edits = update.edits, !edits.isEmpty { call.edits = Self.capped(edits) }
+        var landed = 0
+        if let edits = update.edits, !edits.isEmpty {
+            if call.edits.isEmpty { landed = edits.count }
+            call.edits = Self.capped(edits)
+        }
         if let output = update.output { call.setOutput(output) }
         if let exitCode = update.exitCode { call.exitCode = exitCode }
         if let status = update.status {
             if status == .running { call.status = .running } else { call.finish(status) }
         }
         entry.item.content = .tool(call)
+        saveRevision += 1
+        noteHydraHeadEvent(edits: landed)
         scheduleSave()
     }
 
@@ -1988,6 +2129,8 @@ final class ThreadRuntime {
             guard call.edits.allSatisfy({ $0.diff == nil }) else { return }
             call.edits = edits
             entry.item.content = .tool(call)
+            saveRevision += 1
+            noteHydraHeadEvent(edits: edits.count)
             scheduleSave()
         }
     }
@@ -2096,6 +2239,7 @@ final class ThreadRuntime {
         // times, and the timeline behind it can hold thousands of rows.
         if let id = todosEntryID, let entry = entryIndex[id], entry.item.turnID == currentTurnID {
             entry.item.content = .todos(steps)
+            saveRevision += 1
         } else if let entry = entries.last(where: { entry in
             guard entry.item.turnID == currentTurnID else { return false }
             if case .todos = entry.item.content { return true }
@@ -2103,6 +2247,7 @@ final class ThreadRuntime {
         }) {
             todosEntryID = entry.id
             entry.item.content = .todos(steps)
+            saveRevision += 1
         } else if !steps.isEmpty {
             let item = TimelineItem(turnID: currentTurnID, content: .todos(steps))
             todosEntryID = item.id
@@ -2119,6 +2264,7 @@ final class ThreadRuntime {
     private func updateTurn(_ id: UUID, _ change: (inout TurnRecord) -> Void) {
         guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
         change(&turns[index])
+        saveRevision += 1
     }
 
     private func generateTitle(from text: String) {
@@ -2161,6 +2307,12 @@ final class ThreadRuntime {
     func saveNow() {
         saveTask?.cancel()
         saveTask = nil
+        // The periodic save fires every few seconds while a turn runs, even when the
+        // turn's events changed nothing since the last write: skip the snapshot then.
+        // `finishTurn` and friends still land on disk, as their mutations bump the
+        // revision before the save below.
+        guard saveRevision != lastSavedRevision else { return }
+        lastSavedRevision = saveRevision
         var document = ThreadDocument(threadID: threadID)
         document.items = entries.map(\.item)
         document.turns = turns
@@ -2189,9 +2341,11 @@ extension ThreadRuntime {
             let userItem = TimelineItem(turnID: turn.id, content: .user(UserMessage(text: text)))
             turn.userItemID = userItem.id
             turns.append(turn)
+            saveRevision += 1
             append(userItem)
         } else {
             turns.append(turn)
+            saveRevision += 1
         }
         currentTurnID = turn.id
         phase = .running
@@ -2211,6 +2365,7 @@ extension ThreadRuntime {
         let entry = TimelineEntry(userItem)
         entries.insert(entry, at: 0)
         entryIndex[userItem.id] = entry
+        saveRevision += 1
         scheduleSave()
     }
 

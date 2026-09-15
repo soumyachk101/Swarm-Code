@@ -60,9 +60,13 @@ struct UserMessage: Codable, Hashable, Sendable {
     /// Set when the message is Hydra's rather than the user's own words: the roster
     /// places of the heads reporting back, or empty for a note from Hydra itself.
     var hydraHeads: [Int]?
+    /// Set when the message is the lead's brief to a head, shown as a pill rather
+    /// than a plain bubble. Optional, so threads stored before it still decode.
+    var hydraBrief: Bool?
 
     var isFromHydra: Bool { hydraHeads != nil }
     var isHydraReport: Bool { !(hydraHeads ?? []).isEmpty }
+    var isHydraBrief: Bool { hydraBrief == true }
 }
 
 /// One queued follow-up prompt. Sent as a direct user chat message once the

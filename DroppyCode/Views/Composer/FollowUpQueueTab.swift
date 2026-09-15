@@ -79,13 +79,15 @@ struct FollowUpQueueTab: View {
                             onDragChanged: { translation in dragChanged(prompt.id, translation: translation) },
                             onDragEnded: { dragEnded() }
                         )
-                        .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights[prompt.id] = $0 }
+                        .modifier(RowHeightReporter(id: prompt.id, isActive: drag.id != nil, heights: $rowHeights))
+                        // Only while dragging: settling is the only reader.
                         .offset(y: isDragged ? drag.visualOffset : 0)
                         .zIndex(isDragged ? 1 : 0)
                     }
                 }
             }
             .padding(.top, 6)
+            // Kept always: the fold animates to exactly this.
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
                 if height > 0 { listHeight = height }
             }
@@ -104,6 +106,23 @@ struct FollowUpQueueTab: View {
         .onChange(of: runtime.followUps.map(\.id)) { _, ids in
             // A row that left mid-drag (deleted, or sent) ends the drag cleanly.
             if let id = drag.id, !ids.contains(id) { dragEnded() }
+        }
+    }
+
+    /// Reports its row's height only while a drag is active: settling is the only reader.
+    private struct RowHeightReporter: ViewModifier {
+        let id: UUID
+        let isActive: Bool
+        @Binding var heights: [UUID: CGFloat]
+
+        func body(content: Content) -> some View {
+            if isActive {
+                content.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                    if heights[id] != height { heights[id] = height }
+                }
+            } else {
+                content
+            }
         }
     }
 

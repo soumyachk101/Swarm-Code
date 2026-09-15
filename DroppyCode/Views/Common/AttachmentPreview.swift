@@ -84,11 +84,51 @@ enum PreviewImages {
         return attachment
     }
 
-    static func fileSize(_ path: String) -> String? {
-        guard let size = try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber else { return nil }
+    // One formatter: allocating one per size string needlessly repeats the setup.
+    @MainActor private static let sizeFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
         formatter.countStyle = .file
-        return formatter.string(fromByteCount: size.int64Value)
+        return formatter
+    }()
+
+    @MainActor
+    static func fileSize(_ path: String) -> String? {
+        guard let size = try? FileManager.default.attributesOfItem(atPath: path)[.size] as? NSNumber else { return nil }
+        return sizeFormatter.string(fromByteCount: size.int64Value)
+    }
+}
+
+/// Finder icons by extension, cached: one lookup per row per render stalled scrolling.
+@MainActor
+enum FileIcons {
+    private static var cache: [String: NSImage] = [:]
+    private static var order: [String] = []
+
+    static func icon(for path: String) -> NSImage {
+        let key = iconKey(for: path)
+        if let hit = cache[key] { return hit }
+        let image = NSWorkspace.shared.icon(forFile: path)
+        cache[key] = image
+        order.append(key)
+        // Bounded: icons are small but unbounded kinds are not.
+        while order.count > 64, let oldest = order.first {
+            order.removeFirst()
+            cache.removeValue(forKey: oldest)
+        }
+        return image
+    }
+
+    private static func iconKey(for path: String) -> String {
+        let ext = (path as NSString).pathExtension.lowercased()
+        if !ext.isEmpty { return ext }
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue {
+            return "folder"
+        }
+        if let type = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.contentTypeKey]).contentType {
+            return "type:\(type.identifier)"
+        }
+        return "file"
     }
 }
 
@@ -248,7 +288,8 @@ struct AttachmentLargePreview: View {
                 // Same container as the photo above: pre-sized slot, 12pt
                 // continuous rounding, spinner until the frame lands. The play
                 // badge sits inside the clipped image so the rounding holds.
-                let slot = imageSize ?? Self.videoDisplaySize(for: attachment)
+                // The coordinator sizes the panel up front; here a fixed slot fills in.
+                let slot = imageSize ?? Self.imageBounds
                 ZStack {
                     if let videoFrame {
                         Image(decorative: videoFrame, scale: 2)
@@ -275,7 +316,7 @@ struct AttachmentLargePreview: View {
                 .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 10, style: .continuous))
             } else {
                 HStack(spacing: 10) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: attachment.path))
+                    Image(nsImage: FileIcons.icon(for: attachment.path))
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 32, height: 32)
