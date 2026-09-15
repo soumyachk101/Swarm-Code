@@ -30,6 +30,9 @@ final class AppModel {
     let sidebar: SidebarLayout
     /// Picks chats back up once a spent usage limit resets, with the setting on.
     @ObservationIgnored private(set) var autoContinue: AutoContinue!
+    /// How often each Droppy-run head has been started again after failing at the door
+    /// (see `hydraHeadTurnFinished`); a head gets two more goes.
+    @ObservationIgnored var hydraHeadRetries: [UUID: Int] = [:]
 
     /// The lists are the source of truth for anything that shows several items at once. Single
     /// lookups go through the cells below, so the timeline rows, composer and chat header of one

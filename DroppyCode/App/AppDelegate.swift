@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
         windows.showMain()
+        if !windows.model.settings.hasSeenTour {
+            Task { @MainActor in try? await Task.sleep(for: .milliseconds(700)); Tour.present(model: windows.model) }
+        }
         Task { await windows.model.bootstrap() }
         UpdateChecker.shared.startBackgroundChecks()
         // The relaunch after an install: the update story finishes on About, where it began.

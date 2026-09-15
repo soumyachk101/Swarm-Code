@@ -57,7 +57,7 @@ struct AppCommands: Commands {
             // the queue would swallow the chord the card is asking for.
             Button("Queue a chat") { runtime?.queueDraftAsFollowUp() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .queueChat))
-                .disabled(!(runtime?.isRunning ?? false)
+                .disabled(!(runtime?.canQueue ?? false)
                     || (runtime?.draft.isEmpty ?? true)
                     || !(runtime?.approvals.isEmpty ?? true))
             Button("Toggle plan mode") {
@@ -79,6 +79,10 @@ struct AppCommands: Commands {
             Button(model.finishActionTitle) { model.finishSelectedThread() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .finishThread))
                 .disabled(model.selectedThreadID == nil)
+        }
+
+        CommandGroup(replacing: .help) {
+            Button("Welcome tour") { Tour.present(model: model) }
         }
     }
 }

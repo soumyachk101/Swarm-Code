@@ -107,10 +107,17 @@ struct ModelEffortButton: View {
             ModelEffortPanel(threadID: thread.id, hasHistory: hasHistory)
         }
         .background {
-            // The website captures hang the slider and the switcher from the real chip.
-            if WebsiteCaptures.isEnabled {
+            // The website captures hang the slider and the switcher from the real chip: the
+            // composer's, never a panel's icon-only one, which would leave the popover with
+            // nothing to hang from once the panel is gone.
+            if WebsiteCaptures.isEnabled, !compact {
                 AttachmentAnchorCapture { WebsiteCaptures.modelChipAnchor = WeakView($0) }
             }
+        }
+        // And where the chip is, in the window, by the thread it belongs to: a popover
+        // hung from that rect on the window itself outlives any remaking of the chip's view.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            if WebsiteCaptures.isEnabled, !compact { WebsiteCaptures.modelChipFrames[thread.id] = frame }
         }
         .task(id: thread.provider) { await registry.loadCatalog(thread.provider) }
     }

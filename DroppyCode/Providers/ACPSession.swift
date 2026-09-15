@@ -1,8 +1,30 @@
 import Foundation
 
+/// Spaces out the starts of ACP agent processes. An agent keeps a store of its own on this
+/// Mac (OpenCode's is SQLite), and several starting in the same instant, as a team of heads
+/// does, trip over its lock: "database is locked", and a head's first turn is over before
+/// it began. A lone start never waits; a batch starts one every `spacing` seconds.
+private actor ACPLaunchGate {
+    private let spacing: TimeInterval
+    private var nextSlot = Date.distantPast
+
+    init(spacing: TimeInterval) {
+        self.spacing = spacing
+    }
+
+    func wait() async {
+        let now = Date.now
+        let slot = max(now, nextSlot)
+        nextSlot = slot.addingTimeInterval(spacing)
+        if slot > now { try? await Task.sleep(for: .seconds(slot.timeIntervalSince(now))) }
+    }
+}
+
 /// Drives Agent Client Protocol agents: Cursor, OpenCode, Grok and Devin.
 @MainActor
 final class ACPSession: ProviderSession {
+    private static let launchGate = ACPLaunchGate(spacing: 1.5)
+
     var onEvent: ((ProviderEvent) -> Void)?
 
     private let configuration: SessionConfiguration
@@ -81,6 +103,7 @@ final class ACPSession: ProviderSession {
 
     func start() async throws -> String {
         guard let executable = configuration.executable else { throw ProviderError.notInstalled(configuration.provider) }
+        await Self.launchGate.wait()
         let process = StdioProcess(
             executable: executable,
             arguments: launchArguments,

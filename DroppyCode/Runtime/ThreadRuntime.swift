@@ -340,11 +340,19 @@ final class ThreadRuntime {
 
     // MARK: - Follow-up queue
 
-    /// Instantly queues the composer's draft as a follow-up while a turn runs. The prompt,
-    /// pics and other attachments included, is sent as a direct user chat message once the
-    /// running turn finishes. Stacks up: every queued prompt runs in order.
+    /// Whether the chat box can queue a message: while a turn runs, and while heads are
+    /// out with the lead waiting on them. Return sends to the idle lead at once; the
+    /// queue is for what should wait until the heads have reported.
+    var canQueue: Bool {
+        isRunning || hasWorkingHeads
+    }
+
+    /// Instantly queues the composer's draft as a follow-up while a turn runs or heads are
+    /// at work. The prompt, pics and other attachments included, is sent as a direct user
+    /// chat message once the running turn (or the heads' report) finishes. Stacks up:
+    /// every queued prompt runs in order.
     func queueDraftAsFollowUp() {
-        guard !draft.isEmpty, phase != .idle else { return }
+        guard !draft.isEmpty, canQueue else { return }
         enqueueFollowUp(text: draft.text, attachments: draft.attachments)
         draft = ComposerDraft()
     }
@@ -1394,6 +1402,11 @@ final class ThreadRuntime {
     /// The head a tool row in this timeline sent out, if any.
     func hydraHead(forTool toolID: String) -> UUID? {
         hydraToolHeads[toolID]
+    }
+
+    /// Captures-only mapping of a tool row to its head thread.
+    func rehearseHydraHead(toolID: String, headID: UUID) {
+        hydraToolHeads[toolID] = headID
     }
 
     /// A head the provider started inside this session, or more said about one already
