@@ -674,7 +674,7 @@ final class ThreadRuntime {
         case "/plan":
             app?.updateThread(threadID) { $0.interactionMode = $0.interactionMode == .plan ? .build : .plan }
             return true
-        case "/compact" where thread?.provider == .codex || thread?.provider == .copilot || thread?.provider == .deepseek || thread?.provider == .meta:
+        case "/compact" where thread?.provider == .codex || thread?.provider == .copilot || thread?.provider == .deepseek || thread?.provider == .meta || thread?.provider == .pi:
             compact()
             return true
         default:
@@ -938,6 +938,7 @@ final class ThreadRuntime {
             case .antigravity: AntigravitySession(configuration: configuration)
             case .copilot: CopilotSession(configuration: configuration)
             case .commandcode: CommandCodeSession(configuration: configuration)
+            case .pi: PiSession(configuration: configuration)
             case .cursor, .opencode, .grok, .devin: ACPSession(configuration: configuration)
             case .deepseek: DeepSeekSession(configuration: configuration)
             case .meta: MetaSession(configuration: configuration)

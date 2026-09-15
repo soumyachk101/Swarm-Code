@@ -65,7 +65,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .antigravity: "agy"
         case .copilot: "copilot login"
         case .commandcode: "cmd login"
-        case .pi: "pi, then /login"
+        case .pi: "pi"
         }
     }
 
