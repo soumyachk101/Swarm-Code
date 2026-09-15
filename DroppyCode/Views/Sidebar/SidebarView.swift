@@ -753,7 +753,10 @@ private struct HelperStubRow: View {
 
     var body: some View {
         let count = helpers.count
-        let working = helpers.contains { model.existingRuntime(for: $0.id)?.isRunning == true }
+        let working = helpers.contains { helper in
+            let runtime = model.existingRuntime(for: helper.id)
+            return runtime?.isRunning == true || runtime?.isHydraMerging == true
+        }
         // A team of heads is called that; a mix, or merges alone, stays "helpers".
         let noun = helpers.allSatisfy(\.isHydraHead) ? "head" : "helper"
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
@@ -889,6 +892,8 @@ private struct SidebarThreadRow: View {
         // While the row's ghost is in the air the row itself stays out of sight, and shows
         // again just as the ghost lands on it.
         let isHidden = RowGlideAnimator.shared.isHiding(thread.id)
+        // Read here, in the body, so the row follows the merge as it moves from stage to stage.
+        let mergeStage = Self.mergeStage(of: model.existingRuntime(for: thread.id))
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         Button {
             model.selectedThreadID = thread.id
@@ -897,7 +902,8 @@ private struct SidebarThreadRow: View {
                 thread: thread,
                 projectName: projectName,
                 isSelected: isSelected,
-                trailingClearance: Self.trailingClearance(isSettled: isSettled, isDetailed: isDetailed, showsActions: showsActions || isSettling, showsFold: showsFold)
+                trailingClearance: Self.trailingClearance(isSettled: isSettled, isDetailed: isDetailed, showsActions: showsActions || isSettling, showsFold: showsFold),
+                mergeStage: mergeStage
             ) {
                 ThreadBadge(thread: thread)
             }
@@ -1084,6 +1090,12 @@ private struct SidebarThreadRow: View {
         )
     }
 
+    /// What the team's merge is doing, with an ellipsis, while it runs; nil otherwise.
+    static func mergeStage(of runtime: ThreadRuntime?) -> String? {
+        guard let runtime, runtime.isHydraMerging else { return nil }
+        return (runtime.hydraMergeStage ?? "Merging") + "\u{2026}"
+    }
+
     // MARK: Archiving
 
     private func archiveWithGenie() {
@@ -1111,6 +1123,8 @@ private struct ThreadRowFace<Badge: View>: View {
     let isSelected: Bool
     /// The room left at the trailing end for the row's status, time or buttons.
     let trailingClearance: CGFloat
+    /// What the team's merge is doing, shown in the project line's place while it runs.
+    var mergeStage: String? = nil
     /// The badge at the front of an open row in the project layout.
     @ViewBuilder let badge: Badge
 
@@ -1133,7 +1147,7 @@ private struct ThreadRowFace<Badge: View>: View {
                     HStack(spacing: 4) {
                         Image(systemName: thread.worktreePath == nil ? "folder" : "arrow.triangle.branch")
                             .font(.system(size: 10))
-                        Text(verbatim: projectName)
+                        Text(verbatim: mergeStage ?? projectName)
                             .font(.system(size: 12))
                             .lineLimit(1)
                     }
@@ -1167,7 +1181,7 @@ private struct ThreadGhostBadge: View {
     init(thread: ChatThread, runtime: ThreadRuntime?) {
         self.thread = thread
         needsInput = !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true)
-        isRunning = runtime?.isRunning == true
+        isRunning = runtime?.isRunning == true || runtime?.isHydraMerging == true
     }
 
     var body: some View {
@@ -1225,13 +1239,15 @@ private struct ThreadBadge: View {
     var body: some View {
         let runtime = model.existingRuntime(for: thread.id)
         let needsInput = !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true)
-        let isRunning = runtime?.isRunning == true
+        let mergeStage = SidebarThreadRow.mergeStage(of: runtime)
+        let isRunning = runtime?.isRunning == true || mergeStage != nil
         SidebarIconBadge {
             if needsInput {
                 SidebarSymbol("hand.raised.fill")
                     .foregroundStyle(Chrome.orange)
             } else if isRunning {
                 MiniSpinner(cellSize: 2.4)
+                    .help(mergeStage ?? "")
             } else if thread.isPinned {
                 SidebarSymbol("pin.fill", scale: 0.9)
             } else {
@@ -1358,8 +1374,9 @@ private struct ActivityStatus: View {
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.warning)
-        } else if runtime?.isRunning == true {
+        } else if runtime?.isRunning == true || runtime?.isHydraMerging == true {
             MiniSpinner(cellSize: 2.4)
+                .help(SidebarThreadRow.mergeStage(of: runtime) ?? "")
         } else if thread.hasUnread {
             Circle()
                 .fill(thread.lastStatus == .failed ? Chrome.danger : Chrome.accent)
