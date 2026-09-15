@@ -102,6 +102,20 @@ final class StdioProcess: @unchecked Sendable {
         }
     }
 
+    /// Writes raw bytes to the process's stdin: a prompt piped to a one-shot CLI.
+    func write(_ data: Data) {
+        let handle = stdin.fileHandleForWriting
+        writeQueue.async {
+            try? handle.write(contentsOf: data)
+        }
+    }
+
+    /// Closes stdin, for a process that reads its input to the end before it starts.
+    func closeInput() {
+        let handle = stdin.fileHandleForWriting
+        writeQueue.async { try? handle.close() }
+    }
+
     func terminate() {
         let handle = stdin.fileHandleForWriting
         writeQueue.async { try? handle.close() }

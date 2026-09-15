@@ -12,6 +12,8 @@ struct ProviderCredits: Sendable, Equatable {
     var toppedUp: Double?
     /// The share of the total that came from promotional grants, when the provider splits it.
     var granted: Double?
+    /// The share of the total that the subscription grants each month, when the provider splits it.
+    var monthly: Double?
     /// False once the provider says the account can no longer be charged: every request fails from then on.
     var isUsable: Bool
 
@@ -21,6 +23,7 @@ struct ProviderCredits: Sendable, Equatable {
     /// "Topped up $10.00 · Granted $2.34", or nil when the provider reports one number.
     var breakdownText: String? {
         var parts: [String] = []
+        if let monthly, monthly > 0 { parts.append("Monthly \(Self.money(monthly, currency: currency))") }
         if let toppedUp, toppedUp > 0 { parts.append("Topped up \(Self.money(toppedUp, currency: currency))") }
         if let granted, granted > 0 { parts.append("Granted \(Self.money(granted, currency: currency))") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
@@ -49,13 +52,15 @@ struct ProviderCredits: Sendable, Equatable {
 /// Reading a provider's prepaid balance, the counterpart to `PlanLimitsReader`.
 /// An API-key provider is billed from a credit the user tops up, so where a
 /// subscription shows usage windows, the balance is what is worth watching.
+/// Command Code shows both: its plan's rolling windows and the credits behind them.
 @MainActor
 enum CreditsReader {
-    static func exposesCredits(_ provider: ProviderKind) -> Bool { provider == .deepseek }
+    static func exposesCredits(_ provider: ProviderKind) -> Bool { provider == .deepseek || provider == .commandcode }
 
     static func read(_ provider: ProviderKind, apiKey: String) async -> ProviderCredits? {
         switch provider {
         case .deepseek: await DeepSeekAPI.balance(apiKey: apiKey)
+        case .commandcode: await CommandCodeAPI.credits(apiKey: apiKey)
         default: nil
         }
     }
@@ -64,6 +69,7 @@ enum CreditsReader {
     static func topUpURL(_ provider: ProviderKind) -> URL? {
         switch provider {
         case .deepseek: URL(string: "https://platform.deepseek.com/top_up")
+        case .commandcode: CommandCodeAPI.billingURL
         default: nil
         }
     }

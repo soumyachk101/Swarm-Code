@@ -59,7 +59,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "heatmap", "daily", "weekly", "cumulative", "settle", "settled", "finish", "finished", "done", "sound", "chime"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .hydra: ["hydra", "heads", "subagents", "sub-agents", "agents", "team", "orchestrator", "worker", "pair", "pairs", "parallel", "delegate", "queue"]
-        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "copilot", "github", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
+        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "copilot", "github", "command code", "commandcode", "cmd", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
         case .shortcuts: ["keyboard", "keys"]
         case .archive: ["archived", "restore"]
@@ -500,9 +500,14 @@ private struct ProviderSettingsSection: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
                 }
-                if provider.isAPIKeyBased {
+                if provider.acceptsAPIKey {
                     ChromeRowDivider()
-                    ChromeRow(title: "API key", detail: "Stored in your Keychain. Get one at \(provider.apiKeySource ?? "the provider dashboard").") {
+                    ChromeRow(
+                        title: provider.isAPIKeyBased ? "API key" : "API key (optional)",
+                        detail: provider.isAPIKeyBased
+                            ? "Stored in your Keychain. Get one at \(provider.apiKeySource ?? "the provider dashboard")."
+                            : "Instead of `\(provider.loginCommand)`: a Studio key from \(provider.apiKeySource ?? "the provider dashboard"), stored in your Keychain and handed to the CLI."
+                    ) {
                         HStack(spacing: 8) {
                             Group {
                                 if showsAPIKey {
@@ -525,14 +530,15 @@ private struct ProviderSettingsSection: View {
                             .help(showsAPIKey ? "Hide the API key" : "Show the API key")
                         }
                     }
-                    if !status.isInstalled {
+                    if provider.isAPIKeyBased, !status.isInstalled {
                         ChromeRowDivider()
                         ChromeRow(title: "Get a key", detail: "\(provider.displayName) needs an API key. Nothing to install.") {
                             Link("Get a \(provider.displayName) key", destination: provider.installURL)
                                 .buttonStyle(.glass)
                         }
                     }
-                } else {
+                }
+                if !provider.isAPIKeyBased {
                     ChromeRowDivider()
                     ChromeRow(title: "Binary path", detail: status.executable?.path) {
                         TextField("", text: $binaryPath, prompt: Text(provider.executableName))
@@ -557,7 +563,7 @@ private struct ProviderSettingsSection: View {
         }
         .onAppear {
             binaryPath = model.settings.binaryPath(for: provider)
-            if provider.isAPIKeyBased { apiKey = model.settings.apiKeyInput(for: provider) }
+            if provider.acceptsAPIKey { apiKey = model.settings.apiKeyInput(for: provider) }
         }
         .onChange(of: showsUsage, initial: true) { _, shows in
             // Fires once when the page opens on a signed-in account and again when a check signs
@@ -573,7 +579,7 @@ private struct ProviderSettingsSection: View {
         }
         .onChange(of: apiKey) { _, value in
             // Only an edit counts: loading the stored key into the field must not save or check it.
-            guard provider.isAPIKeyBased, value != model.settings.apiKeyInput(for: provider) else { return }
+            guard provider.acceptsAPIKey, value != model.settings.apiKeyInput(for: provider) else { return }
             model.settings.setAPIKeyInput(value, for: provider)
             keyCheck?.cancel()
             keyCheck = Task {
@@ -584,7 +590,7 @@ private struct ProviderSettingsSection: View {
             }
         }
         .onChange(of: model.settings.apiKeyInput(for: provider)) { _, value in
-            guard provider.isAPIKeyBased, value != apiKey else { return }
+            guard provider.acceptsAPIKey, value != apiKey else { return }
             apiKey = value
         }
     }
