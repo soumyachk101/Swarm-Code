@@ -10,6 +10,8 @@ struct DroppyCodeApp: App {
         // Before anything reads settings or the library.
         WebsiteCaptures.prepare()
         LegacyMigration.run()
+        // A frozen main thread gets its stacks written to ~/Library/Logs/Droppy Code.
+        HangWatchdog.start()
     }
 
     var body: some Scene {

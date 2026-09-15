@@ -1671,6 +1671,15 @@ final class ThreadRuntime {
             return .turnStarted
         }
         message.text = HydraPrompts.withoutDelegationBlock(message.text)
+        // An empty block is the lead saying it did the work itself: the block leaves the
+        // reply, a one-line note says no heads went out, and no turn is spent on it.
+        if delegations.isEmpty {
+            if message.text.isEmpty { message.text = "Done, with no heads." }
+            entry.item.content = .assistant(message)
+            scheduleSave()
+            appendHydraNote("No heads went out: the lead did this itself.")
+            return .none
+        }
         // One request gets so many rounds of heads; past that the lead hears why none went
         // out and finishes by itself, so no request chains heads without end.
         guard hydraDelegationRounds < HydraPrompts.maxDelegationRounds else {

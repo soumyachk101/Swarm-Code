@@ -201,6 +201,9 @@ struct TourView: View {
                 .frame(width: 220, height: 42)
         }
         .buttonStyle(.glassProminent)
+        // A capsule, like the tour's other glass controls, rather than the style's own
+        // rounded box.
+        .buttonBorderShape(.capsule)
         .keyboardShortcut(.defaultAction)
     }
 
