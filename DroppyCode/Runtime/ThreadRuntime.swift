@@ -801,6 +801,7 @@ final class ThreadRuntime {
                 model: thread.model,
                 effort: thread.effort,
                 serviceTier: serviceTier(for: thread),
+                fastMode: thread.fastMode,
                 runtimeMode: thread.runtimeMode,
                 interactionMode: thread.interactionMode,
                 isFinalReport: isFinalReport

@@ -52,12 +52,17 @@ final class ACPSession: ProviderSession {
     private var modelConfigID: String?
     private var modeConfigID: String?
     private var effortConfigID: String?
+    /// Cursor's Fast toggle (`model_config` / `fast`), when the parameterized picker is on.
+    private var fastConfigID: String?
     private var hasModeAPI = false
     private var planMode: String?
     private var buildMode: String?
     private var currentMode: String?
     private var currentModel: String?
     private var currentEffort: String?
+    private var currentFast: String?
+    /// Cursor only exposes effort/fast selectors when the client opts into its parameterized picker.
+    private var usesParameterizedModels: Bool { configuration.provider == .cursor }
 
     init(configuration: SessionConfiguration) {
         self.configuration = configuration
@@ -119,7 +124,7 @@ final class ACPSession: ProviderSession {
 
         let initialized = try await connection.request("initialize", [
             "protocolVersion": 1,
-            "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false], "terminal": false],
+            "clientCapabilities": clientCapabilities,
             "clientInfo": ["name": "droppy-code", "title": "Droppy Code", "version": .string(AppInfo.version)],
         ])
         canLoadSessions = initialized["agentCapabilities"]?["loadSession"]?.bool ?? false
@@ -134,17 +139,40 @@ final class ACPSession: ProviderSession {
             session = try await openSession(connection)
         }
         applySessionState(session)
-        await applySelection(model: configuration.model, effort: configuration.effort, interaction: configuration.interactionMode)
+        await applySelection(
+            model: configuration.model,
+            effort: configuration.effort,
+            fastMode: configuration.fastMode,
+            interaction: configuration.interactionMode
+        )
         guard let sessionID else {
             throw ProviderError.failed("\(configuration.provider.displayName) did not start a session.")
         }
         return sessionID
     }
 
+    /// Cursor hides effort and Fast behind an undocumented `_meta` flag; without it the
+    /// agent only returns one baked-in variant per model and rejects any other effort.
+    private var clientCapabilities: JSONValue {
+        var capabilities: [String: JSONValue] = [
+            "fs": ["readTextFile": false, "writeTextFile": false],
+            "terminal": false,
+        ]
+        if usesParameterizedModels {
+            capabilities["_meta"] = ["parameterizedModelPicker": true]
+        }
+        return .object(capabilities)
+    }
+
     func send(_ input: TurnInput) async throws {
         guard let connection, !connection.isClosed, let sessionID else { throw ProviderError.notRunning }
         runtimeMode = input.runtimeMode
-        await applySelection(model: input.model, effort: input.effort, interaction: input.interactionMode)
+        await applySelection(
+            model: input.model,
+            effort: input.effort,
+            fastMode: input.fastMode,
+            interaction: input.interactionMode
+        )
         var prompt: [JSONValue] = [["type": "text", "text": .string(input.text)]]
         for image in input.images where image.isImage {
             guard let data = try? Data(contentsOf: image.url) else { continue }
@@ -255,10 +283,11 @@ final class ACPSession: ProviderSession {
     }
 
     private func applyModels(_ state: JSONValue) {
-        let current = state["currentModelId"]?.string
+        let current = state["currentModelId"]?.string.map(Self.baseModelID)
         currentModel = current ?? currentModel
         let list = (state["availableModels"]?.array ?? []).compactMap { entry -> ModelOption? in
-            guard let id = entry["modelId"]?.string else { return nil }
+            guard let rawID = entry["modelId"]?.string else { return nil }
+            let id = usesParameterizedModels ? Self.baseModelID(rawID) : rawID
             let efforts = entry["_meta"]?["reasoningEfforts"]?.array ?? []
             return ModelOption(
                 id: id,
@@ -276,6 +305,9 @@ final class ACPSession: ProviderSession {
 
     private func applyConfigOptions(_ options: [JSONValue]) {
         var efforts: [String] = []
+        var hasFast = false
+        effortConfigID = nil
+        fastConfigID = nil
         for option in options {
             guard let id = option["id"]?.string else { continue }
             let values = Self.flatten(option["options"]?.array ?? [])
@@ -283,10 +315,16 @@ final class ACPSession: ProviderSession {
             switch option["category"]?.string ?? id {
             case "model":
                 modelConfigID = id
-                currentModel = current ?? currentModel
+                currentModel = current.map { usesParameterizedModels ? Self.baseModelID($0) : $0 } ?? currentModel
                 let list = values.compactMap { value -> ModelOption? in
-                    guard let valueID = value["value"]?.string else { return nil }
-                    return ModelOption(id: valueID, name: value["name"]?.string ?? valueID, detail: value["description"]?.string, isDefault: valueID == current)
+                    guard let rawID = value["value"]?.string else { return nil }
+                    let valueID = usesParameterizedModels ? Self.baseModelID(rawID) : rawID
+                    return ModelOption(
+                        id: valueID,
+                        name: value["name"]?.string ?? valueID,
+                        detail: value["description"]?.string,
+                        isDefault: valueID == currentModel
+                    )
                 }
                 if !list.isEmpty { models = list }
             case "mode":
@@ -294,19 +332,34 @@ final class ACPSession: ProviderSession {
                 currentMode = current ?? currentMode
                 resolveModes(values.compactMap { $0["value"]?.string })
             case "thought_level", "effort":
+                // Cursor also advertises a boolean `thinking` thought_level; only the
+                // scale (low/medium/high/…) drives Droppy's effort slider.
+                let scale = values.compactMap { $0["value"]?.string }
+                guard Self.isEffortScale(scale) else { break }
                 effortConfigID = id
                 currentEffort = current
-                efforts = values.compactMap { $0["value"]?.string }
+                efforts = scale
+            case "model_config":
+                if id == "fast" {
+                    fastConfigID = id
+                    currentFast = current
+                    hasFast = true
+                }
             default:
                 break
             }
         }
-        if !efforts.isEmpty {
-            models = models.map { model in
-                var model = model
+        models = models.map { model in
+            var model = model
+            let isCurrent = Self.sameModel(model.id, currentModel)
+            if isCurrent, !efforts.isEmpty {
                 model.efforts = efforts
-                return model
+                model.defaultEffort = currentEffort ?? model.defaultEffort
             }
+            if isCurrent {
+                model.fastTier = hasFast ? "true" : nil
+            }
+            return model
         }
         if !models.isEmpty { onEvent?(.models(models, current: currentModel)) }
     }
@@ -318,19 +371,46 @@ final class ACPSession: ProviderSession {
         }
     }
 
-    private func applySelection(model: String?, effort: String?, interaction: InteractionMode) async {
+    /// Values that belong on the effort slider, as opposed to a boolean thinking toggle.
+    private static func isEffortScale(_ values: [String]) -> Bool {
+        let known: Set<String> = ["none", "low", "medium", "high", "xhigh", "max", "extra-high"]
+        return values.contains { known.contains($0.lowercased()) }
+    }
+
+    /// Cursor's parameterized IDs are `model[effort=high,…]`; the picker stores the base name.
+    private static func baseModelID(_ id: String) -> String {
+        guard let bracket = id.firstIndex(of: "[") else { return id }
+        return String(id[..<bracket])
+    }
+
+    private static func sameModel(_ lhs: String?, _ rhs: String?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        return baseModelID(lhs) == baseModelID(rhs)
+    }
+
+    private func applySelection(model: String?, effort: String?, fastMode: Bool, interaction: InteractionMode) async {
         guard let connection, let sessionID else { return }
-        if let model, !model.isEmpty, model != currentModel {
-            if let modelConfigID {
-                await setConfigOption(modelConfigID, value: model)
-            } else {
-                _ = try? await connection.request("session/set_model", ["sessionId": .string(sessionID), "modelId": .string(model)])
+        if let model, !model.isEmpty {
+            let wireID = usesParameterizedModels ? Self.baseModelID(model) : model
+            if !Self.sameModel(wireID, currentModel) {
+                if let modelConfigID {
+                    await setConfigOption(modelConfigID, value: wireID)
+                } else {
+                    _ = try? await connection.request("session/set_model", ["sessionId": .string(sessionID), "modelId": .string(wireID)])
+                }
+                currentModel = wireID
             }
-            currentModel = model
         }
         if let effort, !effort.isEmpty, let effortConfigID, effort != currentEffort {
             await setConfigOption(effortConfigID, value: effort)
             currentEffort = effort
+        }
+        if let fastConfigID {
+            let wanted = fastMode ? "true" : "false"
+            if wanted != currentFast {
+                await setConfigOption(fastConfigID, value: wanted)
+                currentFast = wanted
+            }
         }
         if let mode = interaction == .plan ? planMode : buildMode, mode != currentMode {
             if let modeConfigID {

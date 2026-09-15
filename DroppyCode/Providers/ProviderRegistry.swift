@@ -293,12 +293,18 @@ final class ProviderRegistry {
 
     func model(_ id: String?, for provider: ProviderKind) -> ModelOption? {
         guard let id else { return nil }
-        return models(for: provider).first { $0.id == id }
+        let list = models(for: provider)
+        if let exact = list.first(where: { $0.id == id }) { return exact }
+        // Cursor used to advertise parameterized ids (`model[effort=…]`); the catalog now
+        // stores the base name once the parameterized picker is declared.
+        guard id.contains("["), let bracket = id.firstIndex(of: "[") else { return nil }
+        let base = String(id[..<bracket])
+        return list.first { $0.id == base }
     }
 
     func defaultModel(for provider: ProviderKind) -> ModelOption? {
         let list = models(for: provider)
-        if let last = settings.lastModel(for: provider), let match = list.first(where: { $0.id == last }) {
+        if let last = settings.lastModel(for: provider), let match = model(last, for: provider) {
             return match
         }
         return list.first(where: \.isDefault) ?? list.first
