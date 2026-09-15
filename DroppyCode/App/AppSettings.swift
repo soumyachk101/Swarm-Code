@@ -60,6 +60,10 @@ struct ModelPreference: Codable, Hashable, Sendable {
 @MainActor
 @Observable
 final class AppSettings {
+    /// The per-chat Hydra default's key, shared with `ChatThread`, which seeds new
+    /// threads from it before any settings object is in reach.
+    nonisolated static let hydraDefaultEnabledKey = "hydraDefaultEnabled"
+
     private enum Key {
         static let defaultProvider = "defaultProvider"
         static let runtimeMode = "defaultRuntimeMode"
@@ -93,6 +97,7 @@ final class AppSettings {
         static let deepseekAPIKey = "deepseekAPIKey"
         static let metaAPIKey = "metaAPIKey"
         static let hydraEnabled = "hydraEnabled"
+        static let hydraDefaultEnabled = AppSettings.hydraDefaultEnabledKey
         static let hydraQueueHeads = "hydraQueueHeads"
         static let hydraAlwaysHeads = "hydraAlwaysHeads"
         static let hydraIsolateHeads = "hydraIsolateHeads"
@@ -306,6 +311,13 @@ final class AppSettings {
         didSet { defaults.set(hydraEnabled, forKey: Key.hydraEnabled) }
     }
 
+    /// The per-chat Hydra choice new threads start with. Every per-chat switch flip saves
+    /// here too, so the choice sticks as the default for next threads across relaunch.
+    /// True until the user first switches a chat off.
+    var hydraDefaultEnabled: Bool {
+        didSet { defaults.set(hydraDefaultEnabled, forKey: Key.hydraDefaultEnabled) }
+    }
+
     var hasSeenTour: Bool {
         didSet { defaults.set(hasSeenTour, forKey: Key.hasSeenTour) }
     }
@@ -399,6 +411,7 @@ final class AppSettings {
         modelList = Self.load([ModelPin].self, forKey: Key.modelList) ?? []
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
         hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
+        hydraDefaultEnabled = defaults.object(forKey: Key.hydraDefaultEnabled) as? Bool ?? true
         hasSeenTour = defaults.object(forKey: Key.hasSeenTour) as? Bool ?? false
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
         hydraAlwaysHeads = defaults.object(forKey: Key.hydraAlwaysHeads) as? Bool ?? false

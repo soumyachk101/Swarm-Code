@@ -56,12 +56,14 @@ extension AppModel {
             thread.effort = effort
             thread.fastMode = (option?.supportsFast ?? false) && preference.fastMode
             thread.hydraPairID = pair.id
+            thread.hydraEnabled = true
         }
         // A chat that changes provider leaves its old session behind, as a model choice does.
         if switchesProvider { existingRuntime(for: threadID)?.stopSession() }
         settings.remember(model: modelID, effort: effort, for: provider)
         settings.defaultProvider = provider
         settings.hydraEnabled = true
+        settings.hydraDefaultEnabled = true
     }
 
     /// Takes a chat out of the pair it leads with, when a model is chosen from the picker's

@@ -253,7 +253,7 @@ struct Git: Sendable {
         defer { try? fileManager.removeItem(at: index) }
         let environment = ["GIT_INDEX_FILE": index.path]
         try Self.check(await run(["read-tree", "HEAD"], environment: environment))
-        try Self.check(await run(["add", "-A", "--ignore-errors", "--"] + paths, environment: environment, timeout: 300))
+        try Self.check(await run(["add", "-A", "--ignore-errors", "--pathspec-from-file=-", "--pathspec-file-nul"], environment: environment, input: Self.nulSeparated(paths), timeout: 300))
         let tree = try await run(["write-tree"], environment: environment)
         try Self.check(tree)
         return tree.trimmedOutput
@@ -320,6 +320,40 @@ struct Git: Sendable {
         return paths
     }
 
+    /// Paths from `paths` that the checkout ignores.
+    func ignoredPaths(among paths: [String]) async -> Set<String> {
+        guard !paths.isEmpty, let result = try? await run(["check-ignore", "-z", "--stdin"], input: Self.nulSeparated(paths)), result.succeeded || result.status == 1 else { return [] }
+        return Set(result.output.split(separator: "\0", omittingEmptySubsequences: true).map(String.init))
+    }
+
+    /// Paths from `paths` that HEAD holds. That is what `captureTree(paths:)` reads its
+    /// index from, so a path in HEAD can be staged even once it is gone from disk (the
+    /// deletion is the work), while a path in neither is a pathspec that matches nothing
+    /// and takes the whole `git add` down. `ls-files` reads no pathspec file, so the
+    /// check goes through `cat-file --batch-check`, one `HEAD:<path>` per line on stdin,
+    /// which answers in order with `missing` for what HEAD does not have.
+    func trackedPaths(among paths: [String]) async -> Set<String> {
+        guard !paths.isEmpty else { return [] }
+        let input = paths.reduce(into: Data()) { data, path in
+            data.append(contentsOf: "HEAD:\(path)".utf8)
+            data.append(0)
+        }
+        guard let result = try? await run(["cat-file", "--batch-check=%(objecttype)", "-Z"], input: input), result.succeeded else { return [] }
+        let answers = result.output.split(separator: "\0", omittingEmptySubsequences: false)
+        var tracked = Set<String>()
+        for (path, answer) in zip(paths, answers) where !answer.hasSuffix(" missing") {
+            tracked.insert(path)
+        }
+        return tracked
+    }
+
+    private static func nulSeparated(_ paths: [String]) -> Data {
+        paths.reduce(into: Data()) { data, path in
+            data.append(contentsOf: path.utf8)
+            data.append(0)
+        }
+    }
+
     /// Whether a rebase, merge or cherry-pick is underway: nothing may move then.
     func hasOperationInProgress() async -> Bool {
         for path in ["rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"] {
@@ -339,7 +373,7 @@ struct Git: Sendable {
     /// The index takes HEAD's version of `paths`; the working tree stays as it is.
     func resetIndex(paths: [String]) async throws {
         guard !paths.isEmpty else { return }
-        try Self.check(await run(["reset", "--quiet", "--"] + paths))
+        try Self.check(await run(["reset", "--quiet", "--pathspec-from-file=-", "--pathspec-file-nul"], input: Self.nulSeparated(paths)))
     }
 
     /// Index and working tree take `ref`'s version of `paths`.

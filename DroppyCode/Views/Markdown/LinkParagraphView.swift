@@ -15,7 +15,9 @@ struct LinkParagraphView: NSViewRepresentable {
     /// Bumped when favicons finish loading, so the icons appear.
     var revision: Int = 0
 
-    /// Receives the text view, so the hover that sets the cursor can ask it what is under the pointer.
+    /// Receives the text view, so the hover that sets the cursor can ask it what is under
+    /// the pointer. The closure lives as long as the representable: capture only a weak
+    /// box in it, never the paragraph's view value, or the text view keeps its row alive.
     var onHost: ((LinkTextView) -> Void)?
 
     func makeNSView(context: Context) -> LinkTextView {
@@ -40,6 +42,13 @@ struct LinkParagraphView: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
+    }
+
+    /// The text view otherwise outlives its row through its menu and its merge
+    /// hand-off, which holds the thread's runtime: drop both when it goes away.
+    static func dismantleNSView(_ view: LinkTextView, coordinator: Coordinator) {
+        view.delegate = nil
+        view.mergeTarget = nil
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {

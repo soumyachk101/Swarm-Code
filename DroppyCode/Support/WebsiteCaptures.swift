@@ -123,7 +123,13 @@ enum WebsiteCaptures {
         if let data = try? JSONEncoder().encode(pins) { defaults.set(data, forKey: "modelList") }
         defaults.synchronize()
 
-        if isTourRun { defaults.set(true, forKey: "hydraEnabled") }
+        if isTourRun {
+            defaults.set(true, forKey: "hydraEnabled")
+            // With Hydra on, a queued follow-up would go out as a real head (see
+            // `ThreadRuntime.enqueueFollowUp`): the queue scene must queue, nothing more.
+            defaults.set(false, forKey: "hydraQueueHeads")
+            defaults.set(false, forKey: "hydraAlwaysHeads")
+        }
         let repos = output.appendingPathComponent("repos", isDirectory: true)
         var library = Library()
         library.projects = [
@@ -424,23 +430,23 @@ enum WebsiteCaptures {
     }
 
     /// The changes popover, open on the turn's diff.
-    private static func diffScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder) async {
+    static func diffScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder, film: Bool = true, stillName: String? = nil) async {
         log("scene diffScene")
         let runtime = model.runtime(for: ID.composer)
         runtime.clearDiffFocus()
         runtime.diffAnchor = nil
         runtime.isDiffVisible = true
         try? await Task.sleep(for: .milliseconds(1_200))
-        await recorder.still("diff", stage.captureRect)
+        await recorder.still(stillName ?? "diff", film ? stage.captureRect : stage.tourCaptureRect)
         runtime.isDiffVisible = false
         try? await Task.sleep(for: .milliseconds(600))
     }
 
     /// Three follow-ups queued behind the running turn.
-    private static func queueScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder) async {
+    static func queueScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder, film: Bool = true, stillName: String? = nil) async {
         log("scene queueScene")
         let runtime = model.runtime(for: ID.composer)
-        await recorder.startFilm("queue", stage.captureRect)
+        if film { await recorder.startFilm("queue", stage.captureRect) }
         try? await Task.sleep(for: .milliseconds(700))
         for text in [
             "Also match the trailing inset, and keep the corner radius at 10.",
@@ -451,25 +457,25 @@ enum WebsiteCaptures {
             try? await Task.sleep(for: .milliseconds(800))
         }
         try? await Task.sleep(for: .milliseconds(1_200))
-        await recorder.stopFilm()
-        await recorder.still("queue", stage.captureRect)
+        if film { await recorder.stopFilm() }
+        await recorder.still(stillName ?? "queue", film ? stage.captureRect : stage.tourCaptureRect)
         for prompt in runtime.followUps { runtime.removeFollowUp(prompt.id) }
         try? await Task.sleep(for: .milliseconds(600))
     }
 
     /// The command palette over the thread.
-    private static func paletteScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder) async {
+    static func paletteScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder, film: Bool = true, stillName: String? = nil) async {
         log("scene paletteScene")
         model.isCommandPalettePresented = true
         try? await Task.sleep(for: .milliseconds(800))
-        await recorder.still("palette", stage.captureRect)
+        await recorder.still(stillName ?? "palette", film ? stage.captureRect : stage.tourCaptureRect)
         model.isCommandPalettePresented = false
         try? await Task.sleep(for: .milliseconds(500))
     }
 
     /// A fresh plan-mode thread: one ask, a proposed plan, the to-dos. Nothing else on the
     /// glass, so the encoder can cut the whole exchange out cleanly.
-    private static func plansScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder) async {
+    static func plansScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder, film: Bool = true, stillName: String? = nil) async {
         log("scene plansScene")
         model.selectedThreadID = ID.freshPlan
         try? await Task.sleep(for: .milliseconds(900))
@@ -484,17 +490,17 @@ enum WebsiteCaptures {
             TodoStep(text: "Leave streaming text plain", status: .pending),
         ]))
         try? await Task.sleep(for: .milliseconds(1_200))
-        await recorder.still("plans", stage.captureRect)
+        await recorder.still(stillName ?? "plans", film ? stage.captureRect : stage.tourCaptureRect)
     }
 
     /// The plan-mode thread: a plan proposed, then the agent asks a question, then it asks
     /// before pushing. Lands the thread under "Needs attention" in the sidebar.
-    private static func questionScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder) async {
+    static func questionScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder, film: Bool = true, stillName: String? = nil) async {
         log("scene questionScene")
         model.selectedThreadID = ID.finalAnswer
         try? await Task.sleep(for: .milliseconds(1_000))
         let runtime = model.runtime(for: ID.finalAnswer)
-        await recorder.startFilm("question", stage.captureRect)
+        if film { await recorder.startFilm("question", stage.captureRect) }
         try? await Task.sleep(for: .milliseconds(600))
         runtime.rehearseTurn("Make the final answer of a turn stand out from the tool chatter above it.")
         try? await Task.sleep(for: .milliseconds(400))
@@ -522,8 +528,14 @@ enum WebsiteCaptures {
             ),
         ])))
         try? await Task.sleep(for: .milliseconds(2_600))
-        await recorder.still("question", stage.captureRect)
+        await recorder.still(stillName ?? "question", film ? stage.captureRect : stage.tourCaptureRect)
         runtime.rehearse(.requestResolved(id: "q1"))
+        // Over a gradient only the question itself is photographed; the approval half of
+        // the film stays in the website run, so no approval is left behind.
+        guard film else {
+            try? await Task.sleep(for: .milliseconds(600))
+            return
+        }
         try? await Task.sleep(for: .milliseconds(800))
         runtime.rehearse(.toolStarted(id: "t-edit2", call: ToolCall(kind: .edit, title: "Edit", detail: "TimelineRows.swift · final answer card")))
         try? await Task.sleep(for: .milliseconds(700))
@@ -543,7 +555,7 @@ enum WebsiteCaptures {
             toolItemID: nil
         )))
         try? await Task.sleep(for: .milliseconds(2_400))
-        await recorder.stopFilm()
+        if film { await recorder.stopFilm() }
         await recorder.still("approval", stage.captureRect)
     }
 
@@ -626,6 +638,9 @@ final class Stage {
         self.model = model
     }
 
+    /// The app window's frame in screen coordinates, for a still's sidecar.
+    var windowFrame: NSRect? { window?.frame }
+
     /// The app window with its wallpaper margin, in screen coordinates.
     var captureRect: NSRect {
         (window?.frame ?? .zero).insetBy(dx: -WebsiteCaptures.margin, dy: -WebsiteCaptures.margin)
@@ -635,6 +650,18 @@ final class Stage {
     /// symmetrically around the window's centre until exactly 16:10.
     var tourCaptureRect: NSRect {
         Self.tourRect(around: window?.frame ?? .zero)
+    }
+
+    /// The tour rect around the window plus an open popover, so a slider or model
+    /// switcher hanging past the window edge stays centered and uncropped at 16:10.
+    /// Falls back to the window-only rect when the popover is closed or headless.
+    func tourCaptureRect(including popover: NSPopover?) -> NSRect {
+        guard let frame = window?.frame,
+              let popover,
+              popover.isShown,
+              let panel = popover.contentViewController?.view.window?.frame
+        else { return tourCaptureRect }
+        return Self.tourRect(around: frame.union(panel))
     }
 
     /// Whether the app window is out of the way (see `setWindowHidden`); `ensureActive`
@@ -872,9 +899,26 @@ final class Recorder {
             let representation = NSBitmapImageRep(cgImage: image)
             guard let data = representation.representation(using: .png, properties: [:]) else { return }
             try data.write(to: output.appendingPathComponent("\(name).png"), options: .atomic)
+            writeSidecar(for: name, rect: rect)
         } catch {
             WebsiteCaptures.log("still \(name) failed: \(error.localizedDescription)")
         }
+    }
+
+    /// Where the app window sits inside a still, beside it as <name>.json: the still's
+    /// rect and the window's frame, both in screen points, top-left origin; the script
+    /// takes the pixel scale from the PNG's width over the rect's. A still framed around
+    /// an open popover is wider than the window, and the tour script cuts the window's
+    /// inside out of it; guessing that box from the window's size alone cut the
+    /// sidebar's edge off the welcome page.
+    private func writeSidecar(for name: String, rect: NSRect) {
+        guard let window = stage?.windowFrame else { return }
+        let sidecar: [String: [Double]] = [
+            "rect": [rect.minX, rect.minY, rect.width, rect.height],
+            "window": [window.minX - rect.minX, rect.maxY - window.maxY, window.width, window.height],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: sidecar, options: [.sortedKeys]) else { return }
+        try? data.write(to: output.appendingPathComponent("\(name).json"), options: .atomic)
     }
 
     /// Starts filming `rect` into films/<name>.mov at 60 fps.

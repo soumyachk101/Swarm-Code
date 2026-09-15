@@ -106,6 +106,7 @@ struct MarkdownBlockView: View, Equatable {
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.markdownListDepth) private var listDepth
     @Environment(\.chatZoom) private var zoom
+    @Environment(\.hydraMentionPersonas) private var hydraMentionPersonas
 
     /// Blocks compare by content, so a finished block is skipped while the reply keeps streaming.
     nonisolated static func == (lhs: MarkdownBlockView, rhs: MarkdownBlockView) -> Bool {
@@ -119,7 +120,17 @@ struct MarkdownBlockView: View, Equatable {
                 .font(headingFont(level))
                 .padding(.top, level <= 2 ? 6 : 2)
         case .paragraph(let text):
-            InlineText(text)
+            if listDepth == 0, let mention = leadingMention(in: text) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HydraGlyph(persona: mention.persona, size: 16 * zoom)
+                    Text(verbatim: mention.name)
+                        .fontWeight(.bold)
+                        .foregroundStyle(mention.persona.color)
+                    InlineText(String(text.dropFirst(mention.consumed)))
+                }
+            } else {
+                InlineText(text)
+            }
         case .code(let language, let code):
             // The lead's delegation block (info string `hydra`) is a brief for the team, not
             // code: it reads as a card while it streams and whenever it stays in the reply.
@@ -174,6 +185,25 @@ struct MarkdownBlockView: View, Equatable {
         }
     }
 
+    /// The head a paragraph opens with, if it opens with one of this thread's heads: the
+    /// name itself, or the name wrapped in one inline emphasis marker (`**Otto**`), and
+    /// then the end of the text or a word boundary, never another letter (`Bo` is not
+    /// `Bob`). `consumed` is how much of the source the glyph and the coloured name
+    /// replace, marker included.
+    private func leadingMention(in text: String) -> (persona: HydraPersona, name: String, consumed: Int)? {
+        let boundaries = " :,.;'’-–—("
+        for persona in hydraMentionPersonas {
+            for marker in ["", "**", "__", "*", "_", "`"] {
+                let opener = marker + persona.name + marker
+                guard text.hasPrefix(opener) else { continue }
+                let rest = text.dropFirst(opener.count)
+                guard rest.first == nil || boundaries.contains(rest.first!) else { continue }
+                return (persona, persona.name, opener.count)
+            }
+        }
+        return nil
+    }
+
     @ViewBuilder
     private func marker(ordered: Bool, number: Int, checked: Bool?) -> some View {
         if let checked {
@@ -215,6 +245,8 @@ private struct MarkdownListDepthKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
+    @Entry var hydraMentionPersonas: [HydraPersona] = []
+
     var markdownListDepth: Int {
         get { self[MarkdownListDepthKey.self] }
         set { self[MarkdownListDepthKey.self] = newValue }
@@ -556,27 +588,34 @@ struct InlineText: View {
             let metrics = Self.metrics(pointSize: scaled)
             let ascender = metrics.ascender
             let lineHeight = metrics.lineHeight
-            LinkParagraphView(source: source, pointSize: scaled, dimmed: dimmed, streaming: streaming, revision: faviconRevision, onHost: { linkView.value = $0 })
+            // The hover and the host callback keep only the text view's weak box and the
+            // hand binding: the hover responder and the representable must not keep this
+            // paragraph (and its styled text) alive after it scrolls away.
+            let linkBox = linkView
+            let hand = $showsHand
+            LinkParagraphView(source: source, pointSize: scaled, dimmed: dimmed, streaming: streaming, revision: faviconRevision, onHost: { [weak linkBox] view in linkBox?.value = view })
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { _ in ascender }
                 .alignmentGuide(.lastTextBaseline) { $0.height - lineHeight + ascender }
                 // The pointing hand over links, from here rather than the text view's own
                 // tracking (which AppKit would rebuild every scrolled frame). Hover is off
                 // while the timeline scrolls, so this costs nothing then.
-                .onContinuousHover(coordinateSpace: .local) { phase in
+                .onContinuousHover(coordinateSpace: .local) { [weak linkBox, hand] phase in
                     let overLink: Bool
                     switch phase {
-                    case .active(let point): overLink = (linkView.value as? LinkTextView)?.hasLink(at: point) ?? false
+                    case .active(let point): overLink = (linkBox?.value as? LinkTextView)?.hasLink(at: point) ?? false
                     case .ended: overLink = false
                     }
-                    guard overLink != showsHand else { return }
-                    showsHand = overLink
+                    guard overLink != hand.wrappedValue else { return }
+                    hand.wrappedValue = overLink
                     if overLink { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                 }
-                .onDisappear {
-                    if showsHand { NSCursor.pop(); showsHand = false }
+                .onDisappear { [hand] in
+                    if hand.wrappedValue { NSCursor.pop(); hand.wrappedValue = false }
                 }
-                .task(id: source) { await fetchFavicons() }
+                .task(id: source) { [source, streaming, revision = $faviconRevision] in
+                    await Self.fetchFavicons(source: source, streaming: streaming, revision: revision)
+                }
         } else {
             RichInlineBuilder.text(for: source, streaming: streaming)
                 .textSelection(.enabled)
@@ -598,14 +637,15 @@ struct InlineText: View {
         return measured
     }
 
-    private func fetchFavicons() async {
-        let streaming = streaming
+    /// Static so the `.task` above keeps only the paragraph's source and the refresh
+    /// binding, never the whole view value (and its styled text) after it goes away.
+    private static func fetchFavicons(source: String, streaming: Bool, revision: Binding<Int>) async {
         let hosts = await MainActor.run { RichLink.linkHosts(for: source, streaming: streaming) }
         var changed = false
         for host in hosts where FaviconCache.cached(host: host) == nil {
             if await FaviconCache.image(for: host) != nil { changed = true }
         }
-        if changed { await MainActor.run { faviconRevision += 1 } }
+        if changed { await MainActor.run { revision.wrappedValue += 1 } }
     }
 
     @MainActor
@@ -654,6 +694,9 @@ struct CodeBlock: View {
         let lineCount = 1 + code.utf8.count { $0 == 0x0A }
         let truncated = !showsAll && lineCount > Self.collapsedLineLimit
         let visible = truncated ? Self.head(of: code, lines: Self.collapsedLineLimit) : code
+        // The box alone: the hover handler must not keep this block (and its whole
+        // text) alive after it scrolls away.
+        let hoverBox = hover
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(language ?? "code")
@@ -686,7 +729,7 @@ struct CodeBlock: View {
             }
         }
         .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 12))
-        .onHover { hover.isHovering = $0 }
+        .onHover { [weak hoverBox] in hoverBox?.isHovering = $0 }
     }
 
     /// The first `lines` lines of `code`, without splitting the rest.
@@ -764,9 +807,11 @@ struct CopyButton: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
             didCopy = true
-            Task {
+            // The binding alone: the delayed reset must not keep this button (and its
+            // whole text) alive.
+            Task { [copied = $didCopy] in
                 try? await Task.sleep(for: .seconds(1.4))
-                didCopy = false
+                copied.wrappedValue = false
             }
         } label: {
             Image(systemName: didCopy ? "checkmark" : "doc.on.doc")

@@ -97,9 +97,15 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     var isInPanel = false
     /// Whether this thread's helpers are folded away under it in the sidebar.
     var foldsHelpers = false
-    /// Legacy per-chat flag, kept for decoding old threads. Ignored: with the app-wide
-    /// switch on, every chat leads (see `hydraIsOn`).
-    var hydraEnabled = false
+    /// Per-chat Hydra switch: off kills heads for this chat only, on restores them
+    /// (with the app-wide switch on). New threads start on the saved default
+    /// (see `hydraDefaultEnabled()`); flipping a chat's switch saves there too.
+    var hydraEnabled = true
+    /// Whether `hydraEnabled` above was saved by a build that has the per-chat switch.
+    /// Saves from before it carried an ignored false under the same key, so a thread
+    /// without this flag decodes as on whatever its stored value says; every save from
+    /// here on writes the flag, and its stored value is then the user's own choice.
+    var hydraEnabledIsExplicit = true
     /// The pair an old thread picked while Hydra had per-chat switches. Kept for
     /// decoding; new threads use the best fit for their provider and model.
     var hydraPairID: UUID?
@@ -113,6 +119,16 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
 
     /// A Hydra head, whichever side of the panel it is on.
     var isHydraHead: Bool { hydra != nil }
+
+    /// Defaults key holding the per-chat Hydra default (see `AppSettings`).
+    static let hydraDefaultKey = AppSettings.hydraDefaultEnabledKey
+
+    /// The per-chat Hydra default new threads start with: the last per-chat switch
+    /// flip, or on until the user first switches a chat off.
+    static func hydraDefaultEnabled() -> Bool {
+        let defaults = WebsiteCaptures.defaults ?? .standard
+        return defaults.object(forKey: hydraDefaultKey) as? Bool ?? true
+    }
 
     init(projectID: UUID, provider: ProviderKind, model: String?, effort: String?, runtimeMode: RuntimeMode, fastMode: Bool = false) {
         id = UUID()
@@ -130,6 +146,7 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         isArchived = false
         hasUnread = false
         hasCustomTitle = false
+        hydraEnabled = Self.hydraDefaultEnabled()
     }
 
     init(from decoder: Decoder) throws {
@@ -164,7 +181,11 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         parentThreadID = container.value(.parentThreadID, default: nil)
         isInPanel = container.value(.isInPanel, default: false)
         foldsHelpers = container.value(.foldsHelpers, default: false)
-        hydraEnabled = container.value(.hydraEnabled, default: false)
+        // Threads saved while Hydra was app-wide only carry an ignored false and no
+        // explicit flag: they come back on. A save that wrote the flag holds a real choice.
+        let explicit = container.value(.hydraEnabledIsExplicit, default: false)
+        hydraEnabled = explicit ? container.value(.hydraEnabled, default: true) : true
+        hydraEnabledIsExplicit = true
         hydraPairID = container.value(.hydraPairID, default: nil)
         hydraSpawnCount = container.value(.hydraSpawnCount, default: 0)
         hydra = container.value(.hydra, default: nil)

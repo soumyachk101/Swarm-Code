@@ -6,12 +6,16 @@ it opens the real window with mock data over a curated gradient backdrop, photog
 each tour scene as a 16:10 still into build.noindex/tour-captures, and quits. This
 script then resizes every still to exactly 1320x824 and writes it into the tour
 imagesets (welcome comes from the web hero, themes from a seamless 2x2 collage).
-With --website it also exports cropped-on-the-action WebP files plus per-theme shots
-into website/assets/app/tour/. Needs Pillow (pip).
+
+The website's set is NOT cut here: scripts/website_captures.py encodes the same
+tour run whole into build.noindex/website-tour and uploads it to the R2 tour/v2
+prefix with per-key verification, so only one uploader writes those keys. With
+--website/--export-only/--upload this script delegates to that pipeline. Needs
+Pillow (pip).
 
     scripts/tour_captures.py                 # build, capture, import into the asset catalog
-    scripts/tour_captures.py --website       # ...and export the full-size set for the website
-    scripts/tour_captures.py --export-only   # export the website set from the last run
+    scripts/tour_captures.py --website       # ...and encode the website's set via website_captures.py
+    scripts/tour_captures.py --export-only   # encode the website's set from the last run
     scripts/tour_captures.py --upload        # ...and push it to R2 (wrangler signed in)
 """
 
@@ -33,29 +37,34 @@ HEIGHT = 824
 SCENES = ["welcome", "hydra", "pairs", "slider", "panels"]
 CONTENTS = {"info": {"author": "xcode", "version": 1}}
 
-# App window size in points for each still. Every still is a 16:10 rect around the
-# window: the frame grown by 72 pt on every side, then widened/heightened to 1.6.
+# App window size in points for each still, matching the stage sizes in
+# DroppyCode/Support/TourCaptures.swift (and TourCaptures+Hydra.swift). Every
+# still is a 16:10 rect around the window: the frame grown by 72 pt on every
+# side, then widened/heightened to 1.6. The popover scenes (tour-pairs,
+# tour-slider, web-hero) photograph the window unioned with the open popover
+# (see Stage.tourCaptureRect(including:)), so their PNGs are larger than the
+# window-only rect below; the website pipeline serves those whole, uncropped.
 WINDOW_SIZES = {
-    "tour-welcome": (1200, 660),
+    "tour-welcome": (1280, 800),
     "web-hero": (1280, 800),
-    "tour-hydra": (1080, 640),
-    "tour-pairs": (900, 600),
-    "tour-slider": (900, 600),
-    "tour-panels": (1200, 740),
+    "tour-hydra": (1152, 720),
+    "tour-pairs": (960, 600),
+    "tour-slider": (960, 600),
+    "tour-panels": (1280, 800),
     "tour-window": (660, 600),
     "web-diff": (1200, 660),
     "web-palette": (1200, 660),
     "web-plans": (1200, 660),
     "web-question": (1200, 660),
     "web-queue": (1200, 660),
-    "tour-theme-tokyoNight": (900, 560),
-    "tour-theme-gruvbox": (900, 560),
-    "tour-theme-catppuccinLatte": (900, 560),
-    "tour-theme-rosePine": (900, 560),
-    "web-theme-tokyoNight": (900, 560),
-    "web-theme-gruvbox": (900, 560),
-    "web-theme-catppuccinLatte": (900, 560),
-    "web-theme-rosePine": (900, 560),
+    "tour-theme-tokyoNight": (960, 600),
+    "tour-theme-gruvbox": (960, 600),
+    "tour-theme-catppuccinLatte": (960, 600),
+    "tour-theme-rosePine": (960, 600),
+    "web-theme-tokyoNight": (960, 600),
+    "web-theme-gruvbox": (960, 600),
+    "web-theme-catppuccinLatte": (960, 600),
+    "web-theme-rosePine": (960, 600),
 }
 THEME_ORDER = ["tokyoNight", "gruvbox", "catppuccinLatte", "rosePine"]
 
@@ -72,22 +81,6 @@ def window_box(name):
     else:
         rh = round(rw / 1.6)
     return (rw, rh, (rw - w) / 2, (rh - h) / 2, w, h)
-
-
-def crop_points(image, name, x, y, w, h):
-    """Crop a window-points rect (top-left origin, may extend into the margin)."""
-    rw, rh, mx, my, ww, wh = window_box(name)
-    assert abs(image.width - 2 * rw) <= 2 and abs(image.height - 2 * rh) <= 2, \
-        f"{name}: PNG is {image.width}x{image.height}, expected {2 * rw}x{2 * rh}"
-    x0 = round(2 * (mx + x))
-    y0 = round(2 * (my + y))
-    x1 = round(2 * (mx + x + w))
-    y1 = round(2 * (my + y + h))
-    x0 = max(0, min(image.width, x0))
-    y0 = max(0, min(image.height, y0))
-    x1 = max(0, min(image.width, x1))
-    y1 = max(0, min(image.height, y1))
-    return image.crop((x0, y0, x1, y1))
 
 
 def step(title):
@@ -158,32 +151,28 @@ def write_imageset(name, image):
     print(f"  {path.relative_to(ROOT)}")
 
 
-def theme_collage():
-    """Seamless 2x2 collage, exactly one still's size, gradient continuous."""
-    from PIL import Image
-    order = [f"tour-theme-{t}.png" for t in THEME_ORDER]
-    sources = [CAPTURES / n for n in order]
-    missing = [s for s in sources if not s.exists()]
-    if missing:
-        sys.exit(f"Missing theme stills: {[p.name for p in missing]}; see {CAPTURES / 'run.log'}")
-    first = Image.open(sources[0]).convert("RGB")
-    full_w, full_h = first.size
-    tile_w, tile_h = full_w // 2, full_h // 2
-    collage = Image.new("RGB", (tile_w * 2, tile_h * 2))
-    for index, source in enumerate(sources):
-        tile = Image.open(source).convert("RGB").resize((tile_w, tile_h), Image.LANCZOS)
-        collage.paste(tile, ((index % 2) * tile_w, (index // 2) * tile_h))
-    return collage
-
-
 def interior(name, inset=8):
     """The window's inside, `inset` points in from its edges: the tour card rounds its own
     corners, so a picture that still showed the window's corners would draw a second,
-    tighter corner inside them."""
+    tighter corner inside them.
+
+    The app writes <name>.json beside each still with the still's rect and the window's
+    place in it (top-left origin, points), and that is what is cut: a still framed
+    around an open popover is wider than the window, so the window's size alone put
+    the box in the wrong place. Older runs without the sidecar fall back to the size
+    table, which is exact only for window-only stills."""
     from PIL import Image
-    rw, rh, mx, my, w, h = window_box(name)
     image = Image.open(CAPTURES / f"{name}.png").convert("RGB")
-    box = (round(2 * (mx + inset)), round(2 * (my + inset)), round(2 * (mx + w - inset)), round(2 * (my + h - inset)))
+    sidecar = CAPTURES / f"{name}.json"
+    if sidecar.exists():
+        frames = json.loads(sidecar.read_text())
+        _, _, rect_w, rect_h = frames["rect"]
+        x, y, w, h = frames["window"]
+        scale = image.width / rect_w
+    else:
+        rw, rh, x, y, w, h = window_box(name)
+        scale = 2
+    box = (round(scale * (x + inset)), round(scale * (y + inset)), round(scale * (x + w - inset)), round(scale * (y + h - inset)))
     return image.crop(box)
 
 
@@ -203,7 +192,9 @@ def theme_mosaic():
 def encode():
     from PIL import Image, ImageDraw
     step("Importing")
-    for name, source in [("tour-welcome", "web-hero"), ("tour-hydra", "tour-hydra"), ("tour-pairs", "tour-pairs"),
+    # The welcome page is its own scene: the whole window with the sidebar open, no
+    # popover, so the first page is the overview and not the hero's close-up.
+    for name, source in [("tour-welcome", "tour-welcome"), ("tour-hydra", "tour-hydra"), ("tour-pairs", "tour-pairs"),
                          ("tour-slider", "tour-slider"), ("tour-panels", "tour-panels")]:
         if not (CAPTURES / f"{source}.png").exists():
             sys.exit(f"The capture run wrote no {source}.png; see {CAPTURES / 'run.log'}")
@@ -211,85 +202,24 @@ def encode():
     write_imageset("tour-themes", fit(theme_mosaic(), WIDTH, HEIGHT))
 
 
-WEB_OUT = ROOT / "website" / "assets" / "app" / "tour"
-R2_BUCKET = "droppy-releases"
-R2_PREFIX = "site-assets/droppy-code/tour"
-# The website's set: every scene at the capture's own 2x pixels (2688x1680 for a 16:10
-# rect), as near-lossless WebP, plus the four themes as one collage at the same size.
-WEB_SCENES = SCENES + ["window"]
-
-
-def save_webp(image, dest, quality=92):
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    image.save(dest, "WEBP", quality=quality, method=6)
-    print(f"  {dest.relative_to(ROOT)} {image.size[0]}x{image.size[1]}")
+# The website's set used to be cut and uploaded from here: cropped-on-the-action
+# WebP files into website/assets/app/tour/, pushed to the same R2 tour/v2 prefix
+# website_captures.py writes. That path is superseded and removed, so only one
+# uploader writes those keys: --website/--export-only/--upload delegate to
+# website_captures.py, which encodes every still whole (popovers uncropped) into
+# build.noindex/website-tour and verifies each key serves byte-identical.
+def _tour_pipeline():
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import website_captures
+    return website_captures
 
 
 def website():
-    from PIL import Image, ImageDraw
-    step(f"Exporting the website's set to {WEB_OUT.relative_to(ROOT)}")
-    WEB_OUT.mkdir(parents=True, exist_ok=True)
-
-    def load(stem):
-        source = CAPTURES / f"{stem}.png"
-        if not source.exists():
-            print(f"  (no {stem}.png)")
-            return None
-        return Image.open(source).convert("RGB")
-
-    hero = load("web-hero")
-    if hero is not None:
-        save_webp(hero, WEB_OUT / "hero.webp")
-        save_webp(hero, WEB_OUT / "welcome.webp")
-        # Sidebar: window's left 300 pt plus the left margin, full window height.
-        rw, rh, mx, my, w, h = window_box("web-hero")
-        assert abs(hero.width - 2 * rw) <= 2 and abs(hero.height - 2 * rh) <= 2
-        sidebar = hero.crop((0, round(2 * my), round(2 * (mx + 300)), round(2 * (my + h))))
-        save_webp(sidebar, WEB_OUT / "sidebar.webp")
-    for stem in ["tour-hydra", "tour-panels", "tour-window"]:
-        image = load(stem)
-        if image is not None:
-            save_webp(image, WEB_OUT / f"{stem.removeprefix('tour-')}.webp")
-    slider = load("tour-slider")
-    if slider is not None:
-        save_webp(crop_points(slider, "tour-slider", 900 - 640, 600 - 400, 640, 400),
-                   WEB_OUT / "slider.webp")
-    pairs = load("tour-pairs")
-    if pairs is not None:
-        save_webp(crop_points(pairs, "tour-pairs", 900 - 720, 600 - 450, 720, 450),
-                   WEB_OUT / "pairs.webp")
-    for stem, out in [("web-diff", "diff"), ("web-palette", "palette")]:
-        image = load(stem)
-        if image is not None:
-            save_webp(crop_points(image, stem, (1200 - 880) / 2, 0, 880, 550),
-                       WEB_OUT / f"{out}.webp")
-    plans = load("web-plans")
-    if plans is not None:
-        save_webp(plans, WEB_OUT / "plans.webp")
-    for stem, out in [("web-question", "question"), ("web-queue", "queue")]:
-        image = load(stem)
-        if image is not None:
-            save_webp(crop_points(image, stem, (1200 - 960) / 2, 660 - 600, 960, 600),
-                       WEB_OUT / f"{out}.webp")
-    save_webp(theme_collage(), WEB_OUT / "themes.webp")
-    for source in sorted(CAPTURES.glob("web-theme-*.png")):
-        theme = source.stem.removeprefix("web-theme-")
-        image = Image.open(source).convert("RGB")
-        want_w = 2080
-        want_h = round(image.height * want_w / image.width)
-        save_webp(image.resize((want_w, want_h), Image.LANCZOS),
-                   WEB_OUT / "themes" / f"{theme}.webp", quality=86)
+    _tour_pipeline().encode_tour()
 
 
 def upload():
-    step(f"Uploading to R2 ({R2_BUCKET}/{R2_PREFIX})")
-    for path in sorted(WEB_OUT.rglob("*.webp")):
-        key = f"{R2_PREFIX}/{path.relative_to(WEB_OUT)}"
-        subprocess.run([
-            "wrangler", "r2", "object", "put", f"{R2_BUCKET}/{key}", "--file", str(path),
-            "--content-type", "image/webp", "--cache-control", "public, max-age=31536000, immutable", "--remote",
-        ], check=True, capture_output=True)
-        print(f"  {key}")
+    _tour_pipeline().upload_tour()
 
 
 if __name__ == "__main__":

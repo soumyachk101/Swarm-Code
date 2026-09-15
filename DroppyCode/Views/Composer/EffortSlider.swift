@@ -42,7 +42,13 @@ struct ModelEffortButton: View {
     var compact: Bool = false
 
     @State private var isPresented = false
-    @State private var nameWidth: CGFloat = 0
+
+    /// The chip's content width, in points, before the chip style's own padding. One
+    /// width for every model and every effort: the box never grows or shrinks, whether
+    /// the popover opens, the slider changes the effort's title, or a model with a long
+    /// name is picked; a name that does not fit is cut with an ellipsis, and the full
+    /// name stays in the tooltip.
+    private static let contentWidth: CGFloat = 182
 
     var body: some View {
         let registry = model.providers
@@ -69,36 +75,28 @@ struct ModelEffortButton: View {
                     // The chip keeps the model and effort while its popover is open: they
                     // are what the popover edits, and a label that swapped for "Select
                     // effort" resized the chip under the popover's own arrow. The open
-                    // state reads from the chip style's active look instead. The name
-                    // keeps the width it had when the popover opened and the effort
-                    // reserves the widest of the model's titles, so the chip, and the
-                    // popover hanging from it, stay put while the slider is dragged.
+                    // state reads from the chip style's active look instead. The name is
+                    // the one flexible part of the row, so inside the fixed width below it
+                    // is what gets cut; the effort and the marks keep their size.
                     Text(verbatim: current?.chipName ?? thread.model ?? thread.provider.displayName)
                         .foregroundStyle(Chrome.primaryText)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { width in if !isPresented { nameWidth = width } }
-                        .frame(width: isPresented && nameWidth > 0 ? nameWidth : nil, alignment: .leading)
                     if let current, !current.efforts.isEmpty {
-                        ZStack(alignment: .leading) {
-                            if isPresented {
-                                ForEach(current.efforts, id: \.self) { effort in
-                                    Text(verbatim: ModelOption.effortTitle(effort))
-                                        .hidden()
-                                        .fixedSize()
-                                }
-                            }
-                            Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
-                                .foregroundStyle(Chrome.primaryText.opacity(0.72))
-                                .lineLimit(1)
-                                .fixedSize()
-                        }
+                        Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
+                            .foregroundStyle(Chrome.primaryText.opacity(0.72))
+                            .lineLimit(1)
+                            .fixedSize()
                     }
                     Image(systemName: "chevron.down")
                         .font(Chrome.chevronFont)
                         .foregroundStyle(Chrome.secondaryText)
                 }
             }
+            // One fixed box with its content centered in it: the popover hanging from the
+            // chip never moves, and the name and effort read centered whether the popover
+            // is open or the slider is changing the effort's title.
+            .frame(width: compact ? nil : Self.contentWidth)
         }
         .buttonStyle(.chip(active: isPresented))
         .help(helpText(current: current, pair: pair))

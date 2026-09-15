@@ -13,6 +13,10 @@ struct SidebarView: View {
     @State private var renaming: ChatThread?
     @State private var renameText = ""
     @State private var pendingDeletion: ChatThread?
+    /// Carries context-menu intents (rename, delete) outside any row's @State, so an AppKit
+    /// menu's callbacks never retain a row's state storage. The menu posts a value-type
+    /// request here (holding this box weakly); the list takes it up below.
+    @State private var menuRequests = SidebarMenuRequests()
     /// The live reorder, exactly the queue's: the grabbed row follows the pointer, its
     /// helpers with it, and neighbours slide across as its centre passes theirs.
     @State private var drag = RowDrag<UUID>()
@@ -101,6 +105,21 @@ struct SidebarView: View {
         .frame(maxHeight: .infinity, alignment: .top)
         .background { if !inPopover { WindowDragArea() } }
         .onChange(of: model.selectedThreadID) { if inPopover { dismiss?() } }
+        .onChange(of: menuRequests.rename) { _, thread in
+            guard let thread else { return }
+            menuRequests.rename = nil
+            renameText = thread.title
+            renaming = thread
+        }
+        .onChange(of: menuRequests.delete) { _, thread in
+            guard let thread else { return }
+            menuRequests.delete = nil
+            if model.settings.confirmBeforeDeleting {
+                pendingDeletion = thread
+            } else {
+                model.delete(thread.id)
+            }
+        }
         .alert("Rename thread", isPresented: Binding(
             get: { renaming != nil },
             set: { if !$0 { renaming = nil } }
@@ -148,6 +167,7 @@ struct SidebarView: View {
             deletePopover(for: thread, on: SidebarHelperRow(
                 thread: thread,
                 isLast: isLast,
+                menuRequests: menuRequests,
                 onFold: { fold(thread.parentThreadID) },
                 onRename: {
                     renameText = thread.title
@@ -531,6 +551,7 @@ struct SidebarView: View {
         return deletePopover(for: thread, on: SidebarThreadRow(
             thread: thread,
             projectName: projectName,
+            menuRequests: menuRequests,
             isDragged: isDragged,
             // The popover is another window: no glide can cross into the main one from it.
             listFrame: inPopover ? nil : listFrame,
@@ -607,7 +628,10 @@ private extension ChatThread {
 
 private extension AnyTransition {
     /// A row leaves at once and arrives once its neighbours have mostly made room, so rows moving past
-    /// each other never draw over one another.
+    /// each other never draw over one another. These two fades are deliberately quick and
+    /// not the settle flight: on a settle or reopen the ghost is the motion, and the
+    /// departing row has to be gone under it at once rather than linger as a fading
+    /// remnant while the list closes up.
     static var sidebarRow: AnyTransition {
         .asymmetric(
             insertion: .opacity.animation(.easeIn(duration: 0.18).delay(0.12)),
@@ -663,7 +687,60 @@ private struct ProjectRow: View {
             }
         )
         .opacity(isActive ? 1 : 0.55)
-        .contextMenu { RowActionMenuButtons(actions: actions(isActive: isActive)) }
+        // Snapshots only: the menu builder must not capture the row, so the AppKit menu it
+        // builds cannot pin the row's state storage (and its responder with it) after dismiss.
+        .contextMenu { [project, model] in
+            let projectSnapshot = project
+            let modelSnapshot = model
+            let activeSnapshot = modelSnapshot.settings.isProjectActive(projectSnapshot.id)
+            let overrideSnapshot = modelSnapshot.settings.hasProjectActivationOverride(for: projectSnapshot.id)
+            RowActionMenuButtons(actions: Self.contextMenuActions(
+                project: projectSnapshot,
+                isActive: activeSnapshot,
+                hasOverride: overrideSnapshot,
+                model: modelSnapshot
+            ))
+        }
+    }
+
+    /// The context menu's items, built from value snapshots with weak model captures: the
+    /// AppKit menu outlives the right-click, so its callbacks must not retain the row.
+    /// (The ellipsis popover keeps `actions(isActive:)`; it is not an AppKit menu.)
+    private static func contextMenuActions(project: Project, isActive: Bool, hasOverride: Bool, model: AppModel) -> [RowAction] {
+        let projectID = project.id
+        var items = [
+            RowAction(title: "New thread", symbol: "square.and.pencil") { [weak model, project] in
+                guard let model else { return }
+                model.newThread(in: project)
+            },
+            RowAction(title: "New thread in worktree", symbol: "square.stack.3d.up") { [weak model, project] in
+                guard let model else { return }
+                model.newThread(in: project, workspace: .worktree)
+            },
+            RowAction(title: "Reveal in Finder", symbol: "folder", startsGroup: true) { [weak model, path = project.path] in
+                guard model != nil else { return }
+                Workspace.revealInFinder(path)
+            },
+            RowAction(title: "Remove project", symbol: "trash", isDestructive: true, startsGroup: true) { [weak model, project] in
+                guard let model else { return }
+                model.removeProject(project)
+            },
+        ]
+        items.append(RowAction(
+            title: isActive ? "Deactivate project" : "Activate project",
+            symbol: "power",
+            startsGroup: true
+        ) { [weak model, projectID, isActive] in
+            guard let model else { return }
+            model.settings.setProjectActive(!isActive, for: projectID)
+        })
+        if hasOverride {
+            items.append(RowAction(title: "Follow global setting", symbol: "arrow.uturn.backward") { [weak model, projectID] in
+                guard let model else { return }
+                model.settings.clearProjectActivationOverride(for: projectID)
+            })
+        }
+        return items
     }
 
     private func actions(isActive: Bool) -> [RowAction] {
@@ -724,6 +801,8 @@ private struct SidebarHelperRow: View {
     let thread: ChatThread
     /// The last helper under its parent: the connector ends at this row.
     let isLast: Bool
+    /// Carries rename/delete intents out of the AppKit menu without retaining row state.
+    weak var menuRequests: SidebarMenuRequests?
     let onFold: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
@@ -779,10 +858,25 @@ private struct SidebarHelperRow: View {
                 withAnimation(Chrome.hover) { isHovering = hovering }
                 if hovering { model.warmDocuments([thread.id]) }
             }
-            .contextMenu { RowActionMenuButtons(actions: makeActions()) }
+            // Snapshots only: the menu builder must not capture the row, so the AppKit menu
+            // it builds cannot pin the row's state storage (and its responder with it).
+            .contextMenu { [thread, model, weak menuRequests] in
+                let threadSnapshot = thread
+                let modelSnapshot = model
+                let requestsSnapshot = menuRequests
+                let settleFirstSnapshot = !threadSnapshot.isHelper && modelSnapshot.settings.threadFinishAction == .settle
+                RowActionMenuButtons(actions: ThreadActions.makeContextMenu(
+                    model: modelSnapshot,
+                    thread: threadSnapshot,
+                    settleFirst: settleFirstSnapshot,
+                    requests: requestsSnapshot
+                ))
+            }
             .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
         }
     }
+
+    /// The ellipsis popover's items. Kept on the instance: a popover is not an AppKit menu.
 
     private func makeActions() -> [RowAction] {
         ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
@@ -913,6 +1007,8 @@ private struct SidebarThreadRow: View {
     let thread: ChatThread
     /// The project shown under the title in the activity layout; nil in the project layout.
     let projectName: String?
+    /// Carries rename/delete intents out of the AppKit menu without retaining row state.
+    weak var menuRequests: SidebarMenuRequests?
     /// Lifted and following the pointer in a reorder.
     var isDragged = false
     /// The list's frame in the window, for the glide; nil where no glide can show.
@@ -1022,6 +1118,9 @@ private struct SidebarThreadRow: View {
             RowGlideAnimator.shared.land(threadID: thread.id, at: frame)
         }
         .opacity(isHidden ? 0 : 1)
+        // The ghost hands over in a 0.12s window (see `RowGlideAnimator`: the row comes
+        // back at settlingDuration − 0.12, the ghost goes 0.12 later), so the un-hide
+        // must finish inside it; a slower curve leaves a dip between ghost and row.
         .animation(.easeOut(duration: 0.12), value: isHidden)
         // Lifted: a touch larger with a shadow, over an opaque fill so the rows sliding
         // underneath never show through. The queue's rows lift the same way.
@@ -1034,7 +1133,21 @@ private struct SidebarThreadRow: View {
         }
         .scaleEffect(isDragged ? 1.02 : 1)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isDragged)
-        .contextMenu { RowActionMenuButtons(actions: makeActions()) }
+        // Snapshots only: the menu builder must not capture the row (its frames, its settle
+        // handlers), so the AppKit menu it builds cannot pin row state after dismiss. Settle
+        // and reopen go through finishRequest, which the row takes up with its glide below.
+        .contextMenu { [thread, model, weak menuRequests] in
+            let threadSnapshot = thread
+            let modelSnapshot = model
+            let requestsSnapshot = menuRequests
+            let settleFirstSnapshot = !threadSnapshot.isHelper && modelSnapshot.settings.threadFinishAction == .settle
+            RowActionMenuButtons(actions: ThreadActions.makeContextMenu(
+                model: modelSnapshot,
+                thread: threadSnapshot,
+                settleFirst: settleFirstSnapshot,
+                requests: requestsSnapshot
+            ))
+        }
         // A settle or reopen asked for from the menu, the shortcut or the palette lands here,
         // so it looks the same as a click on the check.
         .onChange(of: model.finishRequest) { _, request in
@@ -1314,6 +1427,19 @@ private struct ThreadBadge: View {
     }
 }
 
+/// Carries sidebar context-menu intents outside any row's @State. An AppKit context menu
+/// outlives the right-click that opened it, so its callbacks must never retain a row's
+/// state storage: menu -> closure -> row state -> view node -> menu responder is the back
+/// edge that pinned ContextMenuResponder/NSMenu pairs after dismiss. Menu actions post a
+/// value-type request here while holding this box weakly; the list takes it up.
+/// A plain class like FrameHolder below: owned by the list's @State, touched on the main
+/// thread only.
+@Observable
+private final class SidebarMenuRequests {
+    var rename: ChatThread?
+    var delete: ChatThread?
+}
+
 /// What a thread row offers from its ellipsis popover and its context menu, in both sidebar layouts.
 @MainActor
 private enum ThreadActions {
@@ -1364,6 +1490,67 @@ private enum ThreadActions {
             items += settleFirst ? [settle, archive] : [archive, settle]
         }
         items.append(RowAction(title: "Delete…", symbol: "trash", isDestructive: true) { onDelete() })
+        return items
+    }
+
+    /// The context menu's items, built from value snapshots with weak captures: the AppKit
+    /// menu outlives the right-click, so its callbacks must not retain the row, its frames,
+    /// or its settle handlers. Rename and delete post to `requests` (held weakly); the list
+    /// takes them up. Settle and reopen post a finish request, which the row takes up with
+    /// its pop and glide, the way the shortcut's and palette's do. Everything else touches
+    /// only the model. (The ellipsis popover keeps `make`; it is not an AppKit menu.)
+    static func makeContextMenu(
+        model: AppModel,
+        thread: ChatThread,
+        settleFirst: Bool,
+        requests: SidebarMenuRequests?
+    ) -> [RowAction] {
+        let threadID = thread.id
+        var items = [RowAction(title: "Rename", symbol: "pencil") { [weak model, weak requests, thread] in
+            guard model != nil else { return }
+            requests?.rename = thread
+        }]
+        // A helper keeps its place under its parent, and a settled thread its place at the
+        // bottom; pinning would pull either out of it.
+        if !thread.isHelper, !thread.isSettled {
+            let isPinned = thread.isPinned
+            items.append(RowAction(title: isPinned ? "Unpin" : "Pin", symbol: isPinned ? "pin.slash" : "pin") { [weak model, threadID] in
+                guard let model else { return }
+                withAnimation(Chrome.panelSlide) {
+                    model.updateThread(threadID) { $0.isPinned.toggle() }
+                }
+            })
+        }
+        if let path = thread.worktreePath {
+            items.append(RowAction(title: "Reveal worktree in Finder", symbol: "folder") { [weak model, path] in
+                guard model != nil else { return }
+                Workspace.revealInFinder(path)
+            })
+        }
+        // A helper has no place of its own to settle into: it only archives, with its parent
+        // or on its own. A thread offers both, the one Settings chose first.
+        let archive = RowAction(title: "Archive", symbol: "archivebox", startsGroup: !settleFirst) { [weak model, threadID] in
+            guard let model else { return }
+            withAnimation(Chrome.panelSlide) { model.archive(threadID) }
+        }
+        if thread.isHelper {
+            items.append(archive)
+        } else {
+            let isSettled = thread.isSettled
+            let settle = RowAction(
+                title: isSettled ? "Reopen" : "Settle",
+                symbol: isSettled ? "arrow.uturn.backward" : "checkmark.circle",
+                startsGroup: settleFirst
+            ) { [weak model, threadID, isSettled] in
+                guard let model else { return }
+                model.finishRequest = AppModel.FinishRequest(threadID: threadID, reopens: isSettled)
+            }
+            items += settleFirst ? [settle, archive] : [archive, settle]
+        }
+        items.append(RowAction(title: "Delete…", symbol: "trash", isDestructive: true) { [weak model, weak requests, thread] in
+            guard model != nil else { return }
+            requests?.delete = thread
+        })
         return items
     }
 }
@@ -1421,6 +1608,15 @@ private struct SettledHeader: View {
     let count: Int
     let isFirst: Bool
 
+    @State private var shown: Int
+    @State private var countTask: Task<Void, Never>?
+
+    init(count: Int, isFirst: Bool) {
+        self.count = count
+        self.isFirst = isFirst
+        _shown = State(initialValue: count)
+    }
+
     var body: some View {
         let collapsed = model.settings.settledCollapsed
         Button {
@@ -1428,15 +1624,20 @@ private struct SettledHeader: View {
                 model.settings.settledCollapsed.toggle()
             }
         } label: {
-            HStack(spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    .animation(Chrome.panelSlide, value: collapsed)
                 Text(verbatim: "Settled")
                     .font(.system(size: 12, weight: .semibold))
-                Text(verbatim: "\(count)")
-                    .font(.system(size: 11).monospacedDigit())
+                Text(verbatim: "\(shown)")
+                    .font(.system(size: 12))
+                    .monospacedDigit()
                     .opacity(0.8)
+                    .fixedSize()
+                    .contentTransition(.numericText(value: Double(shown)))
+                    .animation(Chrome.settleFlight, value: shown)
                 Spacer(minLength: 4)
             }
             .foregroundStyle(Chrome.secondaryText)
@@ -1445,12 +1646,39 @@ private struct SettledHeader: View {
             .padding(.bottom, 4)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(.rect)
+            .animation(Chrome.panelSlide, value: isFirst)
         }
         .buttonStyle(.plain)
         .help(collapsed ? "Show settled threads" : "Hide settled threads")
-        .accessibilityLabel(Text("Settled, \(count) threads"))
+        .accessibilityLabel(Text("Settled, \(shown) threads"))
         .accessibilityValue(Text(collapsed ? "Collapsed" : "Expanded"))
         .accessibilityAddTraits(.isButton)
+        .onAppear {
+            shown = count
+        }
+        .onChange(of: count) { _, newCount in
+            countTask?.cancel()
+            // A settle counts up when its ghost lands, which `RowGlideAnimator` puts at
+            // the spring's settling duration less its 0.12s handover; a reopen counts
+            // down at once, as the row leaves at once. With Reduce Motion nothing flies,
+            // so nothing waits.
+            guard newCount > shown, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+                withAnimation(Chrome.settleFlight) { self.shown = newCount }
+                return
+            }
+            countTask = Task { @MainActor in
+                do {
+                    try await Task.sleep(for: .seconds(max(RowGlideAnimator.spring.settlingDuration - 0.12, 0)))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                withAnimation(Chrome.settleFlight) { self.shown = newCount }
+            }
+        }
+        .onDisappear {
+            countTask?.cancel()
+        }
     }
 }
 
