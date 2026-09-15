@@ -10,3 +10,6 @@ website/assets/app/
 website/
 .wrangler/
 __pycache__/
+node_modules/
+dist/
+target/

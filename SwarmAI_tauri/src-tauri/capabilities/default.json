@@ -1,0 +1,16 @@
+{
+ "identifier": "default",
+ "description": "Default capabilities for SwarmAI",
+ "windows": ["main"],
+ "permissions": [
+ "core:default",
+ "core:window:default",
+ "shell:default",
+ "dialog:default",
+ "fs:default",
+ "http:default",
+ "core:event:default",
+ "core:app:default",
+ "core:resources:default"
+ ]
+}
