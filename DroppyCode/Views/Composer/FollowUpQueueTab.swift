@@ -110,7 +110,15 @@ struct FollowUpQueueTab: View {
             }
             .frame(height: isCollapsed ? 0 : listHeight, alignment: .top)
             .opacity(isCollapsed ? 0 : 1)
-            .clipped()
+            // The fold needs the clip, but a lifted row must not: its capsule reaches
+            // 8 points past the rows on either side and its shadow hangs below, and a
+            // tight clip cut both off. The mask runs out to the tab's own edges, and
+            // a little above and below while the list is open, closing in with the fold.
+            .mask {
+                Rectangle()
+                    .padding(.horizontal, -12)
+                    .padding(.vertical, isCollapsed ? 0 : -16)
+            }
             .allowsHitTesting(!isCollapsed)
             .accessibilityHidden(isCollapsed)
         }
@@ -426,20 +434,21 @@ private struct FollowUpRow: View {
             if showsRule { Divider().opacity(0.35) }
         }
         // Lifted: a touch larger with a shadow, over an opaque glass so the
-        // rows sliding underneath never show through.
+        // rows sliding underneath never show through. A capsule, like the user's
+        // own bubbles in the chat above.
         .background {
             if isPairTarget {
                 // Lit and framed: the held row will join this one on release.
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                Capsule(style: .continuous)
                     .fill(Color.accentColor.opacity(0.18))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        Capsule(style: .continuous)
                             .strokeBorder(Color.accentColor.opacity(0.65), lineWidth: 1.5)
                     }
                     .padding(.horizontal, -8)
             }
             if isDragged {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                Capsule(style: .continuous)
                     .fill(Chrome.overlay(0.12))
                     .padding(.horizontal, -8)
                     .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
