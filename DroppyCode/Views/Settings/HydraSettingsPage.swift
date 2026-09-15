@@ -216,16 +216,21 @@ private struct HydraPairRow: View {
         }
     }
 
+    /// The row's second line: only what the title and the icons do not already say. The
+    /// title names the models, the icons the providers, so this reads the efforts, a head
+    /// cap when one is set, and a warning when the heads' provider is not set up. Defaults
+    /// say nothing: a pair with no effort chosen and no cap has one short line.
     private func summary(registry: ProviderRegistry) -> String {
-        var parts = [pair.sendsHeadsElsewhere ? "\(pair.provider.displayName) lead, \(pair.headsProvider.displayName) heads" : pair.provider.displayName]
-        if let effort = pair.orchestratorEffort { parts.append("Lead at \(ModelOption.effortTitle(effort).lowercased()) effort") }
-        parts.append(HydraPairSummary.workers(pair, registry: registry))
-        parts.append(pair.maxHeads.map { $0 == 1 ? "1 head at a time" : "Up to \($0) heads at once" } ?? "As many heads as the work takes")
+        var parts = [HydraPairSummary.providers(pair)]
+        if let efforts = HydraPairSummary.efforts(pair) { parts.append(efforts) }
+        if let cap = pair.maxHeads {
+            parts.append(cap == 1 ? "One head at a time" : "Up to \(cap) heads")
+        }
         // Heads on a provider this Mac cannot run stay on the lead's, on the chat's own
         // model (see `AppModel.hydraHeadsProvider`); the row says so rather than promising
         // a team that would fail.
         if pair.sendsHeadsElsewhere, model.hydraHeadsProvider(of: pair) == pair.provider {
-            parts.append("\(pair.headsProvider.displayName) is not set up, so the heads stay on \(pair.provider.displayName) for now")
+            parts.append("\(pair.headsProvider.displayName) is not set up, heads stay on \(pair.provider.displayName)")
         }
         return parts.joined(separator: " · ")
     }

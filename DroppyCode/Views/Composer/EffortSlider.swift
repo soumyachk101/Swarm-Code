@@ -351,12 +351,10 @@ struct ModelList: View {
         }
     }
 
-    /// The line under a pair's title: the provider, then what its heads run on, and where
-    /// when that is another provider.
+    /// The line under a pair's title: the providers, and the efforts when any is set. The
+    /// title already names the models, so this never repeats them.
     private func detail(for pair: HydraPair) -> String {
-        let workers = HydraPairSummary.workers(pair, registry: model.providers)
-        let lead = pair.sendsHeadsElsewhere ? "\(pair.provider.displayName) lead" : pair.provider.displayName
-        return "\(lead) · \(workers.prefix(1).lowercased())\(workers.dropFirst())"
+        [HydraPairSummary.providers(pair), HydraPairSummary.efforts(pair)].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
