@@ -38,10 +38,17 @@ final class AppModel {
         didSet { Self.sync(&projectCells, with: projects) }
     }
     private(set) var threads: [ChatThread] = [] {
-        didSet { Self.sync(&threadCells, with: threads) }
+        didSet {
+            Self.sync(&threadCells, with: threads)
+            syncChildCells()
+        }
     }
     @ObservationIgnored private var projectCells: [UUID: ObservedValue<Project?>] = [:]
     @ObservationIgnored private var threadCells: [UUID: ObservedValue<ChatThread?>] = [:]
+    /// The children of one thread, by that thread's id: the ids alone, so a view showing a
+    /// chat's panels depends on which children it has and on each of those children, never
+    /// on the rest of the library. A head's status write leaves every other chat alone.
+    @ObservationIgnored private var childCells: [UUID: ObservedValue<[UUID]>] = [:]
     var selectedThreadID: UUID? {
         didSet {
             if let selectedThreadID { markRead(selectedThreadID) }
@@ -81,6 +88,7 @@ final class AppModel {
         // Property observers stay quiet inside an initializer, so the cells are built here once.
         Self.sync(&projectCells, with: projects)
         Self.sync(&threadCells, with: threads)
+        syncChildCells()
         autoContinue = AutoContinue(app: self)
         if let lastID = settings.lastProjectID, project(lastID) == nil {
             settings.lastProjectID = nil
@@ -108,6 +116,47 @@ final class AppModel {
             cell.value = nil
             cells[id] = nil
         }
+    }
+
+    /// Mirrors who hangs under whom into the child cells, with the same no-op-write
+    /// discipline as the item cells: a parent whose children are unchanged is not written,
+    /// so the chat showing them is left alone. A parent that still exists keeps its cell
+    /// even with nothing under it, because that is exactly the cell a chat with no heads
+    /// yet is watching for its first one; only a parent that is gone loses its cell.
+    private func syncChildCells() {
+        var children: [UUID: [UUID]] = [:]
+        for thread in threads {
+            guard let parent = thread.parentThreadID else { continue }
+            children[parent, default: []].append(thread.id)
+        }
+        for (parent, cell) in childCells {
+            let ids = children[parent] ?? []
+            if cell.value != ids { cell.value = ids }
+        }
+        for (parent, ids) in children where childCells[parent] == nil {
+            childCells[parent] = ObservedValue(ids)
+        }
+        guard childCells.count != children.count else { return }
+        let live = Set(threads.map(\.id))
+        for parent in childCells.keys where !live.contains(parent) && children[parent] == nil {
+            childCells[parent] = nil
+        }
+    }
+
+    /// The ids under a thread, observed on their own. A thread with nothing under it yet
+    /// gets its cell here, on the first read, so the caller hears about the first child
+    /// that arrives; the cell is not observed state, so making it re-renders nothing.
+    private func childIDs(of parentID: UUID) -> [UUID] {
+        if let cell = childCells[parentID] { return cell.value }
+        let cell = ObservedValue<[UUID]>([])
+        childCells[parentID] = cell
+        return cell.value
+    }
+
+    /// The threads under a thread, each read through its own cell: the caller depends on
+    /// which children this thread has and on those children alone.
+    private func children(of parentID: UUID) -> [ChatThread] {
+        childIDs(of: parentID).compactMap(thread)
     }
 
     func bootstrap() async {
@@ -251,9 +300,24 @@ final class AppModel {
     /// The helpers that sit under a thread in the sidebar: spawned from it, out of the panel,
     /// not archived. Newest first, like the threads around them.
     func helpers(of parentID: UUID) -> [ChatThread] {
-        threads
-            .filter { $0.parentThreadID == parentID && !$0.isInPanel && !$0.isArchived }
+        children(of: parentID)
+            .filter { !$0.isInPanel && !$0.isArchived }
             .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// The heads a lead still shows in its floating panel, in the order they were sent out.
+    /// The same list as `hydraHeads(of:)`, read through this thread's own cells: a write to
+    /// a head of some other chat never re-renders this one.
+    func panelHeads(of parentID: UUID) -> [ChatThread] {
+        children(of: parentID)
+            .filter { $0.isInPanel && !$0.isArchived && $0.isHydraHead }
+            .sorted { ($0.hydra?.index ?? 0) < ($1.hydra?.index ?? 0) }
+    }
+
+    /// The helper a thread spawned and still shows in its floating panel, if any, read
+    /// through this thread's own cells. Heads have a panel of their own (`panelHeads(of:)`).
+    func panelSubagent(of parentID: UUID) -> ChatThread? {
+        children(of: parentID).first { $0.isInPanel && !$0.isArchived && !$0.isHydraHead }
     }
 
     func toggleHelpersFold(_ parentID: UUID) {
@@ -429,6 +493,8 @@ final class AppModel {
             $0.isSettled = false
             $0.settledAt = nil
         }
+        // An archived thread is out of the list, so its unread mark leaves the dock with it.
+        updateDockBadge()
     }
 
     func unarchive(_ id: UUID) {
@@ -436,6 +502,8 @@ final class AppModel {
         for helper in threads where helper.parentThreadID == id && helper.isArchived {
             updateThread(helper.id) { $0.isArchived = false }
         }
+        // Back in the list, an unread thread counts again.
+        updateDockBadge()
     }
 
     /// Marks a thread finished: it drops to the bottom of its list as a small grey row,
@@ -556,6 +624,7 @@ final class AppModel {
                 if let worktree { try? await git.removeWorktree(at: worktree) }
             }
         }
+        updateDockBadge()
         scheduleSave()
     }
 
@@ -585,6 +654,7 @@ final class AppModel {
         }
         let removedIDs = Set(removed.map(\.id))
         threads.removeAll { removedIDs.contains($0.id) }
+        updateDockBadge()
         scheduleSave()
     }
 
@@ -597,7 +667,7 @@ final class AppModel {
     /// The helper a thread spawned and still shows in its floating panel, if any. Hydra
     /// heads have a panel of their own (see `hydraHeads(of:)`).
     func subagent(of parentID: UUID) -> ChatThread? {
-        threads.first { $0.parentThreadID == parentID && $0.isInPanel && !$0.isArchived && !$0.isHydraHead }
+        panelSubagent(of: parentID)
     }
 
     /// Adds a thread the app made for another thread: a head, say. The caller selects it
@@ -863,6 +933,9 @@ final class AppModel {
             document.items = runtime.entries.map(\.item)
             document.turns = runtime.turns
             document.usage = runtime.usage
+            // The queue goes with the rest, the way `saveNow` writes it: quitting with
+            // messages waiting behind a turn used to throw them away.
+            document.followUps = runtime.followUps
             if let data = try? JSONEncoder.storage.encode(document) {
                 try? data.write(to: Storage.threadURL(runtime.threadID), options: .atomic)
             }

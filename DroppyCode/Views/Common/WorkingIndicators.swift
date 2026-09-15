@@ -54,10 +54,12 @@ struct SpinnerCell {
 
 /// The 3×3 working indicator shown while a reply is being written.
 ///
-/// Drawn by SwiftUI, in one small canvas on a 30 Hz clock, rather than hosted as layers the
-/// way the sidebar's many mini spinners are: there is one of these on screen at a time, and
-/// as part of the SwiftUI tree it fades, rises and moves with the words beside it in every
-/// transition and animation the working line makes, which a hosted view does not.
+/// Hosted as layers, exactly like the sidebar's mini spinners: the pulse is a repeating
+/// Core Animation keyframe the render server plays on its own. It used to be a Canvas on a
+/// 30 Hz `TimelineView`, which woke SwiftUI thirty times a second for the whole length of a
+/// turn — inside the lazy stack, so every one of those ticks landed on the main thread
+/// while the reader scrolled. The layers take the row's opacity like any other view, so the
+/// working line still fades and moves with the words beside it.
 struct WorkingSpinner: View {
     var cellSize: CGFloat = 3.5
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -72,31 +74,9 @@ struct WorkingSpinner: View {
     }
 
     var body: some View {
-        // Reads the theme, so a theme change redraws the cells in the new accent.
-        let tints = Self.tints(for: ThemeManager.current)
-        let gap = cellSize * 0.8
-        let side = cellSize * 3 + gap * 2
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
-            let phase = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate / GradientSpin.period
-            Canvas { context, _ in
-                for cell in Self.cells {
-                    let rect = CGRect(
-                        x: CGFloat(cell.column) * (cellSize + gap),
-                        y: CGFloat(cell.row) * (cellSize + gap),
-                        width: cellSize,
-                        height: cellSize
-                    )
-                    let opacity = GradientSpin.opacity(phase: phase - cell.lag)
-                    context.fill(Path(rect), with: .color(tints[cell.row].opacity(opacity)))
-                }
-            }
-            .frame(width: side, height: side)
-        }
-        .accessibilityHidden(true)
-    }
-
-    private static func tints(for theme: AppTheme) -> [Color] {
-        GradientSpin.rowTints(accent: Chrome.accentNSColor).map { Color(nsColor: $0) }
+        // The theme is read here, so a theme change reaches the cells at once.
+        SpinnerCells(cells: Self.cells, columns: 3, cellSize: cellSize, animated: !reduceMotion, theme: ThemeManager.current)
+            .accessibilityHidden(true)
     }
 }
 

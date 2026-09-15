@@ -31,6 +31,8 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: "gear"
         case .providers: "cpu"
         case .models: "slider.horizontal.3"
+        // Never drawn: the sidebar gives the Hydra row the dragon mark instead. Kept so
+        // the switch stays exhaustive and anything else that asks gets a sane symbol.
         case .hydra: "point.3.connected.trianglepath.dotted"
         case .sourceControl: "arrow.triangle.branch"
         case .shortcuts: "command"
@@ -109,6 +111,12 @@ struct SettingsView: View {
             page = requested
             SettingsNavigation.shared.requestedPage = nil
         }
+        // A search that filters the selected page out of the list left the detail pane on a
+        // page no row was selected for; the first match takes over instead.
+        .onChange(of: visiblePages) { _, pages in
+            guard !pages.isEmpty, !pages.contains(page), let first = pages.first else { return }
+            page = first
+        }
     }
 
     private var sidebar: some View {
@@ -126,7 +134,13 @@ struct SettingsView: View {
                     ForEach(visiblePages) { item in
                         SidebarRow(title: item.title, isSelected: page == item, action: { page = item }) {
                             SidebarIconBadge {
-                                SidebarSymbol(item.symbol, scale: item == .general ? 1.15 : 1)
+                                if item == .hydra {
+                                    // The Hydra page wears the dragon mark, the same one as the composer button.
+                                    HydraMarkImage()
+                                        .frame(width: Chrome.symbolSize * 1.15, height: Chrome.symbolSize * 1.15)
+                                } else {
+                                    SidebarSymbol(item.symbol, scale: item == .general ? 1.15 : 1)
+                                }
                             }
                             .overlay(alignment: .topTrailing) {
                                 if item == .about, UpdateChecker.shared.updateAvailable {
@@ -506,7 +520,7 @@ private struct ProviderSettingsSection: View {
                     }
                     if !status.isInstalled {
                         ChromeRowDivider()
-                        ChromeRow(title: "Get a key", detail: "\(provider.displayName) needs an API key — no install required.") {
+                        ChromeRow(title: "Get a key", detail: "\(provider.displayName) needs an API key. Nothing to install.") {
                             Link("Get a \(provider.displayName) key", destination: provider.installURL)
                                 .buttonStyle(.glass)
                         }
@@ -657,6 +671,10 @@ private struct ArchiveDeleteAllButton: View {
 private struct ArchiveSettingsPage: View {
     @Environment(AppModel.self) private var model
 
+    /// The row waiting on its confirmation, or nil. One deletion is ever in flight, so one
+    /// dialog on the card serves every row.
+    @State private var pendingDeletion: ChatThread?
+
     var body: some View {
         let archived = model.archivedThreads
         ChromeCard {
@@ -666,12 +684,35 @@ private struct ArchiveSettingsPage: View {
                     HStack(spacing: 8) {
                         Button("Restore") { model.unarchive(thread.id) }
                             .buttonStyle(.glass)
-                        Button("Delete", role: .destructive) { model.delete(thread.id) }
-                            .buttonStyle(.glass)
+                        // The same check the sidebar and Delete all honour: a row here
+                        // used to delete a history on the first click.
+                        Button("Delete", role: .destructive) {
+                            if model.settings.confirmBeforeDeleting {
+                                pendingDeletion = thread
+                            } else {
+                                model.delete(thread.id)
+                            }
+                        }
+                        .buttonStyle(.glass)
                     }
                     .controlSize(.small)
                 }
             }
+        }
+        .confirmationDialog(
+            pendingDeletion.map { "Delete \"\($0.title)\"?" } ?? "Delete the archived thread?",
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            presenting: pendingDeletion
+        ) { thread in
+            Button("Delete thread", role: .destructive) {
+                model.delete(thread.id)
+                pendingDeletion = nil
+            }
+        } message: { _ in
+            Text("Its history will be removed. Files in your project stay as they are.")
         }
     }
 }

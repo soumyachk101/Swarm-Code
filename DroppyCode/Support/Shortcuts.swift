@@ -279,6 +279,21 @@ final class ShortcutStore {
         chord(for: shortcut)?.keyboardShortcut
     }
 
+    /// A command's chord as it reads in a label, or nil when the command has none.
+    /// One dictionary lookup and a short string: cheap enough for a view body, and
+    /// read through the store, so a remap corrects every label that shows it.
+    static func label(for shortcut: AppShortcut) -> String? {
+        shared.chord(for: shortcut)?.description
+    }
+
+    /// The same chord as a tail for a help string: `"Hide terminal" + hint(for: .toggleTerminal)`
+    /// reads "Hide terminal (⌘J)", and an empty string once the chord is cleared, so no
+    /// help text ever promises a key the app no longer answers to.
+    static func hint(for shortcut: AppShortcut) -> String {
+        guard let label = label(for: shortcut) else { return "" }
+        return " (\(label))"
+    }
+
     func set(_ chord: KeyChord?, for shortcut: AppShortcut) {
         overrides[shortcut.rawValue] = chord == shortcut.defaultChord ? nil : Override(chord: chord)
     }

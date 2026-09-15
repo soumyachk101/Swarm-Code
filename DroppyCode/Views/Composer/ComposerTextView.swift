@@ -241,7 +241,7 @@ struct ComposerTextView: NSViewRepresentable {
         textView.drawsBackground = false
         textView.font = .systemFont(ofSize: 14)
         textView.textColor = .labelColor
-        textView.insertionPointColor = .controlAccentColor
+        textView.insertionPointColor = Chrome.accentNSColor
         textView.textContainerInset = NSSize(width: 0, height: 2)
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -288,6 +288,9 @@ struct ComposerTextView: NSViewRepresentable {
             Task { @MainActor in coordinator?.parent.onBlur() }
         }
         if textView.placeholder != placeholder { textView.placeholder = placeholder }
+        // The caret follows the theme's accent; a theme change never rebuilds the view.
+        let caret = Chrome.accentNSColor
+        if textView.insertionPointColor != caret { textView.insertionPointColor = caret }
         if !textView.hasMarkedText(), textView.string != text {
             textView.string = text
             textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))

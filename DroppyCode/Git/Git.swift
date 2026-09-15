@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 struct GitStatus: Equatable, Sendable {
     var branch: String?
@@ -24,8 +25,18 @@ struct Git: Sendable {
         directory = URL(fileURLWithPath: path)
     }
 
+    /// Where git was found, and the PATH it was found on. Finding it walks every folder on
+    /// the PATH, and a turn runs dozens of git commands, so the answer is kept. The login
+    /// environment can load after the first call, so a different PATH looks again.
+    private static let foundExecutable = Mutex<(path: String, url: URL)?>(nil)
+
     private static var executable: URL {
-        LoginEnvironment.which("git") ?? URL(fileURLWithPath: "/usr/bin/git")
+        let environment = LoginEnvironment.current
+        let path = environment["PATH"] ?? ""
+        if let found = foundExecutable.withLock({ $0 }), found.path == path { return found.url }
+        let url = LoginEnvironment.which("git", in: environment) ?? URL(fileURLWithPath: "/usr/bin/git")
+        foundExecutable.withLock { $0 = (path, url) }
+        return url
     }
 
     @discardableResult
@@ -267,6 +278,13 @@ struct Git: Sendable {
         try Self.check(await run(["update-ref", ref, commit]))
     }
 
+    /// Moves `ref` only while it still points at `old`, so a branch someone else moved in
+    /// the meantime is left where it is rather than run over. `old` nil means the ref must
+    /// not exist yet.
+    func updateRef(_ ref: String, to commit: String, expecting old: String?) async throws {
+        try Self.check(await run(["update-ref", ref, commit, old ?? ""]))
+    }
+
     func pushBranch(_ name: String) async throws {
         try Self.check(await run(["push", "-u", "origin", "refs/heads/\(name):refs/heads/\(name)"], timeout: 300))
     }
@@ -287,12 +305,19 @@ struct Git: Sendable {
     /// Paths with uncommitted changes, staged or not, untracked ones included.
     func dirtyPaths() async -> [String] {
         guard let text = try? await output(["status", "--porcelain=v1", "-z", "--untracked-files=all"]) else { return [] }
-        return text.split(separator: "\0").compactMap { entry -> String? in
-            guard entry.count > 3 else { return nil }
-            let path = String(entry.dropFirst(3))
-            // A rename lists "new -> old"; the new name is the one that is dirty.
-            return path.components(separatedBy: " -> ").first
+        var records = text.split(separator: "\0", omittingEmptySubsequences: false)[...]
+        var paths: [String] = []
+        while let entry = records.popFirst() {
+            guard entry.count > 3 else { continue }
+            let code = entry.prefix(2)
+            paths.append(String(entry.dropFirst(3)))
+            // A rename or a copy is two records: the new name, then the name it came from.
+            // That second record is not an entry of its own, and both names are dirty.
+            if code.contains("R") || code.contains("C"), let origin = records.popFirst(), !origin.isEmpty {
+                paths.append(String(origin))
+            }
         }
+        return paths
     }
 
     /// Whether a rebase, merge or cherry-pick is underway: nothing may move then.
@@ -342,6 +367,23 @@ struct Git: Sendable {
         "refs/droppy-code/checkpoints/\(thread.uuidString.lowercased())/\(turn)-\(phase)"
     }
 
+    /// The checkout's real index file, kept per checkout. Asking git for it is a process of
+    /// its own, and every working-tree snapshot starts from it; the path only changes when
+    /// the repository does, and a path that has gone is looked up again.
+    private static let foundIndexPaths = Mutex<[String: String]>([:])
+
+    private func indexPath() async -> String? {
+        let fileManager = FileManager.default
+        if let cached = Self.foundIndexPaths.withLock({ $0[directory.path] }), fileManager.fileExists(atPath: cached) {
+            return cached
+        }
+        guard let resolved = try? await output(["rev-parse", "--path-format=absolute", "--git-path", "index"])
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            fileManager.fileExists(atPath: resolved) else { return nil }
+        Self.foundIndexPaths.withLock { $0[directory.path] = resolved }
+        return resolved
+    }
+
     /// Snapshots the working tree into a hidden ref without touching the user's index or branch.
     func captureCheckpoint(_ ref: String) async throws {
         let tree = try await captureTree()
@@ -359,9 +401,7 @@ struct Git: Sendable {
         let environment = ["GIT_INDEX_FILE": index.path]
 
         // Starting from the real index keeps git's stat cache, so unchanged files are not re-hashed.
-        if let indexPath = try? await output(["rev-parse", "--path-format=absolute", "--git-path", "index"])
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            fileManager.fileExists(atPath: indexPath) {
+        if let indexPath = await indexPath() {
             try? fileManager.copyItem(atPath: indexPath, toPath: index.path)
         } else if await hasCommits() {
             try Self.check(await run(["read-tree", "HEAD"], environment: environment))
@@ -439,9 +479,7 @@ struct Git: Sendable {
         let index = fileManager.temporaryDirectory.appendingPathComponent("droppy-code-apply-\(UUID().uuidString)")
         defer { try? fileManager.removeItem(at: index) }
         let environment = ["GIT_INDEX_FILE": index.path]
-        if let indexPath = try? await output(["rev-parse", "--path-format=absolute", "--git-path", "index"])
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            fileManager.fileExists(atPath: indexPath) {
+        if let indexPath = await indexPath() {
             try? fileManager.copyItem(atPath: indexPath, toPath: index.path)
         } else if await hasCommits() {
             try Self.check(await run(["read-tree", "HEAD"], environment: environment))

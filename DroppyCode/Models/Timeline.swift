@@ -225,6 +225,30 @@ struct TurnRecord: Codable, Identifiable, Hashable, Sendable {
     /// Repository-relative paths this turn's agent edited, so changes made elsewhere in the
     /// repository during the turn are never attributed to the thread. Nil on turns recorded before.
     var touchedPaths: [String]?
+    /// This turn's work has landed on the branch: the auto-merge took it, and the next one
+    /// starts from what came after it.
+    var hydraMerged = false
+}
+
+extension TurnRecord {
+    /// Read field by field, so a turn stored by an earlier build, which knew nothing of
+    /// the newest of them, still reads as the turn it was rather than being dropped.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = container.value(.id, default: UUID())
+        index = container.value(.index, default: 0)
+        providerTurnID = container.value(.providerTurnID, default: nil)
+        startedAt = container.value(.startedAt, default: Date.now)
+        completedAt = container.value(.completedAt, default: nil)
+        status = container.value(.status, default: .running)
+        baseCheckpoint = container.value(.baseCheckpoint, default: nil)
+        endCheckpoint = container.value(.endCheckpoint, default: nil)
+        userItemID = container.value(.userItemID, default: nil)
+        providerDiff = container.value(.providerDiff, default: nil)
+        providerAnchor = container.value(.providerAnchor, default: nil)
+        touchedPaths = container.value(.touchedPaths, default: nil)
+        hydraMerged = container.value(.hydraMerged, default: false)
+    }
 }
 
 struct ContextUsage: Codable, Hashable, Sendable {

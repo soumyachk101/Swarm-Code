@@ -278,13 +278,20 @@ final class ClaudeSession: ProviderSession {
             handleSystem(message)
         case "stream_event":
             if let parent {
-                handleStreamEvent(message["event"] ?? .null, stream: &agentStreams[parent, default: StreamState()], sink: agentSink(parent))
+                // The sink hands the event on at once, and what it reaches can come back
+                // into this session and read the same heads. The state is taken out,
+                // worked on and put back, so nothing is held open across the callbacks.
+                var stream = agentStreams[parent] ?? StreamState()
+                handleStreamEvent(message["event"] ?? .null, stream: &stream, sink: agentSink(parent))
+                agentStreams[parent] = stream
             } else {
                 handleStreamEvent(message["event"] ?? .null, stream: &mainStream, sink: leadSink)
             }
         case "assistant":
             if let parent {
-                handleAssistant(message, stream: &agentStreams[parent, default: StreamState()], sink: agentSink(parent))
+                var stream = agentStreams[parent] ?? StreamState()
+                handleAssistant(message, stream: &stream, sink: agentSink(parent))
+                agentStreams[parent] = stream
             } else {
                 handleAssistant(message, stream: &mainStream, sink: leadSink)
             }

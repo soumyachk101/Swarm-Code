@@ -20,10 +20,12 @@ struct ThreadChangesTab: View {
                     .foregroundStyle(Chrome.secondaryText)
                 Text(verbatim: stats.files == 1 ? "1 file" : "\(stats.files) files")
                     .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                // The same hues as every other +/− in the app (see DiffStatLabel), so a
+                // theme recolours the tab with the diffs it stands for.
                 Text(verbatim: "+\(stats.additions)")
-                    .foregroundStyle(Color(red: 0.36, green: 0.84, blue: 0.5))
+                    .foregroundStyle(Chrome.success)
                 Text(verbatim: "\u{2212}\(stats.deletions)")
-                    .foregroundStyle(Color(red: 0.95, green: 0.42, blue: 0.42))
+                    .foregroundStyle(Chrome.danger)
             }
             .font(.system(size: 12, weight: .medium).monospacedDigit())
             .padding(.horizontal, 12)
@@ -37,7 +39,7 @@ struct ThreadChangesTab: View {
             AttachmentAnchorCapture(onResolve: anchor)
         }
         .fixedSize()
-        .help("Show this thread's changes")
+        .help("Show this thread's changes\(ShortcutStore.hint(for: .toggleChanges))")
         .accessibilityLabel(Text(verbatim: "\(stats.files) files changed, \(stats.additions) added, \(stats.deletions) removed"))
     }
 }

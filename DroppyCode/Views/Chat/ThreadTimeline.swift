@@ -68,11 +68,20 @@ struct ThreadTimeline: View, Equatable {
     /// Changes to rebuild the lazy stack from scratch: the second repair for a viewport
     /// the stack has built nothing for (see `repairLayout`).
     @State private var stackGeneration = 0
+    /// The blocks as last built. This body re-runs for plenty of reasons the conversation
+    /// knows nothing about (the reader starting or ending a scroll, the column resizing, a
+    /// setting elsewhere), and partitioning every entry into blocks again each time is work
+    /// the stack throws straight away. It lives in an object, so reusing a build is not a
+    /// state write.
+    @State private var blockCache = TimelineBlockCache()
 
     var body: some View {
         let entries = runtime.entries
         let meta = TimelineMeta.build(entries)
-        let blocks = DisplayBlock.build(entries, meta: meta, showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning)
+        let blocks = blockCache.blocks(
+            for: entries, meta: meta,
+            showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning
+        )
         if blocks.isEmpty && !runtime.isRunning {
             NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
                 .onAppear {
@@ -1049,6 +1058,38 @@ enum DisplayBlock: Identifiable, Equatable {
     private var carriesWorkingLine: Bool {
         if case .turn(_, _, _, _, true) = self { return true }
         return false
+    }
+}
+
+/// The last build of the timeline's blocks, with everything that build read. Entries are
+/// compared by identity (a pointer each), the turn summaries by value, so a body run that
+/// changed none of them gets its blocks back instead of building them again. Nothing else
+/// reaches the blocks: they are handed straight to the stack, whose rows compare them.
+@MainActor
+final class TimelineBlockCache {
+    private struct Key: Equatable {
+        var entries: [ObjectIdentifier]
+        /// The fold: a turn's block folds the moment its summary lands, and a summary can
+        /// be written into an entry that was already there.
+        var summaries: [UUID: TurnSummary]
+        var isRunning: Bool
+        var showReasoning: Bool
+    }
+
+    private var key: Key?
+    private var built: [DisplayBlock] = []
+
+    func blocks(for entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool) -> [DisplayBlock] {
+        let wanted = Key(
+            entries: entries.map(ObjectIdentifier.init),
+            summaries: meta.summaryByTurn,
+            isRunning: isRunning,
+            showReasoning: showReasoning
+        )
+        if wanted == key { return built }
+        built = DisplayBlock.build(entries, meta: meta, showReasoning: showReasoning, isRunning: isRunning)
+        key = wanted
+        return built
     }
 }
 

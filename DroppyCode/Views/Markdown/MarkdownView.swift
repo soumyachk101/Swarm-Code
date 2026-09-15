@@ -418,6 +418,12 @@ enum FaviconCache {
         let key = host.lowercased()
         if let hit = memory[key] { return hit }
         guard !failed.contains(key) else { return nil }
+        // Icons come from a service on the web, so the host is told to it. Tool output is
+        // full of names that belong to this machine and this network; those never leave.
+        guard isPublic(host: key) else {
+            failed.insert(key)
+            return nil
+        }
         if let task = inFlight[key] { return await task.value }
         guard let url = URL(string: "https://www.google.com/s2/favicons?domain=\(key)&sz=64") else { return nil }
         let task = Task { () -> NSImage? in
@@ -435,6 +441,40 @@ enum FaviconCache {
             failed.insert(key)
         }
         return image
+    }
+
+    /// Suffixes that only ever name something inside a network, never a site on the web.
+    private static let privateSuffixes = [
+        ".local", ".localhost", ".localdomain", ".internal", ".intranet",
+        ".lan", ".home", ".home.arpa", ".test", ".invalid", ".corp",
+    ]
+
+    /// Whether a host is one a public favicon service could possibly know: not the loopback,
+    /// not a bare machine name, not one of the private suffixes, and not an address in the
+    /// ranges that never leave a network. A host that fails any of these is never asked about.
+    static func isPublic(host: String) -> Bool {
+        guard !host.isEmpty, host != "localhost" else { return false }
+        // An IPv6 literal (no brackets by the time it comes off a URL) has no favicon worth
+        // the request, and half of them are link-local or unique-local addresses.
+        guard !host.contains(":") else { return false }
+        for suffix in privateSuffixes where host.hasSuffix(suffix) { return false }
+        // A single label with no dot in it is a machine on this network, not a site.
+        guard host.contains(".") else { return false }
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        var octets: [Int] = []
+        for label in labels {
+            guard let value = Int(label), (0...255).contains(value) else { break }
+            octets.append(value)
+        }
+        guard octets.count == 4, octets.count == labels.count else { return true }
+        switch (octets[0], octets[1]) {
+        case (0, _), (10, _), (127, _): return false
+        case (169, 254), (192, 168): return false
+        case (172, 16...31): return false
+        // Carrier-grade NAT, which tunnels and VPNs hand out.
+        case (100, 64...127): return false
+        default: return true
+        }
     }
 
     private static func resizedIcon(_ image: NSImage) -> NSImage {
@@ -502,13 +542,15 @@ struct InlineText: View {
             // An AppKit view has no text baseline of its own, so a list's marker sat on the
             // paragraph's top edge and the text started a line below it. The first line's
             // baseline is the base font's ascender from the top; the last is one line up
-            // from the bottom.
-            let font = NSFont.systemFont(ofSize: pointSize)
-            let lineHeight = ceil(font.ascender - font.descender + font.leading)
+            // from the bottom. Measured once per size and kept: the alignment guides run
+            // off the main actor, so they take the two numbers rather than the font.
+            let metrics = Self.metrics(pointSize: pointSize)
+            let ascender = metrics.ascender
+            let lineHeight = metrics.lineHeight
             LinkParagraphView(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming, revision: faviconRevision, onHost: { linkView.value = $0 })
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .alignmentGuide(.firstTextBaseline) { _ in ceil(font.ascender) }
-                .alignmentGuide(.lastTextBaseline) { $0.height - lineHeight + ceil(font.ascender) }
+                .alignmentGuide(.firstTextBaseline) { _ in ascender }
+                .alignmentGuide(.lastTextBaseline) { $0.height - lineHeight + ascender }
                 // The pointing hand over links, from here rather than the text view's own
                 // tracking (which AppKit would rebuild every scrolled frame). Hover is off
                 // while the timeline scrolls, so this costs nothing then.
@@ -534,6 +576,19 @@ struct InlineText: View {
         }
     }
 
+    /// The base font's baseline numbers, measured once per point size. Asking AppKit for a
+    /// font and its metrics on every render of every link paragraph is work with one answer.
+    @MainActor private static var metricsBySize: [CGFloat: (ascender: CGFloat, lineHeight: CGFloat)] = [:]
+
+    @MainActor
+    private static func metrics(pointSize: CGFloat) -> (ascender: CGFloat, lineHeight: CGFloat) {
+        if let known = metricsBySize[pointSize] { return known }
+        let font = NSFont.systemFont(ofSize: pointSize)
+        let measured = (ceil(font.ascender), ceil(font.ascender - font.descender + font.leading))
+        metricsBySize[pointSize] = measured
+        return measured
+    }
+
     private func fetchFavicons() async {
         let streaming = streaming
         let hosts = await MainActor.run { RichLink.linkHosts(for: source, streaming: streaming) }
@@ -550,12 +605,33 @@ struct InlineText: View {
     }
 }
 
+/// A hover flag kept in an object instead of view state. A code block's body holds its whole
+/// text, counts its lines and cuts its head off; running all of that again because the
+/// pointer crossed the block is what made the copy control feel sticky over a big dump.
+/// Only the control reads this, so only the control re-renders.
+@MainActor
+@Observable
+private final class BlockHover {
+    var isHovering = false
+}
+
+/// The copy control on a code block's header, in a view of its own so the hover that
+/// reveals it never reaches the block's text.
+private struct CodeBlockCopyButton: View {
+    let text: String
+    let hover: BlockHover
+
+    var body: some View {
+        CopyButton(text: text)
+            .opacity(hover.isHovering ? 1 : 0)
+    }
+}
+
 struct CodeBlock: View {
     let language: String?
     let code: String
 
-    @State private var isHovering = false
-    @State private var didCopy = false
+    @State private var hover = BlockHover()
     @State private var showsAll = false
 
     /// Long dumps render collapsed: materializing thousands of lines at once is what
@@ -574,8 +650,7 @@ struct CodeBlock: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                CopyButton(text: code)
-                    .opacity(isHovering ? 1 : 0)
+                CodeBlockCopyButton(text: code, hover: hover)
             }
             .padding(.leading, 12)
             .padding(.trailing, 6)
@@ -601,7 +676,7 @@ struct CodeBlock: View {
             }
         }
         .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 12))
-        .onHover { isHovering = $0 }
+        .onHover { hover.isHovering = $0 }
     }
 
     /// The first `lines` lines of `code`, without splitting the rest.

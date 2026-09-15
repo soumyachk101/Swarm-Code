@@ -89,10 +89,9 @@ struct ChatView: View {
                         hydraPanel(scene: scene, workingDirectory: workingDirectory, project: project)
                     }
                 }
-                // Toggled from the Hydra button, a surface morphing out of or into the
-                // button does the moving, so the panel itself only crossfades with it while
-                // the chat still slides to make room or take it back; dismissed, it fades.
-                .animation(runtime.hydraPanelMorphs ? .easeOut(duration: GenieAnimator.morphCrossfade) : Chrome.panelSlide, value: scene.hasHeads)
+                // Toggled from the Hydra button or dismissed, the panel fades and scales
+                // in place while the chat slides to make room or take it back.
+                .animation(Chrome.panelSlide, value: scene.hasHeads)
             }
             // Keyed to the heads, not to whether the panel is on screen yet: that also flips
             // as the pane is first measured, and slid the whole chat into place from its
@@ -277,9 +276,11 @@ private struct PanelScene {
 
     init(runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat) {
         isMeasured = paneSize != .zero
-        subagent = model.subagent(of: runtime.threadID)
+        // Both lists come from this chat's own children (see `panelHeads(of:)`), so a head
+        // of another chat writing its status leaves this whole body alone.
+        subagent = model.panelSubagent(of: runtime.threadID)
         isDocked = subagent != nil
-        let team = runtime.isHydraPanelHidden ? [] : model.hydraHeads(of: runtime.threadID)
+        let team = runtime.isHydraPanelHidden ? [] : model.panelHeads(of: runtime.threadID)
         let poppedHead = team.count > 1 ? team.first { $0.id == runtime.hydraPoppedHeadID } : nil
         let teamHeads = team.filter { $0.id != poppedHead?.id }
         popped = poppedHead
@@ -351,7 +352,7 @@ private struct ChatChromeRow: View {
                     ThreadsButton()
                         .transition(.softAppear)
                 }
-                ChromeCircleButton(symbol: "square.and.pencil", help: "New thread (⌘N)") {
+                ChromeCircleButton(symbol: "square.and.pencil", help: "New thread" + ShortcutStore.hint(for: .newThread)) {
                     model.newThread(in: project)
                 }
                 if let thread = model.thread(runtime.threadID) {
@@ -380,11 +381,11 @@ private struct ChatChromeRow: View {
                         }
                     }
                     ChromeCapsule {
-                        ChromeIconButton(symbol: "terminal", isActive: runtime.isTerminalVisible, help: "Terminal (⌘J)") {
+                        ChromeIconButton(symbol: "terminal", isActive: runtime.isTerminalVisible, help: "Terminal" + ShortcutStore.hint(for: .toggleTerminal)) {
                             runtime.isTerminalVisible.toggle()
                         }
                         ChromeDivider()
-                        ChromeIconButton(symbol: "plusminus", isActive: runtime.isDiffVisible, help: "Changes (⌘D)") {
+                        ChromeIconButton(symbol: "plusminus", isActive: runtime.isDiffVisible, help: "Changes" + ShortcutStore.hint(for: .toggleChanges)) {
                             runtime.toggleDiff()
                         }
                     }
@@ -717,13 +718,26 @@ private struct CommitSheet: View {
             .frame(minHeight: 130)
             .background(Chrome.overlay(0.05), in: .rect(cornerRadius: 12, style: .continuous))
             HStack(spacing: 12) {
+                // Nothing writes the message with text generation off or its provider signed
+                // out, so the button says where to turn it on instead of doing nothing.
+                let canGenerate = model.textEngine(preferring: runtime.thread?.provider) != nil
                 Button {
                     Task { await generate() }
                 } label: {
-                    Label("Write for me", systemImage: "sparkles")
+                    Label {
+                        Text("Write for me")
+                    } icon: {
+                        if isGenerating {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "sparkles")
+                        }
+                    }
                 }
                 .buttonStyle(.glass)
-                .disabled(isGenerating)
+                .disabled(isGenerating || !canGenerate)
+                .help(canGenerate ? "Write a commit message from these changes" : "Turn on text generation in Settings > Source control")
                 Toggle("Push after committing", isOn: $pushesAfterCommit)
                     .toggleStyle(.checkbox)
                 Spacer()
@@ -815,6 +829,14 @@ private struct ScriptsEditor: View {
                                 TextField("Command", text: $script.command)
                                     .textFieldStyle(.roundedBorder)
                                     .font(.system(size: 12, design: .monospaced))
+                                    // A script with no command used to be dropped on save
+                                    // without a word; the row says what it is missing.
+                                    .overlay {
+                                        if Self.isIncomplete(script) {
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .strokeBorder(Chrome.danger.opacity(0.65), lineWidth: 1)
+                                        }
+                                    }
                                 Toggle("Run when a worktree is created", isOn: $script.runOnWorktreeCreate)
                                     .toggleStyle(.checkbox)
                             }
@@ -834,16 +856,23 @@ private struct ScriptsEditor: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .buttonStyle(.glass)
+                let incomplete = scripts.contains(where: Self.isIncomplete)
                 Button("Save") {
-                    let cleaned = scripts.filter { !$0.command.trimmingCharacters(in: .whitespaces).isEmpty }
-                    model.updateProject(projectID) { $0.scripts = cleaned }
+                    model.updateProject(projectID) { $0.scripts = scripts }
                     dismiss()
                 }
                 .buttonStyle(.glassProminent)
+                .disabled(incomplete)
+                .help(incomplete ? "Every script needs a command." : "Save these scripts")
             }
         }
         .padding(20)
         .frame(width: 580, height: 460)
         .onAppear { scripts = model.project(projectID)?.scripts ?? [] }
+    }
+
+    /// A script with nothing to run. Saving is held until every row has a command.
+    private static func isIncomplete(_ script: ProjectScript) -> Bool {
+        script.command.trimmingCharacters(in: .whitespaces).isEmpty
     }
 }

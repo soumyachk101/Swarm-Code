@@ -119,7 +119,7 @@ private struct LimitRow: View {
                     .foregroundStyle(Chrome.secondaryText)
                     .monospacedDigit()
             }
-            UsageBar(fraction: window.percent / 100, tint: Self.tint(for: window.percent))
+            UsageBar(fraction: window.percent / 100, tint: Self.tint(for: window.percent), label: window.title)
         }
     }
 
@@ -148,6 +148,9 @@ private struct LimitRow: View {
 struct UsageBar: View {
     let fraction: Double
     let tint: Color
+    /// What the bar measures, for VoiceOver. The percentage on its own said nothing about
+    /// which window or balance it belonged to.
+    var label = "Used"
 
     var body: some View {
         GeometryReader { proxy in
@@ -160,5 +163,8 @@ struct UsageBar: View {
             }
         }
         .frame(height: 5)
+        .accessibilityElement()
+        .accessibilityLabel(Text(verbatim: label))
+        .accessibilityValue(Text(verbatim: "\(Int((min(max(fraction, 0), 1) * 100).rounded()))% used"))
     }
 }

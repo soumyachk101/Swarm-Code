@@ -42,7 +42,6 @@ final class TokenLedger {
     private(set) var dailyTotals: [String: Int] = [:]
 
     private static let liveDefaultsKey = "droppycode.tokenActivity.liveDaily"
-    private static let codexDefaultsKey = "droppycode.tokenActivity.codexFiles"
 
     /// Live-recorded spend, kept apart from history so a rescan never drops
     /// usage that arrived after the scan.
@@ -75,17 +74,19 @@ final class TokenLedger {
     func refreshIfNeeded() async {
         guard !didStartLoad else { return }
         didStartLoad = true
-        let cached = UserDefaults.standard.dictionary(forKey: Self.codexDefaultsKey) as? [String: [String: Any]] ?? [:]
-        let fingerprints = cached.compactMapValues(CodexFileFingerprint.init(dict:))
         let liveCutoff = launchDate
+        // Reading, scanning and writing all happen off the main actor: the fingerprint
+        // file grows with the number of rollouts, and none of it is wanted on the thread
+        // that is drawing Settings.
         let history = await Task.detached(priority: .utility) {
-            TokenHistoryScanner.scanCodexHistory(cached: fingerprints, liveCutoff: liveCutoff)
+            let result = TokenHistoryScanner.scanCodexHistory(
+                cached: CodexFingerprintStore.load(),
+                liveCutoff: liveCutoff
+            )
+            CodexFingerprintStore.save(result.fingerprints)
+            return result
         }.value
         historyDaily = history.daily
-        UserDefaults.standard.set(
-            history.fingerprints.mapValues(\.dict),
-            forKey: Self.codexDefaultsKey
-        )
         dailyTotals = historyDaily.merging(liveDaily) { $0 + $1 }
     }
 
@@ -99,7 +100,7 @@ final class TokenLedger {
 /// One Codex rollout's contribution: its session total attributed to the day
 /// of its last token_count event. Cached by path so rescans only tail files
 /// whose mtime or size moved.
-private struct CodexFileFingerprint: Sendable {
+private struct CodexFileFingerprint: Sendable, Codable {
     var mtime: Double
     var size: UInt64
     var tokens: Int
@@ -126,9 +127,38 @@ private struct CodexFileFingerprint: Sendable {
         let tokens = (dict["tokens"] as? NSNumber)?.intValue ?? (dict["tokens"] as? Int ?? 0)
         self.init(mtime: mtime, size: size, tokens: tokens, day: day)
     }
+}
 
-    var dict: [String: Any] {
-        ["mtime": mtime, "size": NSNumber(value: size), "tokens": tokens, "day": day]
+/// Where the fingerprints live. There is one per Codex rollout and a busy machine has
+/// thousands of them, which has no business in the preferences plist: that file is read
+/// whole into every process that reads a default and rewritten whole on every write, so a
+/// few megabytes of fingerprints slow down every setting the app touches. They sit in
+/// their own JSON file in Application Support instead, beside the library.
+private enum CodexFingerprintStore {
+    /// Where earlier builds kept them. Read once, then cleared.
+    private static let legacyDefaultsKey = "droppycode.tokenActivity.codexFiles"
+
+    private static var fileURL: URL {
+        Storage.root.appendingPathComponent("token-activity-codex.json")
+    }
+
+    static func load() -> [String: CodexFileFingerprint] {
+        if let data = try? Data(contentsOf: fileURL),
+           let stored = try? JSONDecoder().decode([String: CodexFileFingerprint].self, from: data) {
+            return stored
+        }
+        guard let legacy = UserDefaults.standard.dictionary(forKey: legacyDefaultsKey) as? [String: [String: Any]] else {
+            return [:]
+        }
+        UserDefaults.standard.removeObject(forKey: legacyDefaultsKey)
+        let migrated = legacy.compactMapValues(CodexFileFingerprint.init(dict:))
+        save(migrated)
+        return migrated
+    }
+
+    static func save(_ fingerprints: [String: CodexFileFingerprint]) {
+        guard let data = try? JSONEncoder().encode(fingerprints) else { return }
+        try? data.write(to: fileURL, options: .atomic)
     }
 }
 
@@ -438,10 +468,13 @@ struct TokenActivitySection: View {
                     } label: {
                         Text(verbatim: option.title)
                             .font(.system(size: 13, weight: mode == option ? .medium : .regular))
-                            .foregroundStyle(mode == option ? Chrome.primaryText : Chrome.secondaryText)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(mode == option ? .isSelected : [])
+                    // A capsule chip, like every other small switch in the app: these
+                    // were bare words with no hover, no hit target and no button trait.
+                    .buttonStyle(.chip(active: mode == option))
+                    .help(Self.modeHelp(option))
+                    .accessibilityLabel(Text(verbatim: option.title))
+                    .accessibilityAddTraits(mode == option ? [.isButton, .isSelected] : .isButton)
                 }
             }
             .animation(.smooth(duration: 0.25), value: mode)
@@ -449,6 +482,7 @@ struct TokenActivitySection: View {
             let grid = TokenActivityGrid.build(daily: ledger.dailyTotals, mode: mode)
             heatmap(grid: grid)
             monthStrip(grid: grid)
+            legend(total: ledger.dailyTotals.values.reduce(0, +))
         }
         .task {
             await ledger.refreshIfNeeded()
@@ -489,6 +523,46 @@ struct TokenActivitySection: View {
                         )
                 }
             }
+        }
+    }
+
+    /// The line under the grid: what the ledger adds up to on the left, and the intensity
+    /// ladder on the right. The canvas itself is hidden from VoiceOver (365 cells say
+    /// nothing one at a time), so this is where the grid gets a readable value.
+    private func legend(total: Int) -> some View {
+        HStack(spacing: 8) {
+            Text(verbatim: "\(UsagePanel.tokens(total)) tokens recorded")
+                .font(.system(size: 11))
+                .foregroundStyle(Chrome.secondaryText)
+                .lineLimit(1)
+            Spacer(minLength: 12)
+            Text(verbatim: "Less")
+                .font(.system(size: 11))
+                .foregroundStyle(Chrome.secondaryText)
+            ForEach(Array(Self.ladder.enumerated()), id: \.offset) { _, step in
+                RoundedRectangle(cornerRadius: TokenActivityStyle.cellRadius, style: .continuous)
+                    .fill(step)
+                    .frame(width: 10, height: 10)
+            }
+            Text(verbatim: "More")
+                .font(.system(size: 11))
+                .foregroundStyle(Chrome.secondaryText)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Token activity"))
+        .accessibilityValue(Text("\(UsagePanel.tokens(total)) tokens recorded"))
+    }
+
+    /// The five steps `TokenActivityStyle.color(for:maxValue:future:)` paints, as a ladder.
+    private static var ladder: [Color] {
+        [0, 1, 3, 5, 7].map { TokenActivityStyle.color(for: $0, maxValue: 8, future: false) }
+    }
+
+    private static func modeHelp(_ mode: TokenActivityMode) -> String {
+        switch mode {
+        case .daily: "Each day on its own, against the busiest day of the year"
+        case .weekly: "Each week as one shade, against the busiest week"
+        case .cumulative: "The running total, so the year fills as it goes"
         }
     }
 

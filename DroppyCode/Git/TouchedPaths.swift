@@ -11,6 +11,22 @@ enum TouchedPaths {
         return path
     }
 
+    /// The repository-relative form of a path an agent reported, or nil when the path is
+    /// no part of the checkout: another folder on the machine, a climb out of the root, a
+    /// URL. A file written outside the checkout is not the thread's work, and git refuses
+    /// to stage it, which used to take the whole merge down with it.
+    nonisolated static func relative(_ path: String, root: String) -> String? {
+        var path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty, !path.contains("://") else { return nil }
+        if path.hasPrefix("~") { path = (path as NSString).expandingTildeInPath }
+        let root = (root as NSString).standardizingPath
+        let absolute = path.hasPrefix("/") ? path : (root as NSString).appendingPathComponent(path)
+        let full = (absolute as NSString).standardizingPath
+        let prefix = root.hasSuffix("/") ? root : root + "/"
+        guard full.hasPrefix(prefix) else { return nil }
+        return String(full.dropFirst(prefix.count)).nilIfEmpty
+    }
+
     /// Whether a diff file is one of the touched paths, allowing for a path reported relative to a subfolder.
     nonisolated static func matches(_ file: DiffFile, touched: Set<String>) -> Bool {
         [file.path, file.oldPath].compactMap { $0 }.contains { path in

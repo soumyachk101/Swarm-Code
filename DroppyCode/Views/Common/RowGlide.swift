@@ -126,8 +126,9 @@ private struct RowGlideView: View {
     /// Where the check sits in a row, measured from the row's edge to the check's centre:
     /// beside the ellipsis at the trailing end while the thread is open, at the front once
     /// it has settled (see SidebarThreadRow).
-    private static let trailingCheckInset: CGFloat = 36
-    private static let leadingCheckInset: CGFloat = 16
+    /// Read from the keyframe closure, which runs off the main actor.
+    private nonisolated static let trailingCheckInset: CGFloat = 36
+    private nonisolated static let leadingCheckInset: CGFloat = 16
 
     var body: some View {
         let from = glide.from
@@ -199,7 +200,7 @@ private struct RowGlideView: View {
             }
     }
 
-    private static func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
+    private nonisolated static func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
         let t = min(max((x - edge0) / (edge1 - edge0), 0), 1)
         return t * t * (3 - 2 * t)
     }

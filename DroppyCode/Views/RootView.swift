@@ -191,17 +191,16 @@ private struct ProviderStatusRow: View {
                     .controlSize(.small)
             } else if !status.isInstalled {
                 if provider.isAPIKeyBased {
-                    Link("Add key", destination: provider.installURL)
-                        .buttonStyle(.glass)
+                    // Nothing to install: the key is typed in Settings, so the row opens it
+                    // rather than sending the reader to a web page for it.
+                    OpenProvidersSettingsButton()
                 } else {
                     Link("Install", destination: provider.installURL)
                         .buttonStyle(.glass)
                 }
             } else if status.auth == .signedOut {
                 if provider.isAPIKeyBased {
-                    Text("Add an API key in Settings")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.secondaryText)
+                    OpenProvidersSettingsButton()
                 } else {
                     CopyCommandButton(command: provider.loginCommand)
                 }
@@ -215,6 +214,18 @@ private struct ProviderStatusRow: View {
     }
 }
 
+/// Takes the reader to the Providers page, where a key-based provider's key is typed.
+private struct OpenProvidersSettingsButton: View {
+    var body: some View {
+        Button("Add key") {
+            WindowManager.shared.showSettings()
+            SettingsNavigation.shared.requestedPage = .providers
+        }
+        .buttonStyle(.glass)
+        .help("Open Settings > Providers")
+    }
+}
+
 struct CopyCommandButton: View {
     let command: String
     @State private var didCopy = false
@@ -224,6 +235,12 @@ struct CopyCommandButton: View {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(command, forType: .string)
             didCopy = true
+            // Back to the command after a beat, the way the transcript's copy button
+            // goes back to its mark; it used to read "Copied" for the rest of the launch.
+            Task {
+                try? await Task.sleep(for: .seconds(1.4))
+                didCopy = false
+            }
         } label: {
             Label(didCopy ? "Copied" : command, systemImage: didCopy ? "checkmark" : "terminal")
                 .font(.system(size: 11, design: .monospaced))
@@ -250,9 +267,12 @@ struct NoThreadView: View {
             }
             .buttonStyle(.glassProminent)
             .controlSize(.large)
-            Text("⌘N")
-                .font(.system(size: 11))
-                .foregroundStyle(Chrome.secondaryText)
+            // The chord as the store has it now, so a remap never leaves a stale key here.
+            if let chord = ShortcutStore.label(for: .newThread) {
+                Text(verbatim: chord)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

@@ -7,6 +7,63 @@ import Foundation
 // each in a copy of the checkout made for it, and their work lands in the lead's checkout
 // the moment they report.
 
+/// What a head changed in its copy since the tree it started from: the patch itself, the
+/// files it touches, and the tree the copy holds now, which becomes the head's new base
+/// once the patch lands.
+private struct HydraPatch: Sendable {
+    var text: String
+    var files: [HydraLanding.File]
+    var after: String
+}
+
+/// One capture of a checkout's working tree, shared by the heads sent out together.
+/// Capturing means `git add -A` and `write-tree` over the whole project, seconds on a big
+/// repository, and the heads of one delegation block ask for it within milliseconds of
+/// each other: without this each head would pay for its own and the last one would start
+/// half a minute after the first. A capture stands for a few seconds only, and a landing
+/// into the checkout throws it away, so no head ever starts from a stale tree.
+@MainActor
+private enum HydraTreeCache {
+    private struct Capture {
+        var tree: String
+        var commit: String
+        var capturedAt: Date
+    }
+
+    /// How long a capture stands in for the checkout: long enough for one batch to go out
+    /// on it, short enough that the next head sees the checkout as it is.
+    private static let lifetime: TimeInterval = 3
+
+    private static var captures: [String: Capture] = [:]
+    /// Captures under way, so heads asking at the same moment wait for the one running
+    /// rather than each starting another.
+    private static var inFlight: [String: Task<(tree: String, commit: String), any Error>] = [:]
+
+    static func capture(of checkout: String, with git: Git) async throws -> (tree: String, commit: String) {
+        if let ready = captures[checkout], Date.now.timeIntervalSince(ready.capturedAt) < lifetime {
+            return (ready.tree, ready.commit)
+        }
+        if let running = inFlight[checkout] { return try await running.value }
+        let task = Task { () async throws -> (tree: String, commit: String) in
+            let tree = try await git.captureTree()
+            // The commit is the heads' starting point and no branch ever sees it, so it
+            // carries no head's name: several heads share this one.
+            let commit = try await git.commitTree(tree, message: "Droppy Code: a Hydra head's starting point")
+            return (tree, commit)
+        }
+        inFlight[checkout] = task
+        defer { inFlight[checkout] = nil }
+        let made = try await task.value
+        captures[checkout] = Capture(tree: made.tree, commit: made.commit, capturedAt: .now)
+        return made
+    }
+
+    /// The checkout changed under the capture: the next head captures it afresh.
+    static func invalidate(_ checkout: String) {
+        captures[checkout] = nil
+    }
+}
+
 extension AppModel {
     /// Whether a chat leads a team right now: Hydra on for the app. A chat keeps no
     /// switch of its own: with Hydra on in Settings it stays on in every chat until it
@@ -137,8 +194,11 @@ extension AppModel {
         batchID: UUID?
     ) -> ChatThread? {
         guard let parent = thread(parentID) else { return nil }
-        let index = parent.hydraSpawnCount
-        updateThread(parentID) { $0.hydraSpawnCount += 1 }
+        // A lead with no heads left starts the roster over. The count would otherwise
+        // climb for the life of the chat, and a lead that has sent out twenty-five heads
+        // over a morning would name its next one "Hank 2" with one head in the panel.
+        let index = hydraTeam(of: parentID).isEmpty ? 0 : parent.hydraSpawnCount
+        updateThread(parentID) { $0.hydraSpawnCount = index + 1 }
         let launch = hydraLaunch(for: parent)
         let persona = HydraRoster.persona(at: index)
 
@@ -211,10 +271,12 @@ extension AppModel {
         let suffix = String(head.id.uuidString.lowercased().prefix(8))
         let path = Storage.worktreesDirectory.appendingPathComponent("\(folder)-\(name)-\(suffix)").path
         do {
-            let tree = try await git.captureTree()
-            let commit = try await git.commitTree(tree, message: "Droppy Code: \(info.persona.name)'s starting point")
-            try await git.addDetachedWorktree(at: path, commit: commit)
-            return (path, tree)
+            // The heads of one delegation block start within milliseconds of each other
+            // and want the same checkout, so they share one capture of it (see
+            // `HydraTreeCache`); only the worktree itself is made per head.
+            let capture = try await HydraTreeCache.capture(of: checkout, with: git)
+            try await git.addDetachedWorktree(at: path, commit: capture.commit)
+            return (path, capture.tree)
         } catch {
             try? FileManager.default.removeItem(atPath: path)
             return nil
@@ -256,11 +318,9 @@ extension AppModel {
             }
         }
         // Opt-in: a finished head leaves the panel on its own, for the sidebar under its
-        // lead, instead of waiting for "Clear finished heads", and gives its copy of the
-        // checkout back with it. Running heads stay put.
+        // lead, instead of waiting for "Clear finished heads". Running heads stay put.
         if settings.hydraAutoClearFinished {
             updateThread(id) { $0.isInPanel = false }
-            releaseHydraCopy(of: id)
             if let parentID = head.parentThreadID {
                 updateThread(parentID) { $0.foldsHelpers = false }
                 let leadRuntime = runtime(for: parentID)
@@ -272,6 +332,14 @@ extension AppModel {
         let leadRuntime = runtime(for: parentID)
         let copyPath = info.hasOwnCopy ? head.worktreePath : nil
         leadRuntime.hydraHeadFinished(head.id, info: finished, status: outcome, summary: summary, landing: landing, copyPath: copyPath)
+        // The copy goes back only once the lead has the report, and only from a head that
+        // finished: a head that was stopped or that failed hands its report the path to
+        // its copy, where its half-done work is, and that folder has to still be there
+        // when the lead reads it. Those copies go when the heads are cleared by hand, or
+        // when the head is steered on for another turn.
+        if settings.hydraAutoClearFinished, outcome == .completed {
+            releaseHydraCopy(of: id)
+        }
     }
 
     /// A Droppy-run head's turn ended: its last reply is its report, and the work in its
@@ -301,6 +369,12 @@ extension AppModel {
             // in its copy, where a later turn can carry on from them.
             var landing: HydraLanding?
             if status == .completed, info.hasOwnCopy { landing = await landHydraHead(head.id) }
+            // Landing takes seconds, and minutes behind a queue or a lead mid-turn. The
+            // user may have steered the head on from the panel in that time: it is at work
+            // again, so it is not finished. Marking it so would hand the lead a report for
+            // a turn still running and give back the copy the head's tools are writing
+            // into. It reports again when this new turn ends.
+            guard existingRuntime(for: head.id)?.isRunning != true else { return }
             // The head reported; a report arriving on an already-finished head (the user
             // steered it on from the panel) goes to the lead as a fresh one.
             if thread(head.id)?.hydra?.isFinished == true { updateHydraHead(head.id) { $0.status = .running } }
@@ -312,48 +386,136 @@ extension AppModel {
     /// patch between the two trees, applied there, three-way where the checkout has moved
     /// on. What lands moves the base forward, so a head steered on later lands only what
     /// is new; a patch that will not apply is kept as a file and the base stays.
-    /// Landings into one checkout go one at a time: heads finishing together would
-    /// otherwise write into it at once, and the later patch be judged against files the
-    /// earlier one was still changing.
+    ///
+    /// The patch is read from the head's own copy, which nothing else is touching, so
+    /// heads finishing together prepare theirs side by side. Writing into the checkout is
+    /// the part that goes one at a time: two patches at once would leave the later one
+    /// judged against files the earlier was still changing. A patch over a file the lead
+    /// is editing this very turn waits for the lead to come to rest first (see
+    /// `waitForSettledCheckout`); the others do not wait for it.
     private func landHydraHead(_ id: UUID) async -> HydraLanding {
         guard let parentID = thread(id)?.parentThreadID else { return HydraLanding() }
-        let leadRuntime = runtime(for: parentID)
-        let previous = leadRuntime.hydraLanding
-        let landing = Task<HydraLanding, Never> {
-            await previous?.value
-            return await self.applyHydraHead(id)
-        }
-        leadRuntime.hydraLanding = Task { _ = await landing.value }
-        return await landing.value
-    }
-
-    private func applyHydraHead(_ id: UUID) async -> HydraLanding {
         var landing = HydraLanding()
-        guard let head = thread(id), let info = head.hydra, let base = info.baseTree, let copy = head.worktreePath,
-              let parentID = head.parentThreadID, let lead = thread(parentID), let checkout = hydraCheckout(of: lead) else { return landing }
+        let prepared: HydraPatch
         do {
-            let copyGit = Git(copy)
-            let after = try await copyGit.captureTree()
-            guard after != base else { return landing }
-            let patch = try await copyGit.diff(from: base, to: after, binary: true)
-            guard !patch.isEmpty else { return landing }
-            landing.files = DiffParser.parse(patch).map { HydraLanding.File(path: $0.path, additions: $0.additions, deletions: $0.deletions) }
-            do {
-                landing.conflicts = try await Git(checkout).apply(patch)
-                updateHydraHead(id) { $0.baseTree = after }
-            } catch {
-                let name = info.persona.name.replacingOccurrences(of: " ", with: "-").lowercased()
-                let url = Storage.patchesDirectory.appendingPathComponent("\(name)-\(head.id.uuidString.lowercased().prefix(8)).patch")
-                try patch.write(to: url, atomically: true, encoding: .utf8)
-                landing.patchPath = url.path
-                landing.error = error.localizedDescription
-            }
-            // The lead's changes tab and diff panel now show the head's work too.
-            existingRuntime(for: parentID)?.noteDiffChanged()
+            guard let made = try await prepareHydraPatch(id) else { return landing }
+            prepared = made
         } catch {
             landing.error = error.localizedDescription
+            return landing
         }
+        landing.files = prepared.files
+        await waitForSettledCheckout(parentID, paths: prepared.files.map(\.path))
+        let leadRuntime = runtime(for: parentID)
+        let previous = leadRuntime.hydraLanding
+        let applied = Task<HydraLanding, Never> {
+            await previous?.value
+            return await self.applyHydraHead(id, landing: landing, patch: prepared)
+        }
+        leadRuntime.hydraLanding = Task { _ = await applied.value }
+        return await applied.value
+    }
+
+    /// A head's work as a patch against the tree its copy started from, with the files it
+    /// touches. Nil where the head changed nothing or has no copy to compare.
+    private func prepareHydraPatch(_ id: UUID) async throws -> HydraPatch? {
+        guard let head = thread(id), let info = head.hydra, let base = info.baseTree, let copy = head.worktreePath else { return nil }
+        let copyGit = Git(copy)
+        let after = try await copyGit.captureTree()
+        guard after != base else { return nil }
+        let text = try await copyGit.diff(from: base, to: after, binary: true)
+        guard !text.isEmpty else { return nil }
+        // A binary patch runs to megabytes, and parsing it counts every line: off the
+        // main actor, so the chat keeps streaming while a head lands.
+        let files = await Task.detached(priority: .utility) {
+            DiffParser.parse(text).map { HydraLanding.File(path: $0.path, additions: $0.additions, deletions: $0.deletions) }
+        }.value
+        return HydraPatch(text: text, files: files, after: after)
+    }
+
+    /// Waits for the lead's checkout to be a safe place to write: the lead is not in the
+    /// middle of a turn that has already edited one of `paths` (a three-way merge would
+    /// leave conflict markers in a file the lead is still writing), and the team's work is
+    /// not on its way to the remote. Gives up after half an hour and lands anyway, so a
+    /// head's work is never lost to a lead that never comes to rest.
+    private func waitForSettledCheckout(_ parentID: UUID, paths: [String]) async {
+        guard let leadRuntime = existingRuntime(for: parentID) else { return }
+        let wanted = Set(paths)
+        let deadline = Date.now.addingTimeInterval(30 * 60)
+        while Date.now < deadline {
+            let busy = leadRuntime.phase != .idle && !wanted.isEmpty
+                && !wanted.isDisjoint(with: hydraChatContext(for: parentID).touchedPaths)
+            guard busy || leadRuntime.isHydraMerging else { return }
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+    }
+
+    private func applyHydraHead(_ id: UUID, landing: HydraLanding, patch: HydraPatch) async -> HydraLanding {
+        var landing = landing
+        guard let head = thread(id), let info = head.hydra,
+              let parentID = head.parentThreadID, let lead = thread(parentID), let checkout = hydraCheckout(of: lead) else { return landing }
+        let checkoutGit = Git(checkout)
+        // A rebase or a merge is half done in the checkout: a patch laid on top of that
+        // would be impossible to tell from the operation's own conflicts, and resolving
+        // either would lose the other. The work waits as a patch file instead.
+        guard !(await checkoutGit.hasOperationInProgress()) else {
+            landing.patchPath = keepHydraPatch(patch.text, of: info, headID: head.id)
+            landing.error = "a rebase or merge is underway in the checkout"
+            noteHydraLanding(landing, of: info, to: parentID)
+            return landing
+        }
+        do {
+            landing.conflicts = try await checkoutGit.apply(patch.text)
+            // Only a clean landing moves the base. With conflict markers in the checkout
+            // the work is not settled, so the head keeps its whole diff: steered on, it
+            // offers all of it again rather than leaving the unresolved part to nobody.
+            if landing.conflicts.isEmpty { updateHydraHead(id) { $0.baseTree = patch.after } }
+        } catch {
+            landing.patchPath = keepHydraPatch(patch.text, of: info, headID: head.id)
+            landing.error = error.localizedDescription
+        }
+        // The checkout has moved, so the next head captures it afresh rather than starting
+        // from the tree this patch just changed.
+        HydraTreeCache.invalidate(checkout)
+        // The lead's changes tab and diff panel now show the head's work too.
+        existingRuntime(for: parentID)?.noteDiffChanged()
+        noteHydraLanding(landing, of: info, to: parentID)
         return landing
+    }
+
+    /// Keeps a patch that could not be applied as a file beside the others, and hands back
+    /// where it went; nil when even that failed.
+    private func keepHydraPatch(_ text: String, of info: HydraHeadInfo, headID: UUID) -> String? {
+        let slug = info.persona.name.replacingOccurrences(of: " ", with: "-").lowercased()
+        let url = Storage.patchesDirectory.appendingPathComponent("\(slug)-\(headID.uuidString.lowercased().prefix(8)).patch")
+        guard (try? text.write(to: url, atomically: true, encoding: .utf8)) != nil else { return nil }
+        return url.path
+    }
+
+    /// A landing that did not go cleanly says so in the lead's timeline: conflict markers
+    /// and kept patches are otherwise only a few words in a head's row, and the lead is
+    /// told not to look at git status, so nobody would see them.
+    private func noteHydraLanding(_ landing: HydraLanding, of info: HydraHeadInfo, to parentID: UUID) {
+        guard let leadRuntime = existingRuntime(for: parentID) else { return }
+        let name = info.persona.name
+        if !landing.conflicts.isEmpty {
+            let files = landing.conflicts.map { "`\($0)`" }.joined(separator: ", ")
+            leadRuntime.appendHydraNote("""
+            \(name)'s work landed with conflict markers in \(landing.conflicts.count == 1 ? "1 file" : "\(landing.conflicts.count) files").
+            \(files)
+
+            The checkout had moved on where \(name) was working, so the merge was three-way. Resolve the markers before the work goes out; a merge refuses while they are there.
+            """)
+        }
+        if let path = landing.patchPath {
+            let files = landing.files.map { "`\($0.path)`" }.joined(separator: ", ")
+            leadRuntime.appendHydraNote("""
+            \(name)'s work did not land and was kept as a patch.
+            \(files)
+
+            \(landing.error.map { "Why it did not land: \($0).\n\n" } ?? "")Apply it with `git apply --3way \(path)` and settle what conflicts.
+            """)
+        }
     }
 
     // MARK: - Stopping and clearing
@@ -411,6 +573,14 @@ extension AppModel {
     func releaseHydraCopy(of id: UUID) {
         guard let head = thread(id), let info = head.hydra, info.hasOwnCopy, let copy = head.worktreePath,
               let project = project(head.projectID) else { return }
+        // A head back at work keeps its copy: `git worktree remove --force` on the folder
+        // its tools are writing into would take the work with it.
+        guard existingRuntime(for: id)?.isRunning != true else { return }
+        // Work that never landed lives only in the copy, and the head's report points the
+        // lead at it. It is kept as a patch before the folder goes.
+        let unlanded = info.status != .completed || info.landing == nil
+        let base = info.baseTree
+        let name = info.persona.name
         // The session's tools are rooted in the copy; the next turn starts a fresh one.
         existingRuntime(for: id)?.stopSession()
         updateThread(id) {
@@ -418,7 +588,28 @@ extension AppModel {
             $0.branch = nil
         }
         updateHydraHead(id) { $0.baseTree = nil }
-        Task { try? await Git(project.path).removeWorktree(at: copy) }
+        Task {
+            if unlanded, let base { await self.keepHydraCopyAsPatch(id, name: name, copy: copy, base: base) }
+            try? await Git(project.path).removeWorktree(at: copy)
+        }
+    }
+
+    /// Writes what a head changed in its copy but never landed to a patch file, and tells
+    /// the lead where it went. Nothing to keep where the copy holds no changes of its own.
+    private func keepHydraCopyAsPatch(_ id: UUID, name: String, copy: String, base: String) async {
+        let copyGit = Git(copy)
+        guard let after = try? await copyGit.captureTree(), after != base,
+              let patch = try? await copyGit.diff(from: base, to: after, binary: true), !patch.isEmpty else { return }
+        let slug = name.replacingOccurrences(of: " ", with: "-").lowercased()
+        let url = Storage.patchesDirectory.appendingPathComponent("\(slug)-\(id.uuidString.lowercased().prefix(8))-unlanded.patch")
+        guard (try? patch.write(to: url, atomically: true, encoding: .utf8)) != nil else { return }
+        guard let parentID = thread(id)?.parentThreadID, let leadRuntime = existingRuntime(for: parentID) else { return }
+        leadRuntime.appendHydraNote("""
+        \(name)'s unfinished work was kept as a patch before its copy was cleared.
+        \(url.path)
+
+        Nothing of it had landed in your checkout. Apply it with `git apply --3way \(url.path)` if you still want it.
+        """)
     }
 
     /// Heads whose copies are gone from disk (deleted by hand, say) work in the checkout

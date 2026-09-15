@@ -5,7 +5,7 @@ import SwiftUI
 /// in Settings it is always active in every chat: charged, a ring of the roster's colours
 /// turning around it and a soft glow breathing behind, so the chat reads as a team at
 /// work. The badge above it counts the heads at work; tapping the badge (or the mark)
-/// opens the floating panel, tapping again morphs it back into the button.
+/// opens the floating panel, tapping again dismisses it.
 struct HydraButton: View {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
@@ -13,12 +13,17 @@ struct HydraButton: View {
     let runtime: ThreadRuntime
 
     @State private var isHovering = false
+    /// With Hydra on and nothing out yet, the button says so rather than doing nothing.
+    @State private var isExplaining = false
 
     var body: some View {
         let isOn = model.hydraIsOn(thread)
-        let running = model.hydraHeads(of: thread.id).count { $0.hydra?.status == .running }
+        // This chat's own heads, read through its child cells: another lead's head
+        // starting or finishing never re-renders this button.
+        let heads = model.panelHeads(of: thread.id)
+        let running = heads.count { $0.hydra?.status == .running }
         Button {
-            togglePanel()
+            if heads.isEmpty { isExplaining = true } else { togglePanel() }
         } label: {
             ZStack {
                 if isOn {
@@ -44,53 +49,31 @@ struct HydraButton: View {
         }
         .buttonStyle(.plain)
         .chromeGlassCircle()
-        .onGeometryChange(for: CGRect.self, of: {
-            $0.frame(in: .named(GenieAnimator.coordinateSpace))
-        }) { runtime.hydraButtonFrameInWindow = $0 }
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
-        .help(help(isOn: isOn, running: running))
-        .accessibilityLabel(Text(panelHelp(running: running)))
+        .popover(isPresented: $isExplaining, arrowEdge: .bottom) {
+            HydraIdlePopover(thread: thread)
+        }
+        .help(help(isOn: isOn, running: running, hasHeads: !heads.isEmpty))
+        .accessibilityLabel(Text(panelHelp(running: running, hasHeads: !heads.isEmpty)))
         .accessibilityValue(Text(isOn ? "On" : "Off"))
     }
 
-    /// Opens the floating panel; open, morphs it back into this button. Either way one
-    /// surface does the moving, as a single shape: this circle growing into the panel's
-    /// rounded rectangle where the panel will sit, or that rectangle shrinking back into
-    /// this circle. The panel itself only crossfades with the surface at either end.
-    /// Heads keep working either way. Nothing to show yet, nothing happens.
+    /// Shows the floating panel; shown, hides it. The panel fades and scales in and out
+    /// in place while the chat slides to make room or take it back. Heads keep working
+    /// either way. With nothing out yet the popover explains instead (see the body).
     private func togglePanel() {
-        guard !model.hydraHeads(of: thread.id).isEmpty else { return }
-        let morphs = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        if runtime.isHydraPanelHidden {
-            // The panel launches its own arrival once it knows where it sits.
-            runtime.hydraPanelMorphs = morphs
-            withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden = false }
-        } else {
-            var flew = false
-            if morphs, let frame = runtime.hydraPanelFrameInWindow, let button = runtime.hydraButtonFrameInWindow {
-                let isDark = colorScheme == .dark
-                // The surface fades in over the panel's content first, then sets off.
-                flew = GenieAnimator.shared.morph(
-                    from: frame, radius: HydraPanel.cornerRadius,
-                    to: button, radius: button.height / 2,
-                    fadeIn: GenieAnimator.morphCrossfade, holdsFor: GenieAnimator.morphCrossfade
-                ) { radius in
-                    HydraPanelGhost(isDark: isDark, cornerRadius: radius)
-                }
-            }
-            runtime.hydraPanelMorphs = flew
-            withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden = true }
-        }
+        withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden.toggle() }
     }
 
-    private func panelHelp(running: Int) -> String {
+    private func panelHelp(running: Int, hasHeads: Bool) -> String {
+        guard hasHeads else { return "Hydra is on, no heads out yet" }
         if running == 0 { return "Hydra is on, show the panel" }
         return running == 1 ? "Hydra is on, 1 head working, show or hide the panel" : "Hydra is on, \(running) heads working, show or hide the panel"
     }
 
-    private func help(isOn: Bool, running: Int) -> String {
+    private func help(isOn: Bool, running: Int, hasHeads: Bool) -> String {
         guard isOn else { return "Hydra is on in Settings" }
         var parts = ["Hydra is on"]
         if let pair = model.hydraPair(for: thread) {
@@ -99,8 +82,35 @@ struct HydraButton: View {
             parts.append("Heads run on this chat's model")
         }
         if running > 0 { parts.append(running == 1 ? "1 head working" : "\(running) heads working") }
-        parts.append(runtime.isHydraPanelHidden ? "Show the panel" : "Hide the panel into the button")
+        guard hasHeads else {
+            parts.append("No heads out yet")
+            return parts.joined(separator: " · ")
+        }
+        parts.append(runtime.isHydraPanelHidden ? "Show the panel" : "Hide the panel")
         return parts.joined(separator: " · ")
+    }
+}
+
+/// What the Hydra mark says while the team is on but nothing is out: that it is on, which
+/// pair leads, and what sends heads out. The button has no panel to show yet, and a mark
+/// that swallowed the click said none of this.
+private struct HydraIdlePopover: View {
+    @Environment(AppModel.self) private var model
+    let thread: ChatThread
+
+    var body: some View {
+        PopoverMenu {
+            PopoverSectionHeader("Hydra is on")
+            if let pair = model.hydraPair(for: thread) {
+                PopoverNote(HydraPairSummary.title(pair, registry: model.providers))
+                PopoverNote(HydraPairSummary.workers(pair, registry: model.providers))
+            } else {
+                PopoverNote("Heads run on this chat's model and effort.")
+            }
+            PopoverDivider()
+            PopoverNote("No heads are out yet. Ask for something big enough to split up and this chat sends them out, each with a panel of its own.")
+        }
+        .frame(width: 290)
     }
 }
 

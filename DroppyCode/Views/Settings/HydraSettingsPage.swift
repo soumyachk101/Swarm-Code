@@ -7,6 +7,15 @@ struct HydraSettingsPage: View {
 
     var body: some View {
         @Bindable var settings = model.settings
+        // A row that is off says why it is off: dimming alone leaves the user guessing.
+        let hydraOff: String? = settings.hydraEnabled ? nil : "Switch Hydra on above first"
+        let queuedOff: String? = if !settings.hydraEnabled {
+            "Switch Hydra on above first"
+        } else if settings.hydraAlwaysHeads {
+            "Every message already goes to a head"
+        } else {
+            nil
+        }
         ChromeSection(title: "Hydra") {
             ChromeCard {
                 HStack(spacing: 14) {
@@ -27,31 +36,31 @@ struct HydraSettingsPage: View {
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 12)
                 ChromeRowDivider()
-                ChromeRow(title: "Queued follow-ups go to heads", detail: "With Hydra on, a prompt queued behind a running turn starts on a head right away, with a note on what the lead is doing") {
+                ChromeRow(title: "Queued follow-ups go to heads", detail: detail("With Hydra on, a prompt queued behind a running turn starts on a head right away, with a note on what the lead is doing", blockedBy: queuedOff)) {
                     SettingsSwitch(isOn: $settings.hydraQueueHeads)
                 }
                 .disabled(!settings.hydraEnabled || settings.hydraAlwaysHeads)
                 .opacity(settings.hydraEnabled && !settings.hydraAlwaysHeads ? 1 : 0.5)
                 ChromeRowDivider()
-                ChromeRow(title: "Every message goes to a head", detail: "With Hydra on, each message you send starts on a head of its own, sent or queued, whether the lead is busy or not; the lead only hears the heads' reports. Only when a pair caps the heads and every one is busy does a message go to the lead as usual.") {
+                ChromeRow(title: "Every message goes to a head", detail: detail("With Hydra on, each message you send starts on a head of its own, sent or queued, whether the lead is busy or not; the lead only hears the heads' reports. Only when a pair caps the heads and every one is busy does a message go to the lead as usual.", blockedBy: hydraOff)) {
                     SettingsSwitch(isOn: $settings.hydraAlwaysHeads)
                 }
                 .disabled(!settings.hydraEnabled)
                 .opacity(settings.hydraEnabled ? 1 : 0.5)
                 ChromeRowDivider()
-                ChromeRow(title: "Heads work in copies of their own", detail: "A head Droppy Code runs gets its own copy of the checkout, so no head sees another's half-done work; its changes land in the chat's checkout the moment it reports. Off, the heads work in the checkout itself.") {
+                ChromeRow(title: "Heads work in copies of their own", detail: detail("A head Droppy Code runs gets its own copy of the checkout, so no head sees another's half-done work; its changes land in the chat's checkout the moment it reports. Off, the heads work in the checkout itself.", blockedBy: hydraOff)) {
                     SettingsSwitch(isOn: $settings.hydraIsolateHeads)
                 }
                 .disabled(!settings.hydraEnabled)
                 .opacity(settings.hydraEnabled ? 1 : 0.5)
                 ChromeRowDivider()
-                ChromeRow(title: "Merge when the team is done", detail: "Once the lead has finished and every head is back, the files the team changed go out as a merge request on a branch of their own, land through glab, gh or tea, and the checkout is brought up to date, all without the checkout ever changing branch. Every finished job lands this way, with heads or without, and the lead is told never to commit or merge by hand. Off, the work stays in the checkout for you.") {
+                ChromeRow(title: "Merge when the team is done", detail: detail("Once the lead has finished and every head is back, the files the team changed go out as a merge request on a branch of their own, land through glab, gh or tea, and the checkout is brought up to date, all without the checkout ever changing branch. Every finished job lands this way, with heads or without, and the lead is told never to commit or merge by hand. Off, the work stays in the checkout for you.", blockedBy: hydraOff)) {
                     SettingsSwitch(isOn: $settings.hydraAutoMerge)
                 }
                 .disabled(!settings.hydraEnabled)
                 .opacity(settings.hydraEnabled ? 1 : 0.5)
                 ChromeRowDivider()
-                ChromeRow(title: "Clear finished heads automatically", detail: "A head that finishes leaves the panel on its own, for the sidebar under its lead, instead of waiting for “Clear finished heads”") {
+                ChromeRow(title: "Clear finished heads automatically", detail: detail("A head that finishes leaves the panel on its own, for the sidebar under its lead, instead of waiting for “Clear finished heads”", blockedBy: hydraOff)) {
                     SettingsSwitch(isOn: $settings.hydraAutoClearFinished)
                 }
                 .disabled(!settings.hydraEnabled)
@@ -77,7 +86,7 @@ struct HydraSettingsPage: View {
                     }
                 }
             }
-            Text("Each chat leads with the pair for its provider: the one whose lead model the chat runs, else one for any model.")
+            Text("Each chat leads with the pair for its provider: the one whose lead model the chat runs, else one for any model. Every pair also sits at the top of the composer's model picker, where a tap puts the chat in it with Hydra on.")
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.secondaryText)
                 .padding(.horizontal, 4)
@@ -104,6 +113,13 @@ struct HydraSettingsPage: View {
                 }
             }
         }
+    }
+
+    /// A row's detail, with the reason it is switched off after it. Nothing is added while
+    /// the row works.
+    private func detail(_ text: String, blockedBy reason: String?) -> String {
+        guard let reason else { return text }
+        return text.hasSuffix(".") ? "\(text) \(reason)." : "\(text). \(reason)."
     }
 }
 

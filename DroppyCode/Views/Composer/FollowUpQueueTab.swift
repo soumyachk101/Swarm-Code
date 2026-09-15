@@ -152,7 +152,7 @@ private struct FollowUpRow: View {
     let onDragEnded: () -> Void
 
     /// One preview panel for this row's thumbnails, so every photo opens.
-    @State private var preview = AttachmentPreviewCoordinator()
+    @State private var preview = AttachmentPreviewSlot()
     /// The editor popover for this row, anchored to its pencil button.
     @State private var editor = FollowUpEditCoordinator()
 
@@ -400,7 +400,7 @@ private struct FollowUpEditor: View {
 
     @State private var text: String
     @State private var attachments: [Attachment]
-    @State private var preview = AttachmentPreviewCoordinator()
+    @State private var preview = AttachmentPreviewSlot()
     @State private var showingFiles = false
     @FocusState private var editorFocused: Bool
 
@@ -446,9 +446,7 @@ private struct FollowUpEditor: View {
                             AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
                                 .overlay(alignment: .topTrailing) {
                                     Button {
-                                        StripLog.log.notice("sheet X tap id=\(attachment.id) name=\(attachment.name, privacy: .public) countBefore=\(attachments.count)")
                                         attachments.removeAll { $0.id == attachment.id }
-                                        StripLog.log.notice("sheet X removed countAfter=\(attachments.count)")
                                     } label: {
                                         Image(systemName: "xmark.circle.fill")
                                             .symbolRenderingMode(.palette)

@@ -61,6 +61,9 @@ final class AutoContinue {
     /// Limits hit by the running turn: the thread and the reset time, when the provider said.
     @ObservationIgnored private var noted: [UUID: Date?] = [:]
     @ObservationIgnored private var waits: [UUID: Task<Void, Never>] = [:]
+    /// Which wait each thread's countdown belongs to. A wait that ends after it was
+    /// replaced leaves its successor's countdown and task where they are.
+    @ObservationIgnored private var waitTokens: [UUID: UUID] = [:]
 
     init(app: AppModel) {
         self.app = app
@@ -81,8 +84,10 @@ final class AutoContinue {
               let thread = app.thread(threadID), !thread.isHydraHead else { return false }
         waits[threadID]?.cancel()
         let turnID = app.existingRuntime(for: threadID)?.turns.last?.id
+        let token = UUID()
+        waitTokens[threadID] = token
         waits[threadID] = Task { [weak self] in
-            await self?.wait(threadID, turnID: turnID, resetsAt: note, provider: thread.provider)
+            await self?.wait(threadID, turnID: turnID, resetsAt: note, provider: thread.provider, token: token)
         }
         return true
     }
@@ -91,19 +96,21 @@ final class AutoContinue {
     func cancel(_ threadID: UUID) {
         waits[threadID]?.cancel()
         waits[threadID] = nil
+        waitTokens[threadID] = nil
         resumesAt[threadID] = nil
     }
 
-    private func wait(_ threadID: UUID, turnID: UUID?, resetsAt: Date?, provider: ProviderKind) async {
+    private func wait(_ threadID: UUID, turnID: UUID?, resetsAt: Date?, provider: ProviderKind, token: UUID) async {
         guard let app else { return }
         var resetsAt = resetsAt
         // Without a time from the turn itself, the account's limits say when the spent window resets.
         if resetsAt == nil { resetsAt = await readResetTime(provider) }
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled, waitTokens[threadID] == token else { return }
         guard let resetsAt else {
             notice(threadID, .warning, "Usage limit reached, and the provider did not say when it resets. Send a message to continue.")
             notify(threadID, "Usage limit reached. Send a message to continue.")
             waits[threadID] = nil
+            waitTokens[threadID] = nil
             return
         }
         let resumeAt = max(resetsAt.addingTimeInterval(Self.margin), Date.now.addingTimeInterval(5))
@@ -112,9 +119,13 @@ final class AutoContinue {
         notice(threadID, .info, "Usage limit reached. Continuing automatically at \(when).")
         notify(threadID, "Usage limit reached. Continuing at \(when).")
         try? await Task.sleep(for: .seconds(resumeAt.timeIntervalSinceNow))
+        // A wait that was cancelled or replaced while it slept leaves the countdown and
+        // the task alone: they belong to whatever took its place.
+        guard !Task.isCancelled, waitTokens[threadID] == token else { return }
         resumesAt[threadID] = nil
         waits[threadID] = nil
-        guard !Task.isCancelled, app.settings.autoContinueAfterLimit,
+        waitTokens[threadID] = nil
+        guard app.settings.autoContinueAfterLimit,
               let runtime = app.existingRuntime(for: threadID), !runtime.isRunning,
               // The user has since picked the chat up themselves: nothing to continue.
               runtime.turns.last?.id == turnID else { return }

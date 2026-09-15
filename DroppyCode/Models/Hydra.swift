@@ -72,10 +72,12 @@ struct HydraLaunch: Hashable, Sendable {
 enum HydraBudget {
     /// Tools without a change before the head is asked to act.
     static let pacingTools = 24
-    static let wrapUpTools = 50
-    static let maxTools = 90
-    static let wrapUpSeconds: TimeInterval = 12 * 60
-    static let maxSeconds: TimeInterval = 20 * 60
+    /// The wrap-up and the hard stop are wide enough for a real piece of work: a head cut
+    /// off in the middle of a refactor costs the lead more than a slow head does.
+    static let wrapUpTools = 120
+    static let maxTools = 160
+    static let wrapUpSeconds: TimeInterval = 25 * 60
+    static let maxSeconds: TimeInterval = 35 * 60
     /// What a stopped head gets to write its report in.
     static let reportSeconds: TimeInterval = 3 * 60
 
@@ -229,7 +231,10 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
         task = container.value(.task, default: "")
         kind = container.value(.kind, default: .droppy)
         origin = container.value(.origin, default: .delegated)
-        status = container.value(.status, default: .completed)
+        // A status that cannot be read (a record from a newer build, say) reads as
+        // stopped, never as completed: a lead told a head is done when nobody knows what
+        // became of it would answer the user for a team that never came back.
+        status = container.value(.status, default: .stopped)
         summary = container.value(.summary, default: nil)
         activity = container.value(.activity, default: nil)
         toolCalls = container.value(.toolCalls, default: 0)
@@ -240,7 +245,9 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
         nativeTaskID = container.value(.nativeTaskID, default: nil)
         toolUseID = container.value(.toolUseID, default: nil)
         batchID = container.value(.batchID, default: nil)
-        canStop = container.value(.canStop, default: false)
+        // Droppy Code owns a Droppy-run head's turn, so it can always stop one; only a
+        // native head depends on the provider having said so.
+        canStop = container.value(.canStop, default: kind == .droppy)
         isBackground = container.value(.isBackground, default: true)
         baseTree = container.value(.baseTree, default: nil)
         landing = container.value(.landing, default: nil)
@@ -368,15 +375,16 @@ enum HydraPrompts {
         return """
         # Hydra
 
-        The user switched on Hydra for this chat: you lead a team of helper agents, called heads, that work in parallel in your checkout. \(howToSpawn)
+        The user switched on Hydra for this chat: you lead a team of helper agents, called heads, that work in parallel in your checkout. Switching Hydra on is the user asking you to use them, so it overrides any standing rule that says not to spawn agents unless asked. \(howToSpawn)
 
-        Delegate only when it pays off: a request that bundles several independent tasks, changes across several unrelated parts of the codebase, or research that needs many files or sources read. For a simple or single-focus request, do it yourself and send out nothing.
+        Delegate first, work second. Anything bigger than a single obvious change to a single file is a job for heads: audits, reviews, a feature that spans files, a refactor, "check everything", research across many files or sources, several tasks in one message. In your first reply, look at the code only long enough to write good briefs, a minute and a handful of files rather than ten, then send out scouts for the reading and workers for the changes, all in that same message. Never spend minutes reading before you delegate, and never do inline what heads could be doing in parallel. Only a truly single-focus request, one file and one obvious change, is yours to do alone.
 
         When you delegate:
         - \(howToWait)
         - Give each head one self-contained task with the exact files, symbols and acceptance criteria it needs. Heads share the checkout but not your context, so write the task as if to a capable colleague who has read nothing yet.
         - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself: never send out a head to verify, redo or finish another head's work.
         - Tell the user in one line which heads you sent out and what each one does.
+        - While they work, prepare the integration rather than starting on their tasks: how the pieces fit together, and the one check you will run at the end.
 
         When they report back:
         - The checkout changes under you while heads work, and the user may be editing too. Never use git status or git diff to check on a head, and never reconcile, revert, stash or move changes you did not make.
@@ -471,11 +479,11 @@ enum HydraPrompts {
 
     // MARK: - Droppy-run heads
 
-    /// How many times in a row a lead may send heads out for one request of the user's:
-    /// the first round, and one more for what failed or what the reports showed was
-    /// missing. Past that the lead finishes by itself, so no request can chain heads
-    /// that verify heads that verify heads.
-    static let maxDelegationRounds = 2
+    /// How many times in a row a lead may send heads out for one request of the user's: a
+    /// big job wants scouts to read, workers to change, and one round for what failed or
+    /// what the reports showed was missing. Past that the lead finishes by itself, so no
+    /// request can chain heads that verify heads that verify heads.
+    static let maxDelegationRounds = 3
 
     /// The lead's team in a line, for the front of its messages: it should never have to
     /// guess who is still out or what came back.
@@ -510,13 +518,13 @@ enum HydraPrompts {
             : "The heads work in your checkout"
         let team = maxHeads.map { "a team of up to \($0) helper agents" } ?? "a team of helper agents"
         return """
-        [Hydra is on] You lead \(team) ("heads"). For a simple or single-focus request, just do it yourself. If a request bundles several independent tasks or needs research across many files, delegate: finish your reply with one fenced block
+        [Hydra is on] You lead \(team) ("heads"). Delegate first, work second: anything bigger than a single obvious change to a single file is a job for heads. Audits, reviews, a feature across several files, a refactor, "check everything", research across many files, several tasks in one message: in your first reply, look at the code only long enough to write good briefs, a minute and a handful of files rather than ten, and then send the heads out, all of them in that one block. Never spend minutes reading before you delegate, and never do inline what heads could be doing in parallel. Only a truly single-focus request, one file and one obvious change, is yours to do alone. Finish your reply with one fenced block
 
         ```hydra
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, and give no two heads the same file. The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(autoMerges ? " " + autoMergeRule : "")
+        and stop there: do not wait, poll or verify anything after it. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does. The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(autoMerges ? " " + autoMergeRule : "")
         """
     }
 
@@ -527,11 +535,11 @@ enum HydraPrompts {
     }
 
     /// In front of a report message: the heads are back, and the lead's job is to
-    /// finish, not to send out more. `canDelegate` leaves one more round open for what
-    /// failed or turned out to be missing; otherwise the block is not offered at all.
+    /// finish, not to send out more. `canDelegate` says a round of heads is still left
+    /// for what failed or turned out to be missing; otherwise the block is not offered.
     static func fallbackReportNote(team: String?, canDelegate: Bool) -> String {
         let more = canDelegate
-            ? "If a head failed or the reports show a piece of the user's request still undone, you may send out heads once more for exactly that, with the same ```hydra block at the end of your reply; never for verifying, redoing or finishing what a head already did."
+            ? "If the reports open up the next stage of the work, or a head failed, or a piece of the user's request is still undone, send heads out again for exactly that, with the same ```hydra block at the end of your reply; never for verifying, redoing or finishing what a head already did."
             : "Send out no more heads for this request; whatever is left, do yourself."
         return "[Hydra] Your heads reported back below.\(team.map { " " + $0 } ?? "") \(more)\n\n---\n\n"
     }
@@ -551,7 +559,7 @@ enum HydraPrompts {
     static func heldBackMessage(count: Int) -> String {
         """
         Hydra held back \(count == 1 ? "a head" : "\(count) heads").
-        None of the heads you asked for went out: this request has had its \(maxDelegationRounds) rounds of heads already. Do the rest yourself now, without git status or git diff on the heads' work, and answer the user.
+        None of the heads you asked for went out: this request has had all \(maxDelegationRounds) of its rounds of heads already. Do the rest yourself now, without git status or git diff on the heads' work, and answer the user.
         """
     }
 
@@ -663,7 +671,7 @@ enum HydraPrompts {
             if let elapsed = report.elapsed, elapsed >= 1 { effort.append(duration(elapsed)) }
             if report.toolCalls > 0 { effort.append(report.toolCalls == 1 ? "1 tool" : "\(report.toolCalls) tools") }
             let took = effort.isEmpty ? "" : " (" + effort.joined(separator: ", ") + ")"
-            var lines = ["## \(persona.name) — \(report.task)\(outcome)\(took)"]
+            var lines = ["## \(persona.name): \(report.task)\(outcome)\(took)"]
             if let landing = landingLine(for: report) { lines.append(landing) }
             let body = report.text.trimmingCharacters(in: .whitespacesAndNewlines)
             lines.append(body.isEmpty ? "No report." : body)

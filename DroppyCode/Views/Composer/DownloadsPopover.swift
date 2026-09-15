@@ -96,9 +96,11 @@ struct DownloadsPopover: View {
     @State private var downloads = RecentDownloads()
 
     var body: some View {
-        // Hoog genoeg voor alle 15 recente downloads: zonder idealHeight klapt de
-        // ScrollView in tot een paar rijen en wordt maxHeight nooit bereikt.
-        PopoverMenu(maxHeight: 700, idealHeight: 670) {
+        // A ScrollView in a popover collapses to a couple of rows on its own, so the
+        // rows' own height is forced on it. It is measured rather than fixed: a fixed
+        // one left an empty Downloads folder, and the spinner before the folder is
+        // read, in a popover most of a screen tall.
+        PopoverMenu(maxHeight: 700, idealHeight: idealHeight) {
             PopoverSectionHeader("Recent downloads")
             if !downloads.isLoaded {
                 HStack {
@@ -128,14 +130,27 @@ struct DownloadsPopover: View {
                 chooseOther()
             }
         }
-        // Breed genoeg voor lange bestandsnamen en groottes: zonder vaste breedte
-        // krimpt de popover naar de min-breedte van PopoverMenu en breekt alles af.
+        // Wide enough for long file names and their sizes: without a fixed width the
+        // popover shrinks to PopoverMenu's minimum and truncates every row.
         .frame(width: 360)
         .task { await downloads.load() }
+    }
+
+    /// The rows' own height, so the popover is exactly as tall as it has downloads to
+    /// show. Nil while there is nothing to scroll: the spinner and the empty note size
+    /// themselves.
+    private var idealHeight: CGFloat? {
+        guard downloads.isLoaded, !downloads.items.isEmpty else { return nil }
+        let rows = CGFloat(downloads.items.count) * DownloadRow.height
+        // The section header, the divider and the two ways out below the rows.
+        return min(700, rows + 106)
     }
 }
 
 private struct DownloadRow: View {
+    /// One row's slot, so the popover can size itself to its rows.
+    static let height: CGFloat = 38
+
     let item: RecentDownload
     let thumbnail: CGImage?
     let pick: () -> Void
@@ -165,7 +180,7 @@ private struct DownloadRow: View {
             }
             .foregroundStyle(Chrome.primaryText)
             .padding(.horizontal, 8)
-            .frame(height: 38)
+            .frame(height: Self.height)
             .background {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(isHovering ? Chrome.overlay(0.1) : Color.clear)

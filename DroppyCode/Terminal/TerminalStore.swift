@@ -43,8 +43,11 @@ final class TerminalSession: Identifiable {
     func applyAppearance(isDark: Bool) {
         view.nativeBackgroundColor = isDark ? NSColor(white: 0.08, alpha: 1) : NSColor(white: 0.985, alpha: 1)
         view.nativeForegroundColor = isDark ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.12, alpha: 1)
-        view.caretColor = .controlAccentColor
-        view.selectedTextBackgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.3)
+        // The caret and the selection follow the theme's accent, like every other
+        // insertion point in the app.
+        let accent = Chrome.accentNSColor
+        view.caretColor = accent
+        view.selectedTextBackgroundColor = accent.withAlphaComponent(0.3)
     }
 
     func terminate() {
@@ -110,6 +113,26 @@ final class TerminalStore {
         if sessions(for: threadID).isEmpty {
             open(threadID: threadID, directory: directory)
         }
+    }
+
+    /// Replaces an exited shell with a fresh one in the same place in the row, keeping the
+    /// tab's name and its directory, so a shell that quit is one click from working again.
+    @discardableResult
+    func restart(_ session: TerminalSession) -> TerminalSession {
+        session.terminate()
+        let fresh = TerminalSession(
+            threadID: session.threadID,
+            directory: session.directory,
+            title: session.title,
+            command: nil
+        )
+        if let index = sessions[session.threadID]?.firstIndex(where: { $0.id == session.id }) {
+            sessions[session.threadID]?[index] = fresh
+        } else {
+            sessions[session.threadID, default: []].append(fresh)
+        }
+        selection[session.threadID] = fresh.id
+        return fresh
     }
 
     func close(_ session: TerminalSession) {

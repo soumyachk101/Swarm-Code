@@ -25,6 +25,10 @@ final class MetaSession: ProviderSession {
     private var isStopping = false
     private var approveAllRemaining = false
     private var roundTask: Task<StreamRound, Error>?
+    /// The tool running right now, in a task of its own so a stop can cancel it.
+    /// A shell command can hold the turn for two minutes, and nothing it produced
+    /// should reach the timeline or the history once the user has stopped the turn.
+    private var toolTask: Task<String, Never>?
     private var pendingApprovals: [String: CheckedContinuation<Bool, Never>] = [:]
 
     /// Runaway guard only. A turn used to stop after 12 rounds and report
@@ -180,7 +184,15 @@ final class MetaSession: ProviderSession {
                     } else {
                         toolsSinceChange += 1
                     }
-                    let output = await executeTool(tool)
+                    let running = Task { [weak self] in await self?.executeTool(tool) ?? "" }
+                    toolTask = running
+                    let output = await running.value
+                    toolTask = nil
+                    // Stopped while the tool ran: its output is not recorded and no further
+                    // tool starts. A process already launched runs to its own end or its
+                    // timeout, since Shell.run cannot be cancelled, but nothing it produced
+                    // is said or remembered.
+                    if running.isCancelled || interrupted { shouldContinue = false; break }
                     messages.append(["role": "tool", "tool_call_id": .string(tool.id), "content": .string(output)])
                     trimHistory()
                 }
@@ -221,6 +233,8 @@ final class MetaSession: ProviderSession {
         interrupted = true
         roundTask?.cancel()
         roundTask = nil
+        toolTask?.cancel()
+        toolTask = nil
         for (_, continuation) in pendingApprovals { continuation.resume(returning: false) }
         pendingApprovals.removeAll()
     }
@@ -253,6 +267,8 @@ final class MetaSession: ProviderSession {
         interrupted = true
         roundTask?.cancel()
         roundTask = nil
+        toolTask?.cancel()
+        toolTask = nil
         for (_, continuation) in pendingApprovals { continuation.resume(returning: false) }
         pendingApprovals.removeAll()
         sessionID = nil
@@ -321,7 +337,7 @@ final class MetaSession: ProviderSession {
         var accumulators: [Int: Accumulator] = [:]
         var usage: ContextUsage?
         var streamError: String?
-        var statusCode = 200
+        let statusCode = 200
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
@@ -423,7 +439,7 @@ final class MetaSession: ProviderSession {
             return "Meta is rate-limited right now. Wait a moment and try again."
         }
         if statusCode == 504 || lower.contains("gateway_timeout") {
-            return "Meta timed out before finishing. Try again — long generations already stream."
+            return "Meta timed out before finishing. Try again; long generations already stream."
         }
         if lower.contains("reasoning_effort") && lower.contains("none") {
             return "Muse Spark always reasons; \"none\" is rejected. Pick Minimal or higher in the model picker."
@@ -528,6 +544,7 @@ final class MetaSession: ProviderSession {
                 return declined(callID)
             }
             let text = await searchText(pattern: pattern, path: path, regex: args["regex"]?.bool ?? false)
+            guard !Task.isCancelled, !interrupted else { return "Stopped." }
             onEvent?(.toolUpdated(id: callID, update: ToolUpdate(output: summary(text, limit: 6_000), status: .completed)))
             return text
         case "write_file":
@@ -581,6 +598,8 @@ final class MetaSession: ProviderSession {
                 return declined(callID)
             }
             let result = await runCommand(command)
+            // The user stopped the turn while the command ran: say no more about it.
+            guard !Task.isCancelled, !interrupted else { return "Stopped." }
             var update = ToolUpdate()
             update.output = result.output.isEmpty ? "" : summary(result.output, limit: 12_000)
             update.exitCode = Int(result.exitCode)
@@ -806,7 +825,7 @@ final class MetaSession: ProviderSession {
         - Prefer the provided tools over asking the user to run things. Read files before editing them.
         - Keep file paths relative to the project root and never touch paths outside it.
         - Explain briefly what you did after tool calls; keep chat replies concise markdown.
-        - If a tool result shows the user declined an action, do not retry it — ask how to proceed.
+        - If a tool result shows the user declined an action, do not retry it: ask how to proceed.
         - Today's date is \(ISO8601DateFormatter().string(from: Date())).
         \(configuration.hydra.map { "\n" + HydraPrompts.fallbackPolicy(maxHeads: $0.maxHeads, isolated: $0.isolatesHeads, autoMerges: $0.autoMerges) } ?? "")
         """
