@@ -1,11 +1,14 @@
 import Foundation
 
 /// A pair worth having, written as a recipe: which model leads at what effort and
-/// which model builds at what effort. A recipe is resolved against the models this
-/// Mac's providers list, so the cookbook only offers pairs whose models are here.
+/// which model builds at what effort. A recipe names models, not providers: each
+/// side lists the providers that serve its model, and the first one set up on this
+/// Mac whose catalog has the model is the one the pair runs on.
 struct HydraPairRecipe: Identifiable, Sendable {
     struct Side: Sendable {
-        let provider: ProviderKind
+        /// Providers that serve this side's model, best first: the model's own house
+        /// ahead of aggregators, so a lead on Claude's own CLI wins over one relayed.
+        let providers: [ProviderKind]
         /// Names to look for in the provider's catalog, best first; a recipe whose
         /// names find nothing is not offered.
         let models: [String]
@@ -24,15 +27,15 @@ struct HydraPairRecipe: Identifiable, Sendable {
 enum HydraCookbook {
     /// The best pairs, strongest first: cross-model pairs, then one model at two efforts.
     static let recipes: [HydraPairRecipe] = [
-        HydraPairRecipe(id: "claude-fable-opus", title: "Fable 5.1 leads Opus 5", tagline: "The deepest lead over the strongest builders: Fable plans and checks, Opus heads build. Set the thinking effort of each side yourself.", lead: .init(provider: .claude, models: ["Fable"], effort: nil), heads: .init(provider: .claude, models: ["Opus"], effort: nil), maxHeads: nil),
-        HydraPairRecipe(id: "claude-opus-gemini-flash", title: "Opus 5 leads Gemini 3.8 Flash", tagline: "A careful lead and a wide, fast team: Opus writes the briefs, six Gemini Flash heads sprint through them.", lead: .init(provider: .claude, models: ["Opus"], effort: "high"), heads: .init(provider: .antigravity, models: ["3.8 Flash", "Flash"], effort: "medium"), maxHeads: 6),
-        HydraPairRecipe(id: "claude-opus-deepseek", title: "Opus 5 leads DeepSeek V4.1", tagline: "Opus keeps the plan tight; DeepSeek V4.1 Flash heads keep the bill small on the routine parts.", lead: .init(provider: .claude, models: ["Opus"], effort: "high"), heads: .init(provider: .deepseek, models: ["V4.1", "Flash"], effort: "high"), maxHeads: nil),
-        HydraPairRecipe(id: "claude-fable-composer", title: "Fable 5.1 leads Composer 2.5", tagline: "Fable thinks; Cursor's Composer heads type at the speed Composer is known for.", lead: .init(provider: .claude, models: ["Fable"], effort: "high"), heads: .init(provider: .cursor, models: ["Composer"], effort: nil), maxHeads: nil),
-        HydraPairRecipe(id: "commandcode-astra-spark", title: "Astra 6 leads Spark 1.3 Contributor", tagline: "GPT-6 Astra orchestrates at high; Muse Spark Contributor heads build at medium, all on one Command Code account.", lead: .init(provider: .commandcode, models: ["Astra"], effort: "high"), heads: .init(provider: .commandcode, models: ["Contributor"], effort: "medium"), maxHeads: nil),
-        HydraPairRecipe(id: "commandcode-astra-terra", title: "Astra 6 leads Terra 5.6", tagline: "OpenAI top to bottom: Astra plans and reviews, Terra does the work at medium.", lead: .init(provider: .commandcode, models: ["Astra"], effort: "high"), heads: .init(provider: .commandcode, models: ["Terra"], effort: "medium"), maxHeads: nil),
-        HydraPairRecipe(id: "commandcode-astra-astra", title: "Astra 6 high, Astra 6 medium", tagline: "One model, two efforts: Astra thinks hard about the plan and the review, and Astra heads build at a working effort.", lead: .init(provider: .commandcode, models: ["Astra"], effort: "high"), heads: .init(provider: .commandcode, models: ["Astra"], effort: "medium"), maxHeads: nil),
-        HydraPairRecipe(id: "claude-opus-opus", title: "Opus 5 max, Opus 5 medium", tagline: "Opus thinks as hard as it can where it counts; Opus heads at medium do the building.", lead: .init(provider: .claude, models: ["Opus"], effort: "max"), heads: .init(provider: .claude, models: ["Opus"], effort: "medium"), maxHeads: nil),
-        HydraPairRecipe(id: "claude-fable-fable", title: "Fable 5.1 high, Fable 5.1 medium", tagline: "For the hardest, longest jobs: every seat on the most capable model, the lead at high and the heads at medium.", lead: .init(provider: .claude, models: ["Fable"], effort: "high"), heads: .init(provider: .claude, models: ["Fable"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "claude-fable-opus", title: "Fable 5.1 leads Opus 5", tagline: "The deepest lead over the strongest builders: Fable plans and checks, Opus heads build. Set the thinking effort of each side yourself.", lead: .init(providers: [.claude, .commandcode], models: ["Fable"], effort: nil), heads: .init(providers: [.claude, .commandcode], models: ["Opus"], effort: nil), maxHeads: nil),
+        HydraPairRecipe(id: "claude-opus-gemini-flash", title: "Opus 5 leads Gemini 3.8 Flash", tagline: "A careful lead and a wide, fast team: Opus writes the briefs, six Gemini Flash heads sprint through them.", lead: .init(providers: [.claude, .commandcode], models: ["Opus"], effort: "high"), heads: .init(providers: [.antigravity, .commandcode], models: ["Gemini 3.8 Flash", "Gemini", "Flash"], effort: "medium"), maxHeads: 6),
+        HydraPairRecipe(id: "claude-opus-deepseek", title: "Opus 5 leads DeepSeek V4.1", tagline: "Opus keeps the plan tight; DeepSeek V4.1 Flash heads keep the bill small on the routine parts.", lead: .init(providers: [.claude, .commandcode], models: ["Opus"], effort: "high"), heads: .init(providers: [.deepseek, .commandcode], models: ["V4.1 Flash", "V4.1", "DeepSeek"], effort: "high"), maxHeads: nil),
+        HydraPairRecipe(id: "claude-fable-composer", title: "Fable 5.1 leads Composer 2.5", tagline: "Fable thinks; Cursor's Composer heads type at the speed Composer is known for.", lead: .init(providers: [.claude, .commandcode], models: ["Fable"], effort: "high"), heads: .init(providers: [.cursor], models: ["Composer"], effort: nil), maxHeads: nil),
+        HydraPairRecipe(id: "astra-spark", title: "Astra 6 leads Spark 1.3 Contributor", tagline: "GPT-6 Astra orchestrates at high; Muse Spark Contributor heads build at medium.", lead: .init(providers: [.codex, .commandcode], models: ["Astra"], effort: "high"), heads: .init(providers: [.meta, .commandcode], models: ["Contributor"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "astra-terra", title: "Astra 6 leads Terra 5.6", tagline: "OpenAI top to bottom: Astra plans and reviews, Terra does the work at medium.", lead: .init(providers: [.codex, .commandcode], models: ["Astra"], effort: "high"), heads: .init(providers: [.codex, .commandcode], models: ["Terra"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "astra-astra", title: "Astra 6 high, Astra 6 medium", tagline: "One model, two efforts: Astra thinks hard about the plan and the review, and Astra heads build at a working effort.", lead: .init(providers: [.codex, .commandcode], models: ["Astra"], effort: "high"), heads: .init(providers: [.codex, .commandcode], models: ["Astra"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "claude-opus-opus", title: "Opus 5 max, Opus 5 medium", tagline: "Opus thinks as hard as it can where it counts; Opus heads at medium do the building.", lead: .init(providers: [.claude, .commandcode], models: ["Opus"], effort: "max"), heads: .init(providers: [.claude, .commandcode], models: ["Opus"], effort: "medium"), maxHeads: nil),
+        HydraPairRecipe(id: "claude-fable-fable", title: "Fable 5.1 high, Fable 5.1 medium", tagline: "For the hardest, longest jobs: every seat on the most capable model, the lead at high and the heads at medium.", lead: .init(providers: [.claude, .commandcode], models: ["Fable"], effort: "high"), heads: .init(providers: [.claude, .commandcode], models: ["Fable"], effort: "medium"), maxHeads: nil),
     ]
 
     /// Whether a provider is set up and switched on here.
@@ -40,34 +43,44 @@ enum HydraCookbook {
         settings.isEnabled(provider) && registry.status(provider).isInstalled
     }
 
-    /// The provider a recipe still needs, if either of its two is not ready.
+    /// The provider a side runs on here: the first of its providers that is ready and
+    /// lists the model, or nil while none does.
+    @MainActor static func provider(for side: HydraPairRecipe.Side, registry: ProviderRegistry, settings: AppSettings) -> ProviderKind? {
+        side.providers.first { provider in
+            isReady(provider, registry: registry, settings: settings)
+                && (side.models.isEmpty || model(named: side.models, for: provider, registry: registry) != nil)
+        }
+    }
+
+    /// The provider a recipe still needs, if none of a side's providers is ready: the
+    /// side's first choice, as the one to set up.
     @MainActor static func missingProvider(for recipe: HydraPairRecipe, registry: ProviderRegistry, settings: AppSettings) -> ProviderKind? {
-        if !isReady(recipe.lead.provider, registry: registry, settings: settings) { return recipe.lead.provider }
-        if !isReady(recipe.heads.provider, registry: registry, settings: settings) { return recipe.heads.provider }
+        for side in [recipe.lead, recipe.heads] where !side.providers.contains(where: { isReady($0, registry: registry, settings: settings) }) {
+            return side.providers.first
+        }
         return nil
     }
 
-    /// Whether both providers are ready but a named model is not in its catalog.
+    /// Whether a side has a ready provider but none of them lists its model.
     @MainActor static func missingModel(for recipe: HydraPairRecipe, registry: ProviderRegistry, settings: AppSettings) -> Bool {
         guard missingProvider(for: recipe, registry: registry, settings: settings) == nil else { return false }
-        if !recipe.lead.models.isEmpty && model(named: recipe.lead.models, for: recipe.lead.provider, registry: registry) == nil { return true }
-        if !recipe.heads.models.isEmpty && model(named: recipe.heads.models, for: recipe.heads.provider, registry: registry) == nil { return true }
-        return false
+        return provider(for: recipe.lead, registry: registry, settings: settings) == nil
+            || provider(for: recipe.heads, registry: registry, settings: settings) == nil
     }
 
-    /// The pair a recipe makes on this Mac, or nil while a provider it needs is not
-    /// ready or a named model is not in its catalog.
+    /// The pair a recipe makes on this Mac, or nil while a side has no ready provider
+    /// that lists its model.
     @MainActor static func resolve(_ recipe: HydraPairRecipe, registry: ProviderRegistry, settings: AppSettings) -> HydraPair? {
-        guard missingProvider(for: recipe, registry: registry, settings: settings) == nil else { return nil }
-        guard !missingModel(for: recipe, registry: registry, settings: settings) else { return nil }
-        var pair = HydraPair(provider: recipe.lead.provider)
-        let lead = model(named: recipe.lead.models, for: recipe.lead.provider, registry: registry)
+        guard let leadProvider = provider(for: recipe.lead, registry: registry, settings: settings),
+              let headsProvider = provider(for: recipe.heads, registry: registry, settings: settings) else { return nil }
+        var pair = HydraPair(provider: leadProvider)
+        let lead = model(named: recipe.lead.models, for: leadProvider, registry: registry)
         pair.orchestratorModel = lead?.id
-        pair.orchestratorEffort = effort(recipe.lead.effort, for: lead ?? registry.defaultModel(for: recipe.lead.provider))
-        if recipe.heads.provider != recipe.lead.provider { pair.workerProvider = recipe.heads.provider }
-        let heads = model(named: recipe.heads.models, for: recipe.heads.provider, registry: registry)
+        pair.orchestratorEffort = effort(recipe.lead.effort, for: lead ?? registry.defaultModel(for: leadProvider))
+        if headsProvider != leadProvider { pair.workerProvider = headsProvider }
+        let heads = model(named: recipe.heads.models, for: headsProvider, registry: registry)
         pair.workerModel = heads?.id
-        pair.workerEffort = effort(recipe.heads.effort, for: heads ?? registry.defaultModel(for: recipe.heads.provider))
+        pair.workerEffort = effort(recipe.heads.effort, for: heads ?? registry.defaultModel(for: headsProvider))
         pair.maxHeads = recipe.maxHeads
         return pair
     }
