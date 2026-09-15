@@ -546,6 +546,8 @@ final class AppModel {
         }
         updateDockBadge()
         if sounds, settings.settleSound { SettleChime.play() }
+        // A settled thread stays settled across relaunch: write now, not on the debounce.
+        saveLibrary()
     }
 
     /// Brings a settled thread back among the others, on top: reopened counts as activity.
@@ -566,6 +568,7 @@ final class AppModel {
                 $0.settledAt = nil
             }
         }
+        saveLibrary()
     }
 
     /// Settles the thread with the sidebar's motion: the rows around it make room as it goes.
@@ -643,7 +646,7 @@ final class AppModel {
             }
         }
         updateDockBadge()
-        scheduleSave()
+        saveLibrary()
     }
 
     /// Deletes every archived thread at once: histories, terminals and checkpoints go with them.

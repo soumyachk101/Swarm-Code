@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
@@ -91,6 +92,89 @@ enum PreviewImages {
     }
 }
 
+/// Video/movie attachments, shown with the same photo container.
+enum PreviewVideos {
+    static let extensions: Set<String> = [
+        "mov", "mp4", "m4v", "mpg", "mpeg", "avi", "mkv", "webm",
+    ]
+
+    static func isVideoPath(_ path: String) -> Bool {
+        extensions.contains((path as NSString).pathExtension.lowercased())
+    }
+
+    /// One video frame off the main actor, so opening a movie never stalls drawing.
+    static func thumbnail(for path: String, pointSize: CGFloat) async -> CGImage? {
+        await Task.detached(priority: .userInitiated) {
+            let pixels = Int((pointSize * 2).rounded(.up))
+            let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: pixels, height: pixels)
+            var actualTime = CMTime.zero
+            // A beat in, so a black first frame does not become the thumbnail.
+            let time = CMTime(seconds: 0.5, preferredTimescale: 600)
+            return try? generator.copyCGImage(at: time, actualTime: &actualTime)
+        }.value
+    }
+}
+
+extension Attachment {
+    /// A movie by MIME type, or by extension when the MIME type is generic.
+    var isVideo: Bool {
+        if mimeType.hasPrefix("video/") { return true }
+        return PreviewVideos.isVideoPath(path)
+    }
+}
+
+/// The play badge drawn centered over a video thumbnail. It lives inside the
+/// same clipped container as the photo, so the container style is preserved.
+struct AttachmentPlayBadge: View {
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.black.opacity(0.45))
+                .frame(width: 30, height: 30)
+            Image(systemName: "play.fill")
+                .foregroundStyle(.white)
+                .font(.system(size: 13, weight: .semibold))
+                .offset(x: 1)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+/// A list thumbnail for a movie that matches the photo thumbnail in
+/// `AttachmentThumbnail`: same `size` box, same 12pt continuous rounding, same
+/// `.quaternary` fill, same `.fill` image content, plus a centered play badge.
+/// The badge sits inside the clipped stack, so the rounding is untouched.
+struct AttachmentVideoThumbnail: View {
+    let attachment: Attachment
+    var size: CGFloat = 56
+
+    @State private var image: CGImage?
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(.quaternary.opacity(0.6))
+            if let image {
+                Image(decorative: image, scale: 2)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .transition(.opacity)
+            }
+            AttachmentPlayBadge()
+        }
+        .frame(width: size, height: size)
+        .clipShape(.rect(cornerRadius: 12, style: .continuous))
+        .task(id: attachment.path) {
+            guard image == nil else { return }
+            guard let frame = await PreviewVideos.thumbnail(for: attachment.path, pointSize: size) else { return }
+            withAnimation(.easeOut(duration: 0.15)) { image = frame }
+        }
+    }
+}
+
 /// A large preview shown in a popover when an attachment thumbnail is clicked.
 ///
 /// The photo slot is sized up front (`imageSize`, see `imageDisplaySize`), so
@@ -102,6 +186,7 @@ struct AttachmentLargePreview: View {
     var imageSize: CGSize?
 
     @State private var image: CGImage?
+    @State private var videoFrame: CGImage?
     @State private var textPreview: String?
 
     /// The largest a photo is shown at inside the panel.
@@ -124,6 +209,24 @@ struct AttachmentLargePreview: View {
         return CGSize(width: floor(pixels.width * scale), height: floor(pixels.height * scale))
     }
 
+    /// The movie aspect-fitted into `imageBounds`, from the video track's
+    /// natural size (preferred transform applied). Header-only, like the photo
+    /// path above. Falls back to `imageBounds` when the track is unreadable.
+    /// The coordinator can pass this as `imageSize` so the panel is sized up
+    /// front exactly like a photo; the body uses it as the fallback too.
+    static func videoDisplaySize(for attachment: Attachment) -> CGSize {
+        let asset = AVURLAsset(url: attachment.url)
+        if let track = asset.tracks(withMediaType: .video).first {
+            var size = track.naturalSize.applying(track.preferredTransform)
+            size = CGSize(width: abs(size.width), height: abs(size.height))
+            if size.width > 0, size.height > 0 {
+                let scale = min(imageBounds.width / size.width, imageBounds.height / size.height)
+                return CGSize(width: floor(size.width * scale), height: floor(size.height * scale))
+            }
+        }
+        return imageBounds
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if attachment.isImage {
@@ -135,6 +238,25 @@ struct AttachmentLargePreview: View {
                             .aspectRatio(contentMode: .fit)
                             .clipShape(.rect(cornerRadius: 12, style: .continuous))
                             .transition(.opacity)
+                    } else {
+                        ProgressView()
+                    }
+                }
+                .frame(width: slot.width, height: slot.height)
+                .frame(maxWidth: .infinity, alignment: .center)
+            } else if attachment.isVideo {
+                // Same container as the photo above: pre-sized slot, 12pt
+                // continuous rounding, spinner until the frame lands. The play
+                // badge sits inside the clipped image so the rounding holds.
+                let slot = imageSize ?? Self.videoDisplaySize(for: attachment)
+                ZStack {
+                    if let videoFrame {
+                        Image(decorative: videoFrame, scale: 2)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .clipShape(.rect(cornerRadius: 12, style: .continuous))
+                            .transition(.opacity)
+                            .overlay { AttachmentPlayBadge() }
                     } else {
                         ProgressView()
                     }
@@ -195,6 +317,12 @@ struct AttachmentLargePreview: View {
             if attachment.isImage {
                 let loaded = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: Self.imageBounds.width)?.image
                 withAnimation(.easeOut(duration: 0.15)) { image = loaded }
+            } else if attachment.isVideo {
+                guard let frame = await PreviewVideos.thumbnail(for: attachment.path, pointSize: Self.imageBounds.width) else {
+                    textPreview = Self.textPreview(for: attachment)
+                    return
+                }
+                withAnimation(.easeOut(duration: 0.15)) { videoFrame = frame }
             } else {
                 textPreview = Self.textPreview(for: attachment)
             }

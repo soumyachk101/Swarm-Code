@@ -61,7 +61,13 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     }
 
     private func show(_ attachment: Attachment, over view: NSView?, edge: NSRectEdge) {
-        let imageSize = attachment.isImage ? AttachmentLargePreview.imageDisplaySize(for: attachment) : nil
+        let imageSize: CGSize? = if attachment.isImage {
+            AttachmentLargePreview.imageDisplaySize(for: attachment)
+        } else if attachment.isVideo {
+            AttachmentLargePreview.videoDisplaySize(for: attachment)
+        } else {
+            nil
+        }
         let content = AttachmentLargePreview(attachment: attachment, imageSize: imageSize)
         let size = Self.contentSize(for: attachment, imageSize: imageSize)
         currentID = attachment.id

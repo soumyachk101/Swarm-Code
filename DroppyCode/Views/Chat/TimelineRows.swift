@@ -292,19 +292,25 @@ struct HydraDelegationBlock: View {
 
     var body: some View {
         let tasks = Self.tasks(in: json)
-        HStack(alignment: .top, spacing: TimelineMetrics.iconSpacing) {
-            HydraMarkImage()
-                .foregroundStyle(Chrome.secondaryText)
-                .frame(width: 16, height: 16)
-                .accessibilityHidden(true)
-            if tasks.isEmpty {
-                Text("Writing the heads' briefs…")
-                    .font(.chat(.callout, zoom: zoom))
+        // The mark and the title share a line; the tasks run under both, flush with the
+        // mark, so the list reads from the card's own left edge.
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .center, spacing: TimelineMetrics.iconSpacing) {
+                HydraMarkImage()
                     .foregroundStyle(Chrome.secondaryText)
-            } else {
-                VStack(alignment: .leading, spacing: 3) {
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
+                if tasks.isEmpty {
+                    Text("Writing the heads' briefs…")
+                        .font(.chat(.callout, zoom: zoom))
+                        .foregroundStyle(Chrome.secondaryText)
+                } else {
                     Text(tasks.count == 1 ? "Sending out a head" : "Sending out \(tasks.count) heads")
                         .font(.chat(.callout, weight: .medium, zoom: zoom))
+                }
+            }
+            if !tasks.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
                     ForEach(Array(tasks.enumerated()), id: \.offset) { _, task in
                         Text(verbatim: "· " + task)
                             .font(.chat(.caption, zoom: zoom))
@@ -514,6 +520,8 @@ struct AttachmentThumbnail: View {
                 }
                 .frame(width: size, height: size)
                 .clipShape(.rect(cornerRadius: 12, style: .continuous))
+            } else if attachment.isVideo {
+                AttachmentVideoThumbnail(attachment: attachment, size: size)
             } else {
                 HStack(spacing: 6) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: attachment.path))

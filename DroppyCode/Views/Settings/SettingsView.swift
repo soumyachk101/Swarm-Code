@@ -322,6 +322,13 @@ private struct GeneralSettingsPage: View {
                 }
             }
         }
+        ChromeSection(title: "Projects") {
+            ChromeCard {
+                ChromeRow(title: "Projects", detail: "Activates every project at once unless explicitly overridden") {
+                    SettingsSwitch(isOn: $settings.projectsEnabled)
+                }
+            }
+        }
         ChromeSection(title: "Finished threads") {
             ChromeCard {
                 ChromeRow(title: "Done with a thread", detail: settings.threadFinishAction.detail) {

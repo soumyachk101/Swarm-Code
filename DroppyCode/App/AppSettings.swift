@@ -73,6 +73,7 @@ final class AppSettings {
         static let showReasoning = "showReasoning"
         static let chatZoom = "chatZoom"
         static let sidebarActivityView = "sidebarActivityView"
+        static let settledCollapsed = "settledSectionCollapsed"
         static let appTheme = "appTheme"
         static let backdropOpacity = "backdropOpacity"
         static let appearance = "appearance"
@@ -87,6 +88,8 @@ final class AppSettings {
         static let modelPreferences = "modelPreferences"
         static let recentDownloadsPicker = "recentDownloadsPicker"
         static let lastProjectID = "lastProjectID"
+        static let projectsEnabled = "projectsEnabled"
+        static let projectActivationOverrides = "projectActivationOverrides"
         static let deepseekAPIKey = "deepseekAPIKey"
         static let metaAPIKey = "metaAPIKey"
         static let hydraEnabled = "hydraEnabled"
@@ -160,6 +163,11 @@ final class AppSettings {
         didSet { defaults.set(sidebarActivityView, forKey: Key.sidebarActivityView) }
     }
 
+    /// The sidebar's Settled section is folded away. Expanded by default.
+    var settledCollapsed: Bool {
+        didSet { defaults.set(settledCollapsed, forKey: Key.settledCollapsed) }
+    }
+
     var theme: AppTheme {
         didSet {
             defaults.set(theme.rawValue, forKey: Key.appTheme)
@@ -201,6 +209,39 @@ final class AppSettings {
                 defaults.removeObject(forKey: Key.lastProjectID)
             }
         }
+    }
+
+    /// Whether projects are active app-wide. This is the default every project follows:
+    /// with it on, all projects are active without any per-project step; a project the
+    /// user explicitly switched off (or on) keeps its own choice.
+    var projectsEnabled: Bool {
+        didSet { defaults.set(projectsEnabled, forKey: Key.projectsEnabled) }
+    }
+
+    /// Per-project activation choices, by project id. Absent means the project follows
+    /// `projectsEnabled`; present means the user explicitly overrode it.
+    private(set) var projectActivationOverrides: [String: Bool] {
+        didSet { store(projectActivationOverrides, forKey: Key.projectActivationOverrides) }
+    }
+
+    /// Whether a project is active: its own explicit choice, else the global switch.
+    func isProjectActive(_ id: UUID) -> Bool {
+        projectActivationOverrides[id.uuidString] ?? projectsEnabled
+    }
+
+    /// Explicitly switch a project on or off, overriding the global switch.
+    func setProjectActive(_ active: Bool, for id: UUID) {
+        projectActivationOverrides[id.uuidString] = active
+    }
+
+    /// Forget a project's own choice, so it follows the global switch again.
+    func clearProjectActivationOverride(for id: UUID) {
+        projectActivationOverrides[id.uuidString] = nil
+    }
+
+    /// Whether a project has its own explicit choice instead of following the switch.
+    func hasProjectActivationOverride(for id: UUID) -> Bool {
+        projectActivationOverrides[id.uuidString] != nil
     }
 
     /// DeepSeek talks to its cloud API directly, so it needs an API key instead of a CLI login.
@@ -326,6 +367,7 @@ final class AppSettings {
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
         chatZoom = ChatZoom.clamped(defaults.object(forKey: Key.chatZoom) as? Int ?? ChatZoom.defaultIndex)
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
+        settledCollapsed = defaults.object(forKey: Key.settledCollapsed) as? Bool ?? false
         backdropOpacity = defaults.object(forKey: Key.backdropOpacity) as? Double ?? Self.defaultBackdropOpacity
         // The old System/Light/Dark choice maps straight onto the same themes.
         let initialTheme = AppTheme(rawValue: defaults.string(forKey: Key.appTheme) ?? "")
@@ -342,6 +384,8 @@ final class AppSettings {
         } else {
             lastProjectID = nil
         }
+        projectsEnabled = defaults.object(forKey: Key.projectsEnabled) as? Bool ?? true
+        projectActivationOverrides = Self.load([String: Bool].self, forKey: Key.projectActivationOverrides) ?? [:]
         deepseekAPIKeyInput = DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "")
         metaAPIKeyInput = MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "")
         // Earlier builds kept a plaintext copy of every key in the defaults; one the
