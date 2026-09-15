@@ -451,8 +451,10 @@ private struct FinishedHeadPill: View {
 /// A shimmer sweeping across the content on a loop: a narrow bright band sliding
 /// left to right, masked to the content itself. Still when reduced motion is on.
 private struct HydraShimmer: ViewModifier {
-    @State private var phase: CGFloat = 0
     @State private var width: CGFloat = 0
+
+    /// One pass of the band, from off the left edge to off the right.
+    private static let sweep: TimeInterval = 1.8
 
     func body(content: Content) -> some View {
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
@@ -464,26 +466,27 @@ private struct HydraShimmer: ViewModifier {
             content
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 .overlay {
-                    Color.clear
-                        .overlay(alignment: .leading) {
-                            LinearGradient(
-                                stops: [
-                                    .init(color: Chrome.primaryText.opacity(0), location: 0),
-                                    .init(color: Chrome.primaryText.opacity(0.9), location: 0.5),
-                                    .init(color: Chrome.primaryText.opacity(0), location: 1),
-                                ],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                            .frame(width: band)
-                            .offset(x: -band + phase * (width + band))
-                        }
-                        .mask { content }
-                        .allowsHitTesting(false)
-                }
-                .onAppear {
-                    withAnimation(.linear(duration: 1.8).repeatForever(autoreverses: false)) {
-                        phase = 1
+                    // Thirty frames a second is enough for a band this soft, a quarter of the
+                    // display's rate; and it holds still while the reader scrolls anywhere, so
+                    // the mask pass below never lands on a scrolled frame.
+                    TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: ScrollActivity.shared.isScrolling)) { context in
+                        let phase = CGFloat(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.sweep) / Self.sweep)
+                        Color.clear
+                            .overlay(alignment: .leading) {
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: Chrome.primaryText.opacity(0), location: 0),
+                                        .init(color: Chrome.primaryText.opacity(0.9), location: 0.5),
+                                        .init(color: Chrome.primaryText.opacity(0), location: 1),
+                                    ],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                                .frame(width: band)
+                                .offset(x: -band + phase * (width + band))
+                            }
+                            .mask { content }
+                            .allowsHitTesting(false)
                     }
                 }
         }
@@ -1797,55 +1800,86 @@ struct PlanCard: View {
     let entry: TimelineEntry
     let runtime: ThreadRuntime
 
+    @State private var isShowingPlan = false
+
     var body: some View {
         if case .plan(let plan) = entry.item.content {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    Image(systemName: "list.bullet.clipboard")
-                        .foregroundStyle(.tint)
-                    Text("Plan")
-                        .font(.chat(.headline, zoom: zoom))
-                    Spacer()
-                    switch plan.state {
-                    case .accepted:
-                        Label("Approved", systemImage: "checkmark")
-                            .font(.chat(.caption, zoom: zoom))
-                            .foregroundStyle(.secondary)
-                    case .dismissed:
-                        Text("Dismissed")
-                            .font(.chat(.caption, zoom: zoom))
-                            .foregroundStyle(.secondary)
-                    default:
-                        EmptyView()
+            ChatBadge(
+                title: Self.title(for: plan.state),
+                caption: Self.caption(for: plan.state),
+                showsChevron: !plan.markdown.isEmpty,
+                needsAttention: Self.needsAttention(for: plan.state),
+                isEnabled: !plan.markdown.isEmpty,
+                isPresented: $isShowingPlan,
+                glyph: {
+                    if plan.state == .drafting {
+                        WorkingSpinner(cellSize: 3).frame(width: 14)
+                    } else {
+                        Image(systemName: "list.bullet.clipboard").foregroundStyle(.tint)
                     }
-                    CopyButton(text: plan.markdown)
-                }
-                if plan.markdown.isEmpty {
-                    ProgressView()
-                        .controlSize(.small)
-                } else {
-                    MarkdownView(text: plan.markdown, isStreaming: plan.state == .drafting).equatable()
-                }
-                if plan.state == .proposed {
-                    // The controls stay where they are while the thread is busy, greyed
-                    // rather than gone: a plan whose buttons vanish mid-turn reads as a
-                    // plan that has already been dealt with.
-                    let isBusy = runtime.pendingPlanApproval != nil || runtime.isRunning
-                    HStack(spacing: 8) {
-                        Button("Implement plan") { runtime.implementPlan(entry.id) }
-                            .buttonStyle(.glassProminent)
-                        Button("Dismiss") { runtime.dismissPlan(entry.id) }
-                            .buttonStyle(.glass)
+                },
+                detail: {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Plan").font(.chat(.headline, zoom: zoom))
+                            Spacer()
+                            CopyButton(text: plan.markdown)
+                        }
+                        ScrollView {
+                            MarkdownView(text: plan.markdown, isStreaming: plan.state == .drafting).equatable()
+                                .padding(.horizontal, 16)
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                        // An ideal height as well as the cap: a popover sizes to its content's
+                        // ideal, and a scroll view offered nothing collapses (see HydraReportPopover).
+                        .frame(idealHeight: 320, maxHeight: 420)
+                        if plan.state == .proposed {
+                            // The controls stay where they are while the thread is busy, greyed
+                            // rather than gone: a plan whose buttons vanish mid-turn reads as a
+                            // plan that has already been dealt with.
+                            let isBusy = runtime.pendingPlanApproval != nil || runtime.isRunning
+                            HStack(spacing: 8) {
+                                Button("Implement plan") {
+                                    isShowingPlan = false
+                                    runtime.implementPlan(entry.id)
+                                }
+                                .buttonStyle(.glassProminent)
+                                Button("Dismiss") {
+                                    isShowingPlan = false
+                                    runtime.dismissPlan(entry.id)
+                                }
+                                .buttonStyle(.glass)
+                            }
+                            .disabled(isBusy)
+                            .help(isBusy ? "Wait for the current turn to finish" : "")
+                        }
                     }
-                    .disabled(isBusy)
-                    .help(isBusy ? "Wait for the current turn to finish" : "")
-                    .padding(.top, 2)
+                    .padding(16)
+                    .frame(width: 520)
                 }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.tint.opacity(0.06), in: .rect(cornerRadius: 18, style: .continuous))
+            )
         }
+    }
+
+    private static func title(for state: ProposedPlan.State) -> String {
+        switch state {
+        case .drafting: "Writing a plan"
+        case .proposed: "Plan ready"
+        case .accepted, .dismissed: "Plan"
+        }
+    }
+
+    private static func caption(for state: ProposedPlan.State) -> String? {
+        switch state {
+        case .drafting: nil
+        case .proposed: "Implement or dismiss"
+        case .accepted: "Approved"
+        case .dismissed: "Dismissed"
+        }
+    }
+
+    private static func needsAttention(for state: ProposedPlan.State) -> Bool {
+        state == .proposed
     }
 }
 
@@ -1982,7 +2016,6 @@ struct TurnFinishedBlock: View {
     let canUndo: Bool
 
     @State private var isExpanded = false
-    @State private var isConfirmingUndo = false
     /// What the body last derived from the turn, keyed on its entries' identities and the
     /// fold: an evaluation with the same key reads it back instead of walking the turn
     /// again. Written after the body (see the `onChange` below), never in it.
@@ -2169,20 +2202,13 @@ struct TurnFinishedBlock: View {
                     summary: summary,
                     files: derived.fileStats,
                     canUndo: canUndo,
-                    onUndo: { isConfirmingUndo = true },
+                    onRevert: { Task { await runtime.revert(to: turnID, restoreFiles: true) } },
                     // On the button itself, so the changes open where the reader
                     // clicked, whatever is above the chat box.
                     onReview: { [weak reviewRuntime] button in reviewRuntime?.showDiff(on: button, turn: turnID) }
                 )
             }
             }
-        }
-        .confirmationDialog("Undo this turn?", isPresented: $isConfirmingUndo) {
-            Button("Revert files and conversation", role: .destructive) {
-                Task { await runtime.revert(to: turnID, restoreFiles: true) }
-            }
-        } message: {
-            Text("Files go back to how they were before this turn, and the turn leaves the conversation.")
         }
         // The derivation the body just made, kept for the evaluations until the key moves.
         .onChange(of: key, initial: true) { _, _ in
@@ -2196,7 +2222,8 @@ private struct TurnFileCard: View {
     let summary: TurnSummary
     let files: [TurnFinishedBlock.FileStat]
     let canUndo: Bool
-    let onUndo: () -> Void
+    /// Runs the revert; the card confirms first.
+    let onRevert: () -> Void
     /// Receives the Review button's own view, for the popover to open on.
     let onReview: (NSView) -> Void
     /// The Review button's own view, captured once the pointer has been on it: a folded
@@ -2204,88 +2231,130 @@ private struct TurnFileCard: View {
     /// has to hover the button first.
     @State private var reviewAnchor = WeakView()
     @State private var needsReviewAnchor = false
+    @State private var isShowingFiles = false
+    @State private var isConfirmingRevert = false
 
     var body: some View {
         // The anchor box alone: the hover responder and the anchor view must not keep
         // this card alive after it scrolls away.
         let reviewBox = reviewAnchor
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(.primary.opacity(0.08))
-                    .frame(width: 36, height: 36)
-                    .overlay {
-                        Image(systemName: "plus.app")
-                            .font(.system(size: 15 * zoom))
-                            .foregroundStyle(.secondary)
-                    }
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(summary.filesChanged == 1 ? "Edited 1 file" : "Edited \(summary.filesChanged) files")
+        let title = summary.filesChanged == 1 ? "Edited 1 file" : "Edited \(summary.filesChanged) files"
+        HStack(spacing: 8) {
+            Button { isShowingFiles.toggle() } label: {
+                HStack(spacing: 8) {
+                    Image("badge-edit")
+                        .renderingMode(.template)
+                        .resizable()
+                        .frame(width: 18, height: 18)
+                        .foregroundStyle(Chrome.secondaryText)
+                    Text(verbatim: title)
                         .font(.chat(.callout, weight: .medium, zoom: zoom))
+                        .foregroundStyle(Chrome.primaryText.opacity(0.9))
                     DiffStatLabel(additions: summary.additions, deletions: summary.deletions)
-                }
-                Spacer(minLength: 8)
-                if canUndo {
-                    Button(action: onUndo) {
-                        HStack(spacing: 4) {
-                            Text("Undo")
-                            Image(systemName: "arrow.uturn.backward")
-                        }
-                        .font(.chat(.callout, zoom: zoom))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 4)
-                        .contentShape(.rect)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Revert this turn's files and conversation")
-                }
-                Button("Review") { [weak reviewBox] in
-                    guard let view = reviewBox?.value else { return }
-                    onReview(view)
-                }
-                .buttonStyle(.glass)
-                .onHover { [needed = $needsReviewAnchor] hovering in
-                    if hovering, !needed.wrappedValue { needed.wrappedValue = true }
-                }
-                .background {
-                    if needsReviewAnchor {
-                        AttachmentAnchorCapture { [weak reviewBox] in reviewBox?.value = $0 }
+                    if !files.isEmpty {
+                        Image(systemName: "chevron.right")
+                            .font(.chat(.caption2, weight: .semibold, zoom: zoom))
+                            .foregroundStyle(.tertiary)
                     }
                 }
-                .help("Show this turn's changes")
+                .contentShape(.rect)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-
-            if !files.isEmpty {
-                Divider()
-                    .opacity(0.5)
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(files.prefix(12), id: \.path) { file in
-                        HStack(spacing: 8) {
-                            Text(verbatim: file.path)
-                                .font(.chat(.callout, zoom: zoom))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer(minLength: 8)
-                            DiffStatLabel(additions: file.additions, deletions: file.deletions)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                    }
-                    if files.count > 12 {
-                        Text(files.count == 13 ? "and 1 more file" : "and \(files.count - 12) more files")
-                            .font(.chat(.callout, zoom: zoom))
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                    }
+            .buttonStyle(.plain)
+            .disabled(files.isEmpty)
+            .help("Show the files this turn changed")
+            .popover(isPresented: $isShowingFiles, arrowEdge: .bottom) {
+                filesPopover.presentedChrome()
+            }
+            Spacer(minLength: 8)
+            if canUndo {
+                Button { isConfirmingRevert = true } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(Chrome.iconFont)
+                        .foregroundStyle(.white)
+                        .frame(width: 28, height: 28)
+                        .background(AnyShapeStyle(.tint), in: .circle)
                 }
-                .padding(.vertical, 4)
+                .buttonStyle(.plain)
+                .focusable(false)
+                .help("Revert this turn's files and conversation")
+                .popover(isPresented: $isConfirmingRevert, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Revert up to this point?")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("Files go back to how they were before this turn, and the turn leaves the conversation.")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 8) {
+                            Spacer()
+                            Button("Cancel") { isConfirmingRevert = false }
+                                .buttonStyle(.glass)
+                            Button("Revert") { isConfirmingRevert = false; onRevert() }
+                                .buttonStyle(.glassProminent)
+                                .keyboardShortcut(.defaultAction)
+                        }
+                        .controlSize(.small)
+                    }
+                    .padding(16)
+                    .frame(width: 300)
+                    .presentedChrome()
+                }
+            }
+            Button { [weak reviewBox] in
+                guard let view = reviewBox?.value else { return }
+                onReview(view)
+            } label: {
+                Image(systemName: "plusminus")
+                    .font(Chrome.iconFont)
+                    .foregroundStyle(.white)
+                    .frame(width: 28, height: 28)
+                    .background(AnyShapeStyle(.tint), in: .circle)
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .onHover { [needed = $needsReviewAnchor] hovering in
+                if hovering, !needed.wrappedValue { needed.wrappedValue = true }
+            }
+            .background {
+                if needsReviewAnchor {
+                    AttachmentAnchorCapture { [weak reviewBox] in reviewBox?.value = $0 }
+                }
+            }
+            .help("Show this turn's changes")
+        }
+        .padding(.leading, 12)
+        .padding(.trailing, 10)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.32), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, 96)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(title))
+    }
+
+    private var filesPopover: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(files.prefix(12), id: \.path) { file in
+                HStack(spacing: 8) {
+                    Text(verbatim: file.path)
+                        .font(.chat(.callout, zoom: zoom))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 8)
+                    DiffStatLabel(additions: file.additions, deletions: file.deletions)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+            }
+            if files.count > 12 {
+                Text(files.count == 13 ? "and 1 more file" : "and \(files.count - 12) more files")
+                    .font(.chat(.callout, zoom: zoom))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
             }
         }
-        .background(.quaternary.opacity(0.32), in: .rect(cornerRadius: 14, style: .continuous))
+        .padding(.vertical, 6)
+        .frame(width: 420)
     }
 }

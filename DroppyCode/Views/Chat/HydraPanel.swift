@@ -92,6 +92,9 @@ struct HydraPanel: View {
             strip(selected: selected)
         }
         .frame(width: size.width, height: size.height)
+        // Everything inside draws flat over the panel's glass (see `isOnGlassPanel`):
+        // the panel is one glass pass, its controls are not a second one each.
+        .environment(\.isOnGlassPanel, true)
         // The frame follows the pane every frame of a live resize: the strip's
         // swaps settle after, never during.
         .animation(nil, value: liveResize.isActive)
@@ -410,7 +413,10 @@ private struct HydraHeadTranscript: View {
                     projectName: projectName,
                     workingDirectory: workingDirectory,
                     supportsRewind: false,
-                    columnHeight: height
+                    columnHeight: height,
+                    // A panel's transcript needs no rail, and the rail's hover tracking
+                    // and geometry reader are per-frame work under the pointer.
+                    showsMinimap: false
                 )
                 .equatable()
             } else {
@@ -442,6 +448,7 @@ private struct HydraHeadTranscript: View {
 /// What a native head is up to, in place of a chat box: its progress note or last tool,
 /// its tool count and its time.
 private struct HydraHeadFooter: View {
+    @Environment(\.colorScheme) private var colorScheme
     let info: HydraHeadInfo
 
     var body: some View {
@@ -467,7 +474,8 @@ private struct HydraHeadFooter: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .glassEffect(.regular, in: .rect(cornerRadius: 16, style: .continuous))
+        // Flat on the panel's glass: a second glass here sampled the same pixels twice.
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Chrome.panelControlFill(isDark: colorScheme == .dark)))
         .padding(.horizontal, 20)
         .padding(.bottom, 14)
     }

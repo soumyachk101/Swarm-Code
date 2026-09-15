@@ -47,14 +47,6 @@ struct ThreadTimeline: View, Equatable {
     /// without end. `@State` applies the write first and re-renders after.
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var viewportHeight: CGFloat = 0
-    /// True while the reader drags or flicks the timeline. Rows neither hover nor hit-test
-    /// then: with the pointer resting over content that slides under it, SwiftUI otherwise
-    /// re-hit-tests every row's hover region each frame and the rows flip their hover state
-    /// (and animate it) as they pass — a fifth of the main thread's scroll-time work.
-    @State private var isReaderScrolling = false
-    /// Watches for the scroll to settle once movement has been seen, so the freeze lifts
-    /// 150ms after the last frame that moved, for wheel and trackpad alike.
-    @State private var settleWatch: Task<Void, Never>?
     /// Which edge stays put when the content's height changes. At the conversation's end
     /// it is the bottom, so streaming text and the working line grow in place. Once the
     /// reader has scrolled up it is the top: a row expanded mid-thread then pushes what
@@ -293,9 +285,15 @@ struct ThreadTimeline: View, Equatable {
                             .onDisappear { tracking.setVisible(block.id, false) }
                             .transition(Self.transition(for: block))
                     }
+                    // The agent's questions end the conversation as badges until they are answered.
+                    ForEach(runtime.questions) { request in
+                        QuestionBadgeRow(request: request, runtime: runtime)
+                            .id("question-" + request.id)
+                            .transition(.softAppear)
+                    }
                 }
                 .id(stackGeneration)
-                .allowsHitTesting(!isReaderScrolling)
+                .modifier(ScrollFreeze(tracking: tracking))
                 // The end of the conversation. While it is on screen the reader is at the latest message.
                 Color.clear
                     .frame(height: 1)
@@ -321,6 +319,11 @@ struct ThreadTimeline: View, Equatable {
             }
         }
         .id(runtime.threadID)
+        // Torn down mid-scroll (a thread switch, a panel closed): the freeze lifts with it,
+        // so the app never goes on hearing this timeline as scrolling.
+        .onDisappear { tracking.endActivity() }
+        // The thread opens at its end and stays there while its rows measure in.
+        .onAppear { tracking.holdEnd(for: 1.5) }
         .scrollIndicators(.never)
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom, for: .initialOffset)
@@ -360,8 +363,11 @@ struct ThreadTimeline: View, Equatable {
             // The offset moving while nothing else did is the reader scrolling: a drag, a flick,
             // or wheel ticks, which report no phase at all. (A snap to the end below moves it
             // too, and lands pinned, which is right.)
+            // Not while the thread is still arriving (see `holdEnd`): the offset moving
+            // then is the layout settling, and reading it as a scroll unpinned the end and
+            // left a thread opened at its bottom sitting some way up it.
             let scrolled = tracking.isUserScrolling
-                || (!nudging && new.offset != old.offset && new.contentHeight == old.contentHeight
+                || (!nudging && !tracking.isArriving && new.offset != old.offset && new.contentHeight == old.contentHeight
                     && new.containerHeight == old.containerHeight && !tracking.isCoasting)
             let atRest = !tracking.isUserScrolling && !tracking.isCoasting
             if atRest, !scrolled {
@@ -389,7 +395,9 @@ struct ThreadTimeline: View, Equatable {
                 // The reader's own scrolling tells the stack where the viewport is.
                 tracking.resetDrift()
             }
-            if new.distanceFromBottom < -1, atRest {
+            if new.distanceFromBottom < -1, atRest, new.contentHeight != old.contentHeight || new.containerHeight != old.containerHeight {
+                // Only when the content or the container changed shape in this very frame: a
+                // wheel bounce past the end moves only the offset and plays out on its own.
                 // Past the end of the conversation, showing nothing: the content shrank under
                 // the offset. A finished turn folds its whole transcript into one block, and
                 // with the reader's place anchored at the top that left the viewport hanging
@@ -426,6 +434,8 @@ struct ThreadTimeline: View, Equatable {
             // the reader is already looking at the end.
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
+            // The window lands above the viewport over the next frames: still arriving.
+            tracking.holdEnd(for: 1.0)
             loadEarlier(to: TimelineWindow.initial)
             // A thread that opened on nothing (its first rows never laid out where the
             // bottom anchor put the viewport) is caught a beat from now.
@@ -433,6 +443,10 @@ struct ThreadTimeline: View, Equatable {
             await warmMarkdown()
         }
         .onChange(of: tracking.checkRequest) {
+            // A coast whose end phase was never delivered is cleared by the phase watch,
+            // which asks for this check: the app hears that scroll end here (a no-op when
+            // nothing changed).
+            tracking.reportActivity(timeline: runtime.threadID)
             repairLayout()
         }
         .onChange(of: FrontMonitor.shared.revision) {
@@ -490,18 +504,22 @@ struct ThreadTimeline: View, Equatable {
 
     /// The content just moved under the pointer. Freezes hover and hit-testing on the
     /// rows if they are not already, and (re)arms the watch that lifts the freeze once
-    /// no frame has moved for 150ms. The timestamp lives on the tracking object, so
-    /// noting a frame's movement writes no view state.
+    /// no frame has moved for 150ms. The flag, the timestamp and the watch all live on
+    /// the tracking object, so noting a frame's movement writes no view state.
     private func noteScrollMovement() {
         tracking.lastMovementAt = CACurrentMediaTime()
-        guard !isReaderScrolling else { return }
-        isReaderScrolling = true
-        settleWatch?.cancel()
-        settleWatch = Task { @MainActor in
+        guard !tracking.isReaderScrolling else { return }
+        tracking.isReaderScrolling = true
+        tracking.reportActivity(timeline: runtime.threadID)
+        tracking.settleWatch?.cancel()
+        let tracking = tracking
+        let timeline = runtime.threadID
+        tracking.settleWatch = Task { @MainActor in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(80))
                 if CACurrentMediaTime() - tracking.lastMovementAt >= 0.15 {
-                    isReaderScrolling = false
+                    if tracking.isReaderScrolling { tracking.isReaderScrolling = false }
+                    tracking.reportActivity(timeline: timeline)
                     return
                 }
             }
@@ -509,9 +527,10 @@ struct ThreadTimeline: View, Equatable {
     }
 
     private func liftScrollFreeze() {
-        settleWatch?.cancel()
-        settleWatch = nil
-        if isReaderScrolling { isReaderScrolling = false }
+        tracking.settleWatch?.cancel()
+        tracking.settleWatch = nil
+        if tracking.isReaderScrolling { tracking.isReaderScrolling = false }
+        tracking.reportActivity(timeline: runtime.threadID)
     }
 
     /// Puts the viewport back on the conversation when a layout pass has left it showing
@@ -622,8 +641,20 @@ struct ThreadTimeline: View, Equatable {
 @MainActor
 @Observable
 final class TimelineScrollTracking {
-    /// Whether new text keeps the timeline at the conversation's end.
-    var isPinnedToBottom = true
+    /// Whether new text keeps the timeline at the conversation's end. No view body reads
+    /// it, only the scroll closures, so a pin flip must never be able to re-render the
+    /// timeline.
+    @ObservationIgnored var isPinnedToBottom = true
+    /// True while the reader drags or flicks the timeline. Rows neither hover nor hit-test
+    /// then: with the pointer resting over content that slides under it, SwiftUI otherwise
+    /// re-hit-tests every row's hover region each frame and the rows flip their hover state
+    /// (and animate it) as they pass — a fifth of the main thread's scroll-time work.
+    /// Observed on purpose: only the leaf modifier that applies the freeze (`ScrollFreeze`)
+    /// reads it, so its flips re-render that node and never the timeline's body.
+    var isReaderScrolling = false
+    /// Watches for the scroll to settle once movement has been seen, so the freeze lifts
+    /// 150ms after the last frame that moved, for wheel and trackpad alike.
+    @ObservationIgnored var settleWatch: Task<Void, Never>?
     /// True while the reader drags or flicks the timeline, as opposed to it following new text.
     @ObservationIgnored var isUserScrolling = false
     /// When the content last moved, for lifting the scroll freeze.
@@ -713,11 +744,52 @@ final class TimelineScrollTracking {
         if activeBlockID != nil { activeBlockID = nil }
     }
 
+    /// Until when the timeline is still arriving: a thread just opened, or history just
+    /// landed above the viewport. The offset moves on its own in those frames (the initial
+    /// anchor, rows measuring in, the window growing), and none of it is the reader
+    /// scrolling: the end stays pinned until the layout has settled or a real scroll
+    /// phase says otherwise.
+    @ObservationIgnored private var arrivingUntil: CFTimeInterval = 0
+
+    var isArriving: Bool { CACurrentMediaTime() < arrivingUntil }
+
+    func holdEnd(for seconds: TimeInterval) {
+        arrivingUntil = max(arrivingUntil, CACurrentMediaTime() + seconds)
+    }
+
     func noteGeometry(offset: CGFloat, distanceFromBottom: CGFloat, travel: CGFloat) {
         if offset != self.offset { lastOffsetChangeAt = CACurrentMediaTime() }
         self.offset = offset
         self.distanceFromBottom = distanceFromBottom
         self.travel = travel
+    }
+
+    /// The timeline this object last reported under, so the report can be withdrawn when
+    /// the timeline goes: by then the column's `runtime.threadID` may already name the
+    /// next thread.
+    @ObservationIgnored private var reportedTimeline: UUID?
+
+    /// Tells the app whether this timeline is moving under its reader: the drag or the
+    /// wheel (`isReaderScrolling`) and the coast after a flick (`isCoasting`). Motion
+    /// elsewhere pauses on it (see `ScrollActivity`).
+    func reportActivity(timeline: UUID) {
+        if let reported = reportedTimeline, reported != timeline {
+            ScrollActivity.shared.setScrolling(false, timeline: reported)
+        }
+        reportedTimeline = timeline
+        ScrollActivity.shared.setScrolling(isReaderScrolling || isCoasting, timeline: timeline)
+    }
+
+    /// The timeline is gone (a thread switch, a panel closed): whatever it reported is
+    /// withdrawn, mid-drag or mid-coast alike, so the app never goes on hearing it scroll.
+    func endActivity() {
+        settleWatch?.cancel()
+        settleWatch = nil
+        if isReaderScrolling { isReaderScrolling = false }
+        isCoasting = false
+        if let reported = reportedTimeline {
+            ScrollActivity.shared.setScrolling(false, timeline: reported)
+        }
     }
 
     /// A phase's end is not always delivered: content growing under an animated scroll
@@ -1515,7 +1587,9 @@ private struct TurnRunningBlock: View {
             liveWork = entries
             groups.removeLast()
         }
-        return LazyVStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+        // A plain stack: a lazy stack inside a lazy row resolved its own visibility on every
+        // scrolled frame for nothing, the row is on screen whole or not at all.
+        return VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             ForEach(groups) { group in
                 TurnRow(group: group, runtime: runtime, context: context)
                     .equatable()
@@ -1743,5 +1817,16 @@ private struct WorkingBlockView: View {
             steps.append(ThinkingStep(text: block.text, isStreaming: block.isStreaming))
         }
         return steps.reversed()
+    }
+}
+
+/// Applies the scroll freeze to the rows from a leaf of its own: the flag lives on the
+/// tracking object and only this modifier reads it, so its flips re-render nothing but
+/// this node, never the timeline's body.
+private struct ScrollFreeze: ViewModifier {
+    let tracking: TimelineScrollTracking
+
+    func body(content: Content) -> some View {
+        content.allowsHitTesting(!tracking.isReaderScrolling)
     }
 }

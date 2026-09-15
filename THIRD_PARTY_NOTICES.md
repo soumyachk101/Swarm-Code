@@ -1,5 +1,9 @@
 # Third-party notices
 
+## Droppy Code
+
+Droppy Code itself is licensed under the GNU AGPL v3.0 with additional attribution terms (see LICENSE). The notices below are for what it builds on and are preserved as their licenses require.
+
 ## T3 Code
 
 Droppy Code began as a native Swift rewrite of T3 Code by T3 Tools Inc. (https://github.com/pingdotgg/t3code),

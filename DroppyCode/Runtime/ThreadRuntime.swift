@@ -157,7 +157,9 @@ final class ThreadRuntime {
     /// When the head last did anything (a tool, a word of its reply or its reasoning),
     /// and how many file edits its tools have made: what the watchdog reads to tell a
     /// head that is thinking from one that has stalled (see `AppModel.startHydraWatchdog`).
-    var hydraLastEventAt: Date?
+    /// Not observed: it moves with every flush of every head, and the one view that
+    /// reads it (the lead's working pill) is redrawn by the watchdog's label instead.
+    @ObservationIgnored var hydraLastEventAt: Date?
     var hydraEditCount = 0
     /// How long the head has been quiet, in seconds; zero before it has done anything.
     var hydraIdleSeconds: TimeInterval { hydraLastEventAt.map { Date.now.timeIntervalSince($0) } ?? 0 }
@@ -427,9 +429,14 @@ final class ThreadRuntime {
     /// Instantly queues the composer's draft as a follow-up while a turn runs or heads are
     /// at work. The prompt, pics and other attachments included, is sent as a direct user
     /// chat message once the running turn (or the heads' report) finishes. Stacks up:
-    /// every queued prompt runs in order.
+    /// every queued prompt runs in order. With nothing to queue behind, the draft simply
+    /// goes out: the queue chord is never a dead key.
     func queueDraftAsFollowUp() {
-        guard !draft.isEmpty, canQueue else { return }
+        guard !draft.isEmpty else { return }
+        guard canQueue else {
+            send()
+            return
+        }
         enqueueFollowUp(text: draft.text, attachments: draft.attachments)
         draft = ComposerDraft()
     }
@@ -475,6 +482,82 @@ final class ThreadRuntime {
         interrupt()
     }
 
+    /// Pairs the dragged follow-up onto another so they go out as one message: both
+    /// carry the target's bundle (or a fresh one), and the dragged prompt moves to sit
+    /// right after the bundle's last prompt.
+    func bundleFollowUp(_ id: UUID, onto target: UUID) {
+        guard id != target,
+              let targetIndex = followUps.firstIndex(where: { $0.id == target }),
+              followUps.firstIndex(where: { $0.id == id }) != nil else { return }
+        let bundle = followUps[targetIndex].bundleID ?? UUID()
+        followUps[targetIndex].bundleID = bundle
+        var dragged = followUps.remove(at: followUps.firstIndex(where: { $0.id == id })!)
+        dragged.bundleID = bundle
+        // The target still carries the bundle, so this always finds at least it.
+        let insertAt = (followUps.lastIndex(where: { $0.bundleID == bundle }) ?? (followUps.count - 1)) + 1
+        followUps.insert(dragged, at: min(insertAt, followUps.count))
+        saveRevision += 1
+        scheduleSave()
+    }
+
+    /// Drops a prompt from its bundle when neither neighbour shares it, and dissolves
+    /// a bundle left with a single prompt.
+    private func unbundleIfSeparated(_ id: UUID) {
+        guard let index = followUps.firstIndex(where: { $0.id == id }),
+              let bundle = followUps[index].bundleID else { return }
+        let prevShares = index > 0 && followUps[index - 1].bundleID == bundle
+        let nextShares = index + 1 < followUps.count && followUps[index + 1].bundleID == bundle
+        guard !prevShares && !nextShares else { return }
+        followUps[index].bundleID = nil
+        let remaining = followUps.filter { $0.bundleID == bundle }
+        if remaining.count == 1, let lone = followUps.firstIndex(where: { $0.id == remaining[0].id }) {
+            followUps[lone].bundleID = nil
+        }
+    }
+
+    /// Clears any bundle held by only one prompt.
+    private func tidyBundles() {
+        var counts: [UUID: Int] = [:]
+        for prompt in followUps {
+            if let bundle = prompt.bundleID { counts[bundle, default: 0] += 1 }
+        }
+        for index in followUps.indices {
+            if let bundle = followUps[index].bundleID, counts[bundle] == 1 {
+                followUps[index].bundleID = nil
+            }
+        }
+    }
+
+    /// The merged prompt for the bundle starting at `index`, without removing it.
+    private func mergedBundle(startingAt index: Int) -> FollowUpPrompt {
+        let first = followUps[index]
+        guard let bundle = first.bundleID else { return first }
+        var end = index
+        while end + 1 < followUps.count, followUps[end + 1].bundleID == bundle { end += 1 }
+        let members = followUps[index...end]
+        let texts = members.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        var merged = first
+        merged.text = texts.joined(separator: "\n\n")
+        merged.attachments = members.flatMap { $0.attachments }
+        merged.bundleID = nil
+        return merged
+    }
+
+    /// Removes the prompt at `index` and every following adjacent prompt with the same
+    /// non-nil bundle, returning them as one merged prompt.
+    private func takeBundle(startingAt index: Int) -> FollowUpPrompt {
+        let merged = mergedBundle(startingAt: index)
+        let bundle = followUps[index].bundleID
+        if let bundle {
+            var end = index
+            while end + 1 < followUps.count, followUps[end + 1].bundleID == bundle { end += 1 }
+            followUps.removeSubrange(index...end)
+        } else {
+            followUps.remove(at: index)
+        }
+        return merged
+    }
+
     /// Sends a queued follow-up right away instead of waiting its turn: the running turn
     /// stops and the prompt goes out as soon as the stop lands, exactly as Return does with
     /// the draft; idle, it simply sends. The rest of the queue waits for the new turn.
@@ -484,7 +567,11 @@ final class ThreadRuntime {
     /// the prompt as it would with none: "now" means now.
     func sendFollowUpNow(_ id: UUID) {
         guard let index = followUps.firstIndex(where: { $0.id == id }) else { return }
-        let prompt = followUps.remove(at: index)
+        var start = index
+        if let bundle = followUps[index].bundleID {
+            while start > 0, followUps[start - 1].bundleID == bundle { start -= 1 }
+        }
+        let prompt = takeBundle(startingAt: start)
         saveRevision += 1
         scheduleSave()
         guard !prompt.isEmpty else { return }
@@ -569,8 +656,10 @@ final class ThreadRuntime {
     /// as long as the lead is still at work; an idle lead takes them itself, in order.
     private func dispatchQueuedFollowUps() {
         guard phase != .idle else { return }
-        while let next = followUps.first, dispatchQueuedHead(next) {
-            followUps.removeFirst()
+        while !followUps.isEmpty {
+            let merged = mergedBundle(startingAt: 0)
+            guard dispatchQueuedHead(merged) else { break }
+            _ = takeBundle(startingAt: 0)
             saveRevision += 1
             scheduleSave()
         }
@@ -597,6 +686,7 @@ final class ThreadRuntime {
 
     func removeFollowUp(_ id: UUID) {
         followUps.removeAll { $0.id == id }
+        tidyBundles()
         saveRevision += 1
         scheduleSave()
     }
@@ -614,6 +704,7 @@ final class ThreadRuntime {
         guard from != dest else { return false }
         let prompt = followUps.remove(at: from)
         followUps.insert(prompt, at: dest)
+        unbundleIfSeparated(id)
         saveRevision += 1
         scheduleSave()
         return true
@@ -624,6 +715,7 @@ final class ThreadRuntime {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty, attachments.isEmpty {
             followUps.remove(at: index)
+            tidyBundles()
         } else {
             followUps[index].text = text
             followUps[index].attachments = attachments
@@ -637,12 +729,12 @@ final class ThreadRuntime {
     /// Returns whether a turn starts.
     private func drainFollowUps(after status: TurnStatus) -> Bool {
         guard status == .completed, phase == .idle, !followUps.isEmpty else { return false }
-        var next = followUps.removeFirst()
+        var next = takeBundle(startingAt: 0)
         saveRevision += 1
         // Skip prompts that emptied while queued (an attachment file deleted on disk still counts,
         // so only the text+attachment check applies).
         while next.isEmpty, !followUps.isEmpty {
-            next = followUps.removeFirst()
+            next = takeBundle(startingAt: 0)
             saveRevision += 1
         }
         guard !next.isEmpty else {
@@ -1951,7 +2043,7 @@ final class ThreadRuntime {
         // often with no visible effect. The copy itself cannot go away while the
         // row's content is a value-typed enum behind an observed property.
         flushTask = Task { [weak self] in
-            let delay = Self.flushDelay(for: self?.pendingFlushLength())
+            let delay = Self.flushDelay(for: self?.pendingFlushLength(), scrolling: ScrollActivity.shared.isScrolling)
             try? await Task.sleep(for: .milliseconds(delay))
             self?.flushDeltas()
         }
@@ -1984,12 +2076,16 @@ final class ThreadRuntime {
 
     /// How long to wait before flushing deltas onto their rows: 45 ms up to 4 KB,
     /// 90 ms up to 32 KB, 150 ms beyond.
-    private nonisolated static func flushDelay(for length: Int?) -> Int {
-        switch length ?? 0 {
+    private nonisolated static func flushDelay(for length: Int?, scrolling: Bool) -> Int {
+        let paced = switch length ?? 0 {
         case ..<4_096: 45
         case ..<32_768: 90
         default: 150
         }
+        // Under a scrolling reader the row is not being read: it takes at most six
+        // flushes a second then, so the frames of the scroll are not spent laying the
+        // streaming text out again (in the chat and in every head panel at once).
+        return scrolling ? max(paced, 160) : paced
     }
 
     private func flushDeltas() {

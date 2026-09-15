@@ -21,45 +21,48 @@ struct FollowUpQueueTab: View {
     @State private var mouseUpMonitor: Any?
     /// Each row's height including its padding: one row's slot in the stack.
     @State private var rowHeights: [UUID: CGFloat] = [:]
+    /// The row the held row would pair with while nudged right, lit up as the target.
+    @State private var pairTarget: UUID?
     /// The rows' natural height, so the fold can animate to and from exactly it.
     @State private var listHeight: CGFloat = 0
 
     var body: some View {
         let shape = UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12, style: .continuous)
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 7) {
-                Image(systemName: "arrow.turn.down.right")
-                    .font(Chrome.inlineIconFont)
-                    .foregroundStyle(Chrome.secondaryText)
-                Text(verbatim: runtime.followUps.count == 1 ? "1 follow-up" : "\(runtime.followUps.count) follow-ups")
-                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                Text(verbatim: "queued")
-                    .foregroundStyle(Chrome.secondaryText)
-                Spacer(minLength: 8)
-                Button {
-                    withAnimation(Chrome.panelSlide) { isCollapsed.toggle() }
-                } label: {
-                    // Points the way the tab will go: down to close while open,
-                    // up to reopen while collapsed.
+            // The whole title line folds the queue and opens it again; the chevron at
+            // its end only says which way it will go: down to close while open, up to
+            // reopen while collapsed.
+            Button {
+                withAnimation(Chrome.panelSlide) { isCollapsed.toggle() }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(Chrome.inlineIconFont)
+                        .foregroundStyle(Chrome.secondaryText)
+                    Text(verbatim: runtime.followUps.count == 1 ? "1 follow-up" : "\(runtime.followUps.count) follow-ups")
+                        .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                    Text(verbatim: "queued")
+                        .foregroundStyle(Chrome.secondaryText)
+                    Spacer(minLength: 8)
                     Image(systemName: "chevron.down")
                         .font(Chrome.inlineIconFont)
                         .foregroundStyle(Chrome.secondaryText)
                         .frame(width: 22, height: 22)
-                        .contentShape(.rect)
                         .rotationEffect(.degrees(isCollapsed ? 180 : 0))
                 }
-                .buttonStyle(.plain)
-                // Kept out of the key view loop on purpose. SwiftUI's default key-view-loop builder
-                // walks focusable views in reading order, and with this chevron sitting flush above
-                // the row's trash button at the same x it never advanced past the chevron: the main
-                // thread spun in that rebuild forever (the Sept 15 2026 freezes). None of the tab's
-                // controls are meant to be tabbed to, so none of them join the loop.
-                .focusable(false)
-                .help(isCollapsed ? "Expand queued follow-ups" : "Collapse queued follow-ups")
-                .accessibilityLabel(Text(isCollapsed ? "Expand queued follow-ups" : "Collapse queued follow-ups"))
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .contentShape(.rect)
             }
-            .font(.system(size: 12, weight: .medium).monospacedDigit())
+            .buttonStyle(.plain)
+            // Kept out of the key view loop on purpose. SwiftUI's default key-view-loop builder
+            // walks focusable views in reading order, and with this line sitting flush above
+            // the row's trash button at the same x it never advanced past it: the main
+            // thread spun in that rebuild forever (the Sept 15 2026 freezes). None of the tab's
+            // controls are meant to be tabbed to, so none of them join the loop.
+            .focusable(false)
+            .help(isCollapsed ? "Expand queued follow-ups" : "Collapse queued follow-ups")
             .accessibilityLabel(Text(verbatim: runtime.followUps.count == 1 ? "1 queued follow-up" : "\(runtime.followUps.count) queued follow-ups"))
+            .accessibilityValue(Text(isCollapsed ? "Collapsed" : "Expanded"))
 
             // The rows stay in place and fold: a clip animates between zero
             // and their measured height while they fade, so nothing is ever
@@ -71,20 +74,29 @@ struct FollowUpQueueTab: View {
                 // measured height is exactly its slot and the reorder maths
                 // never has to know about stack spacing.
                 VStack(alignment: .leading, spacing: 0) {
+                    let numbers = Self.numbers(for: runtime.followUps)
                     ForEach(Array(runtime.followUps.enumerated()), id: \.element.id) { index, prompt in
                         let isDragged = drag.id == prompt.id
+                        let previous = index > 0 ? runtime.followUps[index - 1] : nil
+                        let next = index + 1 < runtime.followUps.count ? runtime.followUps[index + 1] : nil
+                        let isBundledWithPrevious = prompt.bundleID != nil && prompt.bundleID == previous?.bundleID
+                        let bundledWithNext = prompt.bundleID != nil && prompt.bundleID == next?.bundleID
                         FollowUpRow(
-                            position: index + 1,
+                            position: numbers[prompt.id] ?? index + 1,
                             prompt: prompt,
                             runtime: runtime,
                             isDragged: isDragged,
-                            showsRule: prompt.id != runtime.followUps.last?.id && !isDragged,
+                            showsRule: prompt.id != runtime.followUps.last?.id && !isDragged && !bundledWithNext,
+                            isBundledWithPrevious: isBundledWithPrevious,
+                            isPairTarget: pairTarget == prompt.id,
                             onDragChanged: { translation in dragChanged(prompt.id, translation: translation) },
                             onDragEnded: { dragEnded() }
                         )
                         .modifier(RowHeightReporter(id: prompt.id, heights: $rowHeights))
-                        // Only while dragging: settling is the only reader.
-                        .offset(y: isDragged ? drag.visualOffset : 0)
+                        // Only while dragging: settling is the only reader. In pairing
+                        // mode the held row indents to show it will pair on release.
+                        .offset(x: pairTarget != nil && isDragged ? 14 : 0, y: isDragged ? drag.visualOffset : 0)
+                        .animation(Self.slide, value: pairTarget != nil)
                         .zIndex(isDragged ? 1 : 0)
                     }
                 }
@@ -151,32 +163,88 @@ struct FollowUpQueueTab: View {
     /// Neighbours sliding out of the grabbed row's way.
     private static let slide = Animation.spring(response: 0.28, dampingFraction: 0.82)
 
+    /// One shared number per bundle: the number climbs when a prompt starts a new
+    /// bundle or has none at all.
+    private static func numbers(for prompts: [FollowUpPrompt]) -> [UUID: Int] {
+        var numbers: [UUID: Int] = [:]
+        var number = 0
+        var previous: UUID?
+        var hadPrevious = false
+        for prompt in prompts {
+            if prompt.bundleID == nil || !hadPrevious || prompt.bundleID != previous {
+                number += 1
+            }
+            numbers[prompt.id] = number
+            previous = prompt.bundleID
+            hadPrevious = true
+        }
+        return numbers
+    }
+
     /// The pointer has moved `translation` since the grab. The grabbed row
     /// follows it exactly and `RowDrag` swaps it past every neighbour whose
-    /// centre it has crossed.
-    private func dragChanged(_ id: UUID, translation: CGFloat) {
+    /// centre it has crossed. Nudged 28 points or more right the drag pairs
+    /// instead: reordering pauses and the row under the pointer lights up.
+    private func dragChanged(_ id: UUID, translation: CGSize) {
         if drag.id != id {
             drag = RowDrag(id: id)
+            pairTarget = nil
             NSCursor.closedHand.push()
         }
         var transaction = Transaction()
         transaction.disablesAnimations = true
-        withTransaction(transaction) { drag.translation = translation }
+        withTransaction(transaction) { drag.translation = translation.height }
 
-        let moved = drag.settle(order: runtime.followUps.map(\.id), heights: rowHeights, fallbackHeight: 32) { neighbour, placeAfter in
-            // The neighbour slides and the grabbed row's slot moves in the
-            // same animation as its compensation, so it stays put under
-            // the pointer while the list flows around it.
-            withAnimation(Self.slide) {
-                runtime.moveFollowUp(id, to: neighbour, placeAfter: placeAfter)
+        guard translation.width >= 28 else {
+            if pairTarget != nil {
+                withAnimation(Self.slide) { pairTarget = nil }
             }
+            let moved = drag.settle(order: runtime.followUps.map(\.id), heights: rowHeights, fallbackHeight: 32) { neighbour, placeAfter in
+                // The neighbour slides and the grabbed row's slot moves in the
+                // same animation as its compensation, so it stays put under
+                // the pointer while the list flows around it.
+                withAnimation(Self.slide) {
+                    runtime.moveFollowUp(id, to: neighbour, placeAfter: placeAfter)
+                }
+            }
+            if moved {
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            }
+            return
         }
-        if moved {
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+
+        // Pairing: which other row the held row's centre is over.
+        let ids = runtime.followUps.map(\.id)
+        guard let heldIndex = ids.firstIndex(of: id) else { return }
+        var top: CGFloat = 0
+        for (index, rowID) in ids.enumerated() {
+            if index == heldIndex { break }
+            top += rowHeights[rowID] ?? 32
+        }
+        let centreY = top + (rowHeights[id] ?? 32) / 2 + drag.visualOffset
+        var cursor: CGFloat = 0
+        var target: UUID?
+        for rowID in ids {
+            let height = rowHeights[rowID] ?? 32
+            if centreY >= cursor, centreY < cursor + height {
+                target = rowID == id ? nil : rowID
+                break
+            }
+            cursor += height
+        }
+        if target != pairTarget {
+            withAnimation(Self.slide) { pairTarget = target }
         }
     }
 
     private func dragEnded() {
+        if let held = drag.id, let target = pairTarget {
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.78)) {
+                runtime.bundleFollowUp(held, onto: target)
+            }
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            pairTarget = nil
+        }
         guard drag.id != nil else { return }
         NSCursor.pop()
         // The offset animates from wherever the pointer let go to the row's
@@ -193,7 +261,11 @@ private struct FollowUpRow: View {
     let isDragged: Bool
     /// The rule under the row, off for the last row and while lifted.
     let showsRule: Bool
-    let onDragChanged: (CGFloat) -> Void
+    /// The previous row shares this row's bundle: dim the number and join with a bar.
+    let isBundledWithPrevious: Bool
+    /// The held row hovers over this row while pairing: light it up.
+    let isPairTarget: Bool
+    let onDragChanged: (CGSize) -> Void
     let onDragEnded: () -> Void
 
     /// One preview panel for this row's thumbnails, so every photo opens.
@@ -220,7 +292,7 @@ private struct FollowUpRow: View {
         HStack(alignment: .center, spacing: 8) {
             Text(verbatim: "\(position)")
                 .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(Chrome.secondaryText)
+                .foregroundStyle(isBundledWithPrevious ? Chrome.secondaryText.opacity(0.5) : Chrome.secondaryText)
                 .frame(width: 14, alignment: .trailing)
                 .accessibilityHidden(true)
             Image(systemName: "line.3.horizontal")
@@ -246,13 +318,13 @@ private struct FollowUpRow: View {
                 .gesture(
                     DragGesture(minimumDistance: 1, coordinateSpace: .global)
                         .updating($isGrabbing) { _, grabbing, _ in grabbing = true }
-                        .onChanged { value in onDragChanged(value.translation.height) }
+                        .onChanged { value in onDragChanged(value.translation) }
                         .onEnded { _ in onDragEnded() }
                 )
                 .onChange(of: isGrabbing) { _, grabbing in
                     if !grabbing, isDragged { onDragEnded() }
                 }
-                .help("Drag to reorder")
+                .help("Drag to reorder · nudge right onto another to send them together")
                 .accessibilityLabel(Text("Drag to reorder"))
             if !prompt.attachments.isEmpty {
                 // No anchor view under the thumbnails or the strip: nothing in this tab
@@ -310,12 +382,24 @@ private struct FollowUpRow: View {
         }
         // Tight rows: a one-line follow-up is 32 tall, the grip and buttons 22.
         .padding(.vertical, 5)
+        .overlay(alignment: .leading) {
+            if isBundledWithPrevious {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(Color.accentColor.opacity(0.7))
+                    .frame(width: 2)
+            }
+        }
         .overlay(alignment: .bottom) {
             if showsRule { Divider().opacity(0.35) }
         }
         // Lifted: a touch larger with a shadow, over an opaque glass so the
         // rows sliding underneath never show through.
         .background {
+            if isPairTarget {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.14))
+                    .padding(.horizontal, -8)
+            }
             if isDragged {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(Chrome.overlay(0.12))
@@ -323,8 +407,9 @@ private struct FollowUpRow: View {
                     .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
             }
         }
-        .scaleEffect(isDragged ? 1.02 : 1)
+        .scaleEffect(isPairTarget ? 1.015 : isDragged ? 1.02 : 1)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isDragged)
+        .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isPairTarget)
         .onChange(of: prompt.attachments) {
             preview.retire(except: Set(prompt.attachments.map(\.id)))
         }

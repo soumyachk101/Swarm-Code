@@ -84,4 +84,8 @@ Droppy Code began as a native Swift rewrite of [T3 Code](https://github.com/ping
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The code is free to use; the names "Droppy" and "Droppy Code" and their icons are not part of the license, see [TRADEMARK.md](TRADEMARK.md).
+GNU AGPL v3.0 with additional attribution terms: see [LICENSE](LICENSE). You may use, study, change and share Droppy Code, and anyone who distributes it or a modified version, or runs a modified version for others over a network, must make their source available under the same license and keep the credit to Droppy Code by Jordy Spruit (Droppy). Modified versions must say they are modified and must not present themselves as Droppy Code. The names "Droppy" and "Droppy Code" and their icons are not part of the license, see [TRADEMARK.md](TRADEMARK.md). Portions descend from T3 Code by T3 Tools Inc. under the MIT License, whose notice is preserved in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+## Credit
+
+If you build on Droppy Code, keep the line "Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app" in your About screen, your README and your source headers, and keep THIRD_PARTY_NOTICES.md. That is the whole ask.

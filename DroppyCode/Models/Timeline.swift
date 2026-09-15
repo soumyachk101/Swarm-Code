@@ -77,6 +77,9 @@ struct FollowUpPrompt: Codable, Hashable, Identifiable, Sendable {
     var text: String
     var attachments: [Attachment] = []
     var createdAt = Date.now
+    /// Prompts sharing a bundle sit together, show one number and go out as one
+    /// message (see `ThreadRuntime.bundleFollowUp`).
+    var bundleID: UUID? = nil
 
     var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty

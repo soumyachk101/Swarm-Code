@@ -28,6 +28,8 @@ struct HydraProgressBar: View {
     @State private var isSettled = false
     /// The stave under the pointer, whose steps the card names.
     @State private var hoveredIndex: Int?
+    @Environment(\.isOnGlassPanel) private var isOnGlassPanel
+    @Environment(\.colorScheme) private var colorScheme
 
     private static let height: CGFloat = 28
     private static let staveWidth: CGFloat = 3
@@ -48,12 +50,15 @@ struct HydraProgressBar: View {
         let staves = Self.staves(for: events, capacity: capacity)
         let counts = Counts(of: events)
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let isScrolling = ScrollActivity.shared.isScrolling
         let isRunning = status == .running
         let elapsed = RelativeTime.duration((isRunning ? Date.now : finishedAt ?? .now).timeIntervalSince(startedAt))
         VStack(alignment: .leading, spacing: 6) {
-            // The display's clock drives the rise and the sweep; with reduced motion, or
-            // once the head is done and settled, the canvas is drawn only when the steps change.
-            TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: reduceMotion || isSettled)) { context in
+            // The display's clock drives the rise and the sweep at thirty frames a second,
+            // enough for a sweep this soft; it stands still while the reader scrolls anywhere,
+            // so a scrolled frame is the scroll's alone. With reduced motion, or once the head
+            // is done and settled, the canvas is drawn only when the steps change.
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || isSettled || isScrolling)) { context in
                 Canvas { graphics, size in
                     Self.draw(
                         staves,
@@ -138,7 +143,7 @@ struct HydraProgressBar: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(width: Self.cardWidth, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: Chrome.cardCornerRadius, style: .continuous))
+        .modifier(ProgressCardSurface(isOnGlassPanel: isOnGlassPanel, isDark: colorScheme == .dark))
         // Hung from a zero-height frame at the bar's top edge, so the card's bottom sits 8
         // points above the bar whatever its height: an alignment guide on the overlay
         // was not honoured and left the card over the staves.
@@ -224,7 +229,9 @@ struct HydraProgressBar: View {
                 return Stave(kind: kind, arrivedAt: entry.item.date, steps: [ToolPresentation.label(for: call)])
             case .assistant:
                 guard case .assistant(let message) = entry.item.content else { return nil }
-                let words = TextCleanup.singleLine(message.text, limit: 60)
+                // The first line of the reply is all the stave shows, so only the head of the
+                // text is split, not the whole reply on every streamed flush.
+                let words = TextCleanup.singleLine(String(message.text.prefix(600)), limit: 60)
                 return Stave(kind: .reply, arrivedAt: entry.item.date, steps: [words.isEmpty ? "Replied" : "Replied: \(words)"])
             default:
                 return nil
@@ -382,7 +389,8 @@ private struct HydraWorkingTitle: View {
 
     var body: some View {
         let animates = isRunning && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !animates)) { context in
+        // Twenty frames a second is plenty for a band this wide, and it holds still while the reader scrolls.
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !animates || ScrollActivity.shared.isScrolling)) { context in
             let now = context.date.timeIntervalSinceReferenceDate
             // The band's centre travels from just left of the text to just right of it, so
             // it enters and leaves rather than snapping; still, the text is one colour.
@@ -436,5 +444,22 @@ struct HydraElapsedTime: View {
         .font(.system(size: 11))
         .monospacedDigit()
         .foregroundStyle(Chrome.secondaryText)
+    }
+}
+
+/// The card's surface: glass, unless it floats inside a glass panel already, where a
+/// second glass over the first would sample the same pixels twice; there it is a flat
+/// fill of the panel's control colour.
+private struct ProgressCardSurface: ViewModifier {
+    let isOnGlassPanel: Bool
+    let isDark: Bool
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: Chrome.cardCornerRadius, style: .continuous)
+        if isOnGlassPanel {
+            content.background(shape.fill(Chrome.panelControlFill(isDark: isDark)))
+        } else {
+            content.glassEffect(.regular, in: shape)
+        }
     }
 }
