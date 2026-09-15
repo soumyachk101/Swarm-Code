@@ -5,8 +5,10 @@ import SwiftUI
 /// did, in order, the taller the more it changed. A read, a search or a lookup is short and
 /// faint, a command taller, an edit taller still, and a reply stands full height in the
 /// head's own colour. Under it, what that amounts to; how long the head has been at it
-/// sits beside its task above (see `HydraHeadProgress`). The steps themselves are the
-/// sidebar's to show; here the shape of the work is enough.
+/// sits in the strip's pill (see `HydraElapsedTime`). The steps themselves are the
+/// sidebar's to show; here the shape of the work is enough, and a stave under the pointer
+/// names the steps it stands for on a card above the bar, as the timeline rail previews
+/// the message under the pointer.
 ///
 /// The staves are one `Canvas`, redrawn on the display's clock while the head works: a new
 /// stave rises over 0.45 s from the moment its entry arrived, and a soft highlight sweeps
@@ -24,6 +26,8 @@ struct HydraProgressBar: View {
     @State private var width: CGFloat = 0
     /// The head is done and its last stave has risen: nothing left to animate.
     @State private var isSettled = false
+    /// The stave under the pointer, whose steps the card names.
+    @State private var hoveredIndex: Int?
 
     private static let height: CGFloat = 28
     private static let staveWidth: CGFloat = 3
@@ -33,6 +37,9 @@ struct HydraProgressBar: View {
     private static let rise: TimeInterval = 0.45
     /// One pass of the highlight across the filled staves.
     private static let sweep: TimeInterval = 1.8
+    private static let cardWidth: CGFloat = 260
+    /// How many of a stave's steps the card lists before "and N more".
+    private static let cardLines = 6
 
     var body: some View {
         let events = Self.events(in: runtime.entries)
@@ -56,12 +63,31 @@ struct HydraProgressBar: View {
                         rising: !reduceMotion,
                         sweeping: isRunning && !reduceMotion,
                         status: status,
-                        tint: tint
+                        tint: tint,
+                        hovered: hoveredIndex
                     )
                 }
             }
             .frame(height: Self.height)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+            // The pointer picks the stave whose slot it is over; the slots past the
+            // filled ones name nothing.
+            .onContinuousHover(coordinateSpace: .local) { phase in
+                let index: Int? = switch phase {
+                case .active(let point):
+                    point.x >= 0 && point.y >= 0 && point.y <= Self.height
+                        ? Int((point.x / Self.pitch).rounded(.down)) : nil
+                case .ended: nil
+                }
+                let picked = index.map { $0 < staves.count ? $0 : nil } ?? nil
+                if picked != hoveredIndex { hoveredIndex = picked }
+            }
+            .overlay(alignment: .topLeading) {
+                if let hoveredIndex, hoveredIndex < staves.count {
+                    stepsCard(for: staves[hoveredIndex], at: hoveredIndex)
+                }
+            }
+            .animation(.smooth(duration: 0.15), value: hoveredIndex)
             if !counts.line.isEmpty {
                 Text(verbatim: counts.line)
                     .font(.system(size: 11))
@@ -80,6 +106,44 @@ struct HydraProgressBar: View {
         .accessibilityLabel(Text(verbatim: "\(counts.sentence), \(elapsed)\(isRunning ? " so far" : "")"))
     }
 
+    /// The steps a stave stands for, on the rail's card: one step is the title on its own,
+    /// several are counted with the first few listed. Sits just above the bar, centred on
+    /// the stave as far as the bar's width allows, and never takes the pointer.
+    private func stepsCard(for stave: Stave, at index: Int) -> some View {
+        let steps = stave.steps
+        let listed = steps.count > 1 ? Array(steps.prefix(Self.cardLines)) : []
+        let more = steps.count - listed.count
+        let centre = CGFloat(index) * Self.pitch + Self.staveWidth / 2
+        let x = min(max(0, centre - Self.cardWidth / 2), max(0, width - Self.cardWidth))
+        return VStack(alignment: .leading, spacing: 3) {
+            Text(verbatim: steps.count == 1 ? steps[0] : "\(steps.count) steps")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Chrome.primaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            ForEach(Array(listed.enumerated()), id: \.offset) { _, step in
+                Text(verbatim: step)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if listed.count < steps.count, more > 0 {
+                Text(verbatim: "and \(more) more")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.secondaryText)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(width: Self.cardWidth, alignment: .leading)
+        .glassEffect(.regular, in: .rect(cornerRadius: Chrome.cardCornerRadius, style: .continuous))
+        .alignmentGuide(.top) { $0[.bottom] + 8 }
+        .offset(x: x)
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
     // MARK: - Steps
 
     /// One thing the head did, as the bar shows it.
@@ -94,6 +158,8 @@ struct HydraProgressBar: View {
 
         let kind: Kind
         let arrivedAt: Date
+        /// What the stave stands for, one line per step, for the card under the pointer.
+        var steps: [String]
 
         /// The stave's share of the bar's height.
         var height: CGFloat {
@@ -150,9 +216,11 @@ struct HydraProgressBar: View {
                 case .command: .command
                 default: call.edits.isEmpty ? .lookup : .edit
                 }
-                return Stave(kind: kind, arrivedAt: entry.item.date)
+                return Stave(kind: kind, arrivedAt: entry.item.date, steps: [ToolPresentation.label(for: call)])
             case .assistant:
-                return Stave(kind: .reply, arrivedAt: entry.item.date)
+                guard case .assistant(let message) = entry.item.content else { return nil }
+                let words = TextCleanup.singleLine(message.text, limit: 60)
+                return Stave(kind: .reply, arrivedAt: entry.item.date, steps: [words.isEmpty ? "Replied" : "Replied: \(words)"])
             default:
                 return nil
             }
@@ -168,7 +236,7 @@ struct HydraProgressBar: View {
         return stride(from: 0, to: events.count, by: run).map { start in
             let bucket = events[start..<min(start + run, events.count)]
             let tallest = bucket.max { $0.height < $1.height } ?? events[start]
-            return Stave(kind: tallest.kind, arrivedAt: events[start].arrivedAt)
+            return Stave(kind: tallest.kind, arrivedAt: events[start].arrivedAt, steps: bucket.flatMap(\.steps))
         }
     }
 
@@ -193,7 +261,8 @@ struct HydraProgressBar: View {
         rising: Bool,
         sweeping: Bool,
         status: HydraHeadInfo.Status,
-        tint: Color
+        tint: Color,
+        hovered: Int? = nil
     ) {
         let bottom = size.height
         var filled = Path()
@@ -221,6 +290,8 @@ struct HydraProgressBar: View {
                 color(for: stave.kind, tint: tint)
             }
             context.fill(path, with: .color(color))
+            // The stave under the pointer lifts towards white, so the card reads as its.
+            if index == hovered { context.fill(path, with: .color(.white.opacity(0.4))) }
             filled.addPath(path)
         }
 
@@ -256,9 +327,9 @@ struct HydraProgressBar: View {
     }
 }
 
-/// A head's panel with "Show what heads are doing" off: what it was sent to do with its
-/// time beside it, centred on one row, and the progress bar under them, centred where the
-/// transcript would be.
+/// A head's panel with "Show what heads are doing" off: what it was sent to do, centred on
+/// one row, and the progress bar under it, centred where the transcript would be. How long
+/// the head has been at it sits in the strip's pill beside its name.
 struct HydraHeadProgress: View {
     let head: ChatThread
     let runtime: ThreadRuntime
@@ -270,11 +341,8 @@ struct HydraHeadProgress: View {
         let startedAt = info?.startedAt ?? head.createdAt
         VStack(spacing: 0) {
             Spacer(minLength: 0)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                HydraWorkingTitle(text: task.isEmpty ? head.title : task, isRunning: status == .running)
-                HydraElapsedTime(startedAt: startedAt, finishedAt: info?.finishedAt, isRunning: status == .running)
-            }
-            .frame(maxWidth: .infinity)
+            HydraWorkingTitle(text: task.isEmpty ? head.title : task, isRunning: status == .running)
+                .frame(maxWidth: .infinity)
             HydraProgressBar(
                 runtime: runtime,
                 startedAt: startedAt,
@@ -343,8 +411,9 @@ private struct HydraWorkingTitle: View {
     }
 }
 
-/// How long the head has been at it, ticking every second while it works.
-private struct HydraElapsedTime: View {
+/// How long the head has been at it, ticking every second while it works. Only this text
+/// follows the clock: whatever holds it is drawn once.
+struct HydraElapsedTime: View {
     let startedAt: Date
     let finishedAt: Date?
     let isRunning: Bool

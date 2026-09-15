@@ -63,15 +63,19 @@ final class AppModel {
                 if let selectedThreadID { selectionCell(selectedThreadID).value = true }
             }
             if let selectedThreadID {
-                markRead(selectedThreadID)
                 // A helper or head under the selected thread is on screen with it, so
                 // reading the thread reads them too; otherwise their unread mark would
                 // stick on the dock after the thread that set it is back in view.
-                for child in children(of: selectedThreadID) { markRead(child.id) }
+                // The write waits for the selection to paint, so the click itself
+                // never rewrites the library.
+                let ids = [selectedThreadID] + children(of: selectedThreadID).map(\.id)
+                Task { @MainActor [weak self] in self?.markRead(ids) }
             }
             if oldValue != selectedThreadID {
                 scheduleIdleSessionStop(leaving: oldValue)
-                warmNeighbors(of: selectedThreadID)
+                if let id = selectedThreadID {
+                    Task { @MainActor [weak self] in self?.warmNeighbors(of: id) }
+                }
             }
             if let selectedThreadID, let thread = thread(selectedThreadID) {
                 rememberLastProject(thread.projectID)
@@ -389,10 +393,11 @@ final class AppModel {
         DocumentPrefetch.shared.warm(cold)
     }
 
-    /// The rows either side of the selection, for the arrow keys and the next click.
+    /// The rows either side of the selection within the thread's project, for the
+    /// arrow keys and the next click.
     private func warmNeighbors(of id: UUID?) {
-        guard let id else { return }
-        let order = sidebarThreads
+        guard let id, let thread = thread(id), let project = project(thread.projectID) else { return }
+        let order = threads(in: project)
         guard let index = order.firstIndex(where: { $0.id == id }) else { return }
         var neighbors: [UUID] = []
         if index > 0 { neighbors.append(order[index - 1].id) }
@@ -922,6 +927,22 @@ final class AppModel {
     func markRead(_ id: UUID) {
         guard thread(id)?.hasUnread == true else { return }
         updateThread(id) { $0.hasUnread = false }
+        updateDockBadge()
+    }
+
+    /// Several threads read at once cost one write to the library, so the cells and
+    /// the sidebar see one change, not one per thread.
+    func markRead(_ ids: [UUID]) {
+        let wanted = Set(ids)
+        var copy = threads
+        var changed = false
+        for index in copy.indices where wanted.contains(copy[index].id) && copy[index].hasUnread {
+            copy[index].hasUnread = false
+            changed = true
+        }
+        guard changed else { return }
+        threads = copy
+        scheduleSave()
         updateDockBadge()
     }
 

@@ -47,7 +47,7 @@ struct UsageFloatingPanel: View {
         .animation(nil, value: liveResize.isActive)
         .background {
             // The helper panel's recipe: one glass surface, a scrim for the text over
-            // whatever the panel floats above, the theme's tint, and a hairline.
+            // whatever the panel floats above, and the theme's tint.
             let isDark = colorScheme == .dark
             shape
                 .fill(.clear)
@@ -56,10 +56,9 @@ struct UsageFloatingPanel: View {
                     shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
                 }
         }
+        // Glass supplies the edge (as in `WindowBackdrop`): a hairline on top of it
+        // read as a second ring around the panel whenever its window was key.
         .clipShape(shape)
-        .overlay {
-            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
-        }
         // The scrim sits under the glass and carries the panel's shadow, drawn once.
         .background {
             let isDark = colorScheme == .dark

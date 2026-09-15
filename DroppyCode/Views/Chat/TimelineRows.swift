@@ -245,6 +245,12 @@ struct HydraReportRow: View {
             HydraReportPopover(text: body)
                 .presentedChrome()
         }
+        // The report parses off the main thread as the pill appears, so the tap that
+        // opens it finds the blocks ready rather than parsing the whole batch first.
+        .task(id: body) {
+            guard !details.isEmpty else { return }
+            await MarkdownView.warm([body])
+        }
         .frame(maxWidth: .infinity, alignment: .trailing)
         .padding(.leading, 96)
         .accessibilityElement(children: .contain)
@@ -329,7 +335,9 @@ struct HydraHeadsWorkingRow: View {
         // Every head out has gone quiet for three minutes (no tool, no word): the pill
         // says so. The watchdog labels a head's row at the same moment, and that label is
         // what redraws this one (see `AppModel.startHydraWatchdog`).
-        let team = model.hydraHeads(of: runtime.threadID)
+        // The whole team, not only the panel: a finished head leaves the panel on its own
+        // (`hydraAutoClearFinished`), and its pill below has to stay until the report lands.
+        let team = model.hydraTeam(of: runtime.threadID)
         let running = team.filter { $0.hydra?.status == .running && heads.contains($0.hydra?.index ?? -1) }
         let thinking = !running.isEmpty && running.allSatisfy { head in
             guard let live = model.existingRuntime(for: head.id) else { return false }
@@ -369,15 +377,16 @@ struct HydraHeadsWorkingRow: View {
     }
 
     /// The finished heads whose report has not reached the lead yet: a finished head whose
-    /// batch still has a head at work, or — with no batch — any finished head while any
-    /// head still works. In roster order.
+    /// batch still has a head at work, or — with no batch — a head that finished since the
+    /// earliest running head set out, so heads done in an earlier turn stay out. In roster order.
     private static func finishedHeads(in threads: [ChatThread]) -> [HydraHeadInfo] {
         let infos = threads.compactMap(\.hydra)
         let running = infos.filter { $0.status == .running }
         guard !running.isEmpty else { return [] }
+        let since = running.map(\.startedAt).min() ?? .distantPast
         return infos.filter { info in
             guard info.isFinished else { return false }
-            guard let batch = info.batchID else { return true }
+            guard let batch = info.batchID else { return (info.finishedAt ?? .distantPast) >= since }
             return running.contains { $0.batchID == batch }
         }
     }
@@ -539,20 +548,44 @@ struct HydraBriefRow: View {
 
 /// A head's report in the popover its pill opens: the markdown at reading width, scrolling
 /// past the panel's height rather than pushing the timeline apart.
+///
+/// A batch of reports runs to tens of thousands of characters, and a popover cannot open
+/// before its content has laid out: the blocks are parsed off the main thread (the pill
+/// warms them as it appears, so a tap usually finds them cached) and built lazily, so
+/// opening costs the blocks on screen rather than the whole report.
 private struct HydraReportPopover: View {
     let text: String
     var width: CGFloat = 440
 
+    @State private var blocks: [MarkdownBlock]?
+
     var body: some View {
         ScrollView {
-            MarkdownView(text: text)
+            if let blocks {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                        MarkdownBlockView(block: block)
+                            .equatable()
+                    }
+                }
                 .textSelection(.enabled)
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+            }
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(width: width)
         .frame(idealHeight: 320, maxHeight: 460)
+        .task(id: text) {
+            await MarkdownView.warm([text])
+            guard !Task.isCancelled else { return }
+            blocks = MarkdownView.blocks(for: text)
+        }
     }
 }
 
