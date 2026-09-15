@@ -1,0 +1,521 @@
+import AppKit
+import SwiftUI
+
+/// The side of the chat column a docked panel sits on.
+enum PanelDockSide: Equatable {
+    case leading, trailing
+}
+
+/// The corner a floating panel docks in.
+enum PanelDockCorner: Equatable {
+    case topLeading, topTrailing, bottomLeading, bottomTrailing
+
+    var side: PanelDockSide {
+        switch self {
+        case .topLeading, .bottomLeading: .leading
+        case .topTrailing, .bottomTrailing: .trailing
+        }
+    }
+
+    var isTop: Bool { self == .topLeading || self == .topTrailing }
+
+    /// The corner on the other side of the chat column, at the same edge.
+    var acrossTheColumn: PanelDockCorner {
+        switch self {
+        case .topLeading: .topTrailing
+        case .topTrailing: .topLeading
+        case .bottomLeading: .bottomTrailing
+        case .bottomTrailing: .bottomLeading
+        }
+    }
+}
+
+/// The room the docked panels take from the chat column on each side; the timeline and
+/// the chat box centre in what is left, so they stay lined up with each other.
+struct PanelReserve: Equatable {
+    var leading: CGFloat = 0
+    var trailing: CGFloat = 0
+}
+
+/// The four docked spots for the pane as it is.
+struct PanelDocks {
+    var topLeading: CGPoint
+    var topTrailing: CGPoint
+    var bottomLeading: CGPoint
+    var bottomTrailing: CGPoint
+
+    init(layout: SubagentPanelLayout, reserve: PanelReserve) {
+        topLeading = layout.dockedOrigin(.topLeading, reserve: reserve)
+        topTrailing = layout.dockedOrigin(.topTrailing, reserve: reserve)
+        bottomLeading = layout.dockedOrigin(.bottomLeading, reserve: reserve)
+        bottomTrailing = layout.dockedOrigin(.bottomTrailing, reserve: reserve)
+    }
+
+    subscript(corner: PanelDockCorner) -> CGPoint {
+        switch corner {
+        case .topLeading: topLeading
+        case .topTrailing: topTrailing
+        case .bottomLeading: bottomLeading
+        case .bottomTrailing: bottomTrailing
+        }
+    }
+
+    /// The docked spot in a corner with `below` panels already docked in it: each one
+    /// stacks a panel's height further from the edge, above the last at the bottom and
+    /// below it at the top.
+    func stacked(_ corner: PanelDockCorner, below: Int, layout: SubagentPanelLayout) -> CGPoint {
+        let spot = self[corner]
+        let step = CGFloat(below) * (layout.panelHeight + SubagentPanelLayout.gap)
+        let y = corner.isTop ? min(spot.y + step, layout.pane.height - layout.panelHeight - 8) : max(8, spot.y - step)
+        return CGPoint(x: spot.x, y: y)
+    }
+}
+
+/// Where a floating panel goes and how big it is, from the chat pane's size. Docked, it
+/// sits in a corner beside the chat column, the group centred in the pane; when the pane
+/// is too narrow for both side by side it sits in the corner above the box instead, so
+/// neither is ever covered. Dragged elsewhere, it stays within the pane.
+struct SubagentPanelLayout: Equatable {
+    /// The panel's width, given the room: the composer's own column width at most.
+    static let width: CGFloat = 400
+    static let minWidth: CGFloat = 300
+    /// Between the panel and the chat box.
+    static let gap: CGFloat = 12
+    /// The chat box's own margins (see ComposerArea), so the docked panel lines up with it.
+    static let sideMargin: CGFloat = 20
+    static let bottomMargin: CGFloat = 14
+    /// The narrowest chat box worth typing in; below it the panel moves above the box.
+    static let minComposerWidth: CGFloat = 360
+    static let composerMaxWidth: CGFloat = 820
+    /// How far past the pane's middle a held panel's centre goes before it changes corner,
+    /// so one held on the line does not flicker between the two.
+    static let cornerSlack: CGFloat = 24
+
+    var pane: CGSize
+    /// The chat box with its tabs and cards, so a panel above it clears them.
+    var composerAreaHeight: CGFloat
+    /// The most panels docked in any one corner. Stacked, they share the room between the
+    /// chrome row and the chat box, so two panels sit one above the other without
+    /// overlapping wherever the pane is tall enough for two of the smallest.
+    var stackDepth: Int = 1
+
+    var panelWidth: CGFloat {
+        min(Self.width, max(Self.minWidth, pane.width - 2 * Self.sideMargin))
+    }
+
+    /// Whether the panel and the chat box fit side by side.
+    var sitsBesideComposer: Bool {
+        pane.width - 2 * Self.sideMargin - panelWidth - Self.gap >= Self.minComposerWidth
+    }
+
+    /// The room the docked panel takes from the chat box's row; the box centres in the rest.
+    var composerReserve: CGFloat {
+        sitsBesideComposer ? panelWidth + Self.gap : 0
+    }
+
+    /// The room a docked panel has from the chrome row down to the chat box, or to the
+    /// bottom margin when it sits beside the box.
+    private var verticalRoom: CGFloat {
+        let below = sitsBesideComposer ? Self.bottomMargin : composerAreaHeight + Self.gap
+        return pane.height - Chrome.contentTopInset - below
+    }
+
+    var panelHeight: CGFloat {
+        let ideal = min(520, max(300, pane.height * 0.5))
+        let depth = CGFloat(max(1, stackDepth))
+        let share = (verticalRoom - (depth - 1) * Self.gap) / depth
+        return max(220, min(ideal, share))
+    }
+
+    var panelSize: CGSize { CGSize(width: panelWidth, height: panelHeight) }
+
+    /// The docked spot in a corner: beside the chat column, the group centred, at the top
+    /// under the chrome row or at the bottom level with the chat box; or, when the pane is
+    /// too narrow for both side by side, in the corner above the box. Panels docked on
+    /// both sides take room from both ends of the column, so it narrows to sit between them.
+    func dockedOrigin(_ corner: PanelDockCorner, reserve: PanelReserve) -> CGPoint {
+        let y = corner.isTop
+            ? Chrome.contentTopInset
+            : pane.height - (sitsBesideComposer ? Self.bottomMargin : composerAreaHeight + Self.gap) - panelHeight
+        if sitsBesideComposer {
+            let row = pane.width - reserve.leading - reserve.trailing
+            let composerWidth = min(Self.composerMaxWidth, row - 2 * Self.sideMargin)
+            let composerLeft = reserve.leading + (row - composerWidth) / 2
+            switch corner.side {
+            case .leading: return CGPoint(x: composerLeft - Self.gap - panelWidth, y: y)
+            case .trailing: return CGPoint(x: composerLeft + composerWidth + Self.gap, y: y)
+            }
+        }
+        return CGPoint(x: corner.side == .leading ? Self.sideMargin : pane.width - Self.sideMargin - panelWidth, y: y)
+    }
+
+    /// The corner a panel at `origin` belongs in: the side of the pane its centre is on, and
+    /// the nearer of the top and bottom spots. The corner it has keeps it until its centre
+    /// is `cornerSlack` past the middle, so a panel held on the line settles on one side.
+    func dockCorner(nearest origin: CGPoint, keeping current: PanelDockCorner, docks: PanelDocks) -> PanelDockCorner {
+        let centre = CGPoint(x: origin.x + panelWidth / 2, y: origin.y + panelHeight / 2)
+        let middle = CGPoint(x: pane.width / 2, y: (docks.topLeading.y + docks.bottomLeading.y + panelHeight) / 2)
+        let side: PanelDockSide = switch centre.x - middle.x {
+        case ..<(-Self.cornerSlack): .leading
+        case Self.cornerSlack...: .trailing
+        default: current.side
+        }
+        let isTop: Bool = switch centre.y - middle.y {
+        case ..<(-Self.cornerSlack): true
+        case Self.cornerSlack...: false
+        default: current.isTop
+        }
+        switch (side, isTop) {
+        case (.leading, true): return .topLeading
+        case (.trailing, true): return .topTrailing
+        case (.leading, false): return .bottomLeading
+        case (.trailing, false): return .bottomTrailing
+        }
+    }
+
+    /// Keeps a dragged panel inside the pane.
+    func clamped(_ origin: CGPoint) -> CGPoint {
+        let inset: CGFloat = 8
+        return CGPoint(
+            x: min(max(origin.x, inset), max(inset, pane.width - panelWidth - inset)),
+            y: min(max(origin.y, inset), max(inset, pane.height - panelHeight - inset))
+        )
+    }
+}
+
+/// A helper thread's chat as a small floating glass panel: its conversation, its own chat
+/// box at the bottom, and a glass pill in the top-right corner that closes it and stops the
+/// chat. The strip along the top is the handle: drag it to move the panel anywhere in the pane.
+struct SubagentPanel: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.colorScheme) private var colorScheme
+    let thread: ChatThread
+    let size: CGSize
+    let workingDirectory: String?
+    let projectName: String?
+    /// The pointer's travel since the handle was grabbed.
+    let onDrag: (CGSize) -> Void
+    let onDragEnd: () -> Void
+    let close: () -> Void
+
+    @State private var scrollChrome = ChromeScrollModel()
+    @State private var scrollState = TimelineScrollState()
+    /// Closing while the helper works stops its turn, so that one is asked for first.
+    @State private var isConfirmingClose = false
+
+    private static let cornerRadius: CGFloat = 22
+    private static let handleHeight: CGFloat = Chrome.chromeTopPadding + Chrome.capsuleHeight + 6
+
+    var body: some View {
+        let runtime = model.runtime(for: thread.id)
+        let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+        ThreadTimeline(
+            runtime: runtime,
+            scrollChrome: scrollChrome,
+            scrollState: scrollState,
+            projectName: projectName,
+            workingDirectory: workingDirectory,
+            supportsRewind: false,
+            columnHeight: size.height
+        )
+        .equatable()
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false)
+                .overlay(alignment: .top) {
+                    JumpToLatestButton(scrollState: scrollState)
+                }
+        }
+        .overlay(alignment: .top) {
+            PaneTopVeil(model: scrollChrome)
+        }
+        .overlay(alignment: .top) {
+            HStack(alignment: .top, spacing: 8) {
+                // The handle. Invisible, like a window's title bar with no title; the
+                // cursor says what it does.
+                PanelDragHandle(onDrag: onDrag, onDragEnd: onDragEnd)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Self.handleHeight)
+                    .help("Drag to move")
+                    .accessibilityLabel(Text("Drag to move"))
+                // The working status box at the strip's right end: the sending pulse
+                // first, then who is working, in the one capsule.
+                SubagentWorkingBox(title: thread.title, isRunning: runtime.isRunning)
+                    .padding(.top, Chrome.chromeTopPadding)
+                // The same mark as the team panel's, which closes nothing that is working:
+                // this one ends a turn, so a helper still at it is asked about first.
+                ChromeCircleButton(
+                    symbol: "xmark",
+                    help: runtime.isRunning ? "Close this chat and stop its turn" : "Close this chat"
+                ) {
+                    if runtime.isRunning { isConfirmingClose = true } else { close() }
+                }
+                .padding(.top, Chrome.chromeTopPadding)
+                .padding(.trailing, Chrome.chromeHorizontalPadding)
+                .popover(isPresented: $isConfirmingClose, arrowEdge: .bottom) {
+                    ClosePanelPopover(title: thread.title) { close() }
+                }
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .background {
+            // The window's own recipe, on the panel: one glass surface, a scrim for the
+            // text over whatever the panel floats above, the theme's tint, and a hairline.
+            let isDark = colorScheme == .dark
+            shape
+                .fill(.clear)
+                .glassEffect(.regular, in: shape)
+                .overlay {
+                    shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
+                }
+        }
+        .clipShape(shape)
+        .overlay {
+            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
+        }
+        // The scrim sits under the glass and carries the panel's shadow: a plain filled
+        // shape, so its shadow is drawn once and kept. A shadow on the whole panel was
+        // blurred again with every token the transcript streamed under it.
+        .background {
+            let isDark = colorScheme == .dark
+            shape
+                .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
+                .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
+        }
+    }
+}
+
+/// The helper's working status box at the strip's right end, beside the close mark:
+/// first the sending pulse, then who is working while they work. One capsule, one
+/// anchor, one size and one corner radius across both states, the existing mini
+/// spinner and the panel slide for motion, so the send morphs subtly into the working
+/// box with no jump and no second row. The drag handle and the close mark keep their
+/// actions unchanged.
+private struct SubagentWorkingBox: View {
+    let title: String
+    let isRunning: Bool
+
+    /// Briefly true after work starts, so the box shows the sending pulse inside its
+    /// own capsule before settling into the working words.
+    @State private var isSending = false
+
+    private var name: String {
+        let short = TextCleanup.singleLine(title, limit: 24).trimmingCharacters(in: .whitespacesAndNewlines)
+        return short.isEmpty ? "Helper" : short
+    }
+
+    var body: some View {
+        Group {
+            if isRunning || isSending {
+                HStack(spacing: 6) {
+                    MiniSpinner()
+                    Text(verbatim: isSending && !isRunning ? "Sending…" : "\(name) working")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                }
+                .padding(.horizontal, Chrome.capsuleHorizontalPadding)
+                .frame(height: Chrome.capsuleContentHeight)
+                .padding(.vertical, Chrome.capsuleVerticalPadding)
+                .fixedSize()
+                .chromeGlassCapsule()
+                .transition(.softAppear)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text(isRunning ? "\(name) working" : "Sending"))
+            }
+        }
+        .animation(Chrome.panelSlide, value: isRunning)
+        .animation(Chrome.panelSlide, value: isSending)
+        .onChange(of: isRunning) { _, running in
+            if running { isSending = true }
+        }
+        .task(id: isSending) {
+            guard isSending else { return }
+            try? await Task.sleep(for: .seconds(0.9))
+            guard !Task.isCancelled else { return }
+            isSending = false
+        }
+    }
+}
+
+/// What the helper panel's close mark asks while its turn is running, in the popover the
+/// sidebar's delete question uses: the stop is the destructive row, and clicking away keeps
+/// the helper working.
+private struct ClosePanelPopover: View {
+    let title: String
+    let onClose: () -> Void
+
+    var body: some View {
+        PopoverMenu {
+            PopoverSectionHeader("Stop this helper?")
+            PopoverNote("“\(title)” is still working. Closing the panel stops its turn. What it has done so far stays, and its chat moves to the sidebar under this one.")
+            PopoverDivider()
+            PopoverItem("Close and stop", symbol: "stop.circle", isDestructive: true) { onClose() }
+            PopoverItem("Keep it working", symbol: "arrow.uturn.backward") {}
+        }
+        .frame(width: 300)
+    }
+}
+
+/// A floating panel's place while its handle is held: the corner under the pointer, and
+/// the flick it is let go with. Its own object rather than chat state on purpose: only the
+/// panel's placement reads it, so each pointer move re-lays out that one offset and nothing
+/// else in the chat.
+@Observable @MainActor
+final class PanelDragState {
+    /// The panel's corner under the pointer, moved with no animation; nil at rest.
+    private(set) var position: CGPoint?
+    /// Where the panel was when the handle took hold, so each move is measured from there.
+    @ObservationIgnored private var grab: CGPoint?
+    /// The pointer's speed over the last few moves, in points a second, for the flick.
+    @ObservationIgnored private var velocity = CGVector.zero
+    @ObservationIgnored private var lastMove: TimeInterval = 0
+
+    /// How far the pointer's speed carries the panel past where it is let go; a flick
+    /// towards a corner lands there without the pointer having to reach it.
+    private static let flickCarry: TimeInterval = 0.12
+    /// A pointer that has rested this long before letting go drops the panel where it is.
+    private static let restBeforeDrop: TimeInterval = 0.08
+
+    /// The panel's corner once the pointer has travelled `translation` from where its
+    /// handle was grabbed while the panel sat at `rest`, kept inside the pane.
+    func move(by translation: CGSize, from rest: CGPoint, in layout: SubagentPanelLayout) -> CGPoint {
+        let start = grab ?? rest
+        grab = start
+        let next = layout.clamped(CGPoint(x: start.x + translation.width, y: start.y + translation.height))
+        let now = CACurrentMediaTime()
+        if let position {
+            let elapsed = now - lastMove
+            // Two events in the same frame say nothing about speed; the last reading stands.
+            if elapsed >= 0.004 {
+                let instant = CGVector(dx: (next.x - position.x) / elapsed, dy: (next.y - position.y) / elapsed)
+                velocity = CGVector(dx: velocity.dx * 0.4 + instant.dx * 0.6, dy: velocity.dy * 0.4 + instant.dy * 0.6)
+            }
+        } else {
+            velocity = .zero
+        }
+        lastMove = now
+        position = next
+        return next
+    }
+
+    /// Lets the panel go, and says where it was heading: where it is, carried on a little
+    /// by the flick it was released with. Nil when it was never moved.
+    func release() -> CGPoint? {
+        defer {
+            position = nil
+            grab = nil
+            velocity = .zero
+        }
+        guard let position else { return nil }
+        guard CACurrentMediaTime() - lastMove < Self.restBeforeDrop else { return position }
+        return CGPoint(x: position.x + velocity.dx * Self.flickCarry, y: position.y + velocity.dy * Self.flickCarry)
+    }
+}
+
+/// A floating panel at its docked spot, or under the pointer while its handle is held.
+/// The handle moves it live; a drop and a resize settle it with a slide, as does the
+/// panel's size when another panel docks into its corner or leaves it. Only this view
+/// observes the drag, so the chat around the panel is left alone while it moves.
+struct PlacedPanel<Content: View>: View {
+    let drag: PanelDragState
+    /// The panel's docked spot.
+    let rest: CGPoint
+    /// The panel's size, which the corner's stack decides.
+    let size: CGSize
+    let content: Content
+
+    var body: some View {
+        let origin = drag.position ?? rest
+        let settles = drag.position == nil
+        content
+            .offset(x: origin.x, y: origin.y)
+            .animation(settles ? Chrome.panelSlide : nil, value: origin)
+            .animation(settles ? Chrome.panelSlide : nil, value: size)
+    }
+}
+
+/// The strip a floating panel is dragged by. AppKit tracks the press itself, the way the
+/// sidebar's resize grip does: the first click takes hold even when the window is not key,
+/// nothing under the strip can claim the drag once it has begun, and the hand cursor is a
+/// real cursor rect. A SwiftUI drag gesture here lost most presses to the transcript's
+/// scroll view beneath it. Reports the pointer's travel since the press in the pane's
+/// coordinates, y running down like the panel's offset.
+struct PanelDragHandle: NSViewRepresentable {
+    let onDrag: (CGSize) -> Void
+    let onDragEnd: () -> Void
+
+    func makeNSView(context: Context) -> PanelDragHandleView {
+        let view = PanelDragHandleView(frame: .zero)
+        update(view)
+        return view
+    }
+
+    func updateNSView(_ nsView: PanelDragHandleView, context: Context) {
+        update(nsView)
+    }
+
+    private func update(_ view: PanelDragHandleView) {
+        view.onDrag = onDrag
+        view.onDragEnd = onDragEnd
+    }
+}
+
+final class PanelDragHandleView: NSView {
+    var onDrag: ((CGSize) -> Void)?
+    var onDragEnd: (() -> Void)?
+
+    /// How far the pointer travels before a press becomes a drag.
+    private static let slop: CGFloat = 2
+
+    private var pressOrigin: NSPoint = .zero
+    private var isDragging = false
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// A press on the handle moves the panel, never the window.
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        pressOrigin = event.locationInWindow
+        isDragging = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let travel = travel(to: event)
+        if !isDragging {
+            guard abs(travel.width) >= Self.slop || abs(travel.height) >= Self.slop else { return }
+            isDragging = true
+            NSCursor.closedHand.push()
+        }
+        onDrag?(travel)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard isDragging else { return }
+        isDragging = false
+        NSCursor.pop()
+        onDrag?(travel(to: event))
+        onDragEnd?()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Taken out mid-drag, the panel lets go of the cursor with it.
+        if window == nil, isDragging {
+            isDragging = false
+            NSCursor.pop()
+        }
+    }
+
+    /// The pointer's travel since the press. AppKit's y runs up; the panel's offset runs down.
+    private func travel(to event: NSEvent) -> CGSize {
+        let point = event.locationInWindow
+        return CGSize(width: point.x - pressOrigin.x, height: pressOrigin.y - point.y)
+    }
+}
