@@ -589,6 +589,23 @@ struct WorkSteps: View {
     }
 }
 
+/// The heads a turn sent out, one tool row each, as a plain list: no header, no
+/// chevron, never folded. Sits below the turn's steps and replies while the turn runs
+/// and under the folded turn once it is over, so a head never disappears with the steps.
+struct HydraHeadsList: View {
+    let entries: [TimelineEntry]
+    let runtime: ThreadRuntime
+    var workingDirectory: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+            ForEach(entries) { entry in
+                ToolRow(entry: entry, runtime: runtime, workingDirectory: workingDirectory)
+            }
+        }
+    }
+}
+
 /// The "Edited files, ran commands" line above a tool group, derived from the
 /// calls' kinds rather than their localized titles. First part capitalized, the
 /// rest lowered, in a fixed kind order. A kind with a call still running reads
@@ -1150,7 +1167,10 @@ struct TurnFinishedBlock: View {
         /// come from the turn summary itself, which is measured from the actual diff.
         var fileStats: [FileStat] = []
         var hasResponse = false
-        /// The turn's full steps, built only while they are showing.
+        /// The heads the turn sent out, always shown below the final response, folded or not.
+        var headEntries: [TimelineEntry] = []
+        /// The turn's full steps, built only while they are showing. The heads are not
+        /// among them: they have their list of their own below the response.
         var detailGroups: [TimelineGroup] = []
 
         @MainActor
@@ -1179,6 +1199,7 @@ struct TurnFinishedBlock: View {
                     // Plans, notices and checklists don't interrupt it.
                     answerEntries.removeAll(keepingCapacity: true)
                     guard case .tool(let call) = entry.item.content else { continue }
+                    if call.kind == .agent { headEntries.append(entry) }
                     for edit in call.edits where !edit.path.isEmpty {
                         var stat = totals[edit.path] ?? FileStat(path: edit.path, additions: 0, deletions: 0)
                         stat.additions += edit.additions
@@ -1192,15 +1213,19 @@ struct TurnFinishedBlock: View {
             if answerEntries.isEmpty, let last = assistantEntries.last { answerEntries = [last] }
             if !collapsedPlans.isEmpty || !collapsedNotices.isEmpty { hasResponse = true }
             fileStats = totals.values.sorted { $0.path < $1.path }
-            if expanded { detailGroups = TimelineGroup.build(content, showReasoning: false) }
+            if expanded {
+                detailGroups = TimelineGroup.build(content, showReasoning: false).filter {
+                    if case .heads = $0 { return false }
+                    return true
+                }
+            }
         }
     }
 
     var body: some View {
         let derived = Derived(content: content, expanded: isExpanded)
-        let showsBody = isExpanded
-            ? !derived.detailGroups.isEmpty || summary.filesChanged > 0
-            : derived.hasResponse || summary.filesChanged > 0
+        let showsHeads = !derived.headEntries.isEmpty
+        let showsBody = showsHeads || summary.filesChanged > 0 || (isExpanded ? !derived.detailGroups.isEmpty : derived.hasResponse)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(userEntries) { entry in
                 UserMessageRow(entry: entry, runtime: runtime, canRevert: canUndo)
@@ -1252,10 +1277,13 @@ struct TurnFinishedBlock: View {
                             }
                         case .work(_, let entries, let startsCollapsed):
                             WorkGroup(entries: entries, runtime: runtime, workingDirectory: workingDirectory, startsCollapsed: startsCollapsed)
+                        case .heads:
+                            // Never among the steps: the heads list below shows them.
+                            EmptyView()
                         }
                     }
                 }
-                .padding(.bottom, derived.hasResponse ? TimelineMetrics.rowSpacing : 0)
+                .padding(.bottom, derived.hasResponse || showsHeads ? TimelineMetrics.rowSpacing : 0)
             } else if derived.hasResponse {
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(derived.answerEntries) { entry in
@@ -1271,6 +1299,12 @@ struct TurnFinishedBlock: View {
                     }
                 }
                 .padding(.bottom, TimelineMetrics.rowSpacing)
+            }
+
+            // The heads the turn sent out stay in view under the response, folded or not.
+            if showsHeads {
+                HydraHeadsList(entries: derived.headEntries, runtime: runtime, workingDirectory: workingDirectory)
+                    .padding(.bottom, summary.filesChanged > 0 ? TimelineMetrics.rowSpacing : 0)
             }
 
             if summary.filesChanged > 0 {

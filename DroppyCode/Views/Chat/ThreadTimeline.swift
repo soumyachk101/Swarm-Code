@@ -948,12 +948,24 @@ enum TimelineGroup: Identifiable, Equatable {
     /// A run of tool entries. `startsCollapsed` is true when reply text follows
     /// the run, so past work renders as one tappable summary line above the answer.
     case work(id: String, entries: [TimelineEntry], startsCollapsed: Bool)
+    /// The heads a turn sent out (its `.agent` tool calls), in order. Always the last
+    /// group of a run and never part of a work run: the heads stay in view as a list of
+    /// their own below the turn's steps and replies, whether or not the steps are folded.
+    case heads(id: String, entries: [TimelineEntry])
 
     var id: String {
         switch self {
         case .single(let entry): entry.id
         case .work(let id, _, _): id
+        case .heads(let id, _): id
         }
+    }
+
+    /// Whether the entry is a head the turn sent out: a tool call of the `.agent` kind.
+    @MainActor
+    static func isHead(_ entry: TimelineEntry) -> Bool {
+        if case .tool(let call) = entry.item.content, call.kind == .agent { return true }
+        return false
     }
 
     @MainActor
@@ -968,6 +980,7 @@ enum TimelineGroup: Identifiable, Equatable {
         var groups: [TimelineGroup] = []
         var work: [TimelineEntry] = []
         var workStart = 0
+        var heads: [TimelineEntry] = []
 
         func flushWork() {
             guard let first = work.first else { return }
@@ -980,6 +993,12 @@ enum TimelineGroup: Identifiable, Equatable {
         for (index, entry) in entries.enumerated() {
             switch entry.kind {
             case .tool:
+                // A head sent out never joins the work run: it goes to the heads list at
+                // the end, and the commands around it stay one run.
+                if isHead(entry) {
+                    heads.append(entry)
+                    continue
+                }
                 if let last = work.last, last.turnID != entry.turnID { flushWork() }
                 if work.isEmpty { workStart = index }
                 work.append(entry)
@@ -992,6 +1011,9 @@ enum TimelineGroup: Identifiable, Equatable {
             }
         }
         flushWork()
+        if let first = heads.first {
+            groups.append(.heads(id: "heads-\(first.id)", entries: heads))
+        }
         return groups
     }
 }
@@ -1037,7 +1059,7 @@ enum DisplayBlock: Identifiable, Equatable {
         switch self {
         case .turn(_, let turnID, _, _, _): turnID
         case .group(.single(let entry), _, _): entry.turnID
-        case .group(.work, _, _), .working, .merging: nil
+        case .group(.work, _, _), .group(.heads, _, _), .working, .merging: nil
         }
     }
 
@@ -1047,7 +1069,7 @@ enum DisplayBlock: Identifiable, Equatable {
         switch self {
         case .turn(_, _, let entries, _, _): entries.contains { $0.kind == .user }
         case .group(.single(let entry), _, _): entry.kind == .user
-        case .group(.work, _, _), .working, .merging: false
+        case .group(.work, _, _), .group(.heads, _, _), .working, .merging: false
         }
     }
 
@@ -1256,6 +1278,12 @@ private struct TurnRunningBlock: View {
 
     var body: some View {
         var groups = TimelineGroup.build(entries, showReasoning: false)
+        // The heads the turn sent out come last from the build; they render below the
+        // steps and replies and above the working line, never inside the working line.
+        var heads: TimelineGroup?
+        if case .heads? = groups.last {
+            heads = groups.removeLast()
+        }
         var liveWork: [TimelineEntry] = []
         if showsWorking, case .work(_, let entries, false)? = groups.last {
             liveWork = entries
@@ -1264,6 +1292,11 @@ private struct TurnRunningBlock: View {
         return VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             ForEach(groups) { group in
                 TurnRow(group: group, runtime: runtime, context: context)
+                    .equatable()
+                    .transition(ThreadTimeline.rowTransition)
+            }
+            if let heads {
+                TurnRow(group: heads, runtime: runtime, context: context)
                     .equatable()
                     .transition(ThreadTimeline.rowTransition)
             }
@@ -1320,6 +1353,8 @@ struct TimelineGroupView: View {
             }
         case .work(_, let entries, let startsCollapsed):
             WorkGroup(entries: entries, runtime: runtime, workingDirectory: context.workingDirectory, startsCollapsed: startsCollapsed)
+        case .heads(_, let entries):
+            HydraHeadsList(entries: entries, runtime: runtime, workingDirectory: context.workingDirectory)
         }
     }
 }
