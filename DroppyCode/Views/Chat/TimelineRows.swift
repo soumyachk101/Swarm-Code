@@ -115,16 +115,16 @@ struct UserMessageRow: View {
             // The binding alone, so the hover responder never keeps this row (and its
             // message) alive after it scrolls away.
             .onHover { [hovering = $isHovering] in hovering.wrappedValue = $0 }
-            // Snapshots only: the menu builder must not capture the row, so the AppKit
-            // menu cannot pin the row's state storage after dismiss. The revert intent
-            // goes through the binding alone, the way the hover responder does below.
-            .contextMenu { [message, canRevert, confirming = $menuRequests.confirmRevert] in
-                let textSnapshot = message.text
-                RowActionMenuButtons(actions: Self.messageActions(
-                    text: textSnapshot,
+            // Snapshots only: the popover opens at the pointer and its builder must not
+            // capture the row, so the popover cannot pin the row's state storage
+            // after dismiss. The revert intent goes through the binding alone, the
+            // way the hover responder does below.
+            .rightClickPopover { [message, canRevert, confirming = $menuRequests.confirmRevert] in
+                Self.messageActions(
+                    text: message.text,
                     canRevert: canRevert,
                     confirmRevert: confirming
-                ))
+                )
             }
             // The room for the hover line lives inside the row but is taken back out
             // of its height, so the controls show up in the gap to the next row and
@@ -157,8 +157,8 @@ struct UserMessageRow: View {
     private static func messageActions(text: String, canRevert: Bool, confirmRevert: Binding<Bool>) -> [RowAction] {
         let textSnapshot = text
         var items = [
-            RowAction(title: "Copy", symbol: "doc.on.doc") { copyMessageText(textSnapshot) },
-            RowAction(title: "Copy as plain text", symbol: "doc.plaintext") { copyMessageText(MessageText.plain(textSnapshot)) },
+            RowAction(title: "Copy message", symbol: "doc.on.doc") { copyMessageText(MessageText.plain(textSnapshot)) },
+            RowAction(title: "Copy as markdown", symbol: "number") { copyMessageText(textSnapshot) },
         ]
         if canRevert {
             items.append(RowAction(title: "Edit from here", symbol: "arrow.uturn.backward", startsGroup: true) { [confirm = confirmRevert] in
@@ -1036,8 +1036,8 @@ struct AssistantMessageRow: View {
         let textSnapshot = text
         let codeSnapshot = code
         var items = [
-            RowAction(title: "Copy", symbol: "doc.on.doc") { copyMessageText(textSnapshot) },
-            RowAction(title: "Copy as plain text", symbol: "doc.plaintext") { copyMessageText(MessageText.plain(textSnapshot)) },
+            RowAction(title: "Copy message", symbol: "doc.on.doc") { copyMessageText(MessageText.plain(textSnapshot)) },
+            RowAction(title: "Copy as markdown", symbol: "number") { copyMessageText(textSnapshot) },
         ]
         if let codeSnapshot {
             items.append(RowAction(title: "Copy last code block", symbol: "chevron.left.forwardslash.chevron.right") { [code = codeSnapshot] in
@@ -1058,18 +1058,19 @@ struct AssistantMessageRow: View {
 }
 
 extension View {
-    /// The right-click menu of a reply, wherever its text is shown: copy, the last code
-    /// block, quoting it into the chat box, select-text mode. Snapshots only: the menu
-    /// builder must not capture the row, so the AppKit menu cannot pin the row's state
-    /// storage after dismiss. A nil select binding leaves 'Select text' out (streaming rows).
+    /// The right-click popover of a reply, opened at the pointer, wherever its text
+    /// is shown: copy, the last code block, quoting it into the chat box,
+    /// select-text mode. Snapshots only: the popover builder must not capture the
+    /// row, so the popover cannot pin the row's state storage after dismiss.
+    /// A nil select binding leaves 'Select text' out (streaming rows).
     func messageMenu(text: String, runtime: ThreadRuntime, selectText: Binding<Bool>? = nil) -> some View {
-        contextMenu { [text, runtime, select = selectText] in
-            RowActionMenuButtons(actions: AssistantMessageRow.messageActions(
+        rightClickPopover { [text, runtime, select = selectText] in
+            AssistantMessageRow.messageActions(
                 text: text,
                 code: lastCodeBlock(in: text),
                 runtime: runtime,
                 selectText: select
-            ))
+            )
         }
     }
 }

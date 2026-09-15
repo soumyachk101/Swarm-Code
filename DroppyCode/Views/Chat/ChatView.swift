@@ -1012,14 +1012,16 @@ private struct ChatChromeTitle: View {
                 .foregroundStyle(title.isEmpty ? Chrome.secondaryText : Chrome.primaryText)
                 .lineLimit(1)
                 .truncationMode(.tail)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(.rect)
                 .padding(.vertical, 6)
+                .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .help("Thread title — click to copy or rename")
         .accessibilityLabel(Text("Thread title"))
         .accessibilityAddTraits(.isButton)
+        // The popover hangs off the title's own width, so it opens under the words;
+        // the row's leftover width (below) is not the button's, or a short title
+        // opened its menu far off to the right, over the middle of the chat.
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             PopoverMenu {
                 PopoverSectionHeader("Thread title")
@@ -1040,6 +1042,7 @@ private struct ChatChromeTitle: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

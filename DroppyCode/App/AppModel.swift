@@ -479,6 +479,24 @@ final class AppModel {
 
     // MARK: - Threads
 
+    /// Launch lands in a chat, never on the empty page: the newest thread nothing has been
+    /// sent in yet, in the project you last worked in, or a fresh one there. Reusing an
+    /// unused thread keeps a launch from leaving a "New thread" row behind every time.
+    func openThreadOnLaunch() {
+        guard let project = currentProject else { return }
+        let unused = threads
+            .filter {
+                $0.projectID == project.id && !$0.isArchived && !$0.isSettled && !$0.isHelper
+                    && $0.lastStatus == nil && !$0.hasCustomTitle && $0.title == ChatThread.untitled
+            }
+            .max { $0.createdAt < $1.createdAt }
+        if let unused {
+            selectedThreadID = unused.id
+        } else {
+            newThread(in: project)
+        }
+    }
+
     @discardableResult
     func newThread(in project: Project? = nil, workspace: WorkspaceMode? = nil) -> ChatThread? {
         guard let project = project ?? currentProject else {

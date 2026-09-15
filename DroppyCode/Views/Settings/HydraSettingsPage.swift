@@ -17,9 +17,12 @@ struct HydraSettingsPage: View {
                     }
                     .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Hydra")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(Chrome.primaryText)
+                        HStack(spacing: 4) {
+                            Text("Hydra")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Chrome.primaryText)
+                            InfoHoverButton(help: "How Hydra works") { HydraInfoPopover(topic: .hydra) }
+                        }
                         Text("One chat leads a team of heads on big jobs.")
                             .font(.system(size: 11))
                             .foregroundStyle(Chrome.secondaryText)
@@ -42,7 +45,7 @@ struct HydraSettingsPage: View {
             }
         }
         Group {
-            ChromeSection(title: "Heads") {
+            ChromeSection(title: "Heads", accessory: AnyView(InfoHoverButton(help: "How heads work") { HydraInfoPopover(topic: .heads) })) {
                 ChromeCard {
                     toggleRow("Own copy of the checkout", detail: "Changes land in the chat's checkout when the head reports.", isOn: $settings.hydraIsolateHeads)
                     ChromeRowDivider()
