@@ -18,6 +18,8 @@ struct HydraButton: View {
     /// Briefly true after heads go out, so the badge first shows the sending pulse
     /// inside its own box before morphing into the working count.
     @State private var isSending = false
+    /// Right-tapping the mark opens the per-chat Hydra switch in place.
+    @State private var isHydraSwitchShown = false
 
     var body: some View {
         let isOn = model.hydraIsOn(thread)
@@ -25,6 +27,10 @@ struct HydraButton: View {
         // starting or finishing never re-renders this button.
         let heads = model.panelHeads(of: thread.id)
         let running = heads.count { $0.hydra?.status == .running }
+        // The lead writing head briefs, before any head status is running: a native
+        // agent tool at work, or a delegation block in the reply. Derived from the
+        // lead's own timeline, so the badge pulses as soon as delegation starts.
+        let isDelegating = isOn && running == 0 && runtime.isRunning && Self.isLeadDelegating(runtime.entries)
         Button {
             if heads.isEmpty { isExplaining = true } else { togglePanel() }
         } label: {
@@ -42,14 +48,15 @@ struct HydraButton: View {
             // it over everything else in it, so a badge laid over the button after the
             // glass, as an overlay or a later sibling, came out underneath.
             .overlay(alignment: .topTrailing) {
-                if running > 0 || isSending {
-                    HydraSendWorkingBadge(running: running, isSending: isSending)
+                if running > 0 || isSending || isDelegating {
+                    HydraSendWorkingBadge(running: running, isSending: isSending || isDelegating)
                         .offset(x: 3, y: -3)
                         .transition(.scale.combined(with: .opacity))
                 }
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.7), value: running)
             .animation(Chrome.panelSlide, value: isSending)
+            .animation(Chrome.panelSlide, value: isDelegating)
             .onChange(of: running) { old, new in
                 guard new > old else { return }
                 isSending = true
@@ -63,11 +70,17 @@ struct HydraButton: View {
         }
         .buttonStyle(.plain)
         .chromeGlassCircle()
+        .background {
+            HydraRightTap { isHydraSwitchShown = true }
+        }
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
         .popover(isPresented: $isExplaining, arrowEdge: .bottom) {
             HydraIdlePopover(thread: thread)
+        }
+        .popover(isPresented: $isHydraSwitchShown, arrowEdge: .bottom) {
+            HydraSwitchPopover(thread: thread, isOn: isOn, isHydraSwitchShown: $isHydraSwitchShown)
         }
         .help(help(isOn: isOn, running: running, hasHeads: !heads.isEmpty))
         .accessibilityLabel(Text(panelHelp(running: running, hasHeads: !heads.isEmpty)))
@@ -79,6 +92,27 @@ struct HydraButton: View {
     /// either way. With nothing out yet the popover explains instead (see the body).
     private func togglePanel() {
         withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden.toggle() }
+    }
+
+    /// Whether the lead's own timeline shows delegation under way: a native agent tool
+    /// still running, or a delegation block in a reply (streaming briefs, or written
+    /// while the heads have yet to go out; the block leaves the reply once they do).
+    @MainActor
+    private static func isLeadDelegating(_ entries: [TimelineEntry]) -> Bool {
+        guard let lastEntry = entries.last else { return false }
+        let lastTurnID = lastEntry.item.turnID
+        for entry in entries.reversed() {
+            guard entry.item.turnID == lastTurnID else { break }
+            switch entry.item.content {
+            case .tool(let call) where call.kind == .agent && call.status == .running:
+                return true
+            case .assistant(let message) where HydraPrompts.hasDelegationBlock(in: message.text):
+                return true
+            default:
+                break
+            }
+        }
+        return false
     }
 
     private func panelHelp(running: Int, hasHeads: Bool) -> String {
@@ -103,6 +137,86 @@ struct HydraButton: View {
         parts.append(runtime.isHydraPanelHidden ? "Show the panel" : "Hide the panel")
         return parts.joined(separator: " · ")
     }
+}
+
+/// What a right-tap on the Hydra mark offers, in place: the per-chat switch, on or
+/// off for this chat only. Left-click keeps opening the panel; this only flips the chat.
+private struct HydraSwitchPopover: View {
+    @Environment(AppModel.self) private var model
+    let thread: ChatThread
+    let isOn: Bool
+    @Binding var isHydraSwitchShown: Bool
+
+    var body: some View {
+        PopoverMenu {
+            if !model.settings.hydraEnabled {
+                PopoverSectionHeader("Hydra is off in Settings")
+                PopoverItem("Turn Hydra on") {
+                    model.settings.hydraEnabled = true
+                    model.setHydra(true, for: thread.id)
+                    isHydraSwitchShown = false
+                }
+            } else {
+                PopoverSectionHeader(isOn ? "Hydra is on for this chat" : "Hydra is off for this chat")
+                PopoverItem("Turn Hydra on for this chat", isChecked: isOn) {
+                    model.setHydra(true, for: thread.id)
+                    isHydraSwitchShown = false
+                }
+                PopoverItem("Turn Hydra off for this chat", isChecked: !isOn) {
+                    model.setHydra(false, for: thread.id)
+                    isHydraSwitchShown = false
+                }
+            }
+        }
+    }
+}
+
+/// Catches a right-tap, a right-click or a control-click, on the Hydra mark. A
+/// background with no size of its own, so the button's left-click, badge, hover and
+/// help text are exactly as they were: it only hangs a right-button click recognizer
+/// on the container SwiftUI gives it, which observes without delaying or swallowing
+/// the primary button's events. Control-click arrives as a secondary click, so the
+/// one recognizer covers both.
+private struct HydraRightTap: NSViewRepresentable {
+    var action: () -> Void
+
+    func makeNSView(context: Context) -> HydraRightTapHost {
+        HydraRightTapHost(action: action)
+    }
+
+    func updateNSView(_ nsView: HydraRightTapHost, context: Context) {
+        nsView.action = action
+    }
+}
+
+private final class HydraRightTapHost: NSView {
+    var action: () -> Void
+    private var installed = false
+
+    init(action: @escaping () -> Void) {
+        self.action = action
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        guard let host = superview else {
+            installed = false
+            return
+        }
+        guard !installed else { return }
+        installed = true
+        let recognizer = NSClickGestureRecognizer(target: self, action: #selector(fire))
+        // `buttonMask` is a plain bit mask: bit 0 is the left button, bit 1 the right.
+        recognizer.buttonMask = 0x2
+        recognizer.delaysPrimaryMouseButtonEvents = false
+        host.addGestureRecognizer(recognizer)
+    }
+
+    @objc private func fire() { action() }
 }
 
 /// What the Hydra mark says while the team is on but nothing is out: that it is on, which
@@ -213,8 +327,8 @@ private struct HydraChargeMotion: View {
 }
 
 /// The count of heads at work, above the button's top-right: tapping it is tapping the
-/// button. After heads go out it first shows the sending pulse, then morphs in place
-/// into the working count: the same anchor, the same capsule at the same size, the
+/// button. While the lead delegates it first shows the sending pulse, then morphs in
+/// place into the working count: the same anchor, the same capsule at the same size, the
 /// existing mini spinner and the panel slide for motion, so nothing jumps and no second
 /// row ever appears.
 private struct HydraSendWorkingBadge: View {

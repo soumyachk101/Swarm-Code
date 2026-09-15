@@ -311,6 +311,8 @@ struct HydraLanding: Codable, Hashable, Sendable {
     var files: [File] = []
     /// Files the three-way merge left conflict markers in.
     var conflicts: [String] = []
+    /// Build-output diff sections left out before the patch was parsed.
+    var droppedBuildOutputFiles = 0
     /// Where the patch went when none of it could be applied.
     var patchPath: String?
     var error: String?
@@ -324,6 +326,7 @@ struct HydraLanding: Codable, Hashable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         files = container.value(.files, default: [])
         conflicts = container.value(.conflicts, default: [])
+        droppedBuildOutputFiles = container.value(.droppedBuildOutputFiles, default: 0)
         patchPath = container.value(.patchPath, default: nil)
         error = container.value(.error, default: nil)
     }
@@ -377,6 +380,7 @@ enum HydraPrompts {
         case .ownCopy(let path):
             """
             You have your own copy of the project at \(path): a git worktree Droppy Code made for you from the lead's checkout as it was when you were sent out, uncommitted work included. Work in it directly, on the files as they are; your tools already run there. When you report, Droppy Code carries your changes into the lead's checkout itself. So never commit, branch, stash, push, check out, reset, restore or clean anything, and never make or remove worktrees, whatever the project's own guidelines say about agents and worktrees: this copy already is yours. Do not use git to check your work either.
+            Build only into a folder git ignores, such as `build.noindex/<your name>` with `-derivedDataPath`; never put build output in the project folder or the `.xcodeproj`, since everything not ignored in this copy lands in the lead's checkout.
             """
         case .shared(let path):
             """
@@ -400,10 +404,15 @@ enum HydraPrompts {
     /// for one is a job it finishes by replying.
     private static let autoMergeRule = "Droppy Code merges your finished work itself: the moment you answer and every head is back, the files the team changed go out as a merge request on a branch of their own, it is merged, and the checkout is brought up to date. So never commit, push, make a branch, or open or merge a merge request yourself, and never send out a head to, whatever the project's guidelines or the user's standing instructions say about merging. When the user asks you to merge, there is nothing to run: make sure the work is complete, reply that it lands by itself as soon as you finish, and stop."
 
-    /// What a lead is told when the setting has it audit the heads' work: a quick read of
-    /// every file a report names, with the fixes made by the lead itself, so the audit
+    /// What a lead is told when the setting has it check the heads' work: a quick read of
+    /// every file a report names, with the fixes made by the lead itself, so the check
     /// never turns into another round of heads checking heads.
-    private static let reviewRule = "Before you finish, give every head's work a quick audit: read each file a report names as changed, check the change does what the brief asked, fits the code around it and breaks nothing that calls it, and run the narrowest check that proves it builds. Correct what is wrong yourself, right there in the file, and say in your answer what you corrected and why. Never send out a head to do this audit or the corrections; a head that got it badly wrong may be sent out again with a sharper brief, but small fixes are yours."
+    private static let reviewRule = "Before you finish, read each file a report names as changed, check the change does what the brief asked, fits the code around it and breaks nothing that calls it, and run the narrowest check that proves it builds. Correct what is wrong yourself, right there in the file, and say plainly in your answer what you changed yourself and why. Never send out a head to do this check or the corrections; a head that got it badly wrong may be sent out again with a sharper brief, but small fixes are yours."
+
+    /// How the lead tells the user what the heads did: one short human sentence per
+    /// head, head's name first, everyday words for what changed for the user, file
+    /// details on one short second line only, no audit-speak, no icons.
+    private static let reportStyleRule = "When you answer the user, open each head's part with one short plain sentence that names the head first and says in everyday words what changed for the user (for example: Otto fixed the timeline crash so replies no longer jump). Keep file details to one short second line, never in the opener. Never write stilted audit-speak like Audited Otto and Nova or both do what the briefs asked, and add no icons or glyphs: the interface already draws each head."
 
     /// Appended to the lead's system prompt on providers that run heads natively: when to
     /// delegate, how to split the work and what to do with the reports.
@@ -442,7 +451,7 @@ enum HydraPrompts {
         When they report back:
         - The checkout changes under you while heads work, and the user may be editing too. Never use git status or git diff to check on a head, and never reconcile, revert, stash or move changes you did not make.
         - Take a report as done work: read the files it names if something matters, but do not redo the task and do not start it over because the tree looks different from what you expected. A head that failed leaves its part to you: do it or send it out again. A head the user stopped leaves its part alone unless the user asks.
-        \(reviewsHeads ? "- " + reviewRule + "\n" : "")- Then finish the job: integrate, run one verification if it matters, and answer the user.
+        \(reviewsHeads ? "- " + reviewRule + "\n" : "")- Then finish the job: integrate, run one verification if it matters, and answer the user. \(reportStyleRule)
         \(autoMerges ? "\n" + autoMergeRule + "\n" : "")
         """
     }
@@ -584,7 +593,7 @@ enum HydraPrompts {
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "")
+        and stop there: do not wait, poll or verify anything after it. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "") \(reportStyleRule)
         """
     }
 
@@ -851,13 +860,14 @@ enum HydraPrompts {
         if reports.contains(where: { $0.origin == .sent }) {
             closing.append("The user sent that work straight to the heads instead of to you; take it into account, and reply to the user on it as if they had asked you.")
         }
-        // With the audit on, the lead reads every file listed rather than only the ones
+        // With the check on, the lead reads every file listed rather than only the ones
         // that matter, and fixes what it finds itself.
         if reviewsHeads {
-            closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile or revert anything. Before you finish, give every head's work a quick audit: read each file listed above, check the change does what the brief asked and fits the code around it, run the narrowest check that proves it builds, correct what is wrong yourself, and say in your answer what you corrected. Never send out a head for the audit or the corrections.")
+            closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile or revert anything. Before you finish, read each file listed above, check the change does what the brief asked and fits the code around it, run the narrowest check that proves it builds, correct what is wrong yourself, and say plainly in your answer what you changed yourself. Never send out a head for the check or the corrections.")
         } else {
             closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile, revert or redo anything. Build on the reports, read the files they name if something matters, run one verification if it matters, and finish the job.")
         }
+        closing.append(reportStyleRule)
         if !stillWorking.isEmpty {
             closing.append("Do not wait for \(list(stillWorking)) and do not take over \(stillWorking.count == 1 ? "its" : "their") tasks; tell the user \(stillWorking.count == 1 ? "it is" : "they are") still at work and that you will hear from \(stillWorking.count == 1 ? "it" : "them").")
         }
@@ -879,14 +889,17 @@ enum HydraPrompts {
             return report.status == .completed ? "Changed nothing." : "Nothing landed; its unfinished work is in its copy at \(path)."
         }
         if landing.isEmpty { return "Changed nothing." }
-        let files = landing.files.map { file -> String in
+        let files = landing.files.prefix(25).map { file -> String in
             var line = "\(file.path) (+\(file.additions) −\(file.deletions))"
             if landing.conflicts.contains(file.path) { line += " with conflicts" }
             return line
         }
-        if landing.patchPath != nil { return "Did not land: \(files.joined(separator: ", "))." }
-        if let error = landing.error { return "Did not land (\(error)): \(files.joined(separator: ", "))." }
-        return "Landed in your checkout: \(files.joined(separator: ", "))."
+        let listed = files.joined(separator: ", ")
+            + (landing.files.count > 25 ? ", and \(landing.files.count - 25) more" : "")
+        let omitted = landing.droppedBuildOutputFiles == 0 ? "" : "; \(landing.droppedBuildOutputFiles) build-output file\(landing.droppedBuildOutputFiles == 1 ? " was" : "s were") left out"
+        if landing.patchPath != nil { return "Did not land: \(listed)\(omitted)." }
+        if let error = landing.error { return "Did not land (\(error)): \(listed)\(omitted)." }
+        return "Landed in your checkout: \(listed)\(omitted)."
     }
 
     private static func duration(_ seconds: TimeInterval) -> String {

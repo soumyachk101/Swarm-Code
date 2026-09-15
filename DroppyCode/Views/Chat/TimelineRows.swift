@@ -64,7 +64,9 @@ struct UserMessageRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 96)
-            .onHover { isHovering = $0 }
+            // The binding alone, so the hover responder never keeps this row (and its
+            // message) alive after it scrolls away.
+            .onHover { [hovering = $isHovering] in hovering.wrappedValue = $0 }
             // The room for the hover line lives inside the row but is taken back out
             // of its height, so the controls show up in the gap to the next row and
             // that gap stays the same whether or not they are showing. (6 = the
@@ -102,8 +104,10 @@ struct HydraReportRow: View {
         let who = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
         // A note from Hydra itself says what it is on its first line; the rest is the message.
         // That line ends like a sentence, and the pill reads it as a label.
+        // A heads' report keeps its full text for the popover, but the pill reads a
+        // short human summary with the heads first, never the file-heavy detail.
         let parts = message.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
-        let title = personas.isEmpty ? Self.withoutTrailingStop(String(parts.first ?? "Hydra")) : "\(who) reported back"
+        let title = personas.isEmpty ? Self.withoutTrailingStop(String(parts.first ?? "Hydra")) : Self.reportSummary(who: who, text: message.text)
         let body = personas.isEmpty ? String(parts.count > 1 ? parts[1] : "").trimmingCharacters(in: .whitespacesAndNewlines) : message.text
         // A merge note puts the merge request's address on the body's first line: that becomes
         // a link on the pill, and the chevron stays only for what the note says after it.
@@ -130,6 +134,8 @@ struct HydraReportRow: View {
                 Text(verbatim: title)
                     .font(.chat(.callout, weight: .medium, zoom: zoom))
                     .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 if let link {
                     Link(destination: link) {
                         Text("Open")
@@ -166,6 +172,79 @@ struct HydraReportRow: View {
     /// The title without the one full stop a note's first line ends on.
     private static func withoutTrailingStop(_ title: String) -> String {
         title.hasSuffix(".") ? String(title.dropLast()) : title
+    }
+
+    /// The pill for heads reporting back: the heads first, then what they did in
+    /// a few words. Tasks come from the report's own `## Name: task` sections,
+    /// so landing lines and file counts stay in the popover. Falls back to the
+    /// first line that is not report scaffolding, and only then to "reported back".
+    private static func reportSummary(who: String, text: String) -> String {
+        let tasks = reportTasks(in: text)
+        if !tasks.isEmpty {
+            let joined = tasks.joined(separator: "; ")
+            return TextCleanup.singleLine("\(who): \(joined)", limit: 140)
+        }
+        if let line = firstSummaryLine(in: text) {
+            return TextCleanup.singleLine("\(who): \(line)", limit: 140)
+        }
+        if text.split(whereSeparator: \.isNewline).contains(where: {
+            $0.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("changed nothing")
+        }) {
+            return TextCleanup.singleLine("\(who): changed nothing", limit: 140)
+        }
+        return TextCleanup.singleLine("\(who) reported back", limit: 140)
+    }
+
+    /// One short task per `## Name: task (outcome) (took)` section, in order.
+    private static func reportTasks(in text: String) -> [String] {
+        var tasks: [String] = []
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard line.hasPrefix("## ") else { continue }
+            var task = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
+            if let colon = task.firstIndex(of: ":") {
+                task = String(task[task.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            }
+            task = withoutTrailingParentheticals(task)
+            task = TextCleanup.singleLine(task, limit: 60).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !task.isEmpty { tasks.append(task) }
+        }
+        return tasks
+    }
+
+    /// The outcome and effort suffixes (`(failed)`, `(2 tools)`, `(1m 3s, 4 tools)`)
+    /// off the end of a section's task.
+    private static func withoutTrailingParentheticals(_ task: String) -> String {
+        var result = task.trimmingCharacters(in: .whitespaces)
+        while result.hasSuffix(")"), let open = result.lastIndex(of: "(") {
+            let inner = String(result[result.index(after: open)..<result.index(before: result.endIndex)])
+            guard !inner.isEmpty, !inner.contains(where: { $0.isNewline }),
+                  inner.range(of: #"(failed|stopped|tool|\ds|\dm )"#, options: .regularExpression) != nil
+            else { break }
+            result = String(result[..<open]).trimmingCharacters(in: .whitespaces)
+        }
+        return result
+    }
+
+    /// The first line worth saying out loud: not the "Hydra reports:" opening,
+    /// a section header, a landing or file-count line, or report scaffolding.
+    private static func firstSummaryLine(in text: String) -> String? {
+        for rawLine in text.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty, !line.hasPrefix("## "), !line.hasPrefix("#"),
+                  line != "No report." else { continue }
+            let lower = line.lowercased()
+            if lower.hasPrefix("hydra reports:") || lower.hasPrefix("landed in your checkout:")
+                || lower == "changed nothing." || lower.hasPrefix("did not land")
+                || lower.hasPrefix("nothing landed") || lower.hasPrefix("the changes listed above")
+                || lower.hasPrefix("the heads worked in your checkout") || lower.hasPrefix("do not check")
+                || lower.hasPrefix("do not wait") { continue }
+            // A bare file line (`path (+a −d)`) or bullet is detail, not summary.
+            if line.range(of: #"\(\+\d+.*−\d+\)"#, options: .regularExpression) != nil { continue }
+            if line.hasPrefix("- ") || line.hasPrefix("· ") { continue }
+            return TextCleanup.singleLine(line, limit: 80)
+        }
+        return nil
     }
 
     /// The address on the body's first line, when that line is an address and nothing else.
@@ -446,6 +525,9 @@ struct AttachmentStrip: View {
     @State private var preview = AttachmentPreviewSlot()
 
     var body: some View {
+        // Weak/box captures only: hover responders and anchor views must not keep this
+        // strip (and its panel) alive after it scrolls away.
+        let slot = preview
         // A plain stack hugs the thumbnails, so a trailing-aligned row keeps the
         // photos over the bubble — and the anchor view fills just the photos.
         HStack(spacing: 6) {
@@ -455,9 +537,9 @@ struct AttachmentStrip: View {
             }
         }
         .background {
-            AttachmentAnchorCapture { preview.setAnchor($0) }
+            AttachmentAnchorCapture { [weak slot] in slot?.setAnchor($0) }
         }
-        .onDisappear { preview.close() }
+        .onDisappear { [weak slot] in slot?.close() }
     }
 }
 
@@ -507,6 +589,9 @@ struct AttachmentThumbnail: View {
     }
 
     var body: some View {
+        // The anchor box alone: the hover responder and the anchor view must not keep
+        // this row (and its attachment) alive after it scrolls away.
+        let anchorBox = ownAnchor
         Button {
             togglePanel()
         } label: {
@@ -526,19 +611,21 @@ struct AttachmentThumbnail: View {
             } else if attachment.isVideo {
                 AttachmentVideoThumbnail(attachment: attachment, size: size)
             } else {
-                HStack(spacing: 6) {
+                VStack(spacing: 3) {
                     Image(nsImage: NSWorkspace.shared.icon(forFile: attachment.path))
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 16, height: 16)
                     Text(attachment.name)
-                        .lineLimit(1)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
                         .truncationMode(.middle)
                 }
                 .font(.chat(.caption, zoom: zoom))
-                .padding(.horizontal, 10)
-                .frame(height: size * 0.6)
+                .padding(.horizontal, 6)
+                .frame(width: size, height: size)
                 .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 10, style: .continuous))
+                .clipShape(.rect(cornerRadius: 10, style: .continuous))
             }
         }
         .buttonStyle(.plain)
@@ -546,12 +633,12 @@ struct AttachmentThumbnail: View {
         // pinning the hit shape to the cell keeps the neighbour's remove badge
         // reachable no matter how hit-testing treats the overflow.
         .contentShape(.rect(cornerRadius: 12, style: .continuous))
-        .onHover { hovering in
-            if hovering, !needsAnchor { needsAnchor = true }
+        .onHover { [needed = $needsAnchor] hovering in
+            if hovering, !needed.wrappedValue { needed.wrappedValue = true }
         }
         .background {
             if needsAnchor {
-                AttachmentAnchorCapture { ownAnchor.value = $0 }
+                AttachmentAnchorCapture { [weak anchorBox] in anchorBox?.value = $0 }
             }
         }
         .task(id: attachment.path) {
@@ -593,8 +680,8 @@ struct AssistantMessageRow: View {
                 }
                 .opacity(isHovering && !message.isStreaming ? 1 : 0)
             }
-            .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+            .onHover { [hovering = $isHovering] isOver in
+                withAnimation(.easeOut(duration: 0.12)) { hovering.wrappedValue = isOver }
             }
             // Same trade as the user row: the hover line's room stays inside the row
             // (so hovering it works and text never moves), but not in its height, so
@@ -818,18 +905,25 @@ struct ToolRow: View {
             // nothing to open. Rendered as a line of text rather than a control, so the
             // pointer and VoiceOver both treat it as what it is.
             let isTappable = opensPopover || opensHead || showsOutput
+            // Values and weak boxes only below: the button action must not keep this
+            // row's entry (and its text) alive through menus and hovers.
+            let turn = entry.turnID
+            let diffEdits = edits
+            let slot = preview
+            let rt = runtime
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 if isTappable {
                     Button {
+                        [weak slot, weak rt, presented = $isShowingHead, expanded = $isExpanded] in
                         if opensHead {
-                            isShowingHead.toggle()
+                            presented.wrappedValue.toggle()
                         } else if opensDiff {
-                            guard let view = preview.anchor.value else { return }
-                            runtime.showDiff(on: view, edge: .minY, turn: entry.turnID, focusEdits: edits)
+                            guard let view = slot?.anchor.value else { return }
+                            rt?.showDiff(on: view, edge: .minY, turn: turn, focusEdits: diffEdits)
                         } else if opensImage, let imagePath {
-                            preview.panel.toggle(PreviewImages.attachment(for: imagePath), over: preview.anchor.value, edge: .minY)
+                            slot?.panel.toggle(PreviewImages.attachment(for: imagePath), over: slot?.anchor.value, edge: .minY)
                         } else {
-                            withAnimation(.snappy(duration: 0.2)) { isExpanded.toggle() }
+                            withAnimation(.snappy(duration: 0.2)) { expanded.wrappedValue.toggle() }
                         }
                     } label: {
                         line(call: call, imagePath: imagePath, opensPopover: opensPopover, opensHead: opensHead, showsOutput: showsOutput)
@@ -846,7 +940,7 @@ struct ToolRow: View {
                         .padding(.trailing, 12)
                 }
             }
-            .onDisappear { preview.close() }
+            .onDisappear { [weak slot] in slot?.close() }
         }
     }
 
@@ -854,6 +948,9 @@ struct ToolRow: View {
     /// the line can be tapped.
     @ViewBuilder
     private func line(call: ToolCall, imagePath: String?, opensPopover: Bool, opensHead: Bool, showsOutput: Bool) -> some View {
+        // The slot alone: the hover responder and the anchor view must not keep this
+        // row's entry (and its text) alive after it scrolls away.
+        let previewSlot = preview
         HStack(spacing: TimelineMetrics.iconSpacing) {
             HStack(spacing: TimelineMetrics.iconSpacing) {
                 // A row that sent out a head wears the head's glyph and name.
@@ -886,12 +983,12 @@ struct ToolRow: View {
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
             }
-            .onHover { hovering in
-                if hovering, !needsAnchor { needsAnchor = true }
+            .onHover { [needed = $needsAnchor] hovering in
+                if hovering, !needed.wrappedValue { needed.wrappedValue = true }
             }
             .background {
                 if opensPopover, needsAnchor {
-                    AttachmentAnchorCapture { preview.setAnchor($0) }
+                    AttachmentAnchorCapture { [weak previewSlot] in previewSlot?.setAnchor($0) }
                 }
             }
             Spacer(minLength: 8)
@@ -1644,6 +1741,9 @@ struct TurnFinishedBlock: View {
             }
 
             if summary.filesChanged > 0 {
+                // Weak runtime: the card (and its review closure) must not keep the thread
+                // alive after its turn scrolls away.
+                let reviewRuntime = runtime
                 TurnFileCard(
                     summary: summary,
                     files: derived.fileStats,
@@ -1651,7 +1751,7 @@ struct TurnFinishedBlock: View {
                     onUndo: { isConfirmingUndo = true },
                     // On the button itself, so the changes open where the reader
                     // clicked, whatever is above the chat box.
-                    onReview: { button in runtime.showDiff(on: button, turn: turnID) }
+                    onReview: { [weak reviewRuntime] button in reviewRuntime?.showDiff(on: button, turn: turnID) }
                 )
             }
             }
@@ -1681,6 +1781,9 @@ private struct TurnFileCard: View {
     @State private var needsReviewAnchor = false
 
     var body: some View {
+        // The anchor box alone: the hover responder and the anchor view must not keep
+        // this card alive after it scrolls away.
+        let reviewBox = reviewAnchor
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -1713,17 +1816,17 @@ private struct TurnFileCard: View {
                     .buttonStyle(.plain)
                     .help("Revert this turn's files and conversation")
                 }
-                Button("Review") {
-                    guard let view = reviewAnchor.value else { return }
+                Button("Review") { [weak reviewBox] in
+                    guard let view = reviewBox?.value else { return }
                     onReview(view)
                 }
                 .buttonStyle(.glass)
-                .onHover { hovering in
-                    if hovering, !needsReviewAnchor { needsReviewAnchor = true }
+                .onHover { [needed = $needsReviewAnchor] hovering in
+                    if hovering, !needed.wrappedValue { needed.wrappedValue = true }
                 }
                 .background {
                     if needsReviewAnchor {
-                        AttachmentAnchorCapture { reviewAnchor.value = $0 }
+                        AttachmentAnchorCapture { [weak reviewBox] in reviewBox?.value = $0 }
                     }
                 }
                 .help("Show this turn's changes")
@@ -1735,7 +1838,7 @@ private struct TurnFileCard: View {
                 Divider()
                     .opacity(0.5)
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(files, id: \.path) { file in
+                    ForEach(files.prefix(12), id: \.path) { file in
                         HStack(spacing: 8) {
                             Text(verbatim: file.path)
                                 .font(.chat(.callout, zoom: zoom))
@@ -1746,6 +1849,13 @@ private struct TurnFileCard: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
+                    }
+                    if files.count > 12 {
+                        Text(files.count == 13 ? "and 1 more file" : "and \(files.count - 12) more files")
+                            .font(.chat(.callout, zoom: zoom))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
                     }
                 }
                 .padding(.vertical, 4)

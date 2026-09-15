@@ -13,7 +13,101 @@ import Foundation
 private struct HydraPatch: Sendable {
     var text: String
     var files: [HydraLanding.File]
+    var droppedBuildOutputFiles: Int
     var after: String
+}
+
+private enum HydraPatchFilter {
+    struct Result: Sendable {
+        var text: String
+        var droppedBuildOutputFiles: Int
+    }
+
+    static func removingBuildOutput(from patch: String) -> Result {
+        let lines = patch.split(separator: "\n", omittingEmptySubsequences: false)
+        var sections: [[Substring]] = []
+        var current: [Substring] = []
+
+        for line in lines {
+            if line.hasPrefix("diff --git ") {
+                if !current.isEmpty { sections.append(current) }
+                current = [line]
+            } else if !current.isEmpty {
+                current.append(line)
+            }
+        }
+        if !current.isEmpty { sections.append(current) }
+
+        guard !sections.isEmpty else { return Result(text: patch, droppedBuildOutputFiles: 0) }
+
+        var kept: [[Substring]] = []
+        var droppedBuildOutputFiles = 0
+        for section in sections {
+            if let path = bPath(in: String(section[0])), TouchedPaths.isBuildOutput(path) {
+                droppedBuildOutputFiles += 1
+            } else {
+                kept.append(section)
+            }
+        }
+
+        // The patch's closing newline belonged to whichever section came last; when that
+        // one was dropped the kept text has none, and `git apply` wants one.
+        var text = kept.map { $0.joined(separator: "\n") }.joined(separator: "\n")
+        if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
+        return Result(text: text, droppedBuildOutputFiles: droppedBuildOutputFiles)
+    }
+
+    private static func bPath(in header: String) -> String? {
+        let prefix = "diff --git "
+        guard header.hasPrefix(prefix) else { return nil }
+        var index = header.index(header.startIndex, offsetBy: prefix.count)
+        guard readPath(from: header, index: &index) != nil,
+              let bPath = readPath(from: header, index: &index), bPath.hasPrefix("b/") else { return nil }
+        return String(bPath.dropFirst(2))
+    }
+
+    private static func readPath(from line: String, index: inout String.Index) -> String? {
+        while index < line.endIndex, line[index].isWhitespace {
+            index = line.index(after: index)
+        }
+        guard index < line.endIndex else { return nil }
+
+        if line[index] == "\"" {
+            index = line.index(after: index)
+            var path = ""
+            while index < line.endIndex {
+                let character = line[index]
+                index = line.index(after: index)
+                if character == "\"" { return path }
+                if character == "\\", index < line.endIndex {
+                    let escaped = line[index]
+                    index = line.index(after: index)
+                    let decoded: String
+                    switch escaped {
+                    case "a": decoded = "\u{7}"
+                    case "b": decoded = "\u{8}"
+                    case "t": decoded = "\t"
+                    case "n": decoded = "\n"
+                    case "v": decoded = "\u{b}"
+                    case "f": decoded = "\u{c}"
+                    case "r": decoded = "\r"
+                    case "\\", "\"": decoded = String(escaped)
+                    default: decoded = String(escaped)
+                    }
+                    path.append(decoded)
+                } else {
+                    path.append(character)
+                }
+            }
+            return nil
+        }
+
+        let start = index
+        while index < line.endIndex, !line[index].isWhitespace {
+            index = line.index(after: index)
+        }
+        return String(line[start..<index])
+    }
 }
 
 /// One capture of a checkout's working tree, shared by the heads sent out together.
@@ -65,11 +159,10 @@ private enum HydraTreeCache {
 }
 
 extension AppModel {
-    /// Whether a chat leads a team right now: Hydra on for the app. A chat keeps no
-    /// switch of its own: with Hydra on in Settings it stays on in every chat until it
-    /// is switched off there.
+    /// Whether a chat leads a team right now: Hydra on for the app (the master) and on
+    /// for this chat's own switch. Helpers lead no team of their own.
     func hydraIsOn(_ thread: ChatThread) -> Bool {
-        settings.hydraEnabled && !thread.isHelper
+        settings.hydraEnabled && thread.hydraEnabled && !thread.isHelper
     }
 
     /// Whether the provider has heads of its own: it runs them inside its session, with
@@ -127,12 +220,14 @@ extension AppModel {
         )
     }
 
-    /// Legacy per-chat switch, now unused. Kept so old callers still compile; Hydra is
-    /// app-wide (see `hydraIsOn`) and the button only shows or hides the panel.
+    /// The per-chat Hydra switch: off kills heads for that chat only, on restores them
+    /// (with the app-wide switch on). Each flip also saves the choice as the default
+    /// new threads start with.
     func setHydra(_ on: Bool, for id: UUID) {
         guard let thread = thread(id) else { return }
         guard on else {
             updateThread(id) { $0.hydraEnabled = false }
+            settings.hydraDefaultEnabled = false
             return
         }
         let pair = settings.hydraPair(for: thread.provider, model: thread.model)
@@ -140,6 +235,7 @@ extension AppModel {
             $0.hydraEnabled = true
             $0.hydraPairID = pair?.id
         }
+        settings.hydraDefaultEnabled = true
         guard let pair else { return }
         if let lead = pair.orchestratorModel, lead != thread.model, providers.model(lead, for: thread.provider) != nil {
             updateThread(id) {
@@ -498,6 +594,7 @@ extension AppModel {
             return landing
         }
         landing.files = prepared.files
+        landing.droppedBuildOutputFiles = prepared.droppedBuildOutputFiles
         await waitForSettledCheckout(parentID, paths: prepared.files.map(\.path))
         let leadRuntime = runtime(for: parentID)
         let previous = leadRuntime.hydraLanding
@@ -520,10 +617,19 @@ extension AppModel {
         guard !text.isEmpty else { return nil }
         // A binary patch runs to megabytes, and parsing it counts every line: off the
         // main actor, so the chat keeps streaming while a head lands.
-        let files = await Task.detached(priority: .utility) {
-            DiffParser.parse(text).map { HydraLanding.File(path: $0.path, additions: $0.additions, deletions: $0.deletions) }
+        return await Task.detached(priority: .utility) {
+            let filtered = HydraPatchFilter.removingBuildOutput(from: text)
+            guard !filtered.text.isEmpty else { return nil }
+            let files = DiffParser.parse(filtered.text).map {
+                HydraLanding.File(path: $0.path, additions: $0.additions, deletions: $0.deletions)
+            }
+            return HydraPatch(
+                text: filtered.text,
+                files: files,
+                droppedBuildOutputFiles: filtered.droppedBuildOutputFiles,
+                after: after
+            )
         }.value
-        return HydraPatch(text: text, files: files, after: after)
     }
 
     /// Waits for the lead's checkout to be a safe place to write: the lead is not in the

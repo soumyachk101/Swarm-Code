@@ -247,6 +247,14 @@ struct ComposerTextView: NSViewRepresentable {
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
         textView.isAutomaticSpellingCorrectionEnabled = false
+        textView.isAutomaticTextCompletionEnabled = false
+        // This field must never offer Write with Siri, writing-tools UI, inline
+        // predictions, or Siri completion candidates: it has its own slash/@
+        // popover. `.none` rather than `.limited`, which still offers the Writing
+        // Tools panel and its Siri chip from the Edit and context menus. Scoped to
+        // this view so every other system field is unaffected.
+        textView.inlinePredictionType = .no
+        textView.writingToolsBehavior = .none
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]

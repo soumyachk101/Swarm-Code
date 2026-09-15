@@ -27,6 +27,26 @@ enum TouchedPaths {
         return String(full.dropFirst(prefix.count)).nilIfEmpty
     }
 
+    /// Whether a repository-relative path is build output or a tool cache that no one
+    /// wants landed or merged, even where the project's .gitignore missed it: a head's
+    /// build once left 2,700 compiler cache records under `DroppyCode.xcodeproj/-Xcc`
+    /// in its copy, and every one rode along into the lead's checkout and the merge.
+    /// Only names that are unmistakably caches count; a source folder called `build`
+    /// or `dist` stays the project's business.
+    nonisolated static func isBuildOutput(_ path: String) -> Bool {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        return components.contains { component in
+            let name = String(component)
+            if name == ".DS_Store" || name.hasSuffix(".noindex") { return true }
+            return buildOutputNames.contains(name)
+        }
+    }
+
+    private static let buildOutputNames: Set<String> = [
+        "-Xcc", "DerivedData", ".build", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
+        ".ruff_cache", "xcuserdata", ".swiftpm", "ModuleCache", ".gradle", ".turbo", ".parcel-cache",
+    ]
+
     /// Whether a diff file is one of the touched paths, allowing for a path reported relative to a subfolder.
     nonisolated static func matches(_ file: DiffFile, touched: Set<String>) -> Bool {
         [file.path, file.oldPath].compactMap { $0 }.contains { path in

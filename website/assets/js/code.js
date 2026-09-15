@@ -7,7 +7,7 @@
     2. The highlight rail controller, ported from the home page's
        showcase carousel (drag, arrows, keyboard, aria-current).
     3. The theme picker: the real app captured in every theme, one big window at a time.
-    4. Film playback: the app captures play only while on screen.
+     4. (Was: film playback. The page is stills only now, so initFilms is a no-op.)
 */
 
 (function () {
@@ -183,14 +183,6 @@
         var isActive = i === activeIndex;
         if (isActive) card.setAttribute("aria-current", "true");
         else card.removeAttribute("aria-current");
-        var film = card.querySelector("video");
-        if (!film) return;
-        if (isActive && !reducedMotion.matches) {
-          var promise = film.play();
-          if (promise && promise.catch) promise.catch(function () {});
-        } else {
-          film.pause();
-        }
       });
       prev.disabled = rail.scrollLeft <= 2;
       next.disabled = rail.scrollLeft >= rail.scrollWidth - rail.clientWidth - 2;
@@ -258,7 +250,8 @@
   /* ---------------------------------------------------------------- */
 
   // Mirrors AppTheme.swift: [id, name, detail]. Each id is a capture of the real app in
-  // that theme, cut from the same window, under assets/app/themes.
+  // that theme, cut from the same window, under site-assets/droppy-code/themes (the
+  // desktop capture run's set, one still per theme; the tour prefix has no per-theme stills).
   var THEMES = [
     ["system", "System", "Follows your Mac"],
     ["light", "Light", "Light · System accent"],
@@ -379,30 +372,10 @@
   }
 
   /* ---------------------------------------------------------------- */
-  /* 4. Films: play in view, pause out of it, never under reduced motion */
+  /* 4. (Films removed: the page is stills only; nothing to play.)     */
   /* ---------------------------------------------------------------- */
 
-  function initFilms() {
-    var films = Array.prototype.slice.call(document.querySelectorAll("video[data-film]"));
-    if (!films.length) return;
-    if (reducedMotion.matches) {
-      films.forEach(function (film) { film.removeAttribute("autoplay"); film.pause(); });
-      return;
-    }
-    if (!("IntersectionObserver" in window)) return;
-    var observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        var film = entry.target;
-        if (entry.isIntersecting) {
-          var promise = film.play();
-          if (promise && promise.catch) promise.catch(function () {});
-        } else {
-          film.pause();
-        }
-      });
-    }, { rootMargin: "10% 0px" });
-    films.forEach(function (film) { observer.observe(film); });
-  }
+  function initFilms() {}
 
   function onReady(callback) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", callback);

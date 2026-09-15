@@ -54,7 +54,13 @@ final class AppModel {
     @ObservationIgnored private var childCells: [UUID: ObservedValue<[UUID]>] = [:]
     var selectedThreadID: UUID? {
         didSet {
-            if let selectedThreadID { markRead(selectedThreadID) }
+            if let selectedThreadID {
+                markRead(selectedThreadID)
+                // A helper or head under the selected thread is on screen with it, so
+                // reading the thread reads them too; otherwise their unread mark would
+                // stick on the dock after the thread that set it is back in view.
+                for child in children(of: selectedThreadID) { markRead(child.id) }
+            }
             if oldValue != selectedThreadID {
                 scheduleIdleSessionStop(leaving: oldValue)
                 warmNeighbors(of: selectedThreadID)
@@ -818,11 +824,28 @@ final class AppModel {
 
     // MARK: - Attention
 
+    /// Whether a thread is on screen right now: the selected thread itself, a helper in
+    /// its parent's floating panel, or a sidebar helper shown inline beneath its selected
+    /// parent. Sidebar helpers count only while the parent is unfolded (`foldsHelpers == false`)
+    /// and not settled, which is the same condition `SidebarView` uses to show them inline.
+    private func isOnScreen(_ thread: ChatThread) -> Bool {
+        if selectedThreadID == thread.id { return true }
+        guard let parent = thread.parentThreadID, parent == selectedThreadID else { return false }
+        if thread.isInPanel { return !thread.isArchived }
+        guard !thread.isArchived, let parentThread = self.thread(parent) else { return false }
+        return !parentThread.isArchived && !parentThread.isInPanel
+            && !parentThread.foldsHelpers && !parentThread.isSettled
+    }
+
     func threadNeedsAttention(_ id: UUID) {
         guard !WebsiteCaptures.isEnabled, let thread = thread(id) else { return }
-        // A thread in a panel is on screen with its parent.
-        let onScreen = selectedThreadID == id || (thread.isInPanel && selectedThreadID == thread.parentThreadID)
-        guard !(NSApp.isActive && onScreen) else { return }
+        // Already in view with the app frontmost: the approval or question is on
+        // screen, so no banner and no dock bounce. Seen too, so no unread mark is
+        // left behind to stick on the dock.
+        if NSApp.isActive && isOnScreen(thread) {
+            markRead(id)
+            return
+        }
         notify(threadID: id, title: thread.title, body: "Waiting for your decision.")
         NSApp.requestUserAttention(.informationalRequest)
     }
@@ -830,14 +853,19 @@ final class AppModel {
     /// A turn ended. `continues` means a queued message picks up right away, so the agent is
     /// still at work and neither the chime nor a notification claims otherwise.
     func turnFinished(_ id: UUID, status: TurnStatus, continues: Bool) {
-        // A helper is on screen with its parent, in the parent's floating panel.
-        let onScreen = selectedThreadID == id || (selectedThreadID != nil && thread(id)?.parentThreadID == selectedThreadID)
+        // The thread itself selected, or its panel helper or Hydra head on screen with
+        // the selected parent, while the app is frontmost: in view.
+        let onScreen = thread(id).map(isOnScreen) ?? false
         let isVisible = NSApp.isActive && onScreen
         let isHead = thread(id)?.isHydraHead == true
         updateThread(id) {
             $0.lastStatus = status
             $0.updatedAt = .now
-            if !isVisible, !isHead { $0.hasUnread = true }
+            // Out of view the thread goes unread, for the dock; in view it is read,
+            // which also clears an unread mark from an earlier finish while away so
+            // the badge cannot stick around after the chat is back on screen. Heads
+            // report to their lead and never mark themselves.
+            if !isHead { $0.hasUnread = !isVisible }
         }
         updateDockBadge()
         // A helper panel closed mid-turn kept its session alive to finish stopping cleanly;
@@ -885,6 +913,7 @@ final class AppModel {
 
     func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
         guard !WebsiteCaptures.isEnabled else { return }
+        if NSApp.isActive, let thread = thread(threadID), isOnScreen(thread) { return }
         requestNotificationPermission()
         let content = UNMutableNotificationContent()
         content.title = title

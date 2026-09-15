@@ -28,6 +28,7 @@ struct TourView: View {
     let onFinish: (() -> Void)?
     let onClose: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State var currentIndex: Int
 
     init(
@@ -53,7 +54,9 @@ struct TourView: View {
     }
 
     var body: some View {
-        Group {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        let isDark = colorScheme == .dark
+        return Group {
             if pages.isEmpty {
                 emptyState
             } else {
@@ -61,17 +64,29 @@ struct TourView: View {
                     imageSection
                     bottomPanel
                 }
-                // The artwork is square-cornered: the card's shape clips it, and the glass
-                // takes the same shape underneath.
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .glassEffect(.regular.tint(Color(white: 0.06).opacity(0.72)), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color.white.opacity(0.10), lineWidth: 1)
-                }
+                .frame(width: width)
             }
         }
         .frame(width: width)
+        // The floating-panel recipe from SubagentPanel: one shared rounded shape for
+        // either state, one glass/tint surface, one clip, and one inset hairline.
+        .background {
+            shape
+                .fill(.clear)
+                .glassEffect(.regular, in: shape)
+                .overlay {
+                    shape.fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
+                }
+        }
+        .clipShape(shape)
+        .overlay {
+            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
+        }
+        // The scrim sits under the glass as a plain filled shape; AppKit owns the shadow.
+        .background {
+            shape
+                .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
+        }
         .animation(.easeInOut(duration: 0.25), value: currentIndex)
     }
 
@@ -79,15 +94,17 @@ struct TourView: View {
         VStack(spacing: 12) {
             Image(systemName: "rectangle.stack")
                 .font(.title)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Chrome.secondaryText)
             Text("No tour pages")
                 .font(.headline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Chrome.primaryText)
         }
-        .frame(maxWidth: .infinity, minHeight: 220)
+        .frame(maxWidth: .infinity)
+        .frame(height: Self.emptyStateHeight)
     }
 
     static let imageAspectRatio: CGFloat = 16.0 / 10.0
+    static let emptyStateHeight: CGFloat = 220
 
     private var imageSection: some View {
         ZStack(alignment: .top) {
@@ -126,20 +143,25 @@ struct TourView: View {
         let currentPage = pages[currentIndex]
 
         return VStack(spacing: 0) {
-            Text(verbatim: currentPage.title)
-                .font(.system(size: 28, weight: .bold))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 0) {
+                Spacer(minLength: 12)
 
-            Text(verbatim: currentPage.description)
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(Color.white.opacity(0.70))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 6)
+                Text(verbatim: currentPage.title)
+                    .font(.system(size: 28, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Chrome.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Spacer(minLength: 24)
+                Text(verbatim: currentPage.description)
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Chrome.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+
+                Spacer(minLength: 12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             primaryActionButton
         }
@@ -172,33 +194,13 @@ struct TourView: View {
         .padding(.top, 12)
     }
 
-    private var accent: Color {
-        ThemeManager.spec.accent ?? Color.accentColor
-    }
-
     private var primaryActionButton: some View {
         Button(action: advance) {
             Text(verbatim: isLastPage ? finishButtonTitle : continueButtonTitle)
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(.white)
                 .frame(width: 220, height: 42)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    accent,
-                                    accent.opacity(0.85)
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                )
-                .clipShape(Capsule(style: .continuous))
-                .contentShape(Capsule(style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.glassProminent)
         .keyboardShortcut(.defaultAction)
     }
 
@@ -206,18 +208,11 @@ struct TourView: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.88))
                 .frame(width: 32, height: 32)
-                .background {
-                    Circle()
-                        .fill(.ultraThinMaterial)
-                        .overlay {
-                            Circle().stroke(Color.white.opacity(0.25), lineWidth: 0.5)
-                        }
-                }
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .chromeGlassCircle()
     }
 
     var isLastPage: Bool {

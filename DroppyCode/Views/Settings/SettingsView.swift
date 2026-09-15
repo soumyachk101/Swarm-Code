@@ -817,11 +817,10 @@ private struct LicensesRow: View {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(verbatim: file.title)
                                         .font(.system(size: 13, weight: .semibold))
-                                    Text(verbatim: Self.text(of: file.resource))
-                                        .font(.system(size: 12))
+                                    MarkdownView(text: Self.text(of: file.resource)).equatable()
+                                        .environment(\.markdownPointSize, 12)
                                         .foregroundStyle(Chrome.secondaryText)
                                         .textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                             }
                         }
@@ -833,9 +832,16 @@ private struct LicensesRow: View {
         }
     }
 
+    /// Read from the bundle once: the popover's body runs on every hover and scroll, and
+    /// the markdown it now renders is parsed from this text each time as it is.
+    private static let texts: [String: String] = Dictionary(uniqueKeysWithValues: files.map { file in
+        let url = Bundle.main.url(forResource: file.resource, withExtension: file.resource == "LICENSE" ? nil : "md")
+        let text = url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? "The \(file.resource) file is missing from this copy of the app."
+        return (file.resource, text)
+    })
+
     private static func text(of resource: String) -> String {
-        let url = Bundle.main.url(forResource: resource, withExtension: resource == "LICENSE" ? nil : "md")
-        return url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? "The \(resource) file is missing from this copy of the app."
+        texts[resource] ?? "The \(resource) file is missing from this copy of the app."
     }
 }
 

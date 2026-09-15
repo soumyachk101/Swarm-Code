@@ -39,7 +39,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
+        let threadIDString = notification.request.content.userInfo["threadID"] as? String
+        if let threadIDString, let notifiedID = UUID(uuidString: threadIDString) {
+            let isOpenChat = await MainActor.run {
+                NSApp.isActive && self.model?.selectedThreadID == notifiedID
+            }
+            if isOpenChat { return [] }
+        }
+        return [.banner, .sound]
     }
 
     nonisolated func userNotificationCenter(
@@ -50,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let identifier = userInfo["threadID"] as? String
         let isUpdate = userInfo["update"] != nil
         await MainActor.run {
+            if !isUpdate { WindowManager.shared.showMain() }
             if let identifier, let threadID = UUID(uuidString: identifier) {
                 self.model?.selectedThreadID = threadID
             }

@@ -79,11 +79,16 @@ struct ThreadTimeline: View, Equatable {
     var body: some View {
         let entries = runtime.entries
         let meta = TimelineMeta.build(entries)
+        let heads = model.hydraHeads(of: runtime.threadID)
+        var seenPersonaNames = Set<String>()
+        let hydraMentionPersonas = heads.compactMap { $0.hydra?.persona }.filter {
+            seenPersonaNames.insert($0.name).inserted
+        }
         let blocks = blockCache.blocks(
             for: entries, meta: meta,
             showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning,
             isHydraMerging: runtime.isHydraMerging,
-            workingHeads: model.hydraHeads(of: runtime.threadID).compactMap { $0.hydra?.status == .running ? $0.hydra?.index : nil }
+            workingHeads: heads.compactMap { $0.hydra?.status == .running ? $0.hydra?.index : nil }
         )
         if blocks.isEmpty && !runtime.isRunning {
             NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
@@ -92,11 +97,11 @@ struct ThreadTimeline: View, Equatable {
                     scrollState.showsJumpButton = false
                 }
         } else {
-            timeline(blocks)
+            timeline(blocks, hydraMentionPersonas: hydraMentionPersonas)
         }
     }
 
-    private func timeline(_ blocks: [DisplayBlock]) -> some View {
+    private func timeline(_ blocks: [DisplayBlock], hydraMentionPersonas: [HydraPersona]) -> some View {
         // Only the newest window of blocks is rendered. Older history loads on demand,
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
@@ -132,6 +137,7 @@ struct ThreadTimeline: View, Equatable {
             }
             .animation(Chrome.panelSlide, value: showsMinimap)
         }
+        .environment(\.hydraMentionPersonas, hydraMentionPersonas)
     }
 
     /// Jump the timeline to a minimap block. A target above the loaded
@@ -1145,6 +1151,7 @@ enum DisplayBlock: Identifiable, Equatable {
     /// pill has already become the merged report and must not linger as a second row.
     /// Merge notes are Hydra's own (no heads behind them) and titled "Hydra …"; a head's
     /// landing or patch note leads with the head's name instead.
+    @MainActor
     private static func endsWithMergeOutcome(_ entries: [TimelineEntry]) -> Bool {
         guard let last = entries.last, case .user(let message) = last.item.content,
               message.isFromHydra, (message.hydraHeads ?? []).isEmpty else { return false }

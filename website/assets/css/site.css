@@ -908,9 +908,9 @@ html.nav-intro-done .nav__pill { animation: none; }
   height: 100%;
 }
 
-/* Hero film: the real app, captured from its own capture mode, in the same block
-   geometry as the Droppy promo film. */
-.hero__film { aspect-ratio: 2400 / 1646; }
+/* Hero still: the real app, captured from its own capture mode. Every tour still is a
+   whole 16:10 frame, so the box is 16:10 too and `cover` below never cuts an edge off. */
+.hero__film { aspect-ratio: 16 / 10; }
 .hero__video {
   display: block;
   width: 100%;
@@ -918,7 +918,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   object-fit: cover;
 }
 
-/* Hero media block, same container geometry as the Droppy promo film. */
+/* Hero media block, same container geometry as the Droppy promo still. */
 .media-block {
   position: relative;
   width: 100%;
@@ -967,13 +967,15 @@ html.nav-intro-done .nav__pill { animation: none; }
   margin: 0;
   max-width: 46ch;
 }
+/* The stills are whole 16:10 frames from the tour run; a 16:9 or window-shaped box
+   with `cover` cropped their edges. */
 .fcard__media {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 16 / 10;
   background: var(--ink);
 }
-.fcard__media--window { aspect-ratio: 2080 / 1426; }
+.fcard__media--window { aspect-ratio: 16 / 10; }
 .fcard__media-video,
 .fcard__media-img {
   display: block;
@@ -1058,7 +1060,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   max-width: 52ch;
   font-size: clamp(0.98rem, 1.45vw, 1.08rem);
 }
-.highlight-card .fcard__media { flex: 0 0 auto; aspect-ratio: 16 / 9; }
+.highlight-card .fcard__media { flex: 0 0 auto; aspect-ratio: 16 / 10; }
 .showcase-highlights__controls {
   display: flex;
   justify-content: flex-end;
@@ -1737,8 +1739,8 @@ html.nav-intro-done .nav__pill { animation: none; }
 /* Code elements                                                           */
 /* ---------------------------------------------------------------------- */
 
-/* The demo films are whole windows in their own proportions, never cropped to 16:9. */
-.wordscroll__demo-video { aspect-ratio: 2400 / 1646; object-fit: contain; }
+/* The demo stills are whole 16:10 frames, shown whole: the box matches, so no bars and no crop. */
+.wordscroll__demo-video { aspect-ratio: 16 / 10; object-fit: contain; }
 
 /* Theme picker: one big window in the chosen theme, and the names to pick from. Lives
    inside the second wordscroll's demo slot. */

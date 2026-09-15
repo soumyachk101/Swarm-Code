@@ -41,7 +41,9 @@ final class TourWindowController {
             continueButtonTitle: continueButtonTitle,
             finishButtonTitle: finishButtonTitle
         )
-        let totalHeight = max(imageHeight + maxPanelHeight, 1)
+        let totalHeight = pages.isEmpty
+            ? TourView.emptyStateHeight
+            : max(imageHeight + maxPanelHeight, 1)
 
         let rootView = TourView(
             pages: pages,
@@ -74,6 +76,7 @@ final class TourWindowController {
         )
         window.isOpaque = false
         window.backgroundColor = .clear
+        // AppKit shapes this shadow to the window's alpha, so it follows the card's rounded shape.
         window.hasShadow = true
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
@@ -146,27 +149,33 @@ private struct TourBottomPanelSizingView: View {
     let buttonTitle: String
 
     var body: some View {
-        VStack(spacing: 6) {
-            Text(verbatim: page.title)
-                .font(.system(size: 28, weight: .bold))
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.white)
-                .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                Spacer(minLength: 12)
 
-            Text(verbatim: page.description)
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(Color.white.opacity(0.70))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.bottom, 6)
+                Text(verbatim: page.title)
+                    .font(.system(size: 28, weight: .bold))
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Chrome.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Text(verbatim: page.description)
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Chrome.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+
+                Spacer(minLength: 12)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Text(verbatim: buttonTitle)
                 .font(.system(size: 15, weight: .semibold))
                 .frame(width: 220, height: 42)
-                .padding(.top, 18)
         }
         .padding(.horizontal, 32)
-        .padding(.top, 6)
+        .padding(.top, 12)
         .padding(.bottom, 24)
     }
 }

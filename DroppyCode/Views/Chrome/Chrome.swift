@@ -183,11 +183,10 @@ private struct DetailSheetModifier: ViewModifier {
                 Rectangle().fill(colorScheme == .dark ? Color.black.opacity(0.22) : Color.white.opacity(0.3))
                 Rectangle().fill(Chrome.glassTint.opacity(colorScheme == .dark ? 0.22 : 0.16))
             }
-            .clipped()
     }
 }
 
-/// One Liquid Glass surface for the whole window, with a legibility tint and a hairline.
+/// One shaped surface for the whole window: glass supplies its own edge, while solid mode keeps the hairline.
 struct WindowBackdrop: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppModel.self) private var model
@@ -226,8 +225,11 @@ struct WindowBackdrop: View {
         .overlay {
             shape.fill(Chrome.glassTint.opacity(0.12))
         }
+        // Glass supplies the edge; only solid mode gets the explicit hairline.
         .overlay {
-            shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
+            if isSolid {
+                shape.strokeBorder(Chrome.overlay(0.14), lineWidth: 1)
+            }
         }
     }
 }
