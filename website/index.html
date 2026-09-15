@@ -53,13 +53,13 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&display=swap" rel="stylesheet">
 
   <script>try{if(sessionStorage.getItem("droppyCodeNavIntro")){document.documentElement.className+=" nav-intro-done";}else{sessionStorage.setItem("droppyCodeNavIntro","1");}}catch(e){}</script>
-  <link rel="stylesheet" href="assets/css/site.css?v=6">
+  <link rel="stylesheet" href="assets/css/site.css?v=7">
   <link rel="stylesheet" href="assets/css/wordscroll.css?v=5">
   <noscript><style>.reveal { opacity: 1; transform: none; } .hero__field, .outro__field { display: none; }</style></noscript>
 
   <script src="assets/js/site.js?v=5" defer></script>
   <script src="assets/js/wordscroll.js?v=5" defer></script>
-  <script src="assets/js/code.js?v=5" defer></script>
+  <script src="assets/js/code.js?v=6" defer></script>
 
   <script type="application/ld+json">
   {
@@ -375,12 +375,6 @@
             <img class="tile__film" src="https://droppy-releases.jordylegrand.workers.dev/site-assets/droppy-code/tour/v2/pairs.webp" width="1600" height="1000" alt="The model picker with the pairs at the top" loading="lazy" decoding="async">
           </div>
 
-          <div class="tile tile--wide tile--film">
-            <h3 class="tile__label">A tour on first launch.</h3>
-            <p class="tile__caption">Six pages of real screenshots. The Help menu opens it again.</p>
-            <img class="tile__film" src="https://droppy-releases.jordylegrand.workers.dev/site-assets/droppy-code/tour/v2/window.webp" width="1600" height="1000" alt="The app's welcome tour window: a dark glass card with a screenshot, a title, a description and a Continue button" loading="lazy" decoding="async">
-          </div>
-
           <!-- Sidebar: the real one fills the tile, the label sits on it. -->
           <div class="tile tile--tall tile--visual">
             <div class="tile__art" aria-hidden="true">
@@ -409,6 +403,14 @@
           </div>
 
           <!-- Plans and to-dos: the real exchange. -->
+          <!-- The welcome tour, full width so the six-column grid stays filled: the
+               sidebar tile spans two rows beside the switcher and the git tile. -->
+          <div class="tile tile--full tile--film">
+            <h3 class="tile__label">A tour on first launch.</h3>
+            <p class="tile__caption">Six pages of real screenshots. The Help menu opens it again.</p>
+            <img class="tile__film" src="https://droppy-releases.jordylegrand.workers.dev/site-assets/droppy-code/tour/v2/window.webp" width="1600" height="1000" alt="The app's welcome tour window: a dark glass card with a screenshot, a title, a description and a Continue button" loading="lazy" decoding="async">
+          </div>
+
           <div class="tile tile--half tile--film">
             <h3 class="tile__label">Plans and to‑dos</h3>
             <p class="tile__caption">Plans wait for your approval and to-do lists tick themselves off as the agent works.</p>
