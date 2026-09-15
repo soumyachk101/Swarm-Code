@@ -1048,7 +1048,8 @@ enum DisplayBlock: Identifiable, Equatable {
     case working(turnID: UUID?, liveWork: [TimelineEntry])
     /// The team's work on its way to the remote once the lead's turn is over (see
     /// `AppModel.autoMergeHydraWork`). Never built from the entries either: the timeline
-    /// appends it while the merge runs and drops it when the note about the outcome lands.
+    /// appends its pill while the merge runs and drops it when the note about the outcome
+    /// lands, the pill morphing in place into the merged report.
     case merging
     /// The heads still out on the lead's behalf once its turn is over, by their roster
     /// index in the order they went. Never built from the entries: the timeline appends
@@ -1123,9 +1124,13 @@ enum DisplayBlock: Identifiable, Equatable {
         if !workingHeads.isEmpty, !isRunning {
             blocks.append(.headsWorking(heads: workingHeads))
         }
-        // The merge begins once the lead's turn is over; while it runs, its card ends the
+        // The merge begins once the lead's turn is over; while it runs, its pill ends the
         // timeline, and stays if the user starts the lead on something else meanwhile.
-        if isHydraMerging {
+        // The pill shares the merged report's frame, so when the note about the outcome
+        // lands the merging state morphs into it in place. The outcome and the pill never
+        // show together: the note and the flag clearing land in one pass, and this guard
+        // covers the beat between them, so there is no second row.
+        if isHydraMerging, !Self.endsWithMergeOutcome(entries) {
             blocks.append(.merging)
         }
         return blocks
@@ -1134,6 +1139,17 @@ enum DisplayBlock: Identifiable, Equatable {
     private var carriesWorkingLine: Bool {
         if case .turn(_, _, _, _, true) = self { return true }
         return false
+    }
+
+    /// Whether the timeline already ends with the merge's outcome note, so the merging
+    /// pill has already become the merged report and must not linger as a second row.
+    /// Merge notes are Hydra's own (no heads behind them) and titled "Hydra …"; a head's
+    /// landing or patch note leads with the head's name instead.
+    private static func endsWithMergeOutcome(_ entries: [TimelineEntry]) -> Bool {
+        guard let last = entries.last, case .user(let message) = last.item.content,
+              message.isFromHydra, (message.hydraHeads ?? []).isEmpty else { return false }
+        let title = message.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? ""
+        return title.hasPrefix("Hydra ")
     }
 }
 
@@ -1280,6 +1296,7 @@ private struct DisplayBlockView: View, Equatable {
             WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
         case .merging:
             // Arrives and leaves like the working line: the stack gives every block the row transition.
+            // The pill shares the merged report's frame, so the outcome note morphs into it in place.
             HydraMergingRow(runtime: runtime)
         case .headsWorking(let heads):
             HydraHeadsWorkingRow(heads: heads, runtime: runtime)

@@ -340,11 +340,12 @@ struct HydraDelegationBlock: View {
     }
 }
 
-/// The team's work on its way to the remote once the lead has finished, as a card in the
-/// delegation card's style: the mark, what is happening, and under it the stage the merge
-/// is at right now beside the spinner, with how long it has been at it. The timeline
-/// appends the card while the merge runs and drops it when the note about the outcome
-/// lands, so it holds no condition of its own.
+/// The team's work on its way to the remote once the lead has finished, in the report
+/// pill's own frame: the mark, the spinner, the stage the merge is at right now (the same
+/// words the sidebar shows), with how long it has been at it. The timeline appends the
+/// pill while the merge runs and drops it when the note about the outcome lands, so the
+/// merging state reads inside the exact pill that then morphs into the merged report,
+/// with no second row. It holds no condition of its own.
 struct HydraMergingRow: View {
     @Environment(\.chatZoom) private var zoom
     let runtime: ThreadRuntime
@@ -354,33 +355,35 @@ struct HydraMergingRow: View {
     private static let change = Animation.smooth(duration: 0.3)
 
     var body: some View {
-        let stage = (runtime.hydraMergeStage ?? "Merging the team's work") + "…"
+        // The same stage words the sidebar shows beside its own spinner.
+        let stage = (runtime.hydraMergeStage ?? "Merging") + "…"
         let elapsed = now.timeIntervalSince(runtime.hydraMergeStartedAt ?? now)
-        HStack(alignment: .top, spacing: TimelineMetrics.iconSpacing) {
+        HStack(spacing: 8) {
             HydraMarkImage()
                 .foregroundStyle(Chrome.secondaryText)
-                .frame(width: 16, height: 16)
+                .frame(width: 18, height: 18)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Merging the team's work")
-                    .font(.chat(.callout, weight: .medium, zoom: zoom))
-                HStack(spacing: 6) {
-                    WorkingSpinner(cellSize: 3)
-                        .frame(width: 14)
-                    Text(verbatim: stage)
-                        .contentTransition(.opacity)
-                    Text(RelativeTime.duration(elapsed))
-                        .monospacedDigit()
-                }
+            WorkingSpinner(cellSize: 3)
+                .frame(width: 14)
+            Text(verbatim: stage)
+                .font(.chat(.callout, weight: .medium, zoom: zoom))
+                .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                .modifier(HydraShimmer())
+                .contentTransition(.opacity)
+            Text(RelativeTime.duration(elapsed))
                 .font(.chat(.caption, zoom: zoom))
                 .foregroundStyle(Chrome.secondaryText)
-                .animation(Self.change, value: stage)
-            }
+                .monospacedDigit()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .animation(Self.change, value: stage)
+        .padding(.leading, 12)
+        .padding(.trailing, 14)
+        .padding(.vertical, 8)
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(maxWidth: .infinity, alignment: .trailing)
+        .padding(.leading, 96)
         .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("Merging the team's work: \(stage)"))
         .task {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))

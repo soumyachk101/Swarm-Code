@@ -237,6 +237,10 @@ struct SubagentPanel: View {
                     .frame(height: Self.handleHeight)
                     .help("Drag to move")
                     .accessibilityLabel(Text("Drag to move"))
+                // The working status box at the strip's right end: the sending pulse
+                // first, then who is working, in the one capsule.
+                SubagentWorkingBox(title: thread.title, isRunning: runtime.isRunning)
+                    .padding(.top, Chrome.chromeTopPadding)
                 // The same mark as the team panel's, which closes nothing that is working:
                 // this one ends a turn, so a helper still at it is asked about first.
                 ChromeCircleButton(
@@ -276,6 +280,60 @@ struct SubagentPanel: View {
             shape
                 .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
                 .shadow(color: .black.opacity(isDark ? 1 : 0.65), radius: 28, y: 10)
+        }
+    }
+}
+
+/// The helper's working status box at the strip's right end, beside the close mark:
+/// first the sending pulse, then who is working while they work. One capsule, one
+/// anchor, one size and one corner radius across both states, the existing mini
+/// spinner and the panel slide for motion, so the send morphs subtly into the working
+/// box with no jump and no second row. The drag handle and the close mark keep their
+/// actions unchanged.
+private struct SubagentWorkingBox: View {
+    let title: String
+    let isRunning: Bool
+
+    /// Briefly true after work starts, so the box shows the sending pulse inside its
+    /// own capsule before settling into the working words.
+    @State private var isSending = false
+
+    private var name: String {
+        let short = TextCleanup.singleLine(title, limit: 24).trimmingCharacters(in: .whitespacesAndNewlines)
+        return short.isEmpty ? "Helper" : short
+    }
+
+    var body: some View {
+        Group {
+            if isRunning || isSending {
+                HStack(spacing: 6) {
+                    MiniSpinner()
+                    Text(verbatim: isSending && !isRunning ? "Sending…" : "\(name) working")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .lineLimit(1)
+                        .contentTransition(.opacity)
+                }
+                .padding(.horizontal, Chrome.capsuleHorizontalPadding)
+                .frame(height: Chrome.capsuleContentHeight)
+                .padding(.vertical, Chrome.capsuleVerticalPadding)
+                .fixedSize()
+                .chromeGlassCapsule()
+                .transition(.softAppear)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text(isRunning ? "\(name) working" : "Sending"))
+            }
+        }
+        .animation(Chrome.panelSlide, value: isRunning)
+        .animation(Chrome.panelSlide, value: isSending)
+        .onChange(of: isRunning) { _, running in
+            if running { isSending = true }
+        }
+        .task(id: isSending) {
+            guard isSending else { return }
+            try? await Task.sleep(for: .seconds(0.9))
+            guard !Task.isCancelled else { return }
+            isSending = false
         }
     }
 }
