@@ -140,13 +140,17 @@ impl AudioEngine {
     }
 }
 
-lazy_static::lazy_static! {
-    static ref AUDIO_ENGINE: Mutex<Option<AudioEngine>> = Mutex::new(None);
+use std::sync::OnceLock;
+
+static AUDIO_ENGINE: OnceLock<Mutex<Option<AudioEngine>>> = OnceLock::new();
+
+fn audio_engine() -> &'static Mutex<Option<AudioEngine>> {
+    AUDIO_ENGINE.get_or_init(|| Mutex::new(None))
 }
 
 fn ensure_audio_engine() {
-    if AUDIO_ENGINE.lock().unwrap().is_none() {
-        *AUDIO_ENGINE.lock().unwrap() = AudioEngine::new();
+    if audio_engine().lock().unwrap().is_none() {
+        *audio_engine().lock().unwrap() = AudioEngine::new();
     }
 }
 
