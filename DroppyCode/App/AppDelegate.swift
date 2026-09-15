@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
         windows.showMain()
+        windows.model.openThreadOnLaunch()
         if !windows.model.settings.hasSeenTour {
             Task { @MainActor in try? await Task.sleep(for: .milliseconds(700)); Tour.present(model: windows.model) }
         }

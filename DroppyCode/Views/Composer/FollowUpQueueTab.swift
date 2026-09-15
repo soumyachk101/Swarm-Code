@@ -88,6 +88,7 @@ struct FollowUpQueueTab: View {
                             isDragged: isDragged,
                             showsRule: prompt.id != runtime.followUps.last?.id && !isDragged && !bundledWithNext,
                             isBundledWithPrevious: isBundledWithPrevious,
+                            isBundledWithNext: bundledWithNext,
                             isPairTarget: pairTarget == prompt.id,
                             isPairing: isDragged && pairTarget != nil,
                             onDragChanged: { translation in dragChanged(prompt.id, translation: translation) },
@@ -99,27 +100,6 @@ struct FollowUpQueueTab: View {
                         .offset(x: pairTarget != nil && isDragged ? 14 : 0, y: isDragged ? drag.visualOffset : 0)
                         .animation(Self.slide, value: pairTarget != nil)
                         .zIndex(isDragged ? 1 : 0)
-                    }
-                }
-                .background {
-                    // One frame around each bundle: the rows inside it go as one prompt. It
-                    // springs in on the drop and follows the rows as they are measured.
-                    let spans = Self.bundleSpans(for: runtime.followUps, heights: rowHeights)
-                    GeometryReader { geometry in
-                        ZStack(alignment: .topLeading) {
-                            ForEach(spans, id: \.id) { span in
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(Color.accentColor.opacity(0.08))
-                                    .overlay {
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .strokeBorder(Color.accentColor.opacity(0.3), lineWidth: 1)
-                                    }
-                                    .frame(width: geometry.size.width + 16, height: span.height)
-                                    .offset(x: -8, y: span.top)
-                                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                            }
-                        }
-                        .animation(Chrome.panelSlide, value: spans)
                     }
                 }
             }
@@ -207,38 +187,6 @@ struct FollowUpQueueTab: View {
         return numbers
     }
 
-    /// One framed span per bundle of two or more rows, in the rows' own coordinates.
-    private struct BundleSpan: Equatable {
-        let id: UUID
-        let top: CGFloat
-        let height: CGFloat
-    }
-
-    private static func bundleSpans(for prompts: [FollowUpPrompt], heights: [UUID: CGFloat]) -> [BundleSpan] {
-        var spans: [BundleSpan] = []
-        var top: CGFloat = 0
-        var index = 0
-        while index < prompts.count {
-            let prompt = prompts[index]
-            let height = heights[prompt.id] ?? 32
-            if let bundle = prompt.bundleID {
-                var end = index + 1
-                var span = height
-                while end < prompts.count, prompts[end].bundleID == bundle {
-                    span += heights[prompts[end].id] ?? 32
-                    end += 1
-                }
-                if end - index > 1 { spans.append(BundleSpan(id: bundle, top: top, height: span)) }
-                top += span
-                index = end
-            } else {
-                top += height
-                index += 1
-            }
-        }
-        return spans
-    }
-
     /// The pointer has moved `translation` since the grab. The grabbed row follows it exactly; over the middle of a neighbour it pairs with that row, past the neighbour's far quarter the two swap. Sideways travel plays no part.
     private func dragChanged(_ id: UUID, translation: CGSize) {
         if drag.id != id {
@@ -260,6 +208,16 @@ struct FollowUpQueueTab: View {
         }
         if moved {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+
+        // Pulling a linked row more than half its height out of its slot unlinks it, so a
+        // pair with no other rows to swap past can still be broken by drag; hovering the
+        // neighbour's middle again pairs them back on release.
+        if let held = runtime.followUps.first(where: { $0.id == id }), held.bundleID != nil,
+            abs(drag.visualOffset) > (rowHeights[id] ?? 32) * 0.6
+        {
+            withAnimation(Self.slide) { runtime.unbundleFollowUp(id) }
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
         }
 
         // Pairing: the held row's centre sits within the middle half of the neighbour it is
@@ -310,8 +268,10 @@ private struct FollowUpRow: View {
     let isDragged: Bool
     /// The rule under the row, off for the last row and while lifted.
     let showsRule: Bool
-    /// The previous row shares this row's bundle: dim the number and join with a bar.
+    /// The previous row shares this row's bundle: show the link mark, a tap on it unlinks.
     let isBundledWithPrevious: Bool
+    /// The next row shares this row's bundle: the number and grip turn blue as the head of the pair.
+    let isBundledWithNext: Bool
     /// The held row hovers over this row while pairing: light it up.
     let isPairTarget: Bool
     /// This row is the one held, and it hovers over a row it will pair with.
@@ -345,20 +305,39 @@ private struct FollowUpRow: View {
             // link instead of a number: the bundle goes as one prompt under one number.
             Group {
                 if isBundledWithPrevious || isPairTarget || isPairing {
-                    Image(systemName: "link")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
+                    if isBundledWithPrevious {
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                runtime.unbundleFollowUp(prompt.id)
+                            }
+                            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+                        } label: {
+                            Image(systemName: "link")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .contentShape(.rect)
+                        .help("Unlink from the follow-up above")
+                        .accessibilityLabel(Text("Unlink"))
+                    } else {
+                        Image(systemName: "link")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .accessibilityHidden(true)
+                    }
                 } else {
                     Text(verbatim: "\(position)")
                         .font(.system(size: 11, weight: .medium).monospacedDigit())
-                        .foregroundStyle(Chrome.secondaryText)
+                        .foregroundStyle(isBundledWithNext ? Color.accentColor : Chrome.secondaryText)
+                        .accessibilityHidden(true)
                 }
             }
             .frame(width: 14, alignment: .trailing)
-            .accessibilityHidden(true)
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Chrome.secondaryText.opacity(isHoveringGrip ? 1 : 0.7))
+                .foregroundStyle(isBundledWithNext ? Color.accentColor.opacity(isHoveringGrip ? 1 : 0.85) : Chrome.secondaryText.opacity(isHoveringGrip ? 1 : 0.7))
                 .frame(width: 28, height: 22)
                 .contentShape(.rect)
                 .onHover { hovering in

@@ -500,6 +500,16 @@ final class ThreadRuntime {
         scheduleSave()
     }
 
+    /// Takes a prompt out of its bundle on purpose (the link tapped, or the row dragged
+    /// out): it goes as its own message again, and a bundle left with one prompt dissolves.
+    func unbundleFollowUp(_ id: UUID) {
+        guard let index = followUps.firstIndex(where: { $0.id == id }), followUps[index].bundleID != nil else { return }
+        followUps[index].bundleID = nil
+        tidyBundles()
+        saveRevision += 1
+        scheduleSave()
+    }
+
     /// Drops a prompt from its bundle when neither neighbour shares it, and dissolves
     /// a bundle left with a single prompt.
     private func unbundleIfSeparated(_ id: UUID) {

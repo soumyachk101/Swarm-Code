@@ -937,13 +937,17 @@ struct ChromeCard<Content: View>: View {
 
 struct ChromeSection<Content: View>: View {
     let title: String
+    var accessory: AnyView? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chrome.sectionHeaderSpacing) {
-            Text(verbatim: title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack(spacing: 4) {
+                Text(verbatim: title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                if let accessory { accessory }
+            }
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
