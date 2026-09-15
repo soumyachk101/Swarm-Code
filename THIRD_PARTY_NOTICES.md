@@ -142,6 +142,6 @@ SOFTWARE.
 
 ## Provider names and marks
 
-Codex, Claude, Cursor, OpenCode, Grok, DeepSeek, Meta, Devin, Antigravity and GitHub Copilot are the
-names and marks of their respective owners, used here to name the agents the app drives. Droppy Code is
-not affiliated with or endorsed by any of them.
+Codex, Claude, Cursor, OpenCode, Grok, DeepSeek, Meta, Devin, Antigravity, GitHub Copilot and Command
+Code are the names and marks of their respective owners, used here to name the agents the app drives.
+Droppy Code is not affiliated with or endorsed by any of them.
