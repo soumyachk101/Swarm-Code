@@ -184,7 +184,7 @@ pub fn play_settle_chime() {
         ],
         0.32,
     );
-    if let Some(engine) = AUDIO_ENGINE.lock().unwrap().as_ref() {
+    if let Some(engine) = audio_engine().lock().unwrap().as_ref() {
         engine.play(&data);
     }
 }
@@ -207,7 +207,7 @@ pub fn play_finish_chime() {
         ],
         0.7,
     );
-    if let Some(engine) = AUDIO_ENGINE.lock().unwrap().as_ref() {
+    if let Some(engine) = audio_engine().lock().unwrap().as_ref() {
         engine.play(&data);
     }
 }
@@ -247,7 +247,7 @@ pub fn play_sequence(sequence: &[ToneEvent]) {
                     0.5,
                 );
                 ensure_audio_engine();
-                if let Some(engine) = AUDIO_ENGINE.lock().unwrap().as_ref() {
+                if let Some(engine) = audio_engine().lock().unwrap().as_ref() {
                     engine.play(&data);
                 }
             }
