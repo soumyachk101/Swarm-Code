@@ -47,6 +47,16 @@ struct ThreadTimeline: View, Equatable {
     /// without end. `@State` applies the write first and re-renders after.
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var viewportHeight: CGFloat = 0
+    /// The scroll view's width, for the stepped layout width during a live resize.
+    @State private var paneWidth: CGFloat = 0
+    /// While the window is being dragged the content wraps to a width that moves in
+    /// steps this wide, so rows re-measure a few times over a drag instead of every
+    /// frame; the exact width lands when the drag ends.
+    private static let resizeStep: CGFloat = 12
+    private var layoutWidth: CGFloat? {
+        guard liveResize.isActive, paneWidth > 0 else { return nil }
+        return min(820 + 40, (paneWidth / Self.resizeStep).rounded(.down) * Self.resizeStep)
+    }
     /// Which edge stays put when the content's height changes. At the conversation's end
     /// it is the bottom, so streaming text and the working line grow in place. Once the
     /// reader has scrolled up it is the top: a row expanded mid-thread then pushes what
@@ -307,6 +317,7 @@ struct ThreadTimeline: View, Equatable {
             // The same column as the composer, so messages line up with its edges.
             .frame(maxWidth: 820, alignment: .leading)
             .padding(.horizontal, 20)
+            .frame(width: layoutWidth, alignment: .leading)
             .padding(.top, Chrome.contentTopInset)
             .padding(.bottom, 18)
             // A short conversation still fills the pane, with its messages resting at the bottom.
@@ -332,6 +343,10 @@ struct ThreadTimeline: View, Equatable {
         // One value per frame, and only when it moved: `onGeometryChange` fires solely
         // on change, and the settle below runs once when the resize ends.
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { paneWidth = $0 }
+        // No animation inside the timeline while the window is being dragged; a spring
+        // restarted every frame is what made rows lag behind the window and land somewhere else.
+        .transaction { transaction in if liveResize.isActive { transaction.animation = nil } }
         .onChange(of: liveResize.isActive) { _, active in
             guard !active else { return }
             settleAfterResize()

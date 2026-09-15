@@ -281,6 +281,7 @@ final class LinkTextView: NSTextView {
     /// with the same width run the text layout once.
     private var measuredWidth: CGFloat = 0
     private var measuredHeight: CGFloat = 0
+    private var needsSettleAfterResize = false
 
     /// New content; skips the layout pass when nothing changed (favicons and
     /// streaming rebuilds both funnel through here).
@@ -326,9 +327,29 @@ final class LinkTextView: NSTextView {
         if width > 0, let container = textContainer, container.containerSize.width != width {
             container.containerSize = NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         }
+        // While the window is being dragged SwiftUI already sizes the view through
+        // `sizeThatFits` for every width it proposes; the second measurement here only
+        // landed a frame late and made the paragraph hop between two heights, so it
+        // waits for the drag to end.
+        if window?.inLiveResize == true {
+            needsSettleAfterResize = true
+            return
+        }
         guard width > 0, abs(width - lastLaidOutWidth) > 0.5 else { return }
         lastLaidOutWidth = width
         let height = height(forWidth: width)
+        guard abs(height - lastMeasuredHeight) > 0.5 else { return }
+        lastMeasuredHeight = height
+        invalidateIntrinsicContentSize()
+    }
+
+    override func viewDidEndLiveResize() {
+        super.viewDidEndLiveResize()
+        // The one measurement the drag skipped, now that the width is final.
+        guard needsSettleAfterResize else { return }
+        needsSettleAfterResize = false
+        lastLaidOutWidth = bounds.width
+        let height = height(forWidth: bounds.width)
         guard abs(height - lastMeasuredHeight) > 0.5 else { return }
         lastMeasuredHeight = height
         invalidateIntrinsicContentSize()

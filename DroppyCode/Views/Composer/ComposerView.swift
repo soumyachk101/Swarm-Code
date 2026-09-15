@@ -524,6 +524,7 @@ private struct ComposerTextColumn: View {
         // stack it. Reading the draft here would re-render the text view on every
         // keystroke, since text and attachments are one observable property.
         VStack(alignment: .leading, spacing: 0) {
+            DraftQuotes(runtime: runtime)
             DraftAttachments(runtime: runtime)
             if let attachmentNotice {
                 Text(verbatim: attachmentNotice)
@@ -814,6 +815,55 @@ private struct SendDraftState: View {
         var parts = [goesToHead ? "Send to a head (Return) · the lead reports back" : "Send (Return)"]
         if let queues { parts.append(headsWorking ? "\(queues) queues until the heads report" : "\(queues) queues while running") }
         return parts.joined(separator: " · ")
+    }
+}
+
+private struct DraftQuotes: View {
+    let runtime: ThreadRuntime
+
+    var body: some View {
+        let quotes = runtime.draft.quotes
+        if !quotes.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(quotes) { quote in
+                        HStack(spacing: 5) {
+                            Image(systemName: "text.quote")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Chrome.secondaryText)
+                            Text(verbatim: quote.excerpt)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .frame(maxWidth: 260, alignment: .leading)
+                            Button {
+                                withAnimation(Chrome.panelSlide) {
+                                    runtime.draft.quotes.removeAll { $0.id == quote.id }
+                                }
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(Chrome.secondaryText)
+                            }
+                            .buttonStyle(.plain)
+                            .focusable(false)
+                            .help("Remove quote")
+                            .accessibilityLabel(Text("Remove quote"))
+                        }
+                        .padding(.leading, 9)
+                        .padding(.trailing, 7)
+                        .padding(.vertical, 5)
+                        .background(Capsule(style: .continuous).fill(Chrome.overlay(0.12)))
+                        .help(quote.text)
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+            }
+            .padding(.bottom, 8)
+            .transition(.softAppear)
+            .animation(Chrome.panelSlide, value: quotes.map(\.id))
+        }
     }
 }
 

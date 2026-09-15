@@ -19,7 +19,7 @@ struct HydraCookbookPanel: View {
                 Text("Cookbook")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)
-                Text("The best pairs for the providers set up on this Mac. Add one and it is in the model picker.")
+                Text("Pairs built from the models in your library: which one leads, at what effort, and which ones build. Add one and it is in the model picker.")
                     .font(.system(size: 11))
                     .foregroundStyle(Chrome.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -31,7 +31,7 @@ struct HydraCookbookPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     if ready.isEmpty {
-                        Text("Set up a provider in Settings › Providers to see its pairs.")
+                        Text("Set up a provider in Settings › Providers, and its models bring their pairs here.")
                             .font(.system(size: 12))
                             .foregroundStyle(Chrome.secondaryText)
                             .padding(16)
@@ -79,15 +79,7 @@ private struct HydraCookbookRow: View {
         let registry = model.providers
         let isAdded = pair.map { HydraCookbook.isAdded($0, in: model.settings.hydraPairs) } ?? false
         HStack(alignment: .center, spacing: 12) {
-            HStack(spacing: 4) {
-                ProviderIcon(provider: recipe.lead.provider, size: 16)
-                    .foregroundStyle(Chrome.primaryText)
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(Chrome.secondaryText)
-                ProviderIcon(provider: recipe.heads.provider, size: 13)
-                    .foregroundStyle(Chrome.primaryText.opacity(0.8))
-            }
+            HydraPairMark(lead: recipe.lead.provider, heads: recipe.heads.provider)
             .frame(width: 52, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: recipe.title)
