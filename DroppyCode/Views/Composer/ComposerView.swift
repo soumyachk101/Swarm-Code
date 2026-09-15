@@ -678,8 +678,27 @@ private struct ContextMeter: View {
             // behind it is spoken rather than left to the tooltip.
             .accessibilityValue(Text(fraction.map { "\(Int($0 * 100))% of the context window used" } ?? ""))
             .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-                UsagePanel(usage: usage, provider: provider, headsProvider: headsProvider)
-                    .presentedChrome()
+                VStack(spacing: 0) {
+                    // The same limits as a floating panel beside the chat, open for as long
+                    // as the chat is (see `UsageFloatingPanel`); this is where it comes back
+                    // from once dismissed, so the button is always here.
+                    HStack {
+                        Text("Usage")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Chrome.secondaryText)
+                        Spacer(minLength: 8)
+                        ChromeCircleButton(symbol: "arrow.up.right", help: "Open as a floating panel beside the chat") {
+                            isPresented = false
+                            withAnimation(Chrome.panelSlide) {
+                                runtime.isUsagePanelShown = true
+                            }
+                        }
+                    }
+                    .padding(.top, 10)
+                    .padding(.horizontal, 16)
+                    UsagePanel(usage: usage, provider: provider, headsProvider: headsProvider)
+                }
+                .presentedChrome()
             }
         }
     }

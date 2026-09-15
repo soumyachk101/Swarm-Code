@@ -107,6 +107,7 @@ final class AppSettings {
         static let hydraReviewHeads = "hydraReviewHeads"
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
         static let hydraShowsHeadDetails = "hydraShowsHeadDetails"
+        static let showsUsagePanel = "showsUsagePanel"
         static let hydraPairs = "hydraPairs"
         static let hasSeenTour = "hasSeenTour"
     }
@@ -394,6 +395,13 @@ final class AppSettings {
         didSet { defaults.set(hydraShowsHeadDetails, forKey: Key.hydraShowsHeadDetails) }
     }
 
+    /// A floating panel with the chat's usage, the plan's limits and credits, beside the
+    /// chat for as long as it is open: across the column from the heads, at the left by
+    /// default. Each chat can dismiss it or open it from the usage popover regardless.
+    var showsUsagePanel: Bool {
+        didSet { defaults.set(showsUsagePanel, forKey: Key.showsUsagePanel) }
+    }
+
     /// The lead-and-heads pairings, in the order they were added.
     private(set) var hydraPairs: [HydraPair] {
         didSet { store(hydraPairs, forKey: Key.hydraPairs) }
@@ -459,6 +467,7 @@ final class AppSettings {
         hydraReviewHeads = defaults.object(forKey: Key.hydraReviewHeads) as? Bool ?? false
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
         hydraShowsHeadDetails = defaults.object(forKey: Key.hydraShowsHeadDetails) as? Bool ?? false
+        showsUsagePanel = defaults.object(forKey: Key.showsUsagePanel) as? Bool ?? false
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
     }
 

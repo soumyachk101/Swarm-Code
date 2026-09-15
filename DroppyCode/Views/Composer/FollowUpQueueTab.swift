@@ -16,6 +16,9 @@ struct FollowUpQueueTab: View {
     /// The live reorder: the grabbed prompt, the pointer's travel since the
     /// grab, and how far its slot has already moved to meet it (see `RowDrag`).
     @State private var drag = RowDrag<UUID>()
+    /// Watches for the mouse going up while a row is held: a gesture cancelled from under
+    /// the pointer reports no end, and the row would stay lifted.
+    @State private var mouseUpMonitor: Any?
     /// Each row's height including its padding: one row's slot in the stack.
     @State private var rowHeights: [UUID: CGFloat] = [:]
     /// The rows' natural height, so the fold can animate to and from exactly it.
@@ -79,7 +82,7 @@ struct FollowUpQueueTab: View {
                             onDragChanged: { translation in dragChanged(prompt.id, translation: translation) },
                             onDragEnded: { dragEnded() }
                         )
-                        .modifier(RowHeightReporter(id: prompt.id, isActive: drag.id != nil, heights: $rowHeights))
+                        .modifier(RowHeightReporter(id: prompt.id, heights: $rowHeights))
                         // Only while dragging: settling is the only reader.
                         .offset(y: isDragged ? drag.visualOffset : 0)
                         .zIndex(isDragged ? 1 : 0)
@@ -107,21 +110,38 @@ struct FollowUpQueueTab: View {
             // A row that left mid-drag (deleted, or sent) ends the drag cleanly.
             if let id = drag.id, !ids.contains(id) { dragEnded() }
         }
+        .onChange(of: drag.id) { _, id in
+            if id != nil {
+                guard mouseUpMonitor == nil else { return }
+                mouseUpMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseUp]) { event in
+                    // After the gesture's own end, which settles the row; this only
+                    // catches the drags it never reports.
+                    DispatchQueue.main.async { dragEnded() }
+                    return event
+                }
+            } else if let monitor = mouseUpMonitor {
+                NSEvent.removeMonitor(monitor)
+                mouseUpMonitor = nil
+            }
+        }
+        .onDisappear {
+            if let monitor = mouseUpMonitor {
+                NSEvent.removeMonitor(monitor)
+                mouseUpMonitor = nil
+            }
+        }
     }
 
-    /// Reports its row's height only while a drag is active: settling is the only reader.
+    /// Reports its row's height for the reorder maths. Always on: switching the modifier
+    /// in as a drag began changed every row's structure under the grip mid-gesture, and a
+    /// gesture torn down that way never ends, leaving the row lifted for good.
     private struct RowHeightReporter: ViewModifier {
         let id: UUID
-        let isActive: Bool
         @Binding var heights: [UUID: CGFloat]
 
         func body(content: Content) -> some View {
-            if isActive {
-                content.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
-                    if heights[id] != height { heights[id] = height }
-                }
-            } else {
-                content
+            content.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                if heights[id] != height { heights[id] = height }
             }
         }
     }
@@ -183,6 +203,9 @@ private struct FollowUpRow: View {
 
     /// Whether the pointer is over the reorder grip, for the grab cursor.
     @State private var isHoveringGrip = false
+    /// Held while the grip's drag runs; SwiftUI resets it when the gesture ends or is
+    /// cancelled, and a cancelled gesture calls no `onEnded` of its own.
+    @GestureState private var isGrabbing = false
 
     /// How far the prose is lifted to centre its x-height on the row's line: half the
     /// gap between cap height and x-height of its 12 pt font, on the half point.
@@ -222,9 +245,13 @@ private struct FollowUpRow: View {
                 }
                 .gesture(
                     DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .updating($isGrabbing) { _, grabbing, _ in grabbing = true }
                         .onChanged { value in onDragChanged(value.translation.height) }
                         .onEnded { _ in onDragEnded() }
                 )
+                .onChange(of: isGrabbing) { _, grabbing in
+                    if !grabbing, isDragged { onDragEnded() }
+                }
                 .help("Drag to reorder")
                 .accessibilityLabel(Text("Drag to reorder"))
             if !prompt.attachments.isEmpty {
@@ -260,7 +287,12 @@ private struct FollowUpRow: View {
             .alignmentGuide(VerticalAlignment.center) { $0[VerticalAlignment.center] + Self.proseLift }
             Spacer(minLength: 4)
             HStack(spacing: 0) {
-                QueueIconButton(symbol: "paperplane", help: runtime.isRunning ? "Send now (stops the running turn)" : "Send now") {
+                // Native heads run inside the lead's turn, so that turn is not stopped for
+                // a queued prompt; it goes the moment they have reported.
+                let sendHelp = runtime.hasWorkingNativeHeads && runtime.isRunning
+                    ? "Send as soon as the heads report"
+                    : runtime.isRunning ? "Send now (stops the running turn)" : "Send now"
+                QueueIconButton(symbol: "paperplane", help: sendHelp) {
                     runtime.sendFollowUpNow(prompt.id)
                 }
                 QueueIconButton(symbol: "pencil", help: "Edit follow-up") {

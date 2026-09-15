@@ -4,8 +4,9 @@ import SwiftUI
 /// How far a head has got, as one bar filling in from the left: a stave for each thing it
 /// did, in order, the taller the more it changed. A read, a search or a lookup is short and
 /// faint, a command taller, an edit taller still, and a reply stands full height in the
-/// head's own colour. Under it, what that amounts to and how long the head has been at it.
-/// The steps themselves are the sidebar's to show; here the shape of the work is enough.
+/// head's own colour. Under it, what that amounts to; how long the head has been at it
+/// sits beside its task above (see `HydraHeadProgress`). The steps themselves are the
+/// sidebar's to show; here the shape of the work is enough.
 ///
 /// The staves are one `Canvas`, redrawn on the display's clock while the head works: a new
 /// stave rises over 0.45 s from the moment its entry arrived, and a soft highlight sweeps
@@ -26,7 +27,7 @@ struct HydraProgressBar: View {
 
     private static let height: CGFloat = 28
     private static let staveWidth: CGFloat = 3
-    private static let gap: CGFloat = 2
+    private static let gap: CGFloat = 3
     private static let pitch = staveWidth + gap
     /// How long a new stave takes to rise to its height.
     private static let rise: TimeInterval = 0.45
@@ -61,21 +62,12 @@ struct HydraProgressBar: View {
             }
             .frame(height: Self.height)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
-            HStack(alignment: .firstTextBaseline) {
+            if !counts.line.isEmpty {
                 Text(verbatim: counts.line)
-                Spacer(minLength: 8)
-                if isRunning {
-                    TimelineView(.periodic(from: startedAt, by: 1)) { context in
-                        Text(verbatim: RelativeTime.duration(context.date.timeIntervalSince(startedAt)))
-                            .monospacedDigit()
-                    }
-                } else {
-                    Text(verbatim: elapsed)
-                        .monospacedDigit()
-                }
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .frame(maxWidth: .infinity)
             }
-            .font(.system(size: 11))
-            .foregroundStyle(Chrome.secondaryText)
         }
         // A finished head's last stave still needs its rise before the clock can stop.
         .task(id: isRunning ? -1 : events.count) {
@@ -264,8 +256,9 @@ struct HydraProgressBar: View {
     }
 }
 
-/// A head's panel with "Show what heads are doing" off: what it was sent to do and the
-/// progress bar, centred where the transcript would be.
+/// A head's panel with "Show what heads are doing" off: what it was sent to do with its
+/// time beside it, centred on one row, and the progress bar under them, centred where the
+/// transcript would be.
 struct HydraHeadProgress: View {
     let head: ChatThread
     let runtime: ThreadRuntime
@@ -273,24 +266,101 @@ struct HydraHeadProgress: View {
     var body: some View {
         let info = head.hydra
         let task = info?.task.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        VStack(alignment: .leading, spacing: 0) {
+        let status = info?.status ?? .running
+        let startedAt = info?.startedAt ?? head.createdAt
+        VStack(spacing: 0) {
             Spacer(minLength: 0)
-            Text(verbatim: task.isEmpty ? head.title : task)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Chrome.primaryText)
-                .lineLimit(2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HydraWorkingTitle(text: task.isEmpty ? head.title : task, isRunning: status == .running)
+                HydraElapsedTime(startedAt: startedAt, finishedAt: info?.finishedAt, isRunning: status == .running)
+            }
+            .frame(maxWidth: .infinity)
             HydraProgressBar(
                 runtime: runtime,
-                startedAt: info?.startedAt ?? head.createdAt,
+                startedAt: startedAt,
                 finishedAt: info?.finishedAt,
-                status: info?.status ?? .running,
+                status: status,
                 tint: (info?.persona ?? HydraRoster.persona(at: 0)).color
             )
             .padding(.top, 10)
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
+        // The strip overlays the top of the panel and the chat box is an inset at the
+        // bottom: the room under the strip is what the task and the bar centre in.
+        .padding(.top, HydraPanel.stripHeight)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// The head's task. While the head works the text breathes, and a slightly darker band
+/// drifts across it from left to right, so a bar with nothing on it yet still reads as a
+/// head at work. Done, or with reduced motion, it is plain text.
+private struct HydraWorkingTitle: View {
+    let text: String
+    let isRunning: Bool
+
+    /// One pass of the band across the text.
+    private static let sweep: TimeInterval = 2.6
+    /// One breath, in and out.
+    private static let breath: TimeInterval = 2.2
+    /// Half the band's width, as a share of the text's width.
+    private static let reach = 0.3
+
+    var body: some View {
+        let animates = isRunning && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !animates)) { context in
+            let now = context.date.timeIntervalSinceReferenceDate
+            // The band's centre travels from just left of the text to just right of it, so
+            // it enters and leaves rather than snapping; still, the text is one colour.
+            let phase = now.truncatingRemainder(dividingBy: Self.sweep) / Self.sweep
+            let centre = animates ? -Self.reach + phase * (1 + 2 * Self.reach) : 0.5
+            let dip = animates ? 0.6 : 1.0
+            let breath = animates ? 0.5 + 0.5 * sin(now / Self.breath * 2 * .pi) : 1.0
+            Text(verbatim: text)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(
+                    LinearGradient(
+                        stops: [
+                            .init(color: Chrome.primaryText, location: 0),
+                            .init(color: Chrome.primaryText, location: Self.clamped(centre - Self.reach)),
+                            .init(color: Chrome.primaryText.opacity(dip), location: Self.clamped(centre)),
+                            .init(color: Chrome.primaryText, location: Self.clamped(centre + Self.reach)),
+                            .init(color: Chrome.primaryText, location: 1),
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .opacity(0.86 + 0.14 * breath)
+        }
+        .lineLimit(2)
+        .multilineTextAlignment(.center)
+    }
+
+    private static func clamped(_ location: Double) -> CGFloat {
+        CGFloat(min(1, max(0, location)))
+    }
+}
+
+/// How long the head has been at it, ticking every second while it works.
+private struct HydraElapsedTime: View {
+    let startedAt: Date
+    let finishedAt: Date?
+    let isRunning: Bool
+
+    var body: some View {
+        Group {
+            if isRunning {
+                TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                    Text(verbatim: RelativeTime.duration(context.date.timeIntervalSince(startedAt)))
+                }
+            } else {
+                Text(verbatim: RelativeTime.duration((finishedAt ?? .now).timeIntervalSince(startedAt)))
+            }
+        }
+        .font(.system(size: 11))
+        .monospacedDigit()
+        .foregroundStyle(Chrome.secondaryText)
     }
 }

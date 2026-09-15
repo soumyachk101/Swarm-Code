@@ -22,6 +22,7 @@ struct ChatView: View {
     @State private var subagentDrag = PanelDragState()
     @State private var hydraDrag = PanelDragState()
     @State private var poppedDrag = PanelDragState()
+    @State private var usageDrag = PanelDragState()
     /// One grip held at a time, whichever panel it is on.
     @State private var panelResize = PanelResizeState()
 
@@ -118,6 +119,12 @@ struct ChatView: View {
                 }
             }
             .animation(Chrome.panelSlide, value: scene.popped?.id)
+            .overlay(alignment: .topLeading) {
+                if let usage = scene.usage, scene.showsUsage {
+                    usagePanel(usage, scene: scene)
+                }
+            }
+            .animation(Chrome.panelSlide, value: scene.usage)
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { paneSize = $0 }
             // Free-floating panels are kept inside the pane while it shrinks, with no
             // animation; when the resize ends they land docked exactly (see below).
@@ -129,6 +136,7 @@ struct ChatView: View {
                 subagentDrag.reclamp(in: layout)
                 hydraDrag.reclamp(in: layout)
                 poppedDrag.reclamp(in: layout)
+                usageDrag.reclamp(in: layout)
             }
             // The pane's final size: docked panels land on their new docked spot, and
             // a free spot left outside is pulled back inside.
@@ -137,6 +145,7 @@ struct ChatView: View {
                 subagentDrag.reclamp(in: scene.layout)
                 hydraDrag.reclamp(in: scene.layout)
                 poppedDrag.reclamp(in: scene.layout)
+                usageDrag.reclamp(in: scene.layout)
             }
 
             if runtime.isTerminalVisible {
@@ -276,6 +285,40 @@ struct ChatView: View {
         .id(popped.id)
     }
 
+    /// The usage panel: beyond whichever panels are in the same corner, so it is the last
+    /// of a stack. Across the column from the heads by default, at the left.
+    private func usagePanel(_ usage: PanelUsage, scene: PanelScene) -> some View {
+        let corner = runtime.usagePanelDock
+        let below = [
+            scene.isDocked && runtime.subagentPanelDock == corner,
+            scene.isHydraDocked && runtime.hydraPanelDock == corner,
+            scene.showsPopped && runtime.hydraPoppedPanelDock == corner,
+        ].count { $0 }
+        let rest = scene.docks.stacked(corner, below: below, layout: scene.layout)
+        return PlacedPanel(drag: usageDrag, rest: rest, size: scene.layout.panelSize, content: UsageFloatingPanel(
+            runtime: runtime,
+            provider: usage.provider,
+            headsProvider: usage.headsProvider,
+            size: scene.layout.panelSize,
+            onDrag: { translation in
+                let position = usageDrag.move(by: translation, from: rest, in: scene.layout)
+                dock(\.usagePanelDock, nearest: position, scene: scene)
+            },
+            onDragEnd: {
+                if let heading = usageDrag.release() {
+                    dock(\.usagePanelDock, nearest: heading, scene: scene)
+                }
+            },
+            dismiss: {
+                // For this chat alone; the usage popover's expand button brings it back.
+                withAnimation(Chrome.panelSlide) {
+                    runtime.isUsagePanelShown = false
+                }
+            }
+        )
+        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelResize.isActive)
+    }
+
     /// The grips of a panel docked in `corner`. A pull on a free edge grows the panel away
     /// from its corner; the size is kept in Settings for every chat's panels, fitted to
     /// this pane's room, so it follows the pointer here and the window's size after.
@@ -328,6 +371,9 @@ private struct PanelMembers {
     let heads: [ChatThread]
     let popped: ChatThread?
     let isHydraHidden: Bool
+    /// The usage panel's providers, when this chat shows one: the chat's own, and the
+    /// pair's heads provider when that is another, so both plans' limits stack.
+    let usage: PanelUsage?
 
     init(runtime: ThreadRuntime, model: AppModel) {
         // Both lists come from this chat's own children (see `panelHeads(of:)`), so a head
@@ -339,7 +385,25 @@ private struct PanelMembers {
         let poppedHead = team.count > 1 ? team.first { $0.id == runtime.hydraPoppedHeadID } : nil
         popped = poppedHead
         heads = team.filter { $0.id != poppedHead?.id }
+        // The chat's own word first, the setting when it has none (see `isUsagePanelShown`).
+        if let thread = model.thread(runtime.threadID), runtime.isUsagePanelShown ?? model.settings.showsUsagePanel {
+            var headsProvider: ProviderKind?
+            if model.hydraIsOn(thread), let pair = model.hydraPair(for: thread) {
+                let provider = model.hydraHeadsProvider(of: pair)
+                headsProvider = provider == thread.provider ? nil : provider
+            }
+            usage = PanelUsage(provider: thread.provider, headsProvider: headsProvider)
+        } else {
+            usage = nil
+        }
     }
+}
+
+/// Whose limits the usage panel shows: the chat's provider, and the heads' when a pair
+/// sends them out on another.
+struct PanelUsage: Equatable {
+    let provider: ProviderKind
+    let headsProvider: ProviderKind?
 }
 
 /// Everything the chat's floating panels need in one place, worked out once per body:
@@ -357,9 +421,12 @@ private struct PanelScene {
     /// list; it only stays out while another head is left behind to keep that panel.
     let heads: [ChatThread]
     let popped: ChatThread?
+    /// The usage panel's providers, when the chat shows one (see `PanelMembers`).
+    let usage: PanelUsage?
     let isMeasured: Bool
     let showsHydra: Bool
     let showsPopped: Bool
+    let showsUsage: Bool
     let isHydraDocked: Bool
     /// The sides with a panel docked on them, in a fixed order, as the key for the slides
     /// that make room: it changes with a dock, never with a measurement.
@@ -375,9 +442,11 @@ private struct PanelScene {
         isDocked = members.isDocked
         heads = members.heads
         popped = members.popped
+        usage = members.usage
         isMeasured = geometry.isMeasured
         showsHydra = geometry.showsHydra
         showsPopped = geometry.showsPopped
+        showsUsage = geometry.showsUsage
         isHydraDocked = geometry.isHydraDocked
         dockedSides = geometry.dockedSides
         layout = geometry.layout
@@ -392,6 +461,7 @@ private struct PanelScene {
         let isMeasured: Bool
         let showsHydra: Bool
         let showsPopped: Bool
+        let showsUsage: Bool
         let isHydraDocked: Bool
         let dockedSides: [PanelDockSide]
         let reserve: PanelReserve
@@ -402,17 +472,24 @@ private struct PanelScene {
         let isMeasured = paneSize != .zero
         let showsHydra = !members.heads.isEmpty && isMeasured
         let showsPopped = members.popped != nil && showsHydra
+        let showsUsage = members.usage != nil && isMeasured
         let isHydraDocked = showsHydra
         let isPoppedDocked = showsPopped
         var corners: [PanelDockCorner] = []
         if members.isDocked { corners.append(runtime.subagentPanelDock) }
         if isHydraDocked { corners.append(runtime.hydraPanelDock) }
         if isPoppedDocked { corners.append(runtime.hydraPoppedPanelDock) }
+        if showsUsage { corners.append(runtime.usagePanelDock) }
         let sides = Set(corners.map(\.side))
         let dockedSides = [PanelDockSide.leading, .trailing].filter(sides.contains)
         // Panels docked in one corner stack, so they share its height between them.
         let stackDepth = Dictionary(grouping: corners, by: { $0 }).values.map(\.count).max() ?? 1
-        let layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth, preferred: model.settings.panelSize)
+        // Every panel shows a head's progress bar rather than a conversation: the heads'
+        // with "Show what heads are doing" off, and the helper panel only when it holds a
+        // head too (a helper of the user's own keeps its chat, so it keeps the full height).
+        let helperShowsProgress = members.subagent?.isHydraHead ?? true
+        let compact = !model.settings.hydraShowsHeadDetails && helperShowsProgress && (showsHydra || members.subagent != nil)
+        let layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth, preferred: model.settings.panelSize, compact: compact)
         let reserve = PanelReserve(
             leading: sides.contains(.leading) ? layout.composerReserve : 0,
             trailing: sides.contains(.trailing) ? layout.composerReserve : 0
@@ -422,6 +499,7 @@ private struct PanelScene {
             isMeasured: isMeasured,
             showsHydra: showsHydra,
             showsPopped: showsPopped,
+            showsUsage: showsUsage,
             isHydraDocked: isHydraDocked,
             dockedSides: dockedSides,
             reserve: reserve,

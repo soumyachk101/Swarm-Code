@@ -1285,10 +1285,10 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 .tile--plain .tile__caption { max-width: 34ch; text-wrap: pretty; }
 
-/* Agents: eight marks in one tile. */
+/* Agents: ten marks in one tile. */
 .tile--agents {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 40px 20px;
   margin-top: var(--gap-heading);
   padding: 56px 48px;
@@ -1323,12 +1323,55 @@ html.nav-intro-done .nav__pill { animation: none; }
   border-radius: 6px;
 }
 
+/* Usage limits: the copy on the left, the popover capture on the right. */
+.tile--usage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 48px;
+  align-items: center;
+  margin-top: var(--gap-heading);
+}
+.usage__copy { min-width: 0; }
+.usage__list {
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 18px;
+}
+.usage__list li {
+  display: grid;
+  gap: 4px;
+}
+.usage__list strong {
+  font-family: "Inter Tight", var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+.usage__list span {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  max-width: 44ch;
+  text-wrap: pretty;
+}
+.usage__shot {
+  display: block;
+  width: min(420px, 100%);
+  height: auto;
+  border-radius: 28px;
+  justify-self: center;
+}
+
 @media (max-width: 960px) {
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; gap: 16px; }
   .tile { padding: 36px; border-radius: 32px; }
   .tile--wide, .tile--half, .tile--full { grid-column: span 2; }
   .tile--tall { grid-column: span 2; grid-row: auto; min-height: 460px; }
-  .tile--agents { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px 12px; }
+  .tile--agents { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 32px 12px; }
+  .tile--usage { gap: 32px; }
 }
 @media (max-width: 620px) {
   .tiles { grid-template-columns: minmax(0, 1fr); }
@@ -1338,6 +1381,8 @@ html.nav-intro-done .nav__pill { animation: none; }
   .tile--split { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .tile__rows { margin: 8px -28px 0 0; }
   .tile--agents { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 36px 24px; }
+  .tile--usage { grid-template-columns: minmax(0, 1fr); }
+  .usage__shot { justify-self: start; width: min(360px, 100%); }
   .agent__name { font-size: 18px; }
 }
 

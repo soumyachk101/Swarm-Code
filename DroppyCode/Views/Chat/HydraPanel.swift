@@ -31,16 +31,29 @@ struct HydraPanel: View {
     let dismiss: () -> Void
 
     static let cornerRadius: CGFloat = 22
-    private static let stripHeight: CGFloat = Chrome.chromeTopPadding + Chrome.capsuleHeight + 6
+    /// The strip along the top, an overlay over the content: what sits under it in
+    /// progress mode leaves it room (see `HydraHeadProgress`). The helper panel's handle
+    /// is the same height.
+    static let stripHeight: CGFloat = Chrome.chromeTopPadding + Chrome.capsuleHeight + 6
+    /// How long a head that just finished keeps the stage: its wave crosses the panel
+    /// and settles before the next head takes over or the panel goes. The model holds a
+    /// finished head in the panel this long before clearing it (see `finishHydraHead`).
+    static let finishHold: TimeInterval = 2.0
+
+    /// A head that finished while on stage holds it for `finishHold`.
+    @State private var hold: StageHold?
 
     var body: some View {
         // The head on stage: the one picked, else the newest still working, else the newest.
-        // A popped-out panel holds one head, and that one is on stage.
-        let selected = isPoppedOut
+        // A popped-out panel holds one head, and that one is on stage. A head that has just
+        // finished on stage keeps it while its wave plays, whatever else is at work.
+        let wanted = isPoppedOut
             ? heads.first
             : heads.first { $0.id == runtime.hydraSelectedHeadID }
                 ?? heads.last { $0.hydra?.status == .running }
                 ?? heads.last
+        let held = hold.flatMap { hold in heads.first { $0.id == hold.id } }
+        let selected = held ?? wanted
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
         ZStack {
             if let selected {
@@ -51,7 +64,29 @@ struct HydraPanel: View {
                     projectName: projectName
                 )
                 .id(selected.id)
+                // The next head fades in over the last rather than popping into place.
+                .transition(.opacity)
             }
+        }
+        .animation(liveResize.isActive ? nil : Chrome.panelSlide, value: selected?.id)
+        .overlay {
+            // Done: one wave of the head's colour flows through the whole panel.
+            if let hold, let head = heads.first(where: { $0.id == hold.id }) {
+                DotFieldSweep(tint: NSColor((head.hydra?.persona ?? HydraRoster.persona(at: 0)).color))
+                    .clipShape(shape)
+                    .transition(.opacity)
+                    .id(hold)
+            }
+        }
+        .onChange(of: StageMark(id: selected?.id, status: selected?.hydra?.status)) { old, new in
+            // The head on stage just finished: it holds the stage for its wave.
+            guard let id = new.id, old.id == id, old.status == .running, new.status != .running else { return }
+            hold = StageHold(id: id, startedAt: .now)
+        }
+        .task(id: hold) {
+            guard hold != nil else { return }
+            guard (try? await Task.sleep(for: .seconds(Self.finishHold))) != nil else { return }
+            withAnimation(Chrome.panelSlide) { hold = nil }
         }
         .overlay(alignment: .top) {
             strip(selected: selected)
@@ -164,6 +199,19 @@ struct HydraPanel: View {
         .animation(liveResize.isActive ? nil : Chrome.panelSlide, value: selected?.id)
         .animation(liveResize.isActive ? nil : Chrome.panelSlide, value: heads.count > 1)
     }
+}
+
+/// The head holding the stage past its finish, and since when: a new hold for the same
+/// head plays its wave again.
+private struct StageHold: Hashable {
+    let id: UUID
+    let startedAt: Date
+}
+
+/// What the stage shows, as the key that says a head finished on it.
+private struct StageMark: Equatable {
+    let id: UUID?
+    let status: HydraHeadInfo.Status?
 }
 
 /// The count at the strip's left end: it opens the team in a popover. Not a Button: a
