@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ChatView: View {
     @Environment(AppModel.self) private var model
+    @Environment(WindowLiveResize.self) private var liveResize
     @Bindable var runtime: ThreadRuntime
 
     @State private var git = GitStatusModel()
@@ -33,7 +34,12 @@ struct ChatView: View {
         let workingDirectory = thread.flatMap { $0.worktreePath ?? project?.path }
         let directory = workingDirectory ?? LoginEnvironment.homeDirectory
         let title = thread?.title ?? ""
-        let scene = PanelScene(runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight)
+        // Who is in a panel comes from the model and changes rarely; the geometry
+        // comes from the measured pane and changes every frame of a live resize.
+        // Split, so a resize frame recomputes docks and reserves only, never the
+        // thread lists.
+        let members = PanelMembers(runtime: runtime, model: model)
+        let scene = PanelScene(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight)
         VStack(spacing: 0) {
             ThreadTimeline(
                 runtime: runtime,
@@ -113,6 +119,25 @@ struct ChatView: View {
             }
             .animation(Chrome.panelSlide, value: scene.popped?.id)
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { paneSize = $0 }
+            // Free-floating panels are kept inside the pane while it shrinks, with no
+            // animation; when the resize ends they land docked exactly (see below).
+            .onChange(of: paneSize) {
+                guard liveResize.isActive else { return }
+                let layout = PanelScene.geometry(
+                    members: members, runtime: runtime, model: model,
+                    paneSize: paneSize, composerAreaHeight: composerAreaHeight).layout
+                subagentDrag.reclamp(in: layout)
+                hydraDrag.reclamp(in: layout)
+                poppedDrag.reclamp(in: layout)
+            }
+            // The pane's final size: docked panels land on their new docked spot, and
+            // a free spot left outside is pulled back inside.
+            .onChange(of: liveResize.isActive) { _, resizing in
+                guard !resizing else { return }
+                subagentDrag.reclamp(in: scene.layout)
+                hydraDrag.reclamp(in: scene.layout)
+                poppedDrag.reclamp(in: scene.layout)
+            }
 
             if runtime.isTerminalVisible {
                 TerminalPanel(runtime: runtime, directory: directory)
@@ -209,7 +234,10 @@ struct ChatView: View {
             }
         )
         // Where the panel sits, for the tour's captures only: the Hydra page zooms on it.
+        // Skipped while the window is resized: the frame moves every frame and the
+        // capture map is never read mid-drag.
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            guard !liveResize.isActive else { return }
             if WebsiteCaptures.isEnabled { WebsiteCaptures.hydraPanelFrames[runtime.threadID] = frame }
         }
         .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelResize.isActive)
@@ -290,6 +318,30 @@ struct ChatView: View {
     }
 }
 
+/// Which threads sit in the chat's floating panels. Read from the model once per
+/// body, apart from the pane measurements: a live resize then re-lays out geometry
+/// without walking any thread list again.
+@MainActor
+private struct PanelMembers {
+    let subagent: ChatThread?
+    let isDocked: Bool
+    let heads: [ChatThread]
+    let popped: ChatThread?
+    let isHydraHidden: Bool
+
+    init(runtime: ThreadRuntime, model: AppModel) {
+        // Both lists come from this chat's own children (see `panelHeads(of:)`), so a head
+        // of another chat writing its status leaves this whole body alone.
+        subagent = model.panelSubagent(of: runtime.threadID)
+        isDocked = subagent != nil
+        isHydraHidden = runtime.isHydraPanelHidden
+        let team = isHydraHidden ? [] : model.panelHeads(of: runtime.threadID)
+        let poppedHead = team.count > 1 ? team.first { $0.id == runtime.hydraPoppedHeadID } : nil
+        popped = poppedHead
+        heads = team.filter { $0.id != poppedHead?.id }
+    }
+}
+
 /// Everything the chat's floating panels need in one place, worked out once per body:
 /// which panels there are, which are docked where, the room they take, and their spots.
 @MainActor
@@ -317,35 +369,64 @@ private struct PanelScene {
 
     var hasHeads: Bool { !heads.isEmpty }
 
-    init(runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat) {
-        isMeasured = paneSize != .zero
-        // Both lists come from this chat's own children (see `panelHeads(of:)`), so a head
-        // of another chat writing its status leaves this whole body alone.
-        subagent = model.panelSubagent(of: runtime.threadID)
-        isDocked = subagent != nil
-        let team = runtime.isHydraPanelHidden ? [] : model.panelHeads(of: runtime.threadID)
-        let poppedHead = team.count > 1 ? team.first { $0.id == runtime.hydraPoppedHeadID } : nil
-        let teamHeads = team.filter { $0.id != poppedHead?.id }
-        popped = poppedHead
-        heads = teamHeads
-        showsHydra = !teamHeads.isEmpty && isMeasured
-        showsPopped = poppedHead != nil && showsHydra
-        isHydraDocked = showsHydra
+    init(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat) {
+        let geometry = Self.geometry(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight)
+        subagent = members.subagent
+        isDocked = members.isDocked
+        heads = members.heads
+        popped = members.popped
+        isMeasured = geometry.isMeasured
+        showsHydra = geometry.showsHydra
+        showsPopped = geometry.showsPopped
+        isHydraDocked = geometry.isHydraDocked
+        dockedSides = geometry.dockedSides
+        layout = geometry.layout
+        reserve = geometry.reserve
+        docks = geometry.docks
+    }
+
+    /// The geometry alone, from the members and the measured pane: what a resize frame
+    /// recomputes, with no model reads of its own.
+    struct Geometry {
+        let layout: SubagentPanelLayout
+        let isMeasured: Bool
+        let showsHydra: Bool
+        let showsPopped: Bool
+        let isHydraDocked: Bool
+        let dockedSides: [PanelDockSide]
+        let reserve: PanelReserve
+        let docks: PanelDocks
+    }
+
+    static func geometry(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat) -> Geometry {
+        let isMeasured = paneSize != .zero
+        let showsHydra = !members.heads.isEmpty && isMeasured
+        let showsPopped = members.popped != nil && showsHydra
+        let isHydraDocked = showsHydra
         let isPoppedDocked = showsPopped
         var corners: [PanelDockCorner] = []
-        if isDocked { corners.append(runtime.subagentPanelDock) }
+        if members.isDocked { corners.append(runtime.subagentPanelDock) }
         if isHydraDocked { corners.append(runtime.hydraPanelDock) }
         if isPoppedDocked { corners.append(runtime.hydraPoppedPanelDock) }
         let sides = Set(corners.map(\.side))
-        dockedSides = [PanelDockSide.leading, .trailing].filter(sides.contains)
+        let dockedSides = [PanelDockSide.leading, .trailing].filter(sides.contains)
         // Panels docked in one corner stack, so they share its height between them.
         let stackDepth = Dictionary(grouping: corners, by: { $0 }).values.map(\.count).max() ?? 1
-        layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth, preferred: model.settings.panelSize)
-        reserve = PanelReserve(
+        let layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth, preferred: model.settings.panelSize)
+        let reserve = PanelReserve(
             leading: sides.contains(.leading) ? layout.composerReserve : 0,
             trailing: sides.contains(.trailing) ? layout.composerReserve : 0
         )
-        docks = PanelDocks(layout: layout, reserve: reserve)
+        return Geometry(
+            layout: layout,
+            isMeasured: isMeasured,
+            showsHydra: showsHydra,
+            showsPopped: showsPopped,
+            isHydraDocked: isHydraDocked,
+            dockedSides: dockedSides,
+            reserve: reserve,
+            docks: PanelDocks(layout: layout, reserve: reserve)
+        )
     }
 }
 
@@ -517,6 +598,7 @@ private struct ThreadsButton: View {
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             SidebarView(inPopover: true, dismiss: { isPresented = false })
                 .frame(width: model.sidebar.width, height: 560)
+                .presentedChrome()
         }
     }
 }
@@ -714,6 +796,7 @@ private struct ScriptsMenu: View {
         }
         .sheet(isPresented: $isEditing) {
             ScriptsEditor(projectID: project.id)
+                .presentedChrome()
         }
     }
 }
@@ -741,6 +824,7 @@ private struct GitActionsMenu: View {
         }
         .sheet(isPresented: $isCommitting) {
             CommitSheet(runtime: runtime, directory: directory, git: git)
+                .presentedChrome()
         }
     }
 

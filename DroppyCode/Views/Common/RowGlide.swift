@@ -43,6 +43,12 @@ final class RowGlideAnimator {
     }
 
     private(set) var glides: [Glide] = []
+    /// Whether each thread's row is out of sight under its ghost, one cell per thread: a
+    /// row reads its own cell (see `isHiding`), never `glides`, so a launch, landing or
+    /// finish re-renders the two rows of that glide and the layer, not every row in the
+    /// list. Cells are kept once made: a row observes the cell it read, so a fresh one
+    /// would flip out of its sight.
+    @ObservationIgnored private var hidingCells: [UUID: ObservedValue<Bool>] = [:]
 
     /// A landing frame counts only right after launch: the new row lays out in the same
     /// pass as the thread's change. One reporting later was out of view when the ghost
@@ -68,6 +74,7 @@ final class RowGlideAnimator {
             threadID: threadID, direction: direction, departure: departure, arrival: arrival,
             departureFill: departureFill, arrivalFill: arrivalFill, from: from, to: fallback, bounds: bounds
         ))
+        setHiding(threadID, true)
     }
 
     /// The new row is on screen at `frame`: the ghost lands there.
@@ -77,18 +84,40 @@ final class RowGlideAnimator {
         glides[index].to = frame
     }
 
-    /// Whether the thread's row should stay out of sight: its ghost is in the air.
+    /// Whether the thread's row should stay out of sight: its ghost is in the air. Read
+    /// through the thread's own cell, made on the first ask; making it observes nothing.
     func isHiding(_ threadID: UUID) -> Bool {
-        glides.contains { $0.threadID == threadID && !$0.hasArrived }
+        hidingCell(threadID).value
     }
 
+    private func hidingCell(_ threadID: UUID) -> ObservedValue<Bool> {
+        if let cell = hidingCells[threadID] { return cell }
+        let cell = ObservedValue(false)
+        hidingCells[threadID] = cell
+        return cell
+    }
+
+    /// Flips a thread's cell only when the answer changes, so a row is never re-rendered
+    /// for a write that said what it already showed.
+    private func setHiding(_ threadID: UUID, _ hiding: Bool) {
+        let cell = hidingCell(threadID)
+        if cell.value != hiding { cell.value = hiding }
+    }
+
+    /// Landing is close (settlingDuration − 0.12 s): the row shows again under the ghost's
+    /// last frames, and the ghost goes 0.12 s later in `finish`.
     func arrive(_ id: UUID) {
         guard let index = glides.firstIndex(where: { $0.id == id }) else { return }
         glides[index].hasArrived = true
+        setHiding(glides[index].threadID, false)
     }
 
     func finish(_ id: UUID) {
-        glides.removeAll { $0.id == id }
+        guard let index = glides.firstIndex(where: { $0.id == id }) else { return }
+        let threadID = glides[index].threadID
+        glides.remove(at: index)
+        // A thread with no ghost left in the air shows; one relaunched meanwhile stays hidden.
+        setHiding(threadID, glides.contains { $0.threadID == threadID && !$0.hasArrived })
     }
 
     /// A row's face as a flat image at `size`, for a ghost.

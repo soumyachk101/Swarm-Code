@@ -35,14 +35,32 @@ struct MarkdownView: View, Equatable {
     /// message parses to the same blocks, so each distinct text parses once.
     @MainActor private static var blockCache = RecentCache<String, [MarkdownBlock]>(limit: 200)
     /// The one streaming message's latest parse, so re-renders between flushes never parse.
-    @MainActor private static var streamingParse: (text: String, blocks: [MarkdownBlock])?
+    /// `headCount`/`headBlocks` are the stable prefix both flushes share: the blocks of the
+    /// first `headCount` characters, parsed once and reused while the reply grows.
+    @MainActor private static var streamingParse: StreamingParse?
+
+    /// One streaming reply's latest parse, plus its stable head: the leading characters
+    /// whose blocks no later flush can change, so only the tail re-parses each flush.
+    @MainActor private struct StreamingParse {
+        var text: String
+        var blocks: [MarkdownBlock]
+        var headCount: Int
+        var headBlocks: [MarkdownBlock]
+        var flushes: Int
+    }
 
     @MainActor
     static func blocks(for text: String, streaming: Bool = false) -> [MarkdownBlock] {
         if streaming {
             if let parse = streamingParse, parse.text == text { return parse.blocks }
+            let flushes = (streamingParse?.flushes ?? 0) + 1
+            if let parse = streamingParse, text.hasPrefix(parse.text),
+               let incremental = incrementalBlocks(for: text, from: parse, flushes: flushes) {
+                streamingParse = incremental
+                return incremental.blocks
+            }
             let parsed = MarkdownParser.parse(text)
-            streamingParse = (text, parsed)
+            streamingParse = StreamingParse(text: text, blocks: parsed, headCount: 0, headBlocks: [], flushes: flushes)
             return parsed
         }
         if let cached = blockCache.value(for: text) { return cached }
@@ -56,6 +74,176 @@ struct MarkdownView: View, Equatable {
         }
         blockCache.insert(parsed, for: text)
         return parsed
+    }
+
+    /// Streaming tail-split: only the text after the last settled blank line re-parses.
+    /// Flushes only append, so the head (everything through that blank line) parses to
+    /// the same blocks; it parses once and is reused while the tail re-parses per flush.
+    /// Anything else (edits, resets) falls back to a full parse via the nil return.
+    @MainActor
+    private static func incrementalBlocks(for text: String, from parse: StreamingParse, flushes: Int) -> StreamingParse? {
+        // The tail must cover the last block or two (constructs can join across one
+        // blank line), so the boundary is the last blank line before the previous text
+        // minus their approximate source length.
+        let unstable = approximateSourceLength(parse.blocks.suffix(2))
+        let searchEnd = max(0, parse.text.count - unstable)
+        let endIndex = parse.text.index(parse.text.startIndex, offsetBy: searchEnd, limitedBy: parse.text.endIndex) ?? parse.text.endIndex
+        guard let blank = parse.text[..<endIndex].range(of: "\n\n", options: .backwards) else { return nil }
+        var boundary = blank.upperBound
+        // A list item, continuation or table row past the blank line can still belong
+        // to the head's block, so step back over whole blank lines until the tail
+        // starts something the head cannot absorb.
+        while boundary > parse.text.startIndex {
+            let offset = parse.text.distance(from: parse.text.startIndex, to: boundary)
+            let split = text.index(text.startIndex, offsetBy: offset)
+            guard let first = firstContentLine(after: split, in: text),
+                  let last = lastContentLine(of: parse.text[..<boundary]),
+                  joinsAcross(headLast: last, tailFirst: first) else { break }
+            let earlier = parse.text[..<parse.text.index(before: boundary)].range(of: "\n\n", options: .backwards)
+            guard let earlier else { return nil }
+            boundary = earlier.upperBound
+        }
+        // A fence opened in the head and not yet closed stays whole in the tail.
+        var offset = parse.text.distance(from: parse.text.startIndex, to: boundary)
+        if let opener = openFenceOffset(in: parse.text[..<boundary]) { offset = opener }
+        // The head parses once while it does not move; the tail re-parses per flush.
+        let headBlocks: [MarkdownBlock]
+        if offset == parse.headCount {
+            headBlocks = parse.headBlocks
+        } else {
+            headBlocks = MarkdownParser.parse(String(parse.text.prefix(offset)))
+        }
+        let split = text.index(text.startIndex, offsetBy: offset)
+        let blocks = headBlocks + MarkdownParser.parse(String(text[split...]))
+        #if DEBUG
+        // A divergence is a bug in the split, not a reason to crash a stream: it is
+        // logged, and the full parse stands in for this flush.
+        if flushes % 50 == 0 {
+            let full = MarkdownParser.parse(text)
+            if blocks != full {
+                print("MarkdownView: streaming incremental parse diverged from the full parse at offset \(offset)")
+                return StreamingParse(text: text, blocks: full, headCount: 0, headBlocks: [], flushes: flushes)
+            }
+        }
+        #endif
+        return StreamingParse(text: text, blocks: blocks, headCount: offset, headBlocks: headBlocks, flushes: flushes)
+    }
+
+    /// Whether the tail's first line still belongs to a block the head ends in: a
+    /// same-level item or an indented continuation joins the head's list, and a row
+    /// joins the head's table. Paragraphs, quotes, headings and rules all end at the
+    /// blank line, so anything else splits cleanly.
+    private static func joinsAcross(headLast: String, tailFirst: String) -> Bool {
+        if let head = listMarker(line: headLast), let tail = listMarker(line: tailFirst),
+           head.indent == tail.indent, head.ordered == tail.ordered { return true }
+        if indentation(of: tailFirst) > 0, listMarker(line: tailFirst) == nil,
+           listMarker(line: headLast) != nil || indentation(of: headLast) > 0 { return true }
+        if tailFirst.contains("|"), headLast.contains("|") { return true }
+        return false
+    }
+
+    /// Mirrors the parser's item test: indent and kind only, for the merge check.
+    private static func listMarker(line: String) -> (indent: Int, ordered: Bool)? {
+        let indent = indentation(of: line)
+        let body = line.dropFirst(indent)
+        if let first = body.first, "-*+".contains(first) {
+            let rest = body.dropFirst()
+            guard rest.hasPrefix(" ") || rest.hasPrefix("\t") else { return nil }
+            return (indent, false)
+        }
+        let digits = body.prefix(while: \.isNumber)
+        guard !digits.isEmpty, digits.count <= 9 else { return nil }
+        let rest = body.dropFirst(digits.count)
+        guard let delimiter = rest.first, delimiter == "." || delimiter == ")",
+              rest.dropFirst().hasPrefix(" ") || rest.dropFirst().isEmpty else { return nil }
+        return (indent, true)
+    }
+
+    /// Mirrors the parser's indent: spaces count one, tabs four.
+    private static func indentation(of line: String) -> Int {
+        var count = 0
+        for character in line {
+            if character == " " { count += 1 } else if character == "\t" { count += 4 } else { break }
+        }
+        return count
+    }
+
+    /// The offset of the fence still open at the end of `head`, if any. Skipped fast
+    /// when no fence marker exists; otherwise walks the lines the way the parser does.
+    private static func openFenceOffset(in head: Substring) -> Int? {
+        guard head.contains("```") || head.contains("~~~") else { return nil }
+        var fence: String?
+        var opener: Int?
+        var rest = head
+        var offset = 0
+        while true {
+            let end = rest.firstIndex(of: "\n") ?? rest.endIndex
+            let trimmed = rest[..<end].trimmingCharacters(in: .whitespaces)
+            if let open = fence {
+                if trimmed.hasPrefix(open), trimmed.allSatisfy({ $0 == open.first }) { fence = nil; opener = nil }
+            } else if let marker = fenceMarker(in: trimmed) {
+                fence = marker
+                opener = offset
+            }
+            if end == rest.endIndex { break }
+            offset += rest.distance(from: rest.startIndex, to: end) + 1
+            rest = rest[rest.index(after: end)...]
+        }
+        return fence == nil ? nil : opener
+    }
+
+    /// Mirrors the parser's fence test for the open-fence walk.
+    private static func fenceMarker(in trimmed: String) -> String? {
+        for marker in ["```", "~~~"] where trimmed.hasPrefix(marker) {
+            guard let first = marker.first else { continue }
+            return String(trimmed.prefix(while: { $0 == first }))
+        }
+        return nil
+    }
+
+    /// First non-blank line at or after `index`, for the merge check across the boundary.
+    private static func firstContentLine(after index: String.Index, in text: String) -> String? {
+        var start = index
+        while start < text.endIndex {
+            let end = text[start...].firstIndex(of: "\n") ?? text.endIndex
+            let line = String(text[start..<end])
+            if !line.trimmingCharacters(in: .whitespaces).isEmpty { return line }
+            if end == text.endIndex { break }
+            start = text.index(after: end)
+        }
+        return nil
+    }
+
+    /// Last non-blank line of the head, without copying it.
+    private static func lastContentLine(of head: Substring) -> String? {
+        var rest = head
+        while rest.hasSuffix("\n") { rest = rest.dropLast() }
+        if let newline = rest.lastIndex(of: "\n") { rest = rest[rest.index(after: newline)...] }
+        let line = String(rest)
+        return line.trimmingCharacters(in: .whitespaces).isEmpty ? nil : line
+    }
+
+    /// Approximate source length of the trailing blocks, so the boundary lands before
+    /// all of them and the tail re-parse covers each one whole.
+    private static func approximateSourceLength(_ blocks: ArraySlice<MarkdownBlock>) -> Int {
+        blocks.reduce(0) { $0 + approximateSourceLength($1) + 4 }
+    }
+
+    private static func approximateSourceLength(_ block: MarkdownBlock) -> Int {
+        switch block {
+        case .paragraph(let text), .heading(_, let text):
+            return text.count + 2
+        case .code(_, let code):
+            return code.count + 8
+        case .quote(let inner):
+            return approximateSourceLength(inner[...]) + 2
+        case .table(let header, let rows):
+            return header.joined(separator: "|").count + rows.reduce(0) { $0 + $1.joined(separator: "|").count + 2 } + 8
+        case .list(_, _, let items):
+            return items.reduce(0) { $0 + $1.text.count + approximateSourceLength($1.children[...]) + 4 }
+        case .rule:
+            return 4
+        }
     }
 
     /// Parses finished messages before their rows are built, off the main thread, so a row
@@ -106,6 +294,7 @@ struct MarkdownBlockView: View, Equatable {
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.markdownListDepth) private var listDepth
     @Environment(\.chatZoom) private var zoom
+    @Environment(\.markdownStreaming) private var streaming
     @Environment(\.hydraMentionPersonas) private var hydraMentionPersonas
 
     /// Blocks compare by content, so a finished block is skipped while the reply keeps streaming.
@@ -121,15 +310,36 @@ struct MarkdownBlockView: View, Equatable {
                 .padding(.top, level <= 2 ? 6 : 2)
         case .paragraph(let text):
             if listDepth == 0, let mention = leadingMention(in: text) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    HydraGlyph(persona: mention.persona, size: 16 * zoom)
-                    Text(verbatim: mention.name)
-                        .fontWeight(.bold)
-                        .foregroundStyle(mention.persona.color)
-                    InlineText(String(text.dropFirst(mention.consumed)))
+                let rest = String(text.dropFirst(mention.consumed))
+                Group {
+                    if RichLink.containsLinks(in: rest, streaming: streaming) {
+                        // Links need the AppKit paragraph, which cannot join the name's
+                        // Text; the trimmed rest keeps the gap to the name even.
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            HydraGlyph(persona: mention.persona, size: 16 * zoom)
+                            Text(verbatim: mention.name)
+                                .fontWeight(.bold)
+                                .foregroundStyle(mention.persona.color)
+                            InlineText(String(rest.drop(while: { $0 == " " })), hasLinks: true)
+                        }
+                    } else {
+                        // One flowing Text, so wrapped lines start under the glyph.
+                        let size = 16 * zoom
+                        Text(Self.mentionGlyph(mention.persona, size: size))
+                            .foregroundColor(mention.persona.color)
+                            .baselineOffset(Self.mentionGlyphOffset(size: size))
+                            + Text(verbatim: " ")
+                            + Text(verbatim: mention.name)
+                            .fontWeight(.bold)
+                            .foregroundColor(mention.persona.color)
+                            + RichInlineBuilder.text(for: rest, streaming: streaming)
+                    }
                 }
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                InlineText(text)
+                InlineText(text, hasLinks: RichLink.containsLinks(in: text, streaming: streaming))
             }
         case .code(let language, let code):
             // The lead's delegation block (info string `hydra`) is a brief for the team, not
@@ -145,9 +355,10 @@ struct MarkdownBlockView: View, Equatable {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         marker(ordered: ordered, number: start + index, checked: item.checked)
                         VStack(alignment: .leading, spacing: 6) {
-                            if !item.text.isEmpty { InlineText(item.text) }
+                            if !item.text.isEmpty { InlineText(item.text, hasLinks: RichLink.containsLinks(in: item.text, streaming: streaming)) }
                             ForEach(Array(item.children.enumerated()), id: \.offset) { _, child in
                                 MarkdownBlockView(block: child)
+                                    .equatable()
                             }
                         }
                         // Nested lists read one level deeper, so their dots turn into rings.
@@ -161,6 +372,7 @@ struct MarkdownBlockView: View, Equatable {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { _, child in
                         MarkdownBlockView(block: child)
+                            .equatable()
                     }
                 }
             }
@@ -185,11 +397,35 @@ struct MarkdownBlockView: View, Equatable {
         }
     }
 
+    /// Lifts the 16pt glyph off the baseline onto the surrounding text's x-height.
+    private static func mentionGlyphOffset(size: CGFloat) -> CGFloat { -(size * 0.2) }
+
+    /// The head's dragon as a template image small enough to sit in a Text run.
+    /// Redrawn once per (asset, size), then kept; tinted like the name.
+    @MainActor
+    static func mentionGlyph(_ persona: HydraPersona, size: CGFloat) -> Image {
+        let key = persona.asset + "@\(size)"
+        if let cached = glyphCache[key] { return cached }
+        // Drawn on demand rather than into fixed pixels, so it stays crisp on any display.
+        let source = NSImage(named: persona.asset)
+        let out = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            source?.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
+        out.isTemplate = true
+        let image = Image(nsImage: out).renderingMode(.template)
+        glyphCache[key] = image
+        return image
+    }
+
+    @MainActor private static var glyphCache: [String: Image] = [:]
+
     /// The head a paragraph opens with, if it opens with one of this thread's heads: the
     /// name itself, or the name wrapped in one inline emphasis marker (`**Otto**`), and
     /// then the end of the text or a word boundary, never another letter (`Bo` is not
     /// `Bob`). `consumed` is how much of the source the glyph and the coloured name
-    /// replace, marker included.
+    /// replace, marker included. A name that only opens a list of heads ("Vera, Mira and
+    /// Odin are still at work") is not that head's part, and stays plain text.
     private func leadingMention(in text: String) -> (persona: HydraPersona, name: String, consumed: Int)? {
         let boundaries = " :,.;'’-–—("
         for persona in hydraMentionPersonas {
@@ -198,10 +434,24 @@ struct MarkdownBlockView: View, Equatable {
                 guard text.hasPrefix(opener) else { continue }
                 let rest = text.dropFirst(opener.count)
                 guard rest.first == nil || boundaries.contains(rest.first!) else { continue }
+                guard !opensList(rest) else { return nil }
                 return (persona, persona.name, opener.count)
             }
         }
         return nil
+    }
+
+    /// Whether what follows a head's name goes straight on to another head's name, as a
+    /// list does: ", Mira" or " and Odin", with or without an emphasis marker.
+    private func opensList(_ rest: Substring) -> Bool {
+        for joiner in [", ", " and ", " & "] where rest.hasPrefix(joiner) {
+            var next = rest.dropFirst(joiner.count)
+            for marker in ["**", "__", "*", "_", "`"] where next.hasPrefix(marker) {
+                next = next.dropFirst(marker.count)
+            }
+            return hydraMentionPersonas.contains { next.hasPrefix($0.name) }
+        }
+        return false
     }
 
     @ViewBuilder
@@ -561,6 +811,8 @@ enum RichInlineBuilder {
 
 struct InlineText: View {
     let source: String
+    /// Set when the caller already branched on containsLinks, so the check runs once.
+    let hasLinks: Bool?
     @Environment(\.markdownPointSize) private var pointSize
     @Environment(\.chatZoom) private var zoom
     @Environment(\.markdownDimmed) private var dimmed
@@ -571,15 +823,19 @@ struct InlineText: View {
     /// Whether the pointing hand is up over a link, so hover only sets the cursor on change.
     @State private var showsHand = false
 
-    init(_ source: String) {
+    init(_ source: String, hasLinks: Bool? = nil) {
         self.source = source
+        self.hasLinks = hasLinks
     }
 
     var body: some View {
         // faviconRevision read so loaded favicons rebuild the text.
         let _ = faviconRevision
         let scaled = (pointSize * zoom * 2).rounded() / 2
-        if RichLink.containsLinks(in: source, streaming: streaming) {
+        // Hosts key the favicon work, so a streamed token with no new link costs nothing.
+        let hosts = RichLink.linkHosts(for: source, streaming: streaming)
+        let hasLinkText = hasLinks ?? !hosts.isEmpty
+        if hasLinkText {
             // An AppKit view has no text baseline of its own, so a list's marker sat on the
             // paragraph's top edge and the text started a line below it. The first line's
             // baseline is the base font's ascender from the top; the last is one line up
@@ -588,6 +844,9 @@ struct InlineText: View {
             let metrics = Self.metrics(pointSize: scaled)
             let ascender = metrics.ascender
             let lineHeight = metrics.lineHeight
+            // Stable hosts key the favicon work, so a streamed token with no new link
+            // leaves the task alone.
+            let hostKey = hosts.joined(separator: ",")
             // The hover and the host callback keep only the text view's weak box and the
             // hand binding: the hover responder and the representable must not keep this
             // paragraph (and its styled text) alive after it scrolls away.
@@ -613,7 +872,9 @@ struct InlineText: View {
                 .onDisappear { [hand] in
                     if hand.wrappedValue { NSCursor.pop(); hand.wrappedValue = false }
                 }
-                .task(id: source) { [source, streaming, revision = $faviconRevision] in
+                // Stable hosts key the favicon work, so a streamed token with no new link
+                // leaves the task alone.
+                .task(id: hostKey) { [source, streaming, revision = $faviconRevision] in
                     await Self.fetchFavicons(source: source, streaming: streaming, revision: revision)
                 }
         } else {
@@ -756,23 +1017,36 @@ struct TableBlock: View {
 
     private static let collapsedRowLimit = 30
 
+    /// Cell runs by source text, so a re-layout joins cached runs instead of re-parsing.
+    @MainActor private static var cellCache = RecentCache<String, AttributedString>(limit: 400)
+
+    @MainActor
+    private static func cell(_ source: String) -> AttributedString {
+        if let hit = cellCache.value(for: source) { return hit }
+        let value = InlineText.attributed(source)
+        cellCache.insert(value, for: source)
+        return value
+    }
+
     var body: some View {
         let visible = showsAll ? rows : Array(rows.prefix(Self.collapsedRowLimit))
-        VStack(alignment: .leading, spacing: 0) {
+        let head = header.map(Self.cell)
+        let cells = visible.map { $0.map(Self.cell) }
+        return VStack(alignment: .leading, spacing: 0) {
             ScrollView(.horizontal, showsIndicators: false) {
                 // Cells go through the shared cache even while the table streams: only its
                 // last row changes between flushes, and the rest hit.
                 Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 8) {
                     GridRow {
-                        ForEach(header.indices, id: \.self) { column in
-                            Text(InlineText.attributed(header[column]))
+                        ForEach(head.indices, id: \.self) { column in
+                            Text(head[column])
                                 .fontWeight(.semibold)
                         }
                     }
-                    ForEach(visible.indices, id: \.self) { row in
+                    ForEach(cells.indices, id: \.self) { row in
                         GridRow {
-                            ForEach(header.indices, id: \.self) { column in
-                                Text(InlineText.attributed(column < visible[row].count ? visible[row][column] : ""))
+                            ForEach(head.indices, id: \.self) { column in
+                                Text(column < cells[row].count ? cells[row][column] : AttributedString(""))
                                     .foregroundStyle(.primary.opacity(0.9))
                             }
                         }

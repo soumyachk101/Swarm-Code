@@ -95,8 +95,15 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     /// Whether the helper is showing in its parent's floating panel. While it is, it is kept
     /// out of the sidebar, the palette, the recent picks and the unread count.
     var isInPanel = false
-    /// Whether this thread's helpers are folded away under it in the sidebar.
-    var foldsHelpers = false
+    /// Whether this thread's helpers are shown one by one under it in the sidebar. Off
+    /// until the user opens them: folded, one line under the chat names the team, and a
+    /// click on it unfolds them. Saved under its own key, so chats from before the fold
+    /// was the default fold too.
+    var expandsHelpers = false
+    var foldsHelpers: Bool {
+        get { !expandsHelpers }
+        set { expandsHelpers = !newValue }
+    }
     /// Per-chat Hydra switch: off kills heads for this chat only, on restores them
     /// (with the app-wide switch on). New threads start on the saved default
     /// (see `hydraDefaultEnabled()`); flipping a chat's switch saves there too.
@@ -180,7 +187,7 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         lastStatus = container.value(.lastStatus, default: nil)
         parentThreadID = container.value(.parentThreadID, default: nil)
         isInPanel = container.value(.isInPanel, default: false)
-        foldsHelpers = container.value(.foldsHelpers, default: false)
+        expandsHelpers = container.value(.expandsHelpers, default: false)
         // Threads saved while Hydra was app-wide only carry an ignored false and no
         // explicit flag: they come back on. A save that wrote the flag holds a real choice.
         let explicit = container.value(.hydraEnabledIsExplicit, default: false)

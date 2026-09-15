@@ -60,7 +60,7 @@ final class ComposerController {
         // is the only size the panel is ever positioned against and it stays
         // on the caret while the list changes under typing.
         let size = NSSize(width: 340, height: min(340, 44 + CGFloat(max(itemCount, 1)) * 26))
-        let sized = AnyView(content.frame(width: size.width, height: size.height))
+        let sized = AnyView(content.frame(width: size.width, height: size.height).presentedChrome())
         if let host = suggestionHost {
             host.rootView = sized
         } else {

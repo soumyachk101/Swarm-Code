@@ -109,6 +109,7 @@ struct DiffInspector: View {
                                 DiffFileCard(file: file, isCollapsed: collapsed.contains(file.id)) {
                                     if collapsed.contains(file.id) { collapsed.remove(file.id) } else { collapsed.insert(file.id) }
                                 }
+                                .equatable()
                                 .id(file.id)
                             }
                         }
@@ -206,10 +207,22 @@ private func focusedFiles(_ edits: [FileEdit], missingFrom files: [DiffFile]) ->
     return missing
 }
 
-private struct DiffFileCard: View {
+private struct DiffFileCard: View, Equatable {
     let file: DiffFile
     let isCollapsed: Bool
     let toggle: () -> Void
+
+    // Skip re-renders when another card's collapse state changes: the closure
+    // and hunk arrays defeat SwiftUI's default diffing, so compare cheap fields.
+    nonisolated static func == (lhs: DiffFileCard, rhs: DiffFileCard) -> Bool {
+        lhs.file.id == rhs.file.id
+            && lhs.file.additions == rhs.file.additions
+            && lhs.file.deletions == rhs.file.deletions
+            && lhs.file.hunks.count == rhs.file.hunks.count
+            && lhs.file.change == rhs.file.change
+            && lhs.file.isBinary == rhs.file.isBinary
+            && lhs.isCollapsed == rhs.isCollapsed
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -243,6 +256,7 @@ private struct DiffFileCard: View {
                         .padding(.bottom, 10)
                 } else {
                     DiffLinesView(file: file)
+                        .equatable()
                         .padding(.bottom, 6)
                 }
             }
@@ -270,11 +284,25 @@ private struct DiffFileCard: View {
     }
 }
 
-struct DiffLinesView: View {
+struct DiffLinesView: View, Equatable {
     let file: DiffFile
     var showsLineNumbers = true
 
+    // Skip re-renders when a sibling card changes: hunk arrays defeat the
+    // default diff, so compare only the file identity and hunk count.
+    nonisolated static func == (lhs: DiffLinesView, rhs: DiffLinesView) -> Bool {
+        lhs.sectionsKey == rhs.sectionsKey && lhs.showsLineNumbers == rhs.showsLineNumbers
+    }
+
+    /// What the rows depend on, cheaply: the same path with more or fewer lines (the
+    /// agent edited the file again) must rebuild them, a sibling's collapse must not.
+    private var sectionsKey: String {
+        "\(file.id)|\(file.hunks.count)|\(file.additions)|\(file.deletions)|\(totalLines)"
+    }
+
     @State private var showsAll = false
+    // Sections are built once per state change, not on every body pass.
+    @State private var sections: [Section] = []
 
     /// Large files render collapsed: materializing thousands of rows at once is what
     /// makes opening a diff feel laggy. The full diff is one instant tap away.
@@ -302,10 +330,11 @@ struct DiffLinesView: View {
         }
     }
 
-    private var sections: [Section] {
+    /// Builds the row groups once per state change instead of on every body pass.
+    private nonisolated static func makeSections(file: DiffFile, showsLineNumbers: Bool, limit: Int) -> [Section] {
         var sections: [Section] = []
         var pending: [DiffLine] = []
-        var remaining = showsAll ? Int.max : Self.collapsedLineLimit
+        var remaining = limit
         func flush() {
             if !pending.isEmpty {
                 sections.append(.tinted(pending))
@@ -391,6 +420,9 @@ struct DiffLinesView: View {
         }
         .font(.system(size: 11.5, design: .monospaced))
         .textSelection(.enabled)
+        .onChange(of: "\(sectionsKey)|\(showsAll)", initial: true) {
+            sections = Self.makeSections(file: file, showsLineNumbers: showsLineNumbers, limit: showsAll ? Int.max : Self.collapsedLineLimit)
+        }
     }
 }
 
@@ -425,25 +457,33 @@ private struct DiffLineRow: View {
     )
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 0) {
-            if showsLineNumbers {
-                Text(line.oldNumber.map(String.init) ?? "")
-                    .frame(width: 38, alignment: .trailing)
-                    .foregroundStyle(.tertiary)
-                Text(line.newNumber.map(String.init) ?? "")
-                    .frame(width: 38, alignment: .trailing)
-                    .foregroundStyle(.tertiary)
-            }
-            Text(marker)
-                .frame(width: 18)
-                .foregroundStyle(markerColor)
-            Text(line.text.isEmpty ? " " : line.text)
-                .foregroundStyle(line.kind == .note ? .secondary : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        // One Text per row instead of five views: fewer views to diff and lay out.
+        var row = Text("")
+        if showsLineNumbers {
+            row = row
+                + Text(padded(line.oldNumber.map(String.init) ?? ""))
+                    .foregroundStyle(Color.secondary.opacity(0.6))
+                + Text(" ")
+                + Text(padded(line.newNumber.map(String.init) ?? ""))
+                    .foregroundStyle(Color.secondary.opacity(0.6))
         }
-        .padding(.vertical, 1)
-        .padding(.trailing, 8)
-        .background(background, in: rounding)
+        row = row
+            + Text(" \(marker) ")
+                .foregroundStyle(markerColor)
+            + Text(line.text.isEmpty ? " " : line.text)
+                .foregroundStyle(line.kind == .note ? .secondary : .primary)
+        return row
+            .padding(.vertical, 1)
+            .padding(.leading, 6)
+            .padding(.trailing, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(background, in: rounding)
+    }
+
+    /// Right-aligns a line number in a 4-character column so the monospaced
+    /// columns line up without per-column Text views.
+    private func padded(_ number: String) -> String {
+        String(repeating: " ", count: max(0, 4 - number.count)) + number
     }
 
     /// Positional corners for a row inside its tinted block: only the block's

@@ -46,6 +46,8 @@ struct HydraSettingsPage: View {
                 toggleRow("Heads work in copies of their own", detail: "Each head gets its own copy of the checkout, and its changes land in the chat's checkout when it reports. Off, heads work in the checkout itself.", isOn: $settings.hydraIsolateHeads, blockedBy: hydraOff)
                 ChromeRowDivider()
                 toggleRow("Clear finished heads automatically", detail: "A finished head leaves the panel for the sidebar under its lead.", isOn: $settings.hydraAutoClearFinished, blockedBy: hydraOff)
+                ChromeRowDivider()
+                toggleRow("Show what heads are doing", detail: "Every step in a head's panel instead of the progress bar.", isOn: $settings.hydraShowsHeadDetails, blockedBy: hydraOff)
             }
         }
         ChromeSection(title: "When the team is done") {
@@ -193,6 +195,7 @@ private struct HydraPairRow: View {
             .popover(isPresented: $isEditing, arrowEdge: .trailing) {
                 HydraPairEditor(pairID: pair.id)
                     .frame(width: 360)
+                    .presentedChrome()
             }
             Button {
                 withAnimation(Chrome.panelSlide) { model.removeHydraPair(pair.id) }

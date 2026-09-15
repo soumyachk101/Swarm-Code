@@ -202,7 +202,7 @@ private struct DownloadRow: View {
                 .frame(width: 28, height: 28)
                 .clipShape(.rect(cornerRadius: 6, style: .continuous))
         } else {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: item.url.path))
+            Image(nsImage: FileIcons.icon(for: item.url.path))
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 28, height: 28)

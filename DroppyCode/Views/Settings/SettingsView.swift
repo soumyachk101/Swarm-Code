@@ -834,6 +834,7 @@ private struct LicensesRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(width: 480, height: 440)
+                    .presentedChrome()
                 }
         }
     }

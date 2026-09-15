@@ -94,6 +94,7 @@ struct TourView: View {
                 .fill((isDark ? Color.black : Color.white).opacity(isDark ? 0.3 : 0.34))
         }
         .animation(.easeInOut(duration: 0.25), value: currentIndex)
+        .presentedChrome()
     }
 
     private var emptyState: some View {
@@ -207,9 +208,6 @@ struct TourView: View {
                 .frame(width: 220, height: 42)
         }
         .buttonStyle(.glassProminent)
-        // A capsule, like the tour's other glass controls, rather than the style's own
-        // rounded box.
-        .buttonBorderShape(.capsule)
         .keyboardShortcut(.defaultAction)
     }
 

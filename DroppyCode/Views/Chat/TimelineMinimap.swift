@@ -104,14 +104,29 @@ struct TimelineMinimapColumn: View, Equatable {
         lhs.blocks == rhs.blocks && lhs.tracking === rhs.tracking && lhs.centerHeight == rhs.centerHeight
     }
 
+    @Environment(WindowLiveResize.self) private var liveResize
+    /// The outline as last built. Mid-resize the track scales in place and new user
+    /// messages wait for the settle, so a height-only pass never rebuilds the ticks.
+    @State private var lastEntries: [TimelineMinimapEntry] = []
+
     var body: some View {
         MinimapSelection(
-            entries: TimelineMinimap.entries(for: blocks),
+            entries: liveResize.isActive ? lastEntries : TimelineMinimap.entries(for: blocks),
             outline: blocks.map { MinimapOutlineBlock(id: $0.id, hasUserMessage: $0.hasUserMessage) },
             tracking: tracking,
             centerHeight: centerHeight,
             onNavigate: onNavigate
         )
+        // Rebuilt once the resize settles, so the ticks land correct after scaling in place.
+        .onChange(of: liveResize.isActive) { _, active in
+            guard !active else { return }
+            lastEntries = TimelineMinimap.entries(for: blocks)
+        }
+        .onAppear { lastEntries = TimelineMinimap.entries(for: blocks) }
+        .onChange(of: blocks) { _, blocks in
+            guard !liveResize.isActive else { return }
+            lastEntries = TimelineMinimap.entries(for: blocks)
+        }
     }
 }
 
@@ -168,6 +183,7 @@ struct TimelineMinimapRail: View, Equatable {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(WindowLiveResize.self) private var liveResize
 
     /// Tick under the pointer, nil once the pointer leaves the rail.
     @State private var hoveredID: String?
@@ -180,7 +196,9 @@ struct TimelineMinimapRail: View, Equatable {
     private var isExpanded: Bool { hoveredID != nil || isPressing }
     private var baseOpacity: Double { isExpanded ? 0.4 : 0.25 }
     private var hoverAnimation: Animation? {
-        reduceMotion ? nil : .smooth(duration: 0.22)
+        // Held mid-resize: a hover curve restarted every frame lagged the whole rail.
+        if liveResize.isActive || reduceMotion { return nil }
+        return .smooth(duration: 0.22)
     }
 
     var body: some View {

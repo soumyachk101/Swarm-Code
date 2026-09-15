@@ -116,6 +116,7 @@ struct ModelEffortButton: View {
         .accessibilityLabel(Text(helpText(current: current, pair: pair)))
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ModelEffortPanel(threadID: thread.id, hasHistory: hasHistory)
+                .presentedChrome()
         }
         .background {
             // The website captures hang the slider and the switcher from the real chip: the

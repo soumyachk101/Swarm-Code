@@ -31,8 +31,18 @@ struct LinkParagraphView: NSViewRepresentable {
     func updateNSView(_ view: LinkTextView, context: Context) {
         // Read so a favicon-load bump rebuilds the string with icons.
         _ = revision
+        let coordinator = context.coordinator
+        if coordinator.lastSource != source || coordinator.lastPointSize != pointSize
+            || coordinator.lastDimmed != dimmed || coordinator.lastStreaming != streaming
+            || coordinator.lastRevision != revision {
+            coordinator.lastSource = source
+            coordinator.lastPointSize = pointSize
+            coordinator.lastDimmed = dimmed
+            coordinator.lastStreaming = streaming
+            coordinator.lastRevision = revision
+            view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming))
+        }
         view.mergeTarget = context.environment.mergeRequestTarget
-        view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming))
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: LinkTextView, context: Context) -> CGSize? {
@@ -52,6 +62,12 @@ struct LinkParagraphView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
+        // The last inputs built into a string, so repeat updates with nothing new skip it.
+        var lastSource: String?
+        var lastPointSize: CGFloat = 0
+        var lastDimmed = false
+        var lastStreaming = false
+        var lastRevision: Int = 0
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             if let url = link as? URL {
                 NSWorkspace.shared.open(url)

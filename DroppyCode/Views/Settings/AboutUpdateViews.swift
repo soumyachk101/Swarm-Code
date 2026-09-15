@@ -147,11 +147,19 @@ struct UpdateReleaseNotesDigest: Equatable {
         return value
     }
 
+    // Compiled once: the strip runs per bullet, per parse.
+    private static let linkPattern = try! NSRegularExpression(pattern: #"\[([^\]]+)\]\([^)]*\)"#)
+    private static let boldPattern = try! NSRegularExpression(pattern: #"\*\*([^*]+)\*\*"#)
+    private static let codePattern = try! NSRegularExpression(pattern: #"`([^`]+)`"#)
+
+    private static func stripped(_ text: String, with pattern: NSRegularExpression) -> String {
+        pattern.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "$1")
+    }
+
     private static func strippedInlineMarkdown(_ text: String) -> String {
-        var output = text
-        output = output.replacingOccurrences(of: "\\[([^\\]]+)\\]\\([^)]*\\)", with: "$1", options: .regularExpression)
-        output = output.replacingOccurrences(of: "\\*\\*([^*]+)\\*\\*", with: "$1", options: .regularExpression)
-        output = output.replacingOccurrences(of: "`([^`]+)`", with: "$1", options: .regularExpression)
+        var output = stripped(text, with: linkPattern)
+        output = stripped(output, with: boldPattern)
+        output = stripped(output, with: codePattern)
         return output.trimmingCharacters(in: .whitespaces)
     }
 }
@@ -213,9 +221,12 @@ struct UpdateReleaseSectionCards: View {
             get: { presented == category },
             set: { if $0 { presented = category } else if presented == category { presented = nil } }
         ), arrowEdge: .top) {
-            if let section {
-                UpdateReleaseSectionPopover(section: section, version: version)
+            Group {
+                if let section {
+                    UpdateReleaseSectionPopover(section: section, version: version)
+                }
             }
+            .presentedChrome()
         }
     }
 }
@@ -674,6 +685,8 @@ struct AboutSoftwareUpdateSection: View {
     private let checker = UpdateChecker.shared
     private let progress = UpdateInstallProgress.shared
     @State private var celebration: Task<Void, Never>?
+    // Parsed once per release: parsing in body re-ran on every evaluation.
+    @State private var digest = UpdateReleaseNotesDigest(sections: [])
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
@@ -690,6 +703,9 @@ struct AboutSoftwareUpdateSection: View {
             }
             await checker.check()
         }
+        .onChange(of: checker.update?.version, initial: true) {
+            digest = UpdateReleaseNotesDigest.parse(checker.update?.notes)
+        }
         .onDisappear {
             celebration?.cancel()
             celebration = nil
@@ -698,7 +714,6 @@ struct AboutSoftwareUpdateSection: View {
 
     @ViewBuilder
     private func releaseBody(_ update: AvailableUpdate) -> some View {
-        let digest = UpdateReleaseNotesDigest.parse(update.notes)
         VStack(alignment: .leading, spacing: 10) {
             if !digest.isEmpty {
                 UpdateReleaseSectionCards(digest: digest, version: update.version)

@@ -310,12 +310,14 @@ private struct TerminalTab: View {
 }
 
 /// Hosts a long-lived terminal view, moving it between containers as threads change.
+/// The container coalesces the terminal's own re-wrap while the window resizes (see
+/// `TerminalHostContainer`); outside a resize the view resizes exactly as before.
 struct TerminalHost: NSViewRepresentable {
     let session: TerminalSession
     let isDark: Bool
 
     func makeNSView(context: Context) -> NSView {
-        let container = NSView()
+        let container = TerminalHostContainer()
         attach(to: container)
         return container
     }
@@ -323,6 +325,7 @@ struct TerminalHost: NSViewRepresentable {
     func updateNSView(_ container: NSView, context: Context) {
         session.applyAppearance(isDark: isDark)
         if session.view.superview !== container { attach(to: container) }
+        (container as? TerminalHostContainer)?.hostedView = session.view
     }
 
     private func attach(to container: NSView) {
@@ -332,5 +335,73 @@ struct TerminalHost: NSViewRepresentable {
         view.autoresizingMask = [.width, .height]
         container.addSubview(view)
         session.applyAppearance(isDark: isDark)
+        (container as? TerminalHostContainer)?.hostedView = view
+    }
+}
+
+/// Holds the terminal view while the window resizes. SwiftTerm re-wraps its buffer on every
+/// frame-size change, so a live resize that moved the frame every frame reflowed per frame.
+/// While the drag lasts the view's autoresizing is parked, and its frame (hence one re-wrap)
+/// lands at most every beat; the settled size lands once at the end.
+final class TerminalHostContainer: NSView {
+    /// The terminal view being held. Set on attach; nil only before the first one.
+    weak var hostedView: NSView?
+    /// A coalesced frame sync after the last beat, cancelled by the next one.
+    private var pendingSync: DispatchWorkItem?
+    /// Resize observers for this container's window, re-registered on window moves.
+    private var resizeObservers: [NSObjectProtocol] = []
+
+    // Isolated, so the main-actor state can be torn down here at all.
+    isolated deinit {
+        pendingSync?.cancel()
+        for observer in resizeObservers { NotificationCenter.default.removeObserver(observer) }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        for observer in resizeObservers { NotificationCenter.default.removeObserver(observer) }
+        resizeObservers = []
+        guard let window else { return }
+        let center = NotificationCenter.default
+        resizeObservers.append(center.addObserver(
+            forName: NSWindow.willStartLiveResizeNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            self?.hostedView?.autoresizingMask = []
+        })
+        resizeObservers.append(center.addObserver(
+            forName: NSWindow.didEndLiveResizeNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            self?.finishResize()
+        })
+    }
+
+    override func resizeSubviews(withOldSize oldSize: NSSize) {
+        super.resizeSubviews(withOldSize: oldSize)
+        guard hostedView != nil, window?.inLiveResize == true else { return }
+        // Autoresizing is parked, so without this the view would sit at its old size for
+        // the whole drag; with it the frame (and its one re-wrap) follows at most per beat.
+        guard pendingSync == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.pendingSync = nil
+            self?.syncFrame()
+        }
+        pendingSync = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(50), execute: work)
+    }
+
+    /// The settled size, once: autoresizing back on and the frame replayed through the
+    /// terminal view, so SwiftTerm recomputes its columns and rows a final time.
+    private func finishResize() {
+        pendingSync?.cancel()
+        pendingSync = nil
+        hostedView?.autoresizingMask = [.width, .height]
+        syncFrame()
+    }
+
+    private func syncFrame() {
+        guard let hostedView, hostedView.superview === self else { return }
+        let bounds = self.bounds
+        guard bounds.width > 0, bounds.height > 0, hostedView.frame != bounds else { return }
+        hostedView.frame = bounds
     }
 }

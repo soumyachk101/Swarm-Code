@@ -202,6 +202,7 @@ struct SubagentPanelLayout: Equatable {
 /// chat. The strip along the top is the handle: drag it to move the panel anywhere in the pane.
 struct SubagentPanel: View {
     @Environment(AppModel.self) private var model
+    @Environment(WindowLiveResize.self) private var liveResize
     @Environment(\.colorScheme) private var colorScheme
     let thread: ChatThread
     let size: CGSize
@@ -223,16 +224,24 @@ struct SubagentPanel: View {
     var body: some View {
         let runtime = model.runtime(for: thread.id)
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-        ThreadTimeline(
-            runtime: runtime,
-            scrollChrome: scrollChrome,
-            scrollState: scrollState,
-            projectName: projectName,
-            workingDirectory: workingDirectory,
-            supportsRewind: false,
-            columnHeight: size.height
-        )
-        .equatable()
+        Group {
+            if thread.isHydraHead, !model.settings.hydraShowsHeadDetails {
+                // A head shows its task and the progress bar instead of its steps; a
+                // helper of the user's own keeps its conversation, since they talk to it.
+                HydraHeadProgress(head: thread, runtime: runtime)
+            } else {
+                ThreadTimeline(
+                    runtime: runtime,
+                    scrollChrome: scrollChrome,
+                    scrollState: scrollState,
+                    projectName: projectName,
+                    workingDirectory: workingDirectory,
+                    supportsRewind: false,
+                    columnHeight: size.height
+                )
+                .equatable()
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false)
                 .overlay(alignment: .top) {
@@ -271,6 +280,9 @@ struct SubagentPanel: View {
             }
         }
         .frame(width: size.width, height: size.height)
+        // The frame follows the pane every frame of a live resize: any content keyed
+        // to it settles after, never during.
+        .animation(nil, value: liveResize.isActive)
         .background {
             // The window's own recipe, on the panel: one glass surface, a scrim for the
             // text over whatever the panel floats above, the theme's tint, and a hairline.
@@ -305,6 +317,7 @@ struct SubagentPanel: View {
 /// box with no jump and no second row. The drag handle and the close mark keep their
 /// actions unchanged.
 private struct SubagentWorkingBox: View {
+    @Environment(WindowLiveResize.self) private var liveResize
     let title: String
     let isRunning: Bool
 
@@ -338,8 +351,9 @@ private struct SubagentWorkingBox: View {
                 .accessibilityLabel(Text(isRunning ? "\(name) working" : "Sending"))
             }
         }
-        .animation(Chrome.panelSlide, value: isRunning)
-        .animation(Chrome.panelSlide, value: isSending)
+        // Held while the window is resized: the panel's frame moves every frame.
+        .animation(liveResize.isActive ? nil : Chrome.panelSlide, value: isRunning)
+        .animation(liveResize.isActive ? nil : Chrome.panelSlide, value: isSending)
         .onChange(of: isRunning) { _, running in
             if running { isSending = true }
         }
@@ -413,6 +427,14 @@ final class PanelDragState {
         return next
     }
 
+    /// Pulls a panel dragged to a free spot back inside the pane: the pane shrinks
+    /// under it in a live resize. Only writes when the spot is actually outside.
+    func reclamp(in layout: SubagentPanelLayout) {
+        guard let position else { return }
+        let next = layout.clamped(position)
+        if next != position { self.position = next }
+    }
+
     /// Lets the panel go, and says where it was heading: where it is, carried on a little
     /// by the flick it was released with. Nil when it was never moved.
     func release() -> CGPoint? {
@@ -431,7 +453,10 @@ final class PanelDragState {
 /// The handle moves it live; a drop and a resize settle it with a slide, as does the
 /// panel's size when another panel docks into its corner or leaves it. Only this view
 /// observes the drag, so the chat around the panel is left alone while it moves.
+/// A window live resize holds the settle slide too: the dock follows the pane every
+/// frame, so a spring restarted per frame is what made panels lag and land elsewhere.
 struct PlacedPanel<Content: View>: View {
+    @Environment(WindowLiveResize.self) private var liveResize
     let drag: PanelDragState
     /// The panel's docked spot.
     let rest: CGPoint
@@ -445,7 +470,10 @@ struct PlacedPanel<Content: View>: View {
 
     var body: some View {
         let origin = drag.position ?? rest
-        let settles = drag.position == nil && !isResizing
+        // Read now, so the slide turning off and on is one settle from the current
+        // spot: an origin kept from before the resize would swing in from stale.
+        let resizing = liveResize.isActive
+        let settles = drag.position == nil && !isResizing && !resizing
         content
             .overlay {
                 if let resize {

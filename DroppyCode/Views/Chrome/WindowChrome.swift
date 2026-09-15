@@ -20,13 +20,17 @@ final class WindowChromeProbeView: NSView {
     var sidebarVisible = true {
         didSet {
             guard sidebarVisible != oldValue, let window else { return }
-            WindowChrome.placeTrafficLights(on: window, sidebarVisible: sidebarVisible, animated: true)
+            // A restarted animation every frame of a live resize is what made the
+            // buttons lag behind the window; they follow unanimated, then settle.
+            WindowChrome.placeTrafficLights(on: window, sidebarVisible: sidebarVisible, animated: !window.inLiveResize)
         }
     }
 
     /// The title bar whose height this view keeps (see `WindowChrome.fitTitlebar`), or nil until
     /// the view is in a window.
     private weak var titlebarContainer: NSView?
+    /// The window the didEndLiveResize observer belongs to, so moving windows never stack them.
+    private weak var resizeWindow: NSWindow?
     /// A fit is queued for after AppKit's current layout pass.
     private var titlebarFitPending = false
 
@@ -36,9 +40,18 @@ final class WindowChromeProbeView: NSView {
             NotificationCenter.default.removeObserver(self, name: NSView.frameDidChangeNotification, object: titlebarContainer)
             self.titlebarContainer = nil
         }
+        if let resizeWindow {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didEndLiveResizeNotification, object: resizeWindow)
+            self.resizeWindow = nil
+        }
         guard let window else { return }
         WindowChrome.configure(window)
         WindowChrome.placeTrafficLights(on: window, sidebarVisible: sidebarVisible, animated: false)
+        // The probe's previous window keeps its own observer; moving windows register fresh.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(windowDidEndLiveResize), name: NSWindow.didEndLiveResizeNotification, object: window
+        )
+        resizeWindow = window
         // AppKit tiles the title bar back to its own height when the window resizes, and with
         // that the buttons level with the chrome are out of its reach again. It says so through
         // the container's frame, and the fit goes back on.
@@ -56,14 +69,26 @@ final class WindowChromeProbeView: NSView {
 
     /// Runs inside AppKit's own tiling of the title bar; the fit waits for it to finish, so the
     /// container is never resized halfway through a pass that is laying out its subviews.
+    /// Cheap per frame during a live resize: a container that already has the wanted
+    /// height queues nothing, and the fit itself never lays out or draws synchronously.
     @objc private func titlebarFrameDidChange(_ notification: Notification) {
-        guard !titlebarFitPending else { return }
+        guard let container = notification.object as? NSView,
+              container.frame.height < WindowChrome.titlebarHeight,
+              !titlebarFitPending else { return }
         titlebarFitPending = true
         Task { @MainActor [weak self] in
             guard let self else { return }
             titlebarFitPending = false
             if let window { WindowChrome.fitTitlebar(of: window) }
         }
+    }
+
+    /// One final unanimated placement once the window settles, so the buttons end up
+    /// correct after following the drag without animations.
+    @objc private func windowDidEndLiveResize(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        WindowChrome.placeTrafficLights(on: window, sidebarVisible: sidebarVisible, animated: false)
+        WindowChrome.fitTitlebar(of: window)
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -73,8 +98,13 @@ final class WindowChromeProbeView: NSView {
 enum WindowChrome {
     private static let leadingIdentifier = "droppycode.trafficLight.leading"
     private static let topIdentifier = "droppycode.trafficLight.top"
+    /// Windows `configure` has already set up. Weak, so a closed window drops out on its own.
+    private static let configuredWindows = NSHashTable<NSWindow>.weakObjects()
 
     static func configure(_ window: NSWindow) {
+        // Idempotent: viewDidMoveToWindow fires on every reorder, so the setup pays once.
+        if configuredWindows.contains(window) { return }
+        configuredWindows.add(window)
         window.styleMask.insert(.fullSizeContentView)
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -112,6 +142,8 @@ enum WindowChrome {
 
     /// Reaches the title bar down to `titlebarHeight`, keeping its top edge where it is. The
     /// buttons' bar fills the container, so it grows with it and the pinned buttons come inside.
+    /// Never lays out synchronously: the fit lands on the frame and AppKit's own pass lays
+    /// it out, so a notification fired mid-tiling costs one frame assignment.
     static func fitTitlebar(of window: NSWindow) {
         guard let container = titlebarContainer(of: window), let themeFrame = container.superview else { return }
         var fitted = container.frame
@@ -123,7 +155,6 @@ enum WindowChrome {
             fitted.size.height = titlebarHeight
         }
         container.frame = fitted
-        container.layoutSubtreeIfNeeded()
     }
 
     /// Pins the native buttons with constraints, since the title bar's own layout pass resets
@@ -167,7 +198,8 @@ enum WindowChrome {
             }
         }
         guard changed else { return }
-        guard animated else {
+        // Never animated mid-resize: a fresh group every frame is what lagged the buttons.
+        guard animated, !window.inLiveResize else {
             titlebar.layoutSubtreeIfNeeded()
             return
         }
@@ -214,6 +246,8 @@ final class SidebarLayout {
 
     @ObservationIgnored private var anchorWidth: CGFloat = 0
     @ObservationIgnored private var restingWidth: CGFloat
+    /// The width as last laid out, so a resize frame that changes nothing writes nothing.
+    @ObservationIgnored private var lastLaidOutWidth: CGFloat = -1
 
     init() {
         let defaults = WebsiteCaptures.defaults ?? .standard
@@ -229,7 +263,10 @@ final class SidebarLayout {
 
     /// The sidebar's width as laid out, reported every frame it changes, so the buttons follow
     /// the sidebar as it actually is on screen rather than the state it is heading for.
+    /// Unchanged reports write nothing, so a height-only resize frame costs no state.
     func noteLaidOutWidth(_ laidOut: CGFloat) {
+        guard laidOut != lastLaidOutWidth else { return }
+        lastLaidOutWidth = laidOut
         let fits = laidOut >= Self.trafficLightsFitWidth
         if fits != holdsTrafficLights { holdsTrafficLights = fits }
     }

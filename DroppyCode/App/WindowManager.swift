@@ -95,7 +95,8 @@ final class WindowManager {
         window.tabbingMode = .disallowed
         WindowChrome.configure(window)
 
-        let hosting = WindowHostingView(rootView: AnyView(HostedRoot(model: model, content: content())))
+        let liveResize = WindowLiveResize(window: window)
+        let hosting = WindowHostingView(rootView: AnyView(HostedRoot(model: model, liveResize: liveResize, content: content())))
         hosting.frame = frame
         let container = NSView(frame: frame)
         container.addSubview(hosting)
@@ -104,14 +105,38 @@ final class WindowManager {
     }
 }
 
+/// Whether the window is being dragged to a new size right now. Views read it from the
+/// environment to hold their settle animations and heavier layout work until the drag
+/// ends: a spring restarted on every frame of a live resize is what made panels lag
+/// behind the window and land somewhere else. Flipped by AppKit's live-resize
+/// notifications for this one window, so a resize elsewhere leaves it alone.
+@MainActor @Observable
+final class WindowLiveResize {
+    private(set) var isActive = false
+
+    /// The window keeps this alive for as long as it exists, so the observations are
+    /// never taken down: a window is not made twice.
+    init(window: NSWindow) {
+        let center = NotificationCenter.default
+        center.addObserver(forName: NSWindow.willStartLiveResizeNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.isActive = true }
+        }
+        center.addObserver(forName: NSWindow.didEndLiveResizeNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.isActive = false }
+        }
+    }
+}
+
 /// Shared environment for every hosted window, plus the app-wide appearance choice.
 private struct HostedRoot<Content: View>: View {
     let model: AppModel
+    let liveResize: WindowLiveResize
     let content: Content
 
     var body: some View {
         content
             .environment(model)
+            .environment(liveResize)
             .buttonBorderShape(.capsule)
             .preferredColorScheme(model.settings.theme.spec.scheme)
             .modifier(ThemeTint(theme: model.settings.theme))

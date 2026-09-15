@@ -185,6 +185,7 @@ private struct ShortcutRecorder: View {
         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: chord)
         .popover(isPresented: $isPresenting, arrowEdge: .top) {
             ShortcutRecordingPopoverContent(session: session)
+                .presentedChrome()
         }
         .onChange(of: isPresenting) { _, presenting in
             if presenting {

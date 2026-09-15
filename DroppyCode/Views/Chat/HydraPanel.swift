@@ -13,6 +13,7 @@ import SwiftUI
 /// head back in the team panel.
 struct HydraPanel: View {
     @Environment(AppModel.self) private var model
+    @Environment(WindowLiveResize.self) private var liveResize
     @Environment(\.colorScheme) private var colorScheme
     let runtime: ThreadRuntime
     let heads: [ChatThread]
@@ -56,6 +57,9 @@ struct HydraPanel: View {
             strip(selected: selected)
         }
         .frame(width: size.width, height: size.height)
+        // The frame follows the pane every frame of a live resize: the strip's
+        // swaps settle after, never during.
+        .animation(nil, value: liveResize.isActive)
         .background {
             // The helper panel's recipe: one glass surface, a scrim for the text over
             // whatever the panel floats above, the theme's tint, and a hairline.
@@ -157,8 +161,8 @@ struct HydraPanel: View {
             .padding(.top, Chrome.chromeTopPadding)
             .padding(.trailing, Chrome.chromeHorizontalPadding)
         }
-        .animation(Chrome.panelSlide, value: selected?.id)
-        .animation(Chrome.panelSlide, value: heads.count > 1)
+        .animation(liveResize.isActive ? nil : Chrome.panelSlide, value: selected?.id)
+        .animation(liveResize.isActive ? nil : Chrome.panelSlide, value: heads.count > 1)
     }
 }
 
@@ -347,16 +351,24 @@ private struct HydraHeadTranscript: View {
 
     var body: some View {
         let runtime = model.runtime(for: head.id)
-        ThreadTimeline(
-            runtime: runtime,
-            scrollChrome: scrollChrome,
-            scrollState: scrollState,
-            projectName: projectName,
-            workingDirectory: workingDirectory,
-            supportsRewind: false,
-            columnHeight: height
-        )
-        .equatable()
+        Group {
+            if model.settings.hydraShowsHeadDetails {
+                ThreadTimeline(
+                    runtime: runtime,
+                    scrollChrome: scrollChrome,
+                    scrollState: scrollState,
+                    projectName: projectName,
+                    workingDirectory: workingDirectory,
+                    supportsRewind: false,
+                    columnHeight: height
+                )
+                .equatable()
+            } else {
+                // The task and the progress bar stand in for the steps, which the
+                // sidebar shows; the chat box below still steers the head.
+                HydraHeadProgress(head: head, runtime: runtime)
+            }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if head.hydra?.kind == .droppy {
                 // A head of Droppy Code's own can be steered and answered like any chat.

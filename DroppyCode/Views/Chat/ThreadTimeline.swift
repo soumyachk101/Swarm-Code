@@ -4,6 +4,7 @@ import SwiftUI
 struct ThreadTimeline: View, Equatable {
     @Environment(AppModel.self) private var model
     @Environment(\.chatZoom) private var zoom
+    @Environment(WindowLiveResize.self) private var liveResize
     let runtime: ThreadRuntime
     let scrollChrome: ChromeScrollModel
     let scrollState: TimelineScrollState
@@ -78,18 +79,16 @@ struct ThreadTimeline: View, Equatable {
 
     var body: some View {
         let entries = runtime.entries
-        let meta = TimelineMeta.build(entries)
         let heads = model.hydraHeads(of: runtime.threadID)
-        var seenPersonaNames = Set<String>()
-        let hydraMentionPersonas = heads.compactMap { $0.hydra?.persona }.filter {
-            seenPersonaNames.insert($0.name).inserted
-        }
+        // Nothing here reads an entry's content: the cache keys on identities and kinds,
+        // so a streaming row redraws itself and never brings this body with it.
         let blocks = blockCache.blocks(
-            for: entries, meta: meta,
+            for: entries,
             showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning,
             isHydraMerging: runtime.isHydraMerging,
             workingHeads: heads.compactMap { $0.hydra?.status == .running ? $0.hydra?.index : nil }
         )
+        let hydraMentionPersonas = blockCache.mentionPersonas(for: heads)
         if blocks.isEmpty && !runtime.isRunning {
             NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
                 .onAppear {
@@ -135,7 +134,9 @@ struct ThreadTimeline: View, Equatable {
                     .transition(.opacity)
                 }
             }
-            .animation(Chrome.panelSlide, value: showsMinimap)
+            // The rail fades with the slide of the panel that takes its edge. Held mid-resize:
+            // a fresh slide every frame lagged the whole chat behind the window.
+            .animation(liveResize.isActive ? nil : Chrome.panelSlide, value: showsMinimap)
         }
         .environment(\.hydraMentionPersonas, hydraMentionPersonas)
     }
@@ -211,10 +212,16 @@ struct ThreadTimeline: View, Equatable {
     /// back into the window when older history loads, and a fade over a block that can run
     /// to thousands of points is a whole-layer composite the renderer may draw as nothing.
     /// A turn that is only starting is a prompt and the working line: it arrives like a row.
+    /// A work group past a few rows is the same kind of layer, so it gets none either; a
+    /// small one still fades in.
     private static func transition(for block: DisplayBlock) -> AnyTransition {
         if case .turn(_, _, _, .some(_), _) = block { return .identity }
+        if case .group(.work(_, let entries, _), _, _) = block, entries.count > softAppearLimit { return .identity }
         return rowTransition
     }
+
+    /// The most rows a work group may hold and still arrive with the soft appear.
+    private static let softAppearLimit = 8
 
     /// A row's own arrival and departure, inside a turn's block as in the stack.
     static let rowTransition: AnyTransition = .asymmetric(
@@ -310,7 +317,13 @@ struct ThreadTimeline: View, Equatable {
         .defaultScrollAnchor(.bottom, for: .initialOffset)
         .defaultScrollAnchor(.bottom, for: .alignment)
         .defaultScrollAnchor(anchorsBottomOnGrowth ? .bottom : .top, for: .sizeChanges)
+        // One value per frame, and only when it moved: `onGeometryChange` fires solely
+        // on change, and the settle below runs once when the resize ends.
         .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
+        .onChange(of: liveResize.isActive) { _, active in
+            guard !active else { return }
+            settleAfterResize()
+        }
         .onScrollPhaseChange { _, phase in
             // Fingers on the trackpad freeze the rows (no click can land then anyway); the
             // moment the scroll coasts or settles they come back, so a click that stops a
@@ -392,7 +405,9 @@ struct ThreadTimeline: View, Equatable {
                 // measured after it anchored, a thread opened mid-animation) and is showing
                 // empty space past the conversation. The end is where the reader is; the
                 // timeline snaps back to it, never slides, so a new row lands in place and
-                // fades in on its own.
+                // fades in on its own. (Mid-resize this waits for the settle below: the
+                // anchor already holds the bottom edge each frame.)
+                guard !liveResize.isActive else { return }
                 withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
             }
         }
@@ -541,6 +556,19 @@ struct ThreadTimeline: View, Equatable {
     /// the working line coming or going, a group collapsing. More can carry it off them.
     private static func jumpTolerance(_ viewportHeight: CGFloat) -> CGFloat {
         max(48, viewportHeight / 4)
+    }
+
+    /// One settle when the window stops resizing: bottom-anchored if the reader was at the
+    /// end, otherwise the top anchor already held the top-most row each frame. Unanimated,
+    /// so no glide restarts per frame mid-drag; the stack is told where the viewport is.
+    private func settleAfterResize() {
+        guard !tracking.isUserScrolling, !tracking.isCoasting else { return }
+        if tracking.isPinnedToBottom {
+            withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+        } else {
+            tracking.armViewportRefresh()
+        }
+        tracking.armBlankWatch()
     }
 
     /// Tells the lazy stack where the viewport is. The stack builds rows for the viewport
@@ -1091,32 +1119,56 @@ enum DisplayBlock: Identifiable, Equatable {
         }
     }
 
+    /// What a build leaves behind besides its blocks: where the last run began. The runs
+    /// before it are what an append never touches, so the cache keeps their blocks and
+    /// builds the rest again (see `TimelineBlockCache`).
+    struct Built {
+        var blocks: [DisplayBlock]
+        /// How many blocks at the front come from runs before the last one. The synthetic
+        /// blocks at the end never count.
+        var stableCount: Int
+        /// The index of the entry the last run begins with.
+        var lastRunStart: Int
+    }
+
     @MainActor
     static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int] = []) -> [DisplayBlock] {
-        // Partition into contiguous runs sharing one turnID (nil groups together),
-        // so every turn becomes one block.
-        var runs: [(turnID: UUID?, entries: [TimelineEntry])] = []
-        for entry in entries {
-            if runs.last?.turnID == entry.turnID {
-                runs[runs.count - 1].entries.append(entry)
+        build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads).blocks
+    }
+
+    /// The blocks for the entries from `start` on, after `kept`: the blocks the entries
+    /// before `start` built last time. Building from 0 with nothing kept is the full build.
+    @MainActor
+    static func build(_ entries: [TimelineEntry], from start: Int, keeping kept: ArraySlice<DisplayBlock>, meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int]) -> Built {
+        // Partition into contiguous runs sharing one turnID (nil groups together), so every
+        // turn becomes one block. A run is a range of indices: no entry is copied to find it.
+        var runs: [(turnID: UUID?, range: Range<Int>)] = []
+        for index in start..<entries.count {
+            let turnID = entries[index].turnID
+            if let last = runs.last, last.turnID == turnID {
+                runs[runs.count - 1].range = last.range.lowerBound..<(index + 1)
             } else {
-                runs.append((entry.turnID, [entry]))
+                runs.append((turnID, index..<(index + 1)))
             }
         }
         // While a turn runs and no reply has started, the working line ends its block. The
         // moment the reply it is waiting on arrives, the line goes and the reply takes its
         // place; it comes back below when the agent moves on to another step.
         let waiting = isRunning && entries.last?.kind != .assistant
-        var blocks: [DisplayBlock] = []
+        var blocks = Array(kept)
+        blocks.reserveCapacity(kept.count + runs.count + 3)
+        var stableCount = blocks.count
         for (index, run) in runs.enumerated() {
+            let isLast = index == runs.count - 1
+            if isLast { stableCount = blocks.count }
             if let turnID = run.turnID {
                 // Thinking lives behind the working line's chevron, never as a row of its own.
-                let rows = run.entries.filter { $0.kind != .turnEnd && $0.kind != .reasoning }
+                let rows = entries[run.range].filter { $0.kind != .turnEnd && $0.kind != .reasoning }
                 let summary = meta.summaryByTurn[turnID]
-                let showsWorking = waiting && summary == nil && index == runs.count - 1
+                let showsWorking = waiting && summary == nil && isLast
                 blocks.append(.turn(id: "turn-\(turnID.uuidString)", turnID: turnID, entries: rows, summary: summary, showsWorking: showsWorking))
             } else {
-                for group in TimelineGroup.build(run.entries, showReasoning: showReasoning) {
+                for group in TimelineGroup.build(Array(entries[run.range]), showReasoning: showReasoning) {
                     blocks.append(.group(group, summary: meta.summary(for: group), hasReply: meta.hasReply(for: group)))
                 }
             }
@@ -1139,7 +1191,7 @@ enum DisplayBlock: Identifiable, Equatable {
         if isHydraMerging, !Self.endsWithMergeOutcome(entries) {
             blocks.append(.merging)
         }
-        return blocks
+        return Built(blocks: blocks, stableCount: stableCount, lastRunStart: runs.last?.range.lowerBound ?? start)
     }
 
     private var carriesWorkingLine: Bool {
@@ -1161,40 +1213,118 @@ enum DisplayBlock: Identifiable, Equatable {
 }
 
 /// The last build of the timeline's blocks, with everything that build read. Entries are
-/// compared by identity (a pointer each), the turn summaries by value, so a body run that
-/// changed none of them gets its blocks back instead of building them again. Nothing else
-/// reaches the blocks: they are handed straight to the stack, whose rows compare them.
+/// compared by identity (a pointer each) and by kind, never by content, so a body run that
+/// changed none of them gets its blocks back instead of building them again, and the body
+/// never observes a streaming row through the key. The per-turn meta is the cache's own,
+/// built with the blocks. Nothing else reaches the blocks: they are handed straight to
+/// the stack, whose rows compare them.
 @MainActor
 final class TimelineBlockCache {
     private struct Key: Equatable {
         var entries: [ObjectIdentifier]
-        /// The fold: a turn's block folds the moment its summary lands, and a summary can
-        /// be written into an entry that was already there.
-        var summaries: [UUID: TurnSummary]
+        /// The fold: a turn's block folds the moment its end marker lands. The marker is an
+        /// entry of its own, so the identities say so already; the count says so again for
+        /// the price of one integer, should a marker ever be written into a row in place.
+        var turnEnds: Int
         var isRunning: Bool
         /// The merge's row comes and goes on this flag alone; no entry changes for it.
         var isHydraMerging: Bool
         /// The heads' row likewise: it comes and goes as heads start and finish.
         var workingHeads: [Int]
         var showReasoning: Bool
+
+        /// Whether this key is `old` with entries appended and nothing else changed.
+        func extends(_ old: Key) -> Bool {
+            entries.count > old.entries.count
+                && isRunning == old.isRunning
+                && isHydraMerging == old.isHydraMerging
+                && workingHeads == old.workingHeads
+                && showReasoning == old.showReasoning
+                && entries.starts(with: old.entries)
+        }
     }
 
     private var key: Key?
-    private var built: [DisplayBlock] = []
+    private var built = DisplayBlock.Built(blocks: [], stableCount: 0, lastRunStart: 0)
+    private var meta = TimelineMeta()
+    /// The mention list, once per roster of heads: heads come and go far more rarely
+    /// than this body runs.
+    private var personaHeads: [Int?] = []
+    private var personas: [HydraPersona] = []
+    #if DEBUG
+    private var tailBuilds = 0
+    #endif
 
-    func blocks(for entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int] = []) -> [DisplayBlock] {
+    func blocks(for entries: [TimelineEntry], showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int] = []) -> [DisplayBlock] {
+        var identities: [ObjectIdentifier] = []
+        identities.reserveCapacity(entries.count)
+        var turnEnds = 0
+        for entry in entries {
+            identities.append(ObjectIdentifier(entry))
+            if entry.kind == .turnEnd { turnEnds += 1 }
+        }
         let wanted = Key(
-            entries: entries.map(ObjectIdentifier.init),
-            summaries: meta.summaryByTurn,
+            entries: identities,
+            turnEnds: turnEnds,
             isRunning: isRunning,
             isHydraMerging: isHydraMerging,
             workingHeads: workingHeads,
             showReasoning: showReasoning
         )
-        if wanted == key { return built }
-        built = DisplayBlock.build(entries, meta: meta, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads)
+        if wanted == key { return built.blocks }
+        if let key, wanted.extends(key),
+           let tail = buildTail(entries, appendedFrom: key.entries.count, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads) {
+            built = tail
+        } else {
+            meta = TimelineMeta.build(entries)
+            built = DisplayBlock.build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads)
+        }
         key = wanted
-        return built
+        return built.blocks
+    }
+
+    /// The append fast path: entries arrived and nothing else changed. Every run but the
+    /// last is as it was, and so are its blocks: a turn block that is not the last carries
+    /// no working line, and a plain group reads nothing beyond its own run. So the last run
+    /// and the synthetic blocks after it are built again, over the meta grown by the new
+    /// entries, and the rest is kept. Nil when a new end marker folds a kept turn block;
+    /// that build starts over.
+    private func buildTail(_ entries: [TimelineEntry], appendedFrom appended: Int, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int]) -> DisplayBlock.Built? {
+        var grown = meta
+        for entry in entries[appended...] {
+            grown.add(entry)
+            if entry.kind == .turnEnd, case .turnEnd(let summary) = entry.item.content,
+               built.blocks[..<built.stableCount].contains(where: { $0.turnID == summary.turnID }) {
+                return nil
+            }
+        }
+        let tail = DisplayBlock.build(entries, from: built.lastRunStart, keeping: built.blocks[..<built.stableCount], meta: grown, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads)
+        #if DEBUG
+        // The fast path must be invisible: now and then, hold it against a full build.
+        // A difference is a bug in the fast path, not a reason to crash a chat: it is
+        // logged, and the full build stands in.
+        tailBuilds += 1
+        if tailBuilds % 20 == 0 {
+            let full = DisplayBlock.build(entries, meta: grown, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads)
+            if tail.blocks != full {
+                print("ThreadTimeline: the tail build differed from a full build after \(entries.count) entries")
+                return nil
+            }
+        }
+        #endif
+        meta = grown
+        return tail
+    }
+
+    /// The personas the composer can mention, by the heads' roster indices. Memoized on
+    /// them, so the list is built when a head comes or goes and not on every pass.
+    func mentionPersonas(for heads: [ChatThread]) -> [HydraPersona] {
+        let indices = heads.map { $0.hydra?.index }
+        if indices == personaHeads { return personas }
+        var seen = Set<String>()
+        personas = heads.compactMap { $0.hydra?.persona }.filter { seen.insert($0.name).inserted }
+        personaHeads = indices
+        return personas
     }
 }
 
@@ -1222,22 +1352,27 @@ struct TimelineMeta {
     @MainActor
     static func build(_ entries: [TimelineEntry]) -> TimelineMeta {
         var meta = TimelineMeta()
-        for entry in entries {
-            switch entry.kind {
-            case .assistant:
-                if let turnID = entry.turnID {
-                    meta.lastAssistantIDByTurn[turnID] = entry.id
-                    meta.turnsWithReply.insert(turnID)
-                }
-            case .turnEnd:
-                if case .turnEnd(let summary) = entry.item.content {
-                    meta.summaryByTurn[summary.turnID] = summary
-                }
-            default:
-                break
-            }
-        }
+        for entry in entries { meta.add(entry) }
         return meta
+    }
+
+    /// Takes one more entry, in timeline order. Only an end marker's content is read, and
+    /// that never changes once written.
+    @MainActor
+    mutating func add(_ entry: TimelineEntry) {
+        switch entry.kind {
+        case .assistant:
+            if let turnID = entry.turnID {
+                lastAssistantIDByTurn[turnID] = entry.id
+                turnsWithReply.insert(turnID)
+            }
+        case .turnEnd:
+            if case .turnEnd(let summary) = entry.item.content {
+                summaryByTurn[summary.turnID] = summary
+            }
+        default:
+            break
+        }
     }
 
     /// The turn's summary, shown on the turn's last reply only. A dictionary lookup,
@@ -1322,9 +1457,12 @@ private struct TurnRunningBlock: View {
     let entries: [TimelineEntry]
     let showsWorking: Bool
     let context: RowContext
+    /// The partition as last built, keyed on the entries' identities: grouping is by kind
+    /// only, so it changes when a row comes or goes and never while one streams.
+    @State private var groupCache = TurnGroupCache()
 
     var body: some View {
-        var groups = TimelineGroup.build(entries, showReasoning: false)
+        var groups = groupCache.groups(for: entries)
         // The heads the turn sent out come last from the build; they render below the
         // steps and replies and above the working line, never inside the working line.
         var heads: TimelineGroup?
@@ -1336,7 +1474,7 @@ private struct TurnRunningBlock: View {
             liveWork = entries
             groups.removeLast()
         }
-        return VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+        return LazyVStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             ForEach(groups) { group in
                 TurnRow(group: group, runtime: runtime, context: context)
                     .equatable()
@@ -1352,6 +1490,23 @@ private struct TurnRunningBlock: View {
                     .transition(ThreadTimeline.rowTransition)
             }
         }
+    }
+}
+
+/// A running turn's last partition, with the identities it was built from. An object, so
+/// handing the groups back is not a state write.
+@MainActor
+private final class TurnGroupCache {
+    private var identities: [ObjectIdentifier] = []
+    private var groups: [TimelineGroup] = []
+
+    func groups(for entries: [TimelineEntry]) -> [TimelineGroup] {
+        let wanted = entries.map(ObjectIdentifier.init)
+        if wanted != identities {
+            groups = TimelineGroup.build(entries, showReasoning: false)
+            identities = wanted
+        }
+        return groups
     }
 }
 
@@ -1387,7 +1542,7 @@ struct TimelineGroupView: View {
         case .single(let entry):
             switch entry.kind {
             case .user: UserMessageRow(entry: entry, runtime: runtime, canRevert: context.canRewind)
-            case .assistant: AssistantMessageRow(entry: entry, summary: summary)
+            case .assistant: AssistantMessageRow(entry: entry, summary: summary, runtime: runtime)
             case .reasoning: EmptyView()
             case .tool: WorkGroup(entries: [entry], runtime: runtime, workingDirectory: context.workingDirectory)
             case .plan: PlanCard(entry: entry, runtime: runtime)

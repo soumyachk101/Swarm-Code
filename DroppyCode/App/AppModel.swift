@@ -52,8 +52,16 @@ final class AppModel {
     /// chat's panels depends on which children it has and on each of those children, never
     /// on the rest of the library. A head's status write leaves every other chat alone.
     @ObservationIgnored private var childCells: [UUID: ObservedValue<[UUID]>] = [:]
+    /// Whether one thread is the selected one, observed on its own: a sidebar row reads its
+    /// flag here rather than `selectedThreadID`, so a selection change re-renders the row
+    /// that lost it and the row that gained it, not every row in the list.
+    @ObservationIgnored private var selectionCells: [UUID: ObservedValue<Bool>] = [:]
     var selectedThreadID: UUID? {
         didSet {
+            if oldValue != selectedThreadID {
+                if let oldValue { selectionCells[oldValue]?.value = false }
+                if let selectedThreadID { selectionCell(selectedThreadID).value = true }
+            }
             if let selectedThreadID {
                 markRead(selectedThreadID)
                 // A helper or head under the selected thread is on screen with it, so
@@ -173,6 +181,20 @@ final class AppModel {
         let cell = ObservedValue<[UUID]>([])
         childCells[parentID] = cell
         return cell.value
+    }
+
+    /// A thread's selection cell, made on the first ask; the cell is not observed state, so
+    /// making it re-renders nothing.
+    private func selectionCell(_ id: UUID) -> ObservedValue<Bool> {
+        if let cell = selectionCells[id] { return cell }
+        let cell = ObservedValue(selectedThreadID == id)
+        selectionCells[id] = cell
+        return cell
+    }
+
+    /// Whether the thread is selected, depending on this thread's flag alone.
+    func isSelected(_ id: UUID) -> Bool {
+        selectionCell(id).value
     }
 
     /// The threads under a thread, each read through its own cell: the caller depends on
@@ -319,11 +341,13 @@ final class AppModel {
         }
     }
 
-    /// The helpers that sit under a thread in the sidebar: spawned from it, out of the panel,
-    /// not archived. Newest first, like the threads around them.
+    /// The helpers that sit under a thread in the sidebar: spawned from it and not archived.
+    /// Heads are there from the moment they go out, still in the lead's panel or not, so a
+    /// chat with a team at work shows it; a helper popped out into its own panel is the
+    /// one kind that leaves the list. Newest first, like the threads around them.
     func helpers(of parentID: UUID) -> [ChatThread] {
         children(of: parentID)
-            .filter { !$0.isInPanel && !$0.isArchived }
+            .filter { !$0.isArchived && (!$0.isInPanel || $0.isHydraHead) }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
@@ -758,8 +782,6 @@ final class AppModel {
             }
         }
         updateThread(id) { $0.isInPanel = false }
-        // A fresh helper under a parent unfolds them, so the one just closed is in view.
-        if let parentID = helper.parentThreadID { updateThread(parentID) { $0.foldsHelpers = false } }
     }
 
     private func discardThreadState(_ thread: ChatThread) {
