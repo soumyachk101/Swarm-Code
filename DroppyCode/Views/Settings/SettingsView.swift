@@ -279,8 +279,10 @@ private struct GeneralSettingsPage: View {
         TokenActivitySection()
         ChromeSection(title: "New threads") {
             ChromeCard {
-                ChromeRow(title: "Provider") {
-                    GlassPickerButton(options: ProviderKind.allCases.map { ($0, $0.displayName) }, selection: $settings.defaultProvider, asset: { $0.iconName })
+                // No picker: a new thread follows the one it is made from, and the composer's
+                // model picker is where the provider is chosen (see `AppModel.newThread`).
+                ChromeRow(title: "Provider and model", detail: "A new thread follows the one you are in: its provider, model, effort and Hydra pair. With no thread open it starts on the provider you last chose.") {
+                    EmptyView()
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Permissions", detail: settings.defaultRuntimeMode.summary) {
