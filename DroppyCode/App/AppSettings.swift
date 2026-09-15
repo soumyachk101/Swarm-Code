@@ -96,6 +96,7 @@ final class AppSettings {
         static let projectActivationOverrides = "projectActivationOverrides"
         static let deepseekAPIKey = "deepseekAPIKey"
         static let metaAPIKey = "metaAPIKey"
+        static let commandcodeAPIKey = "commandcodeAPIKey"
         static let hydraEnabled = "hydraEnabled"
         static let panelSize = "floatingPanelSize"
         static let hydraDefaultEnabled = AppSettings.hydraDefaultEnabledKey
@@ -285,6 +286,17 @@ final class AppSettings {
         }
     }
 
+    /// Command Code signs in with `cmd login`; a Studio API key here is the alternative,
+    /// handed to the CLI as `COMMAND_CODE_API_KEY`. Stored in the Keychain when available,
+    /// with a UserDefaults fallback for a Mac whose Keychain refused it.
+    var commandcodeAPIKeyInput: String {
+        didSet {
+            guard commandcodeAPIKeyInput != oldValue else { return }
+            let kept = CommandCodeKeychain.setAPIKey(commandcodeAPIKeyInput)
+            storeAPIKeyFallback(kept ? "" : commandcodeAPIKeyInput, forKey: Key.commandcodeAPIKey)
+        }
+    }
+
     /// The plaintext copy in defaults, for a Mac whose Keychain refused the key; an empty
     /// value removes it, so a key the Keychain holds never sits in the defaults too.
     private func storeAPIKeyFallback(_ value: String, forKey key: String) {
@@ -414,10 +426,12 @@ final class AppSettings {
         projectActivationOverrides = Self.load([String: Bool].self, forKey: Key.projectActivationOverrides) ?? [:]
         deepseekAPIKeyInput = DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "")
         metaAPIKeyInput = MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "")
+        commandcodeAPIKeyInput = CommandCodeKeychain.apiKey(fallback: defaults.string(forKey: Key.commandcodeAPIKey) ?? "")
         // Earlier builds kept a plaintext copy of every key in the defaults; one the
         // Keychain holds needs none.
         if !DeepSeekKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.deepseekAPIKey) }
         if !MetaKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.metaAPIKey) }
+        if !CommandCodeKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.commandcodeAPIKey) }
         binaryPaths = defaults.dictionary(forKey: Key.binaryPaths) as? [String: String] ?? [:]
         disabledProviders = defaults.stringArray(forKey: Key.disabledProviders) ?? []
         lastModels = defaults.dictionary(forKey: Key.models) as? [String: String] ?? [:]
@@ -553,15 +567,17 @@ final class AppSettings {
 
     /// The API key Droppy Code sends to an API-key provider: the value from Settings,
     /// falling back to the provider's env var from the login environment
-    /// (`DEEPSEEK_API_KEY` for DeepSeek, `MODEL_API_KEY` for Meta).
+    /// (`DEEPSEEK_API_KEY` for DeepSeek, `MODEL_API_KEY` for Meta). Command Code's is
+    /// optional: the CLI's own `cmd login` serves when it is empty.
     func apiKey(for provider: ProviderKind) -> String {
         let stored: String = switch provider {
         case .deepseek: deepseekAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         case .meta: metaAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .commandcode: commandcodeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         default: ""
         }
         if !stored.isEmpty { return stored }
-        guard provider.isAPIKeyBased, let envVar = provider.apiKeyEnvVar else { return "" }
+        guard provider.acceptsAPIKey, let envVar = provider.apiKeyEnvVar else { return "" }
         return (LoginEnvironment.current[envVar] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -574,12 +590,14 @@ final class AppSettings {
         switch provider {
         case .deepseek: deepseekAPIKeyInput
         case .meta: metaAPIKeyInput
+        case .commandcode: commandcodeAPIKeyInput
         default: ""
         }
     }
 
     func setAPIKeyInput(_ value: String, for provider: ProviderKind) {
         switch provider {
+        case .commandcode: commandcodeAPIKeyInput = value
         case .deepseek: deepseekAPIKeyInput = value
         case .meta: metaAPIKeyInput = value
         default: break

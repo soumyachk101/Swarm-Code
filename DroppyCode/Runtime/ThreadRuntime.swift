@@ -855,6 +855,7 @@ final class ThreadRuntime {
             case .claude: ClaudeSession(configuration: configuration)
             case .antigravity: AntigravitySession(configuration: configuration)
             case .copilot: CopilotSession(configuration: configuration)
+            case .commandcode: CommandCodeSession(configuration: configuration)
             case .cursor, .opencode, .grok, .devin: ACPSession(configuration: configuration)
             case .deepseek: DeepSeekSession(configuration: configuration)
             case .meta: MetaSession(configuration: configuration)

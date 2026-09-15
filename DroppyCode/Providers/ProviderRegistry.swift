@@ -85,6 +85,10 @@ final class ProviderRegistry {
     /// the account's models behind it; a fresh install starts with just this row.
     static let copilotAuto = ModelOption(id: "auto", name: "Auto", detail: "Copilot picks the model for each request", isDefault: true)
 
+    /// Command Code's starting catalog; `cmd --list-models` replaces it with the account's
+    /// seventy-odd models, led by the one the CLI itself is set to.
+    static let commandcodeSeed = CommandCodeAPI.seed
+
     /// Every provider tries its live catalog at most once per launch unless forced, success or not,
     /// so views that ask on appear never re-spawn a CLI or re-hit an API while scrolling.
     @ObservationIgnored private var attemptedCatalogs: Set<ProviderKind> = []
@@ -105,6 +109,7 @@ final class ProviderRegistry {
             catalogs[.antigravity] = Self.antigravitySeed
         }
         if catalogs[.copilot]?.isEmpty ?? true { catalogs[.copilot] = [Self.copilotAuto] }
+        if catalogs[.commandcode]?.isEmpty ?? true { catalogs[.commandcode] = Self.commandcodeSeed }
     }
 
     var availableProviders: [ProviderKind] {
@@ -139,6 +144,20 @@ final class ProviderRegistry {
                 ?? environment["XDG_DATA_HOME"].flatMap { $0.isEmpty ? nil : ($0 as NSString).appendingPathComponent("gh") }
                 ?? (LoginEnvironment.homeDirectory as NSString).appendingPathComponent(".local/share/gh")
             return [URL(fileURLWithPath: dataDirectory).appendingPathComponent("copilot/copilot")]
+        case .commandcode:
+            // npm's global bin under a user prefix, plus the CLI's other names: `cmd` is
+            // the documented alias, `command-code` and `commandcode` the package's own.
+            let home = LoginEnvironment.homeDirectory
+            var candidates: [URL] = []
+            for name in ["command-code", "commandcode", "cmd"] {
+                if let found = LoginEnvironment.which(name) { candidates.append(found) }
+            }
+            for directory in ["\(home)/.local/bin", "/opt/homebrew/bin", "/usr/local/bin", "\(home)/.npm-global/bin", "\(home)/.volta/bin"] {
+                for name in ["command-code", "cmd"] {
+                    candidates.append(URL(fileURLWithPath: directory).appendingPathComponent(name))
+                }
+            }
+            return candidates
         default:
             return []
         }
@@ -150,6 +169,12 @@ final class ProviderRegistry {
            let path = environment["PATH"],
            !path.split(separator: ":").contains(Substring(directory)) {
             environment["PATH"] = directory + ":" + path
+        }
+        // A Studio key pasted into Settings reaches the CLI the way its docs say, and takes
+        // precedence over the `cmd login` in `~/.commandcode/auth.json`.
+        if provider == .commandcode {
+            let key = settings.apiKey(for: .commandcode)
+            if !key.isEmpty { environment["COMMAND_CODE_API_KEY"] = key }
         }
         return environment
     }
@@ -169,7 +194,7 @@ final class ProviderRegistry {
             refreshPlanLimits(provider, force: true)
         }
         await withTaskGroup(of: Void.self) { group in
-            for provider in [ProviderKind.codex, .antigravity, .copilot, .deepseek, .meta] where status(provider).isInstalled {
+            for provider in [ProviderKind.codex, .antigravity, .copilot, .commandcode, .deepseek, .meta] where status(provider).isInstalled {
                 group.addTask { await self.loadCatalog(provider, force: true) }
             }
         }
@@ -279,8 +304,10 @@ final class ProviderRegistry {
             await loadAPICatalog(provider, force: force)
             return
         }
-        // Copilot's seed is only its Auto row, so the account's models are fetched on first use.
-        let seeded = provider == .copilot && models(for: provider) == [Self.copilotAuto]
+        // Copilot's seed is only its Auto row, and Command Code's a handful of its seventy
+        // models, so the account's list is fetched on first use.
+        let seeded = (provider == .copilot && models(for: provider) == [Self.copilotAuto])
+            || (provider == .commandcode && models(for: provider) == Self.commandcodeSeed)
         guard force || seeded || models(for: provider).isEmpty, let executable = executable(for: provider) else { return }
         attemptedCatalogs.insert(provider)
         loadingCatalogs.insert(provider)
@@ -290,6 +317,7 @@ final class ProviderRegistry {
         case .codex: try? await CodexSession.listModels(executable: executable, environment: environment)
         case .antigravity: try? await AntigravitySession.listModels(executable: executable, environment: environment)
         case .copilot: try? await CopilotSession.listModels(executable: executable, environment: environment)
+        case .commandcode: try? await CommandCodeAPI.listModels(executable: executable, environment: environment)
         case .cursor, .opencode, .grok, .devin: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
         case .claude, .deepseek, .meta: nil
         }
@@ -340,7 +368,10 @@ final class ProviderRegistry {
     /// the popover that asked for it cannot cancel it.
     func refreshCredits(_ provider: ProviderKind, force: Bool = false) {
         guard CreditsReader.exposesCredits(provider), !loadingCredits.contains(provider) else { return }
-        let apiKey = settings.apiKey(for: provider)
+        // Command Code's key is the CLI's own login unless Settings holds one.
+        let apiKey = provider == .commandcode
+            ? (CommandCodeAPI.apiKey(environment: environment(for: .commandcode)) ?? "")
+            : settings.apiKey(for: provider)
         guard !apiKey.isEmpty else {
             credits[provider] = nil
             return
@@ -420,6 +451,8 @@ final class ProviderRegistry {
             return await AntigravitySession.authStatus(executable: executable, environment: environment)
         case .copilot:
             return await CopilotSession.authStatus(executable: executable, environment: environment)
+        case .commandcode:
+            return await CommandCodeAPI.authStatus(executable: executable, environment: environment)
         case .opencode, .grok, .deepseek, .meta:
             return .unknown
         }
