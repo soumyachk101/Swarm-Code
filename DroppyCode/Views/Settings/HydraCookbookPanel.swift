@@ -79,7 +79,11 @@ private struct HydraCookbookRow: View {
         let registry = model.providers
         let isAdded = pair.map { HydraCookbook.isAdded($0, in: model.settings.hydraPairs) } ?? false
         HStack(alignment: .center, spacing: 12) {
-            HydraPairMark(lead: recipe.lead.provider, heads: recipe.heads.provider)
+            // The marks show the providers the pair resolved to here; a waiting recipe shows its first choices.
+            HydraPairMark(
+                lead: pair?.provider ?? recipe.lead.providers.first ?? .claude,
+                heads: pair?.headsProvider ?? recipe.heads.providers.first ?? .claude
+            )
             .frame(width: 52, alignment: .leading)
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: pair.map { HydraPairSummary.title($0, registry: registry) } ?? recipe.title)

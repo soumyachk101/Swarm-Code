@@ -12,7 +12,6 @@ struct HydraMergeNote {
     let target: String
     let branch: String
     let notes: [String]
-    let isUpToDate: Bool
 
     /// The files line, which is what makes a body a merge note at all: without it the
     /// caller keeps the generic popover.
@@ -23,7 +22,6 @@ struct HydraMergeNote {
     static func parse(_ body: String, link: MergeRequestLink) -> HydraMergeNote? {
         var match: (files: Int, additions: Int, deletions: Int, target: String, branch: String)?
         var notes: [String] = []
-        var isUpToDate = false
         for rawLine in body.components(separatedBy: "\n") {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !line.isEmpty else { continue }
@@ -38,16 +36,14 @@ struct HydraMergeNote {
                 match = (files, additions, deletions, group(4), group(5))
                 continue
             }
-            if line.hasSuffix("is up to date.") {
-                isUpToDate = true
-                continue
-            }
+            // The checkout line goes without saying once the merge is in; it is not a note.
+            if line.hasSuffix("is up to date.") { continue }
             notes.append(line.replacingOccurrences(of: "`", with: ""))
         }
         guard let match else { return nil }
         return HydraMergeNote(
             link: link, files: match.files, additions: match.additions, deletions: match.deletions,
-            target: match.target, branch: match.branch, notes: notes, isUpToDate: isUpToDate
+            target: match.target, branch: match.branch, notes: notes
         )
     }
 }
@@ -112,16 +108,6 @@ struct HydraMergePopover: View {
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(Chrome.secondaryText)
                 chip(note.target)
-            }
-            if note.isUpToDate {
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Chrome.success)
-                    Text("Checkout is up to date")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Chrome.secondaryText)
-                }
             }
             ForEach(Array(note.notes.enumerated()), id: \.offset) { _, entry in
                 HStack(alignment: .top, spacing: 6) {
