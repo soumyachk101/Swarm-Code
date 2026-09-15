@@ -46,8 +46,9 @@ struct ChatView: View {
             )
             .equatable()
             // The zoom the chrome row's slider sets, for the conversation alone: the row and
-            // the chat box keep their own size.
-            .dynamicTypeSize(ChatZoom.size(at: model.settings.chatZoom))
+            // the chat box keep their own size. macOS ignores Dynamic Type, so the timeline
+            // scales its fonts by this factor itself (see `Font.chat`).
+            .environment(\.chatZoom, ChatZoom.scale(at: model.settings.chatZoom))
             // The room the docked panels take from either side; the conversation and the
             // box centre in the rest, so they stay lined up with each other. The slide is
             // keyed to what is docked, never to the measured room: a pane measured for the

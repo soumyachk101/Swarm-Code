@@ -148,7 +148,7 @@ final class AppSettings {
         didSet { defaults.set(showReasoning, forKey: Key.showReasoning) }
     }
 
-    /// How large the conversation reads: an index into `ChatZoom.steps`, which the slider in
+    /// How large the conversation reads: a step of `ChatZoom` (see its percentages), which the slider in
     /// the chat's chrome row moves. The row and the chat box keep their own size.
     var chatZoom: Int {
         didSet { defaults.set(chatZoom, forKey: Key.chatZoom) }

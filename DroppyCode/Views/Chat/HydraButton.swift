@@ -243,14 +243,14 @@ enum HydraPairSummary {
         return parts.joined(separator: " · ")
     }
 
-    /// "Fable leads Opus", "Any model leads Sonnet", "Opus leads itself", and across
-    /// providers "Fable leads Gemini 3.8 Flash".
+    /// "Fable + Opus", "Any model + Sonnet", "Opus + itself", and across
+    /// providers "Fable + Gemini 3.8 Flash".
     @MainActor
     static func title(_ pair: HydraPair, registry: ProviderRegistry) -> String {
         let lead = pair.orchestratorModel.map { registry.model($0, for: pair.provider)?.shortName ?? $0 } ?? "Any \(pair.provider.displayName) model"
         guard let worker = workerModel(pair, registry: registry) ?? (pair.sendsHeadsElsewhere ? pair.headsProvider.displayName : nil) else {
-            return "\(lead) leads itself"
+            return "\(lead) + itself"
         }
-        return "\(lead) leads \(worker)"
+        return "\(lead) + \(worker)"
     }
 }

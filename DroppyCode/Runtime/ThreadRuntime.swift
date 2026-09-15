@@ -1310,14 +1310,17 @@ final class ThreadRuntime {
         settleForegroundHeads(after: status)
         // The Return-while-running message jumps the queue: it goes right away
         // and anything queued waits for it. A reply that ends in a delegation block
-        // sends the heads out instead, and their reports come back as the next
-        // message. Either way the app hears whether a next turn is on its way, so
+        // sends the heads out instead, and their reports come back as a message of
+        // their own; the lead is free meanwhile, so the next queued prompt starts on
+        // it at once rather than waiting out the heads, and the reports follow that
+        // turn. Either way the app hears whether a next turn is on its way, so
         // "finished" only sounds when nothing is.
         var continues: Bool
         if pendingSend != nil {
             continues = drainPendingSend()
-        } else if status == .completed, spawnDelegatedHeads(for: turnID) {
+        } else if status == .completed, case let delegation = spawnDelegatedHeads(for: turnID), delegation != .none {
             continues = true
+            if delegation == .headsOut { _ = drainFollowUps(after: status) }
         } else if status == .completed, flushHydraReports() {
             continues = true
         } else {
@@ -1552,11 +1555,9 @@ final class ThreadRuntime {
         }
     }
 
-    /// Sends the reports waiting on an idle lead as one message, once no delegation is
-    /// still out: the lead is waiting for that batch, and hears everything with it rather
-    /// than starting on a queued head's report meanwhile. Returns whether a turn starts.
-    /// The reports stay put until the turn takes them: heads finishing together then go
-    /// out as one message, instead of each starting a turn the next one cuts short.
+    /// Sends the reports waiting on an idle lead as one message. Returns whether a turn
+    /// starts. The reports stay put until the turn takes them: heads finishing together
+    /// then go out as one message, instead of each starting a turn the next one cuts short.
     @discardableResult
     private func flushHydraReports() -> Bool {
         guard phase == .idle, !hydraFlushScheduled, !flushableHydraReports().isEmpty else { return false }
@@ -1565,13 +1566,12 @@ final class ThreadRuntime {
         return true
     }
 
-    /// The reports an idle lead can hear now: all of them once no delegation is still out,
-    /// and otherwise only the heads that are no part of one. A head the user queued or
-    /// sent out directly has nothing to do with a batch, and waiting behind one can mean
-    /// waiting out a job of twenty minutes.
+    /// The reports an idle lead can hear now: every one waiting. A delegation's reports
+    /// only get here once its whole batch is back (see `settleBatches`), and a head the
+    /// user queued or sent out directly has nothing to do with a batch; neither waits on
+    /// another delegation still out, which can mean waiting out a job of twenty minutes.
     private func flushableHydraReports() -> [HydraReport] {
-        let ready = hydraBatches.isEmpty ? hydraPendingReports : hydraPendingReports.filter { $0.origin != .delegated }
-        return ready.sorted { $0.headIndex < $1.headIndex }
+        hydraPendingReports.sorted { $0.headIndex < $1.headIndex }
     }
 
     /// The turn `flushHydraReports` scheduled. A lead no longer idle (the user got a word
@@ -1595,23 +1595,32 @@ final class ThreadRuntime {
     /// practice, and the pair's cap still decides how many run at a time.
     private static let maxDelegatedTasks = 32
 
+    /// What a reply's delegation block led to, for the end of the turn.
+    private enum DelegationOutcome {
+        /// No block, or nothing came of it.
+        case none
+        /// Heads went out; the lead is free until they report.
+        case headsOut
+        /// The lead is being told something instead, in a turn of its own already on its way.
+        case turnStarted
+    }
+
     /// A reply on any provider may end in a delegation block: its tasks go out as
     /// Droppy-run heads, up to the pair's limit at a time, and the block leaves the reply.
     /// A block Droppy Code cannot read leaves the reply as well, and the lead hears so in
-    /// a turn of its own: a block never stays in a reply doing nothing. Returns whether a
-    /// turn followed the reply, heads going out or the lead being told.
-    private func spawnDelegatedHeads(for turnID: UUID) -> Bool {
+    /// a turn of its own: a block never stays in a reply doing nothing.
+    private func spawnDelegatedHeads(for turnID: UUID) -> DelegationOutcome {
         guard let app, let thread, let launch = app.hydraLaunch(for: thread),
               let entry = entries.last(where: { $0.turnID == turnID && $0.kind == .assistant }),
-              case .assistant(var message) = entry.item.content else { return false }
+              case .assistant(var message) = entry.item.content else { return .none }
         guard let delegations = HydraPrompts.delegations(in: message.text) else {
-            guard HydraPrompts.hasDelegationBlock(in: message.text) else { return false }
+            guard HydraPrompts.hasDelegationBlock(in: message.text) else { return .none }
             message.text = HydraPrompts.withoutDelegationBlock(message.text)
             if message.text.isEmpty { message.text = "Asking for heads." }
             entry.item.content = .assistant(message)
             scheduleSave()
             Task { await startTurn(text: HydraPrompts.unreadableBlockMessage(reason: nil), attachments: [], hydraHeads: []) }
-            return true
+            return .turnStarted
         }
         message.text = HydraPrompts.withoutDelegationBlock(message.text)
         // One request gets so many rounds of heads; past that the lead hears why none went
@@ -1622,7 +1631,7 @@ final class ThreadRuntime {
             scheduleSave()
             let text = HydraPrompts.heldBackMessage(count: delegations.count)
             Task { await startTurn(text: text, attachments: [], hydraHeads: []) }
-            return true
+            return .turnStarted
         }
         hydraDelegationRounds += 1
         if message.text.isEmpty { message.text = "Sending out heads." }
@@ -1643,7 +1652,7 @@ final class ThreadRuntime {
         spawnWaitingHeads(launch: launch)
         settleBatches()
         scheduleSave()
-        return !hydraBatches.isEmpty || !hydraWaiting.isEmpty
+        return hydraBatches.isEmpty && hydraWaiting.isEmpty ? .none : .headsOut
     }
 
     /// Sends out delegated tasks still waiting, as far as the pair's cap allows; without

@@ -773,6 +773,7 @@ struct GlassPickerButton<Value: Hashable>: View {
     let options: [(value: Value, title: String)]
     @Binding var selection: Value
     var asset: (Value) -> String? = { _ in nil }
+    var maxWidth: CGFloat? = nil
 
     @State private var isPresented = false
     @State private var isHovering = false
@@ -792,6 +793,7 @@ struct GlassPickerButton<Value: Hashable>: View {
                 Text(verbatim: title)
                     .font(.system(size: 12.5, weight: .medium))
                     .lineLimit(1)
+                    .truncationMode(.tail)
                 Image(systemName: "chevron.down")
                     .font(Chrome.chevronFont)
                     .foregroundStyle(Chrome.secondaryText)
@@ -802,8 +804,9 @@ struct GlassPickerButton<Value: Hashable>: View {
             .contentShape(Capsule(style: .continuous))
         }
         .buttonStyle(.plain)
-        .fixedSize()
+        .fixedSize(horizontal: maxWidth == nil, vertical: true)
         .chromeGlassCapsule()
+        .frame(maxWidth: maxWidth, alignment: .trailing)
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }

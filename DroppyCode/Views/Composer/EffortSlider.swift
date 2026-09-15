@@ -42,6 +42,7 @@ struct ModelEffortButton: View {
     var compact: Bool = false
 
     @State private var isPresented = false
+    @State private var nameWidth: CGFloat = 0
 
     var body: some View {
         let registry = model.providers
@@ -68,16 +69,30 @@ struct ModelEffortButton: View {
                     // The chip keeps the model and effort while its popover is open: they
                     // are what the popover edits, and a label that swapped for "Select
                     // effort" resized the chip under the popover's own arrow. The open
-                    // state reads from the chip style's active look instead.
+                    // state reads from the chip style's active look instead. The name
+                    // keeps the width it had when the popover opened and the effort
+                    // reserves the widest of the model's titles, so the chip, and the
+                    // popover hanging from it, stay put while the slider is dragged.
                     Text(verbatim: current?.chipName ?? thread.model ?? thread.provider.displayName)
                         .foregroundStyle(Chrome.primaryText)
                         .lineLimit(1)
                         .truncationMode(.tail)
+                        .onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { width in if !isPresented { nameWidth = width } }
+                        .frame(width: isPresented && nameWidth > 0 ? nameWidth : nil, alignment: .leading)
                     if let current, !current.efforts.isEmpty {
-                        Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
-                            .foregroundStyle(Chrome.primaryText.opacity(0.72))
-                            .lineLimit(1)
-                            .fixedSize()
+                        ZStack(alignment: .leading) {
+                            if isPresented {
+                                ForEach(current.efforts, id: \.self) { effort in
+                                    Text(verbatim: ModelOption.effortTitle(effort))
+                                        .hidden()
+                                        .fixedSize()
+                                }
+                            }
+                            Text(verbatim: ModelOption.effortTitle(thread.effort ?? current.defaultEffort ?? ""))
+                                .foregroundStyle(Chrome.primaryText.opacity(0.72))
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
                     }
                     Image(systemName: "chevron.down")
                         .font(Chrome.chevronFont)
@@ -456,7 +471,7 @@ private struct ModelListRow: View {
 /// fusion runs between, and what the heads' effort is, for the line that says the slider
 /// sets the lead's.
 struct EffortPairLook: Hashable {
-    /// "Fable leads Opus (1M context)".
+    /// "Fable + Opus (1M context)".
     var title: String
     var brand: EffortPairBrand
     /// The heads' effort by name, when the pair sets one.

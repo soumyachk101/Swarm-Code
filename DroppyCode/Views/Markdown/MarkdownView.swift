@@ -105,6 +105,7 @@ struct MarkdownBlockView: View, Equatable {
     let block: MarkdownBlock
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.markdownListDepth) private var listDepth
+    @Environment(\.chatZoom) private var zoom
 
     /// Blocks compare by content, so a finished block is skipped while the reply keeps streaming.
     nonisolated static func == (lhs: MarkdownBlockView, rhs: MarkdownBlockView) -> Bool {
@@ -166,10 +167,10 @@ struct MarkdownBlockView: View, Equatable {
 
     private func headingFont(_ level: Int) -> Font {
         switch level {
-        case 1: .title2.weight(.semibold)
-        case 2: .title3.weight(.semibold)
-        case 3: .headline
-        default: .subheadline.weight(.semibold)
+        case 1: .chat(.title2, weight: .semibold, zoom: zoom)
+        case 2: .chat(.title3, weight: .semibold, zoom: zoom)
+        case 3: .chat(.headline, zoom: zoom)
+        default: .chat(.subheadline, weight: .semibold, zoom: zoom)
         }
     }
 
@@ -529,6 +530,7 @@ enum RichInlineBuilder {
 struct InlineText: View {
     let source: String
     @Environment(\.markdownPointSize) private var pointSize
+    @Environment(\.chatZoom) private var zoom
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.markdownStreaming) private var streaming
     @State private var faviconRevision = 0
@@ -544,16 +546,17 @@ struct InlineText: View {
     var body: some View {
         // faviconRevision read so loaded favicons rebuild the text.
         let _ = faviconRevision
+        let scaled = (pointSize * zoom * 2).rounded() / 2
         if RichLink.containsLinks(in: source, streaming: streaming) {
             // An AppKit view has no text baseline of its own, so a list's marker sat on the
             // paragraph's top edge and the text started a line below it. The first line's
             // baseline is the base font's ascender from the top; the last is one line up
             // from the bottom. Measured once per size and kept: the alignment guides run
             // off the main actor, so they take the two numbers rather than the font.
-            let metrics = Self.metrics(pointSize: pointSize)
+            let metrics = Self.metrics(pointSize: scaled)
             let ascender = metrics.ascender
             let lineHeight = metrics.lineHeight
-            LinkParagraphView(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming, revision: faviconRevision, onHost: { linkView.value = $0 })
+            LinkParagraphView(source: source, pointSize: scaled, dimmed: dimmed, streaming: streaming, revision: faviconRevision, onHost: { linkView.value = $0 })
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { _ in ascender }
                 .alignmentGuide(.lastTextBaseline) { $0.height - lineHeight + ascender }
@@ -637,6 +640,7 @@ struct CodeBlock: View {
     let language: String?
     let code: String
 
+    @Environment(\.chatZoom) private var zoom
     @State private var hover = BlockHover()
     @State private var showsAll = false
 
@@ -653,7 +657,7 @@ struct CodeBlock: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text(language ?? "code")
-                    .font(.caption)
+                    .font(.chat(.caption, zoom: zoom))
                     .foregroundStyle(.secondary)
                 Spacer()
                 CodeBlockCopyButton(text: code, hover: hover)
@@ -663,7 +667,7 @@ struct CodeBlock: View {
             .padding(.top, 6)
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(visible)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.chat(.callout, design: .monospaced, zoom: zoom))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 12)
@@ -675,7 +679,7 @@ struct CodeBlock: View {
                     showsAll.toggle()
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(.chat(.caption, zoom: zoom))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.bottom, 10)
@@ -704,6 +708,7 @@ struct TableBlock: View {
     let header: [String]
     let rows: [[String]]
 
+    @Environment(\.chatZoom) private var zoom
     @State private var showsAll = false
 
     private static let collapsedRowLimit = 30
@@ -738,7 +743,7 @@ struct TableBlock: View {
                     showsAll.toggle()
                 }
                 .buttonStyle(.link)
-                .font(.caption)
+                .font(.chat(.caption, zoom: zoom))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
                 .padding(.bottom, 10)

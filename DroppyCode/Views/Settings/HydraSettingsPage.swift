@@ -322,7 +322,8 @@ private struct HydraPairEditor: View {
                                     }
                                 }
                             }
-                        )
+                        ),
+                        maxWidth: 190
                     )
                 }
                 if !leadEfforts.isEmpty {
@@ -371,7 +372,8 @@ private struct HydraPairEditor: View {
                                     }
                                 }
                             }
-                        )
+                        ),
+                        maxWidth: 190
                     )
                 }
                 if !workerEfforts.isEmpty {
@@ -421,14 +423,17 @@ private struct HydraPairEditor: View {
                 Text(verbatim: title)
                     .font(.system(size: 13))
                     .foregroundStyle(Chrome.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 if let detail {
                     Text(verbatim: detail)
                         .font(.system(size: 11))
                         .foregroundStyle(Chrome.secondaryText)
                 }
             }
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
             control()
+                .layoutPriority(1)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)

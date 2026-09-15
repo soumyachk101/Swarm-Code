@@ -632,7 +632,8 @@ private struct SourceControlSettingsPage: View {
 }
 
 /// Clears the whole archive from the page's chrome row, asking first the way a single
-/// delete does when the setting is on.
+/// delete does when the setting is on. The question hangs off the button as a popover,
+/// like the sidebar's delete menu, rather than a sheet over the whole window.
 private struct ArchiveDeleteAllButton: View {
     @Environment(AppModel.self) private var model
     @State private var isConfirming = false
@@ -652,17 +653,17 @@ private struct ArchiveDeleteAllButton: View {
                 model.deleteArchivedThreads()
             }
         }
-        .confirmationDialog(
-            count == 1 ? "Delete the archived thread?" : "Delete all archived threads?",
-            isPresented: $isConfirming
-        ) {
-            Button(count == 1 ? "Delete thread" : "Delete \(count) threads", role: .destructive) {
-                model.deleteArchivedThreads()
+        .popover(isPresented: $isConfirming, arrowEdge: .bottom) {
+            PopoverMenu {
+                PopoverSectionHeader(count == 1 ? "Delete the archived thread?" : "Delete all archived threads?")
+                PopoverNote(count == 1
+                    ? "Its history will be removed. Files in your project stay as they are."
+                    : "The histories of all \(count) threads will be removed. Files in your projects stay as they are.")
+                PopoverDivider()
+                PopoverItem(count == 1 ? "Delete thread" : "Delete \(count) threads", symbol: "trash", isDestructive: true) {
+                    model.deleteArchivedThreads()
+                }
             }
-        } message: {
-            Text(count == 1
-                ? "Its history will be removed. Files in your project stay as they are."
-                : "The histories of all \(count) threads will be removed. Files in your projects stay as they are.")
         }
     }
 }
