@@ -275,7 +275,10 @@ struct SubagentPanel: View {
                     projectName: projectName,
                     workingDirectory: workingDirectory,
                     supportsRewind: false,
-                    columnHeight: size.height
+                    columnHeight: size.height,
+                    // A panel's transcript needs no rail, and the rail's hover tracking
+                    // and geometry reader are per-frame work under the pointer.
+                    showsMinimap: false
                 )
                 .equatable()
             }
@@ -318,6 +321,9 @@ struct SubagentPanel: View {
             }
         }
         .frame(width: size.width, height: size.height)
+        // Everything inside draws flat over the panel's glass (see `isOnGlassPanel`):
+        // the panel is one glass pass, its controls are not a second one each.
+        .environment(\.isOnGlassPanel, true)
         // The frame follows the pane every frame of a live resize: any content keyed
         // to it settles after, never during.
         .animation(nil, value: liveResize.isActive)

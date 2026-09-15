@@ -20,6 +20,8 @@ struct HydraButton: View {
     @State private var isSending = false
     /// Right-tapping the mark opens the per-chat Hydra switch in place.
     @State private var isHydraSwitchShown = false
+    /// The first chat's intro, opened by the mark itself until it has been read.
+    @State private var isIntroShown = false
 
     var body: some View {
         let isOn = model.hydraIsOn(thread)
@@ -32,7 +34,7 @@ struct HydraButton: View {
         // lead's own timeline, so the badge pulses as soon as delegation starts.
         let isDelegating = isOn && running == 0 && runtime.isRunning && Self.isLeadDelegating(runtime.entries)
         Button {
-            if heads.isEmpty { isExplaining = true } else { togglePanel() }
+            if !model.settings.hasSeenHydraIntro { isIntroShown = true } else if heads.isEmpty { isExplaining = true } else { togglePanel() }
         } label: {
             ZStack {
                 if isOn {
@@ -82,6 +84,11 @@ struct HydraButton: View {
         .popover(isPresented: $isHydraSwitchShown, arrowEdge: .bottom) {
             HydraSwitchPopover(thread: thread, isOn: isOn, isHydraSwitchShown: $isHydraSwitchShown)
         }
+        .popover(isPresented: $isIntroShown, arrowEdge: .bottom) {
+            HydraIntroPopover { model.settings.hasSeenHydraIntro = true; isIntroShown = false }
+                .interactiveDismissDisabled()
+        }
+        .onAppear { if !model.settings.hasSeenHydraIntro, isOn { isIntroShown = true } }
         .help(help(isOn: isOn, running: running, hasHeads: !heads.isEmpty))
         .accessibilityLabel(Text(panelHelp(running: running, hasHeads: !heads.isEmpty)))
         .accessibilityValue(Text(isOn ? "On" : "Off"))
@@ -276,6 +283,8 @@ private struct HydraIdlePopover: View {
             }
             PopoverDivider()
             PopoverNote("No heads are out yet. Ask for something big enough to split up and this chat sends them out, each with a panel of its own.")
+            PopoverDivider()
+            PopoverNote("Right-click the mark to switch Hydra off for this chat.")
         }
         .frame(width: 290)
     }
@@ -304,7 +313,9 @@ struct HydraCharge: View {
     /// Whether any head is at work: the ring turns and the glow breathes only then.
     var isWorking = true
 
-    private static let colors: [Color] = HydraRoster.personas.prefix(6).map(\.color)
+    fileprivate static let colors: [Color] = HydraRoster.personas.prefix(6).map(\.color)
+    /// The same colours for the moving ring, which is drawn by a layer.
+    fileprivate static let layerColors: [NSColor] = colors.map { NSColor($0) }
 
     var body: some View {
         ZStack {
@@ -348,19 +359,227 @@ struct HydraCharge: View {
 }
 
 /// The charge in motion. A view of its own, so the repeating animations start when a head
-/// goes out and are torn down with it when the last one is back.
-private struct HydraChargeMotion: View {
-    @State private var isTurning = false
-    @State private var isBreathing = false
+/// goes out and are torn down with it when the last one is back. Drawn by Core Animation:
+/// the ring's turn and the glow's breath are animations on layers of their own, run by the
+/// render server, so no frame of them touches the main thread or re-composites the glass
+/// row around the button. As SwiftUI animations they re-rendered the button every frame,
+/// and the button sits in the chrome row's glass container, which composited the whole
+/// row again each time, for as long as any head worked.
+private struct HydraChargeMotion: NSViewRepresentable {
+    func makeNSView(context: Context) -> HydraChargeLayerView {
+        let view = HydraChargeLayerView()
+        view.configure(colors: HydraCharge.layerColors, accent: Chrome.accentNSColor)
+        return view
+    }
 
-    var body: some View {
-        ZStack {
-            HydraCharge.glow(breathing: isBreathing)
-            HydraCharge.ring(turned: isTurning, bright: isBreathing)
+    func updateNSView(_ view: HydraChargeLayerView, context: Context) {
+        view.configure(colors: HydraCharge.layerColors, accent: Chrome.accentNSColor)
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: HydraChargeLayerView, context: Context) -> CGSize? {
+        // Fills whatever the button proposes, as the circles it replaces did.
+        proposal.replacingUnspecifiedDimensions()
+    }
+}
+
+/// The moving charge as layers: the glow, a radial gradient breathing between the still
+/// glow's opacity and full, and the ring, a conic gradient turning once every four seconds
+/// under a stroked-circle mask and brightening in step with the glow. The geometry is the
+/// still charge's exactly (`HydraCharge.glow` and `.ring`), so the swap between the two
+/// states moves nothing. Every animation runs from one fixed origin on the shared clock,
+/// so putting it back on wherever the render server may have dropped it (the app coming
+/// to the front, the window uncovered, the view joining a window late) changes nothing
+/// on screen: the ring keeps its angle and the glow its brightness.
+final class HydraChargeLayerView: NSView {
+    private let glow = CAGradientLayer()
+    private let ring = CAGradientLayer()
+    private let ringMask = CAShapeLayer()
+    private var colors: [NSColor] = []
+    private var accent: NSColor = .controlAccentColor
+
+    private static let turnKey = "turn"
+    private static let breathKey = "breathe"
+    /// The still ring's and glow's opacity, from `HydraCharge`; each breath rises to full.
+    private static let ringRestOpacity: Float = 0.85
+    private static let glowRestOpacity: Float = 0.6
+    private static let turnDuration: CFTimeInterval = 4
+    private static let breathDuration: CFTimeInterval = 1.4
+    private static let lineWidth: CGFloat = 2
+    /// The glow's gradient: full out to the start radius, gone at the end radius.
+    private static let glowStartRadius: CGFloat = 2
+    private static let glowEndRadius: CGFloat = 15
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+        layer?.masksToBounds = false
+
+        glow.type = .radial
+        glow.startPoint = CGPoint(x: 0.5, y: 0.5)
+        glow.locations = [NSNumber(value: Double(Self.glowStartRadius / Self.glowEndRadius)), 1]
+        // A circle, as the still glow is: the gradient reaches past its edge.
+        glow.masksToBounds = true
+        glow.opacity = Self.glowRestOpacity
+
+        ring.type = .conic
+        ring.startPoint = CGPoint(x: 0.5, y: 0.5)
+        ring.endPoint = CGPoint(x: 1, y: 0.5)
+        ring.opacity = Self.ringRestOpacity
+        ringMask.fillColor = nil
+        ringMask.strokeColor = NSColor.black.cgColor
+        ringMask.lineWidth = Self.lineWidth
+        ring.mask = ringMask
+
+        // Never implicitly animated: geometry and colours are set outright, and the
+        // opacity and the turn belong to the explicit animations.
+        let still: [String: CAAction] = [
+            "opacity": NSNull(), "bounds": NSNull(), "position": NSNull(), "colors": NSNull(),
+            "endPoint": NSNull(), "cornerRadius": NSNull(), "path": NSNull(), "transform": NSNull(),
+        ]
+        for sublayer in [glow, ring, ringMask] as [CALayer] {
+            sublayer.actions = still
         }
-        .onAppear {
-            withAnimation(.linear(duration: 4).repeatForever(autoreverses: false)) { isTurning = true }
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) { isBreathing = true }
+        layer?.addSublayer(glow)
+        layer?.addSublayer(ring)
+
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(appDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
+        center.addObserver(self, selector: #selector(windowDidChangeOcclusionState(_:)), name: NSWindow.didChangeOcclusionStateNotification, object: nil)
+        // The accent is set on the glow once, not resolved on every draw, so a theme
+        // change has to reach it here.
+        center.addObserver(self, selector: #selector(themeDidChange), name: ThemeManager.didChange, object: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func configure(colors: [NSColor], accent: NSColor) {
+        let recolor = colors != self.colors || accent != self.accent
+        self.colors = colors
+        self.accent = accent
+        if recolor { applyColors() }
+        // The animations go on once; the lifecycle below puts them back wherever they can
+        // be lost. A re-render of the button (every hover) is not one of those.
+        if ring.animation(forKey: Self.turnKey) == nil { installAnimations() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Joining a window late (a button built off screen), the layers need their colours
+        // resolved for its appearance and their animations running from the shared clock.
+        guard window != nil else { return }
+        applyColors()
+        installAnimations()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        // The system accent is dynamic; re-resolve it for the new appearance.
+        applyColors()
+    }
+
+    @objc private func appDidBecomeActive() {
+        guard window != nil else { return }
+        installAnimations()
+    }
+
+    @objc private func windowDidChangeOcclusionState(_ note: Notification) {
+        // Every window ordered in posts this, popovers and tooltips included: only this
+        // view's own window coming back into view concerns it.
+        guard let window, (note.object as? NSWindow) === window, window.occlusionState.contains(.visible) else { return }
+        installAnimations()
+    }
+
+    @objc private func themeDidChange() {
+        accent = Chrome.accentNSColor
+        applyColors()
+    }
+
+    override func layout() {
+        super.layout()
+        let bounds = self.bounds
+        guard bounds.width > 4, bounds.height > 4 else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // The still glow: a circle two points in, its gradient running from two to fifteen
+        // points out of the centre whatever the circle's size.
+        let glowRect = bounds.insetBy(dx: 2, dy: 2)
+        glow.bounds = CGRect(origin: .zero, size: glowRect.size)
+        glow.position = CGPoint(x: glowRect.midX, y: glowRect.midY)
+        glow.cornerRadius = min(glowRect.width, glowRect.height) / 2
+        glow.endPoint = CGPoint(
+            x: 0.5 + Self.glowEndRadius / glowRect.width,
+            y: 0.5 + Self.glowEndRadius / glowRect.height
+        )
+        // The still ring: two points of stroke just inside a circle one point in. The
+        // mask turns with the ring, and a circle looks the same at every angle.
+        let ringRect = bounds.insetBy(dx: 1, dy: 1)
+        ring.bounds = CGRect(origin: .zero, size: ringRect.size)
+        ring.position = CGPoint(x: ringRect.midX, y: ringRect.midY)
+        ringMask.frame = ring.bounds
+        ringMask.path = CGPath(
+            ellipseIn: ring.bounds.insetBy(dx: Self.lineWidth / 2, dy: Self.lineWidth / 2),
+            transform: nil
+        )
+        CATransaction.commit()
+    }
+
+    /// The accent, resolved in this view's appearance (the system accent has a light and
+    /// a dark variant), into the glow's stops; the ring's colours into the conic gradient.
+    /// Those go in reversed: the gradient's angle grows counter-clockwise on a y-up layer,
+    /// where the still ring's angular gradient runs clockwise.
+    private func applyColors() {
+        guard let first = colors.first else { return }
+        var accent = self.accent.cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            accent = self.accent.cgColor
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        glow.colors = [accent.copy(alpha: 0.46) ?? accent, accent.copy(alpha: 0) ?? accent]
+        ring.colors = (colors + [first]).reversed().map(\.cgColor)
+        CATransaction.commit()
+    }
+
+    /// Puts the turn and the two breaths on afresh, each from one second on the shared
+    /// clock, so however often they are put back the phase is the one the clock says.
+    private func installAnimations() {
+        ring.removeAllAnimations()
+        glow.removeAllAnimations()
+        let origin = ring.convertTime(1, from: nil)
+
+        let turn = CABasicAnimation(keyPath: "transform.rotation.z")
+        turn.fromValue = 0
+        // The layer is y-up, so a negative angle turns clockwise on screen, the way the
+        // still ring's `rotationEffect(.degrees(360))` did.
+        turn.toValue = -2 * Double.pi
+        turn.duration = Self.turnDuration
+        turn.repeatCount = .infinity
+        turn.timingFunction = CAMediaTimingFunction(name: .linear)
+        turn.beginTime = origin
+        turn.isRemovedOnCompletion = false
+        ring.add(turn, forKey: Self.turnKey)
+
+        for (layer, rest) in [(ring, Self.ringRestOpacity), (glow, Self.glowRestOpacity)] {
+            let breath = CABasicAnimation(keyPath: "opacity")
+            breath.fromValue = rest
+            breath.toValue = 1
+            breath.duration = Self.breathDuration
+            breath.autoreverses = true
+            breath.repeatCount = .infinity
+            breath.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            breath.beginTime = origin
+            breath.isRemovedOnCompletion = false
+            layer.add(breath, forKey: Self.breathKey)
         }
     }
 }

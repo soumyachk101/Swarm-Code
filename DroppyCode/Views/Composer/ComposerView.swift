@@ -49,9 +49,10 @@ struct ComposerArea: View {
     }
 }
 
-/// The tab above the pill: the agent's question while it asks one, else the queue while
-/// any follow-ups are queued, else the changes. Reading them here keeps stats refreshes
-/// and question arrivals off the area, whose body watches approvals alone.
+/// The tab above the pill: the queue while any follow-ups are queued, else the
+/// changes tab. The agent's questions are badges in the conversation now.
+/// Reading them here keeps stats refreshes and question arrivals off the area,
+/// whose body watches approvals alone.
 private struct TabSlot: View {
     let runtime: ThreadRuntime
     let diffPopover: DiffPopoverCoordinator
@@ -62,16 +63,9 @@ private struct TabSlot: View {
         // fades in over it, and the slot's height glides from one to the other.
         // The slot exists only while a tab does, or the stack's overlap would
         // pull an empty slot's box up by that much.
-        let question = runtime.questions.first
-        if question != nil || !runtime.followUps.isEmpty || runtime.changeStats != nil {
+        if !runtime.followUps.isEmpty || runtime.changeStats != nil {
             ZStack(alignment: .bottom) {
-                if let question {
-                    // A question takes the slot from whatever held it and stays until
-                    // it is answered; the answer hands the slot straight back.
-                    QuestionTab(request: question, runtime: runtime)
-                        .id(question.id)
-                        .transition(.softAppear)
-                } else if !runtime.followUps.isEmpty {
+                if !runtime.followUps.isEmpty {
                     // The queued steering prompts take the tab slot while any are queued:
                     // the changes tab hides behind them and reappears once the queue empties.
                     FollowUpQueueTab(runtime: runtime)
@@ -92,10 +86,6 @@ private struct TabSlot: View {
                 }
             }
             .transition(.softAppear)
-            // The question is taller than the tab it replaces and the one that comes back,
-            // so the box and the conversation above it slide to fit; a tab's own arrival
-            // animates via its .softAppear transition instead.
-            .animation(Chrome.panelSlide, value: question?.id)
         }
     }
 }
@@ -183,7 +173,7 @@ struct ComposerView: View {
         .background {
             ComposerWorkingDotsSlot(runtime: runtime)
         }
-        .glassEffect(.regular, in: .rect(cornerRadius: 22, style: .continuous))
+        .modifier(ComposerSurface())
         .onChange(of: suggestions) { _, new in
             if new.isVisible {
                 controller.showSuggestions(AnyView(suggestionMenu()), itemCount: new.items.count)
@@ -1079,5 +1069,24 @@ final class FileIndex {
             if results.count >= 20_000 { break }
         }
         return results
+    }
+}
+
+/// The chat box's surface: Liquid Glass, or, inside a floating glass panel (a helper's,
+/// a head's), the panel's flat control fill, since glass on the panel's glass sampled
+/// the same pixels twice on every frame the transcript moved under it.
+private struct ComposerSurface: ViewModifier {
+    @Environment(\.isOnGlassPanel) private var isOnGlassPanel
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        if isOnGlassPanel {
+            content
+                .background(shape.fill(Chrome.panelControlFill(isDark: colorScheme == .dark)))
+                .clipShape(shape)
+        } else {
+            content.glassEffect(.regular, in: shape)
+        }
     }
 }

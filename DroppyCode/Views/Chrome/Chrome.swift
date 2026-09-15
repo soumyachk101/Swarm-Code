@@ -157,18 +157,52 @@ extension Color {
 // MARK: - Surfaces
 
 extension View {
-    /// Capsule buttons stay Liquid Glass, washed with a tad of the theme.
+    /// Capsule buttons stay Liquid Glass, washed with a tad of the theme. On a glass panel
+    /// they draw flat instead (see `isOnGlassPanel`): glass on glass samples the same
+    /// pixels twice, once for the panel and once for the button.
     func chromeGlassCapsule() -> some View {
-        glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)).interactive(), in: Capsule(style: .continuous))
+        modifier(ChromeGlassSurface(shape: .capsule))
     }
 
     func chromeGlassCircle() -> some View {
-        glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)).interactive(), in: Circle())
+        modifier(ChromeGlassSurface(shape: .circle))
     }
 
     /// The inset content sheet the detail pane floats on.
     func detailSheet() -> some View {
         modifier(DetailSheetModifier())
+    }
+}
+
+/// A control's surface: interactive Liquid Glass, or, inside a glass panel, the panel's
+/// flat control fill, a shade brighter under the pointer the way the glass would be.
+private struct ChromeGlassSurface: ViewModifier {
+    enum Kind { case capsule, circle }
+    let shape: Kind
+    @Environment(\.isOnGlassPanel) private var isOnGlassPanel
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        switch shape {
+        case .capsule:
+            surface(content, in: Capsule(style: .continuous))
+        case .circle:
+            surface(content, in: Circle())
+        }
+    }
+
+    @ViewBuilder
+    private func surface<S: InsettableShape>(_ content: Content, in shape: S) -> some View {
+        if isOnGlassPanel {
+            content
+                .background(shape.fill(Chrome.panelControlFill(isDark: colorScheme == .dark, hovered: isHovered)))
+                .contentShape(shape)
+                .onHover { isHovered = $0 }
+                .animation(Chrome.hover, value: isHovered)
+        } else {
+            content.glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)).interactive(), in: shape)
+        }
     }
 }
 
@@ -507,7 +541,8 @@ final class ChromeScrollModel {
     }
 }
 
-/// The glass veil that settles over the top of a pane as its content scrolls under the chrome.
+/// The veil that settles over the top of a pane as its content scrolls under the chrome: a
+/// scrim and the theme's tint, fading out downward.
 struct PaneTopVeil: View {
     let model: ChromeScrollModel
     @Environment(\.colorScheme) private var colorScheme
@@ -516,35 +551,38 @@ struct PaneTopVeil: View {
         let progress = Double(model.progress)
         let isDark = colorScheme == .dark
         let scrim = isDark ? 0.42 + 0.28 * progress : 0.48 + 0.30 * progress
+        let base = isDark ? Color.black : Color.white
+        let tint = Chrome.glassTint.opacity(isDark ? 0.22 : 0.16)
         ZStack {
-            // Only once content has scrolled under the chrome; at rest there is nothing to sample.
+            // Only once content has scrolled under the chrome; at rest there is nothing to cover.
             if progress > 0 {
-                // The liquid glass is the veil: it samples and refracts the
-                // content sliding under the chrome. The scrim settles it toward
-                // the scheme's base, and the theme's tint colours it lightly.
-                Rectangle()
-                    .fill(.clear)
-                    .glassEffect(.regular, in: Rectangle())
-                Rectangle()
-                    .fill((isDark ? Color.black : Color.white).opacity(scrim))
-                Rectangle()
-                    .fill(Chrome.glassTint.opacity(isDark ? 0.22 : 0.16))
+                // Two gradient fills and nothing else: the scrim settles the content sliding
+                // under the chrome toward the scheme's base and the theme's tint colours it.
+                // This was liquid glass under a gradient mask, which cost a backdrop sample
+                // and an offscreen mask pass on every scrolled frame of every chat (a
+                // bottom-anchored conversation keeps the veil fully on); the chrome's own
+                // capsules still refract what passes under them.
+                Self.fade(base.opacity(scrim))
+                Self.fade(tint)
             }
         }
         .opacity(0.08 + 0.92 * progress)
-        .mask(
-            LinearGradient(
-                stops: [
-                    .init(color: .black, location: 0),
-                    .init(color: .black, location: 0.38),
-                    .init(color: .clear, location: 1),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
         .frame(height: Chrome.veilHeight)
         .allowsHitTesting(false)
+    }
+
+    /// A colour held over the top 38% of the veil and fading out by its bottom edge, the
+    /// mask the glass used to wear.
+    private static func fade(_ color: Color) -> LinearGradient {
+        LinearGradient(
+            stops: [
+                .init(color: color, location: 0),
+                .init(color: color, location: 0.38),
+                .init(color: color.opacity(0), location: 1),
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 }
 

@@ -108,6 +108,7 @@ final class AppSettings {
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
         static let hydraShowsHeadDetails = "hydraShowsHeadDetails"
         static let hydraAutoPopsHeads = "hydraAutoPopsHeads"
+        static let hydraTempersHeadEffort = "hydraTempersHeadEffort"
         static let showsUsagePanel = "showsUsagePanel"
         static let sidebarFloats = "sidebarFloats"
         static let sidebarOnlyFloats = "sidebarOnlyFloats"
@@ -117,6 +118,7 @@ final class AppSettings {
         static let usagePanelHeight = "usagePanelHeight"
         static let hydraPairs = "hydraPairs"
         static let hasSeenTour = "hasSeenTour"
+        static let hasSeenHydraIntro = "hasSeenHydraIntro"
     }
 
     static let modelListLimit = 15
@@ -344,7 +346,8 @@ final class AppSettings {
         didSet { store(modelPreferences, forKey: Key.modelPreferences) }
     }
 
-    /// Hydra is on for the app: every chat's chrome row shows its mark while it is on.
+    /// Hydra is on for the app from the first launch: what the app is for. Switched
+    /// off in Settings › Hydra, or per chat from the mark.
     var hydraEnabled: Bool {
         didSet { defaults.set(hydraEnabled, forKey: Key.hydraEnabled) }
     }
@@ -358,6 +361,11 @@ final class AppSettings {
 
     var hasSeenTour: Bool {
         didSet { defaults.set(hasSeenTour, forKey: Key.hasSeenTour) }
+    }
+
+    /// The first chat's Hydra intro was read (see `HydraIntroPopover`).
+    var hasSeenHydraIntro: Bool {
+        didSet { defaults.set(hasSeenHydraIntro, forKey: Key.hasSeenHydraIntro) }
     }
 
     /// With Hydra on, a follow-up queued while a turn runs goes to a head at once
@@ -409,6 +417,13 @@ final class AppSettings {
     /// its own, on the left and the right, until each side is full (see `PanelScene.autoPopped`).
     var hydraAutoPopsHeads: Bool {
         didSet { defaults.set(hydraAutoPopsHeads, forKey: Key.hydraAutoPopsHeads) }
+    }
+
+    /// Heads think at a working effort rather than the lead's own: a lead above medium
+    /// sends out medium heads on the same model, unless the pair names an effort for
+    /// them (see `AppModel.hydraHeadsEffort`).
+    var hydraTempersHeadEffort: Bool {
+        didSet { defaults.set(hydraTempersHeadEffort, forKey: Key.hydraTempersHeadEffort) }
     }
 
     /// A floating panel with the chat's usage, the plan's limits and credits, beside
@@ -522,9 +537,10 @@ final class AppSettings {
         lastEfforts = defaults.dictionary(forKey: Key.efforts) as? [String: String] ?? [:]
         modelList = Self.load([ModelPin].self, forKey: Key.modelList) ?? []
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
-        hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
+        hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? true
         hydraDefaultEnabled = defaults.object(forKey: Key.hydraDefaultEnabled) as? Bool ?? true
         hasSeenTour = defaults.object(forKey: Key.hasSeenTour) as? Bool ?? false
+        hasSeenHydraIntro = defaults.object(forKey: Key.hasSeenHydraIntro) as? Bool ?? false
         if let stored = defaults.array(forKey: Key.panelSize) as? [Double], stored.count == 2 {
             panelSize = CGSize(width: stored[0], height: stored[1])
         }
@@ -536,6 +552,7 @@ final class AppSettings {
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
         hydraShowsHeadDetails = defaults.object(forKey: Key.hydraShowsHeadDetails) as? Bool ?? false
         hydraAutoPopsHeads = defaults.object(forKey: Key.hydraAutoPopsHeads) as? Bool ?? false
+        hydraTempersHeadEffort = defaults.object(forKey: Key.hydraTempersHeadEffort) as? Bool ?? true
         showsUsagePanel = defaults.object(forKey: Key.showsUsagePanel) as? Bool ?? false
         sidebarFloats = defaults.object(forKey: Key.sidebarFloats) as? Bool ?? false
         sidebarOnlyFloats = defaults.object(forKey: Key.sidebarOnlyFloats) as? Bool ?? false

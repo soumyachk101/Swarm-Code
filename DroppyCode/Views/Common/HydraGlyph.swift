@@ -1,3 +1,5 @@
+import AppKit
+import QuartzCore
 import SwiftUI
 
 /// A head's mark: its own dragon, in its colour. The same glyph stands for the head
@@ -18,10 +20,9 @@ struct HydraGlyph: View {
     var body: some View {
         ZStack {
             if isRunning {
-                Circle()
-                    .stroke(persona.color.opacity(0.55), lineWidth: 1.5)
+                HydraBreathRing(color: NSColor(persona.color.opacity(0.55)).cgColor, lineWidth: 1.5)
                     .frame(width: size, height: size)
-                    .modifier(HydraBreath())
+                    .allowsHitTesting(false)
             }
             Image(persona.asset)
                 .resizable()
@@ -64,18 +65,150 @@ struct HydraGlyph: View {
     }
 }
 
-/// The ring around a working head: it swells and fades, over and over.
-private struct HydraBreath: ViewModifier {
-    @State private var swollen = false
+/// The ring around a working head: it swells and fades, over and over. Drawn by Core
+/// Animation, so the breath runs on the render server and no frame of it re-renders
+/// the pill or the panel the glyph sits in (a SwiftUI `repeatForever` did, at the
+/// display's full rate, once per head at work).
+private struct HydraBreathRing: NSViewRepresentable {
+    let color: CGColor
+    let lineWidth: CGFloat
 
-    func body(content: Content) -> some View {
-        content
-            .scaleEffect(swollen ? 1.5 : 1.05)
-            .opacity(swollen ? 0 : 0.9)
-            .onAppear {
-                guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-                withAnimation(.easeOut(duration: 1.6).repeatForever(autoreverses: false)) { swollen = true }
-            }
+    func makeNSView(context: Context) -> HydraBreathRingView {
+        let view = HydraBreathRingView()
+        view.configure(color: color, lineWidth: lineWidth)
+        return view
+    }
+
+    func updateNSView(_ view: HydraBreathRingView, context: Context) {
+        view.configure(color: color, lineWidth: lineWidth)
+    }
+}
+
+final class HydraBreathRingView: NSView {
+    private let ring = CAShapeLayer()
+    private var lineWidth: CGFloat = 0
+
+    private static let animationKey = "breath"
+    /// One breath: the ring grows from just outside the glyph to half again its size
+    /// while it fades out, then starts over.
+    private static let period: CFTimeInterval = 1.6
+    private static let restingScale: CGFloat = 1.05
+    private static let swollenScale: CGFloat = 1.5
+    private static let restingOpacity: Float = 0.9
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .never
+        // The ring swells past the glyph's frame: nothing here may clip it.
+        layer?.masksToBounds = false
+        ring.fillColor = nil
+        ring.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        // Never implicitly animated: the path and colour are set once, and the breath is
+        // an explicit animation of its own.
+        ring.actions = [
+            "path": NSNull(), "strokeColor": NSNull(), "lineWidth": NSNull(), "bounds": NSNull(),
+            "position": NSNull(), "opacity": NSNull(), "transform": NSNull(), "contentsScale": NSNull(),
+        ]
+        layer?.addSublayer(ring)
+        // The render server keeps an animation only while its layer is on screen; the app
+        // coming back to the front is a moment a ring may have lost its breath.
+        NotificationCenter.default.addObserver(self, selector: #selector(applicationDidBecomeActive), name: NSApplication.didBecomeActiveNotification, object: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    func configure(color: CGColor, lineWidth: CGFloat) {
+        let resized = lineWidth != self.lineWidth
+        self.lineWidth = lineWidth
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ring.strokeColor = color
+        ring.lineWidth = lineWidth
+        CATransaction.commit()
+        if resized { placeRing() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // A ring that joins a window late (a row built off screen, a panel just opened)
+        // needs its breath running from the shared clock, and its stroke at the window's scale.
+        guard window != nil else { return }
+        matchBackingScale()
+        installAnimation()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        matchBackingScale()
+    }
+
+    @objc private func applicationDidBecomeActive() {
+        guard window != nil else { return }
+        installAnimation()
+    }
+
+    override func layout() {
+        super.layout()
+        placeRing()
+    }
+
+    /// The stroke is rasterised at the layer's scale; a Retina window needs it told.
+    private func matchBackingScale() {
+        guard let scale = window?.backingScaleFactor else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ring.contentsScale = scale
+        CATransaction.commit()
+    }
+
+    /// The ring fills the view, centred, so the breath scales it about the glyph's middle.
+    private func placeRing() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ring.bounds = bounds
+        ring.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        ring.path = CGPath(ellipseIn: bounds.insetBy(dx: lineWidth / 2, dy: lineWidth / 2), transform: nil)
+        CATransaction.commit()
+    }
+
+    private func installAnimation() {
+        ring.removeAnimation(forKey: Self.animationKey)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // The resting frame: what shows under reduced motion, and between breaths.
+        ring.opacity = Self.restingOpacity
+        ring.transform = CATransform3DMakeScale(Self.restingScale, Self.restingScale, 1)
+        CATransaction.commit()
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let swell = CABasicAnimation(keyPath: "transform.scale")
+        swell.fromValue = Self.restingScale
+        swell.toValue = Self.swollenScale
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = Self.restingOpacity
+        fade.toValue = 0
+        for animation in [swell, fade] {
+            animation.duration = Self.period
+            animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        }
+        let breath = CAAnimationGroup()
+        breath.animations = [swell, fade]
+        breath.duration = Self.period
+        breath.repeatCount = .infinity
+        // One fixed origin on the shared clock, so every ring in the app breathes in step
+        // and a restart picks the breath up where it is rather than snapping it back.
+        breath.beginTime = ring.convertTime(1, from: nil)
+        breath.isRemovedOnCompletion = false
+        ring.add(breath, forKey: Self.animationKey)
     }
 }
 

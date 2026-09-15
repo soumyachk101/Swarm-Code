@@ -1,12 +1,28 @@
 import SwiftUI
 
-/// The agent's questions as a tab rising from the top of the chat box, exactly like the
-/// queue tab: while it asks, it takes the queue's slot (the queue, the changes tab or the
-/// working line moves aside), and the moment the answer is sent the slot goes back to
-/// whatever held it. It has no fold: it stays open until the questions are answered or
-/// skipped. Past a screenful the questions scroll.
-struct QuestionTab: View {
-    static let overlap: CGFloat = ThreadChangesTab.overlap
+/// The agent's questions as a badge at the end of the conversation, answered in
+/// its popover; it leaves with the answer.
+struct QuestionBadgeRow: View {
+    let request: QuestionRequest
+    let runtime: ThreadRuntime
+    @State private var isShowingQuestions = false
+
+    var body: some View {
+        let count = request.questions.count
+        ChatBadge(
+            title: count == 1 ? "1 question" : "\(count) questions",
+            caption: "to answer",
+            needsAttention: true,
+            isPresented: $isShowingQuestions,
+            glyph: { Image(systemName: "questionmark.bubble").foregroundStyle(.tint) },
+            detail: { QuestionSheet(request: request, runtime: runtime) }
+        )
+    }
+}
+
+/// The agent's questions, answered in the badge's popover. It stays open until
+/// the questions are answered or skipped. Past a screenful the questions scroll.
+struct QuestionSheet: View {
     /// The most the questions take before they scroll.
     private static let maxHeight: CGFloat = 320
 
@@ -19,72 +35,50 @@ struct QuestionTab: View {
     @State private var contentHeight: CGFloat = 0
 
     var body: some View {
-        let shape = UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12, style: .continuous)
         let count = request.questions.count
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 7) {
-                Image(systemName: "questionmark.bubble")
-                    .font(Chrome.inlineIconFont)
-                    .foregroundStyle(Chrome.secondaryText)
-                Text(verbatim: count == 1 ? "1 question" : "\(count) questions")
-                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                Text(verbatim: "to answer")
-                    .foregroundStyle(Chrome.secondaryText)
+        VStack(alignment: .leading, spacing: 4) {
+            // The questions report their height and the clip takes exactly it, up to the
+            // cap; only then does the scroll view have anything to scroll.
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 14) {
+                    ForEach(request.questions) { question in
+                        questionView(question)
+                    }
+                }
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(contentHeight, Self.maxHeight))
+            // Discrete value: animating on the measured float re-triggered every frame.
+            .animation(Chrome.panelSlide, value: isComplete)
+
+            HStack(spacing: 8) {
+                // Why Send is off, rather than a dead button and no reason for it.
+                if unansweredCount > 0 {
+                    Text(verbatim: unansweredCount == 1 ? "1 question still to answer" : "\(unansweredCount) questions still to answer")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 8)
+                Button("Skip these questions") { runtime.answer(request, answers: [:]) }
+                    .buttonStyle(.glass)
+                    .help("Sends no answers and lets the agent carry on")
+                Button("Send answer") { runtime.answer(request, answers: answers) }
+                    .buttonStyle(.glassProminent)
+                    .disabled(!isComplete)
+                    .help(isComplete
+                        ? "Sends your answers"
+                        : (count == 1 ? "Answer the question to send" : "Answer all \(count) questions to send"))
             }
-            .font(.system(size: 12, weight: .medium).monospacedDigit())
-            .frame(height: 22)
-            .accessibilityLabel(Text(verbatim: count == 1 ? "1 question from the agent" : "\(count) questions from the agent"))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Divider().opacity(0.5)
-                // The questions report their height and the clip takes exactly it, up to the
-                // cap; only then does the scroll view have anything to scroll.
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        ForEach(request.questions) { question in
-                            questionView(question)
-                        }
-                    }
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
-                }
-                .scrollBounceBehavior(.basedOnSize)
-                .frame(height: min(contentHeight, Self.maxHeight))
-                // Discrete value: animating on the measured float re-triggered every frame.
-                .animation(Chrome.panelSlide, value: isComplete)
-
-                HStack(spacing: 8) {
-                    // Why Send is off, rather than a dead button and no reason for it.
-                    if unansweredCount > 0 {
-                        Text(verbatim: unansweredCount == 1 ? "1 question still to answer" : "\(unansweredCount) questions still to answer")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    Button("Skip these questions") { runtime.answer(request, answers: [:]) }
-                        .buttonStyle(.glass)
-                        .help("Sends no answers and lets the agent carry on")
-                    Button("Send answer") { runtime.answer(request, answers: answers) }
-                        .buttonStyle(.glassProminent)
-                        .disabled(!isComplete)
-                        .help(isComplete
-                            ? "Sends your answers"
-                            : (count == 1 ? "Answer the question to send" : "Answer all \(count) questions to send"))
-                }
-                .controlSize(.small)
-                .padding(.top, 4)
-            }
-            .padding(.top, 6)
+            .controlSize(.small)
+            .padding(.top, 4)
         }
         .padding(.horizontal, 12)
-        .padding(.top, 7)
-        .padding(.bottom, 7 + Self.overlap)
-        .frame(maxWidth: 560)
-        .glassEffect(.regular, in: shape)
-        .contentShape(shape)
+        .frame(width: 520)
+        .padding(.vertical, 12)
     }
 
     @ViewBuilder

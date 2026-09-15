@@ -190,7 +190,7 @@ private struct ModelEffortPanel: View {
         // In a pair the slider is the lead's: it wears the pair's fusion, says whose effort
         // it sets, and resets to the pair's lead effort rather than the model's default.
         let pair = model.hydraIsOn(thread) ? model.hydraPair(for: thread) : nil
-        let pairLook = pair.map { EffortPairLook($0, registry: model.providers) }
+        let pairLook = pair.map { EffortPairLook($0, registry: model.providers, resolvedHeadsEffort: model.hydraLaunch(for: thread)?.workerEffort) }
         return EffortSliderCard(
             modelName: option?.shortName ?? thread.model ?? thread.provider.displayName,
             provider: thread.provider,
@@ -496,10 +496,10 @@ struct EffortPairLook: Hashable {
     var headsEffort: String?
 
     @MainActor
-    init(_ pair: HydraPair, registry: ProviderRegistry) {
+    init(_ pair: HydraPair, registry: ProviderRegistry, resolvedHeadsEffort: String?) {
         title = HydraPairSummary.title(pair, registry: registry)
         brand = EffortPairBrand(pair)
-        headsEffort = pair.workerEffort.map { ModelOption.effortTitle($0).lowercased() }
+        headsEffort = (pair.workerEffort ?? resolvedHeadsEffort).map { ModelOption.effortTitle($0).lowercased() }
     }
 
     /// Whose effort the slider sets, and what the heads run at.

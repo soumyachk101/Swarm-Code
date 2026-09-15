@@ -115,7 +115,7 @@ enum TourCaptures {
             model.updateThread(WebsiteCaptures.freshThreadID) { $0.effort = "max" }
             guard let thread = model.thread(WebsiteCaptures.freshThreadID) else { return nil }
             let option = model.providers.model(thread.model, for: thread.provider)
-            let pair = model.settings.hydraPair(thread.hydraPairID).map { EffortPairLook($0, registry: model.providers) }
+            let pair = model.settings.hydraPair(thread.hydraPairID).map { EffortPairLook($0, registry: model.providers, resolvedHeadsEffort: nil) }
             let card = EffortSliderCard(
                 modelName: option?.shortName ?? thread.model ?? thread.provider.displayName,
                 provider: thread.provider,

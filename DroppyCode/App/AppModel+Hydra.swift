@@ -211,8 +211,19 @@ extension AppModel {
         return provider
     }
 
+    /// The effort heads inherit from a lead when the pair leaves it open: medium when
+    /// the lead thinks above medium on a model with a medium, since a head's brief is a
+    /// bounded task and the lead keeps the judgement; the lead's own effort at medium or
+    /// below, or on a scale with no medium; nil when the lead has none.
+    static func hydraHeadsEffort(leadEffort: String?, scale: [String]) -> String? {
+        guard let leadEffort, !leadEffort.isEmpty else { return nil }
+        guard let lead = scale.firstIndex(of: leadEffort), let medium = scale.firstIndex(of: "medium") else { return leadEffort }
+        return lead > medium ? "medium" : leadEffort
+    }
+
     /// What the heads run on while the chat leads, or nil with Hydra off. Without a pair
-    /// the heads inherit the chat's own model and effort, and go out without a cap.
+    /// the heads inherit the chat's own model, and the effort as `hydraHeadsEffort`
+    /// tempers it, and go out without a cap.
     func hydraLaunch(for thread: ChatThread) -> HydraLaunch? {
         guard hydraIsOn(thread) else { return nil }
         let pair = hydraPair(for: thread)
@@ -227,12 +238,21 @@ extension AppModel {
             let model = providers.model(pair?.workerModel, for: headsProvider) ?? providers.defaultModel(for: headsProvider)
             label = "\(model?.shortName ?? pair?.workerModel ?? "the default model") on \(headsProvider.displayName)"
         }
+        let pairEffort = keepsModel ? pair?.workerEffort : nil
+        let workerEffort: String?
+        if let pairEffort {
+            workerEffort = pairEffort
+        } else if settings.hydraTempersHeadEffort, !elsewhere {
+            workerEffort = Self.hydraHeadsEffort(leadEffort: thread.effort, scale: providers.model(thread.model, for: thread.provider)?.efforts ?? [])
+        } else {
+            workerEffort = nil
+        }
         return HydraLaunch(
             headsProvider: headsProvider,
             runsNatively: !elsewhere && Self.hydraIsNative(thread.provider),
             headsLabel: label,
             workerModel: keepsModel ? pair?.workerModel : nil,
-            workerEffort: keepsModel ? pair?.workerEffort : nil,
+            workerEffort: workerEffort,
             maxHeads: pair?.maxHeads,
             isolatesHeads: settings.hydraIsolateHeads,
             autoMerges: settings.hydraAutoMerge,

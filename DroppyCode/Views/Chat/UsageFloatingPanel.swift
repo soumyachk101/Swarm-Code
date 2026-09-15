@@ -48,6 +48,9 @@ struct UsageFloatingPanel: View {
             strip
         }
         .frame(width: size.width, height: size.height)
+        // Everything inside draws flat over the panel's glass (see `isOnGlassPanel`):
+        // the panel is one glass pass, its controls are not a second one each.
+        .environment(\.isOnGlassPanel, true)
         // The frame follows the pane every frame of a live resize.
         .animation(nil, value: liveResize.isActive)
         .background {
