@@ -93,6 +93,7 @@ final class AppSettings {
         static let hydraAlwaysHeads = "hydraAlwaysHeads"
         static let hydraIsolateHeads = "hydraIsolateHeads"
         static let hydraAutoMerge = "hydraAutoMerge"
+        static let hydraReviewHeads = "hydraReviewHeads"
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
         static let hydraPairs = "hydraPairs"
     }
@@ -282,6 +283,12 @@ final class AppSettings {
         didSet { defaults.set(hydraAutoMerge, forKey: Key.hydraAutoMerge) }
     }
 
+    /// The lead gives every head's landed work a quick audit before it finishes, reading
+    /// the files the reports name and correcting what is wrong itself. Off unless asked.
+    var hydraReviewHeads: Bool {
+        didSet { defaults.set(hydraReviewHeads, forKey: Key.hydraReviewHeads) }
+    }
+
     /// A head that finishes leaves the Hydra panel on its own, for the sidebar under its
     /// lead, instead of waiting for "Clear finished heads".
     var hydraAutoClearFinished: Bool {
@@ -339,6 +346,7 @@ final class AppSettings {
         hydraAlwaysHeads = defaults.object(forKey: Key.hydraAlwaysHeads) as? Bool ?? false
         hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
         hydraAutoMerge = defaults.object(forKey: Key.hydraAutoMerge) as? Bool ?? false
+        hydraReviewHeads = defaults.object(forKey: Key.hydraReviewHeads) as? Bool ?? false
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
     }
