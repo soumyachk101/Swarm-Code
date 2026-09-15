@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
+use parking_lot::Mutex;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -737,17 +739,13 @@ impl PlanLimitsReader {
     // -----------------------------------------------------------------------
 
     pub fn set_probe(provider: ProviderKind, probe: PlanLimitsProbe) {
-        PROBES
-            .lock()
-            .expect("plan-limits probes poisoned")
-            .insert(provider, probe);
+        let mut map = probes().lock();
+        map.insert(provider, probe);
     }
 
     pub fn clear_probe(provider: ProviderKind) {
-        PROBES
-            .lock()
-            .expect("plan-limits probes poisoned")
-            .remove(&provider);
+        let mut map = probes().lock();
+        map.remove(&provider);
     }
 
     // -----------------------------------------------------------------------
@@ -804,7 +802,7 @@ impl PlanLimitsReader {
 
     async fn dispatch_probe(provider: ProviderKind) -> Option<PlanLimits> {
         let probe = {
-            let guard = PROBES.lock().expect("plan-limits probes poisoned");
+            let guard = probes().lock();
             guard.get(&provider).cloned()
         };
         match probe {
@@ -820,12 +818,18 @@ use std::sync::{Arc, Mutex};
 /// sets one of these per-provider to wire the reader into its real network
 /// or subprocess stack.
 #[derive(Clone)]
-pub struct PlanLimitsProbe(Arc<dyn Fn(ProviderKind) -> futures_core::future::BoxFuture<'static, Option<PlanLimits>> + Send + Sync>);
+pub struct PlanLimitsProbe(
+    Arc<
+        dyn Fn(ProviderKind) -> futures::future::BoxFuture<'static, Option<PlanLimits>>
+            + Send
+            + Sync,
+    >,
+);
 
 impl PlanLimitsProbe {
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(ProviderKind) -> futures_core::future::BoxFuture<'static, Option<PlanLimits>>
+        F: Fn(ProviderKind) -> futures::future::BoxFuture<'static, Option<PlanLimits>>
             + Send
             + Sync
             + 'static,
@@ -840,8 +844,11 @@ impl std::fmt::Debug for PlanLimitsProbe {
     }
 }
 
-static PROBES: once_cell::sync::Lazy<Mutex<HashMap<ProviderKind, PlanLimitsProbe>>> =
-    once_cell::sync::Lazy::new(|| Mutex::new(HashMap::new()));
+static PROBES: OnceLock<Mutex<HashMap<ProviderKind, PlanLimitsProbe>>> = OnceLock::new();
+
+fn probes() -> &'static Mutex<HashMap<ProviderKind, PlanLimitsProbe>> {
+    PROBES.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 // ---------------------------------------------------------------------------
 // JSON helpers — parse the JSON returned by the provider's usage endpoint

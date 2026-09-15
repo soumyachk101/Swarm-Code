@@ -7,8 +7,8 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
 use chrono::DateTime;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::RwLock;
