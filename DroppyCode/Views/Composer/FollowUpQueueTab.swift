@@ -112,11 +112,12 @@ struct FollowUpQueueTab: View {
             .opacity(isCollapsed ? 0 : 1)
             // The fold needs the clip, but a lifted row must not: its capsule reaches
             // 8 points past the rows on either side and its shadow hangs below, and a
-            // tight clip cut both off. The mask runs out to the tab's own edges, and
-            // a little above and below while the list is open, closing in with the fold.
+            // tight clip cut both off. The mask runs well past the tab's own edges, for the
+            // lifted row's overshoot and shadow, and a little above and below while the
+            // list is open, closing in with the fold.
             .mask {
                 Rectangle()
-                    .padding(.horizontal, -12)
+                    .padding(.horizontal, -32)
                     .padding(.vertical, isCollapsed ? 0 : -16)
             }
             .allowsHitTesting(!isCollapsed)

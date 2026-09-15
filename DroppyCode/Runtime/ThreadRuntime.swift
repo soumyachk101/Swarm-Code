@@ -189,6 +189,11 @@ final class ThreadRuntime {
     var hydraMergeStage: String?
     /// When the merge under way began, so the timeline can show how long it has been at it.
     var hydraMergeStartedAt: Date?
+    /// The id the merge's outcome note will land under, chosen when the merge starts. The
+    /// timeline draws its merging pill as the block with this id, so the note takes the
+    /// pill's place under the same identity and the pill morphs into the merged report
+    /// rather than being replaced (see `DisplayBlock.merging`).
+    var hydraMergeNoteID: String?
     /// A native head's progress while it runs (its provider's note, its tool count, its
     /// spend), kept here rather than on the thread record: the provider reports it many
     /// times a second, and a write to a thread re-renders everything that lists threads.
@@ -588,13 +593,42 @@ final class ThreadRuntime {
         guard let bundle = first.bundleID else { return first }
         var end = index
         while end + 1 < followUps.count, followUps[end + 1].bundleID == bundle { end += 1 }
-        let members = followUps[index...end]
-        let texts = members.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let members = Array(followUps[index...end])
         var merged = first
-        merged.text = texts.joined(separator: "\n\n")
+        merged.text = Self.bundleText(members)
         merged.attachments = members.flatMap { $0.attachments }
         merged.bundleID = nil
         return merged
+    }
+
+    /// The text of a bundle going out as one message. With no attachment among the
+    /// members, their texts one after the other; otherwise each message is numbered and
+    /// names its own pictures (by their order among the images sent, which is the order
+    /// the merged attachments keep) and files (by path) under it, so the model never has
+    /// to guess which picture or file came with which of the messages.
+    static func bundleText(_ members: [FollowUpPrompt]) -> String {
+        let texts = members.map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+        guard members.count > 1, members.contains(where: { !$0.attachments.isEmpty }) else {
+            return texts.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
+        var imageNumber = 0
+        var sections: [String] = []
+        for (offset, member) in members.enumerated() {
+            let number = offset + 1
+            var lines = ["Message \(number):"]
+            if !texts[offset].isEmpty { lines.append(texts[offset]) }
+            let named = member.attachments.map { attachment -> String in
+                guard attachment.isImage else { return "file \(attachment.path)" }
+                imageNumber += 1
+                return "image \(imageNumber) (\(attachment.name))"
+            }
+            if !named.isEmpty {
+                lines.append("Attached to message \(number): " + named.joined(separator: ", ") + ".")
+            }
+            sections.append(lines.joined(separator: "\n"))
+        }
+        let header = "\(members.count) messages sent together. The pictures and files a message came with are named under it, the pictures numbered in the order they are attached."
+        return ([header] + sections).joined(separator: "\n\n")
     }
 
     /// Removes the prompt at `index` and every following adjacent prompt with the same
@@ -2033,9 +2067,10 @@ final class ThreadRuntime {
     // MARK: - Timeline mutations
 
     /// A note from Hydra in the timeline, with no turn behind it: what it merged, what it
-    /// could not. Its first line is its title.
-    func appendHydraNote(_ text: String) {
-        append(TimelineItem(turnID: nil, content: .user(UserMessage(text: text, hydraHeads: []))))
+    /// could not. Its first line is its title. An `id` lets the note land under an identity
+    /// the timeline is already drawing (the merging pill, see `hydraMergeNoteID`).
+    func appendHydraNote(_ text: String, id: String? = nil) {
+        append(TimelineItem(id: id ?? UUID().uuidString, turnID: nil, content: .user(UserMessage(text: text, hydraHeads: []))))
         app?.updateThread(threadID) { $0.updatedAt = .now }
         scheduleSave()
     }

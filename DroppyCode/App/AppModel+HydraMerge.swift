@@ -16,11 +16,13 @@ extension AppModel {
               let runtime = existingRuntime(for: leadID), !runtime.isHydraMerging else { return }
         runtime.isHydraMerging = true
         runtime.hydraMergeStartedAt = .now
+        runtime.hydraMergeNoteID = UUID().uuidString
         runtime.hydraMergeStage = "Gathering the team's files"
         defer {
             runtime.isHydraMerging = false
             runtime.hydraMergeStage = nil
             runtime.hydraMergeStartedAt = nil
+            runtime.hydraMergeNoteID = nil
         }
         // A head's work still going into the checkout finishes first: the snapshot the
         // commit is built from must hold the patch whole or not at all. Landings that have
@@ -445,7 +447,13 @@ extension AppModel {
 
     /// A note from Hydra in the lead's timeline, and word of it when the chat is out of view.
     private func note(_ leadID: UUID, _ title: String, _ body: String) {
-        existingRuntime(for: leadID)?.appendHydraNote(title + "\n" + body)
+        // The note lands under the id the merging pill has been drawn with, so the timeline
+        // keeps one row from the first stage to the outcome; the id is spent here, so a
+        // second note in the same run would get one of its own.
+        let runtime = existingRuntime(for: leadID)
+        let id = runtime?.hydraMergeNoteID
+        runtime?.hydraMergeNoteID = nil
+        runtime?.appendHydraNote(title + "\n" + body, id: id)
         let onScreen = selectedThreadID == leadID
         guard !(NSApp.isActive && onScreen) else { return }
         updateThread(leadID) { $0.hasUnread = true }

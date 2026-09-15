@@ -87,7 +87,7 @@ struct ThreadTimeline: View, Equatable {
         let blocks = blockCache.blocks(
             for: entries,
             showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning,
-            isHydraMerging: runtime.isHydraMerging,
+            hydraMergeID: runtime.isHydraMerging ? (runtime.hydraMergeNoteID ?? "hydra-merging") : nil,
             workingHeads: heads.compactMap { $0.hydra?.status == .running ? $0.hydra?.index : nil }
         )
         let hydraMentionPersonas = blockCache.mentionPersonas(for: heads)
@@ -1179,8 +1179,10 @@ enum DisplayBlock: Identifiable, Equatable {
     /// The team's work on its way to the remote once the lead's turn is over (see
     /// `AppModel.autoMergeHydraWork`). Never built from the entries either: the timeline
     /// appends its pill while the merge runs and drops it when the note about the outcome
-    /// lands, the pill morphing in place into the merged report.
-    case merging
+    /// lands, the pill morphing in place into the merged report. Carries the id the
+    /// outcome note will land under (`ThreadRuntime.hydraMergeNoteID`), so the note's
+    /// block takes this one's identity and the pill morphs into the merged report.
+    case merging(id: String)
     /// The heads still out on the lead's behalf once its turn is over, by their roster
     /// index in the order they went. Never built from the entries: the timeline appends
     /// it while any head works and drops it when the last one reports back.
@@ -1191,7 +1193,7 @@ enum DisplayBlock: Identifiable, Equatable {
         case .turn(let id, _, _, _, _): id
         case .group(let group, _, _): group.id
         case .working(let turnID, _): "working-\(turnID?.uuidString ?? "")"
-        case .merging: "hydra-merging"
+        case .merging(let id): id
         case .headsWorking: "hydra-heads-working"
         }
     }
@@ -1215,6 +1217,21 @@ enum DisplayBlock: Identifiable, Equatable {
         }
     }
 
+    /// The merge pill's state when this block is the pill: the merge under way, or the
+    /// note about its outcome. The note lands under the merging block's own id (see
+    /// `ThreadRuntime.hydraMergeNoteID`), so the block keeps its identity across the
+    /// change and one row morphs from the one state to the other.
+    @MainActor
+    var hydraMergePhase: HydraMergePhase? {
+        switch self {
+        case .merging: return .merging
+        case .group(.single(let entry), _, _):
+            guard case .user(let message) = entry.item.content, Self.isMergeOutcome(message) else { return nil }
+            return .outcome(message)
+        default: return nil
+        }
+    }
+
     /// What a build leaves behind besides its blocks: where the last run began. The runs
     /// before it are what an append never touches, so the cache keeps their blocks and
     /// builds the rest again (see `TimelineBlockCache`).
@@ -1228,14 +1245,14 @@ enum DisplayBlock: Identifiable, Equatable {
     }
 
     @MainActor
-    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int] = []) -> [DisplayBlock] {
-        build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads).blocks
+    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, workingHeads: [Int] = []) -> [DisplayBlock] {
+        build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads).blocks
     }
 
     /// The blocks for the entries from `start` on, after `kept`: the blocks the entries
     /// before `start` built last time. Building from 0 with nothing kept is the full build.
     @MainActor
-    static func build(_ entries: [TimelineEntry], from start: Int, keeping kept: ArraySlice<DisplayBlock>, meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int]) -> Built {
+    static func build(_ entries: [TimelineEntry], from start: Int, keeping kept: ArraySlice<DisplayBlock>, meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, workingHeads: [Int]) -> Built {
         // Partition into contiguous runs sharing one turnID (nil groups together), so every
         // turn becomes one block. A run is a range of indices: no entry is copied to find it.
         var runs: [(turnID: UUID?, range: Range<Int>)] = []
@@ -1284,8 +1301,8 @@ enum DisplayBlock: Identifiable, Equatable {
         // lands the merging state morphs into it in place. The outcome and the pill never
         // show together: the note and the flag clearing land in one pass, and this guard
         // covers the beat between them, so there is no second row.
-        if isHydraMerging, !Self.endsWithMergeOutcome(entries) {
-            blocks.append(.merging)
+        if let hydraMergeID, !Self.endsWithMergeOutcome(entries) {
+            blocks.append(.merging(id: hydraMergeID))
         }
         return Built(blocks: blocks, stableCount: stableCount, lastRunStart: runs.last?.range.lowerBound ?? start)
     }
@@ -1301,8 +1318,15 @@ enum DisplayBlock: Identifiable, Equatable {
     /// landing or patch note leads with the head's name instead.
     @MainActor
     private static func endsWithMergeOutcome(_ entries: [TimelineEntry]) -> Bool {
-        guard let last = entries.last, case .user(let message) = last.item.content,
-              message.isFromHydra, (message.hydraHeads ?? []).isEmpty else { return false }
+        guard let last = entries.last, case .user(let message) = last.item.content else { return false }
+        return isMergeOutcome(message)
+    }
+
+    /// Whether a Hydra note is about a merge's outcome. Merge notes are Hydra's own (no
+    /// heads behind them) and titled "Hydra …"; a head's landing or patch note leads with
+    /// the head's name instead.
+    static func isMergeOutcome(_ message: UserMessage) -> Bool {
+        guard message.isFromHydra, (message.hydraHeads ?? []).isEmpty else { return false }
         let title = message.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? ""
         return title.hasPrefix("Hydra ")
     }
@@ -1344,8 +1368,8 @@ final class TimelineBlockCache {
         /// the price of one integer, should a marker ever be written into a row in place.
         var turnEnds: Int
         var isRunning: Bool
-        /// The merge's row comes and goes on this flag alone; no entry changes for it.
-        var isHydraMerging: Bool
+        /// The merge's row comes and goes on this alone; no entry changes for it.
+        var hydraMergeID: String?
         /// The heads' row likewise: it comes and goes as heads start and finish.
         var workingHeads: [Int]
         var showReasoning: Bool
@@ -1354,7 +1378,7 @@ final class TimelineBlockCache {
         func extends(_ old: Key) -> Bool {
             entries.count > old.entries.count
                 && isRunning == old.isRunning
-                && isHydraMerging == old.isHydraMerging
+                && hydraMergeID == old.hydraMergeID
                 && workingHeads == old.workingHeads
                 && showReasoning == old.showReasoning
                 && entries.starts(with: old.entries)
@@ -1372,7 +1396,7 @@ final class TimelineBlockCache {
     private var tailBuilds = 0
     #endif
 
-    func blocks(for entries: [TimelineEntry], showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int] = []) -> [DisplayBlock] {
+    func blocks(for entries: [TimelineEntry], showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, workingHeads: [Int] = []) -> [DisplayBlock] {
         var identities: [ObjectIdentifier] = []
         identities.reserveCapacity(entries.count)
         var turnEnds = 0
@@ -1384,17 +1408,17 @@ final class TimelineBlockCache {
             entries: identities,
             turnEnds: turnEnds,
             isRunning: isRunning,
-            isHydraMerging: isHydraMerging,
+            hydraMergeID: hydraMergeID,
             workingHeads: workingHeads,
             showReasoning: showReasoning
         )
         if wanted == key { return built.blocks }
         if let key, wanted.extends(key),
-           let tail = buildTail(entries, appendedFrom: key.entries.count, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads) {
+           let tail = buildTail(entries, appendedFrom: key.entries.count, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads) {
             built = tail
         } else {
             meta = TimelineMeta.build(entries)
-            built = DisplayBlock.build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads)
+            built = DisplayBlock.build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads)
         }
         key = wanted
         return built.blocks
@@ -1406,7 +1430,7 @@ final class TimelineBlockCache {
     /// and the synthetic blocks after it are built again, over the meta grown by the new
     /// entries, and the rest is kept. Nil when a new end marker folds a kept turn block;
     /// that build starts over.
-    private func buildTail(_ entries: [TimelineEntry], appendedFrom appended: Int, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool, workingHeads: [Int]) -> DisplayBlock.Built? {
+    private func buildTail(_ entries: [TimelineEntry], appendedFrom appended: Int, showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, workingHeads: [Int]) -> DisplayBlock.Built? {
         var grown = meta
         for entry in entries[appended...] {
             grown.add(entry)
@@ -1415,14 +1439,14 @@ final class TimelineBlockCache {
                 return nil
             }
         }
-        let tail = DisplayBlock.build(entries, from: built.lastRunStart, keeping: built.blocks[..<built.stableCount], meta: grown, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads)
+        let tail = DisplayBlock.build(entries, from: built.lastRunStart, keeping: built.blocks[..<built.stableCount], meta: grown, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads)
         #if DEBUG
         // The fast path must be invisible: now and then, hold it against a full build.
         // A difference is a bug in the fast path, not a reason to crash a chat: it is
         // logged, and the full build stands in.
         tailBuilds += 1
         if tailBuilds % 20 == 0 {
-            let full = DisplayBlock.build(entries, meta: grown, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging, workingHeads: workingHeads)
+            let full = DisplayBlock.build(entries, meta: grown, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads)
             if tail.blocks != full {
                 print("ThreadTimeline: the tail build differed from a full build after \(entries.count) entries")
                 return nil
@@ -1539,37 +1563,43 @@ private struct DisplayBlockView: View, Equatable {
     }
 
     var body: some View {
-        switch block {
-        case .group(let group, let summary, let hasReply):
-            TimelineGroupView(group: group, runtime: runtime, summary: summary, hasReply: hasReply, context: context)
-        case .turn(_, let turnID, let entries, let summary, let showsWorking):
-            // The fold is a change of what the block shows, in the same frame, with no
-            // transition: a fade over a block that can run to thousands of points is a
-            // whole-layer composite the renderer may draw as nothing.
-            if let summary {
-                let split = Self.splitTurnEntries(entries)
-                TurnFinishedBlock(
-                    runtime: runtime,
-                    turnID: turnID,
-                    summary: summary,
-                    userEntries: split.userEntries,
-                    content: split.content,
-                    workingDirectory: context.workingDirectory,
-                    canUndo: context.canRewind
-                )
-                .transition(.identity)
-            } else {
-                TurnRunningBlock(runtime: runtime, entries: entries, showsWorking: showsWorking, context: context)
+        // The merge pill in either state: the block keeps its id from the merge's first
+        // stage to its outcome note, so this one branch keeps the row's identity and the
+        // pill morphs rather than being swapped for another.
+        if let phase = block.hydraMergePhase {
+            HydraMergeRow(runtime: runtime, phase: phase)
+        } else {
+            switch block {
+            case .group(let group, let summary, let hasReply):
+                TimelineGroupView(group: group, runtime: runtime, summary: summary, hasReply: hasReply, context: context)
+            case .turn(_, let turnID, let entries, let summary, let showsWorking):
+                // The fold is a change of what the block shows, in the same frame, with no
+                // transition: a fade over a block that can run to thousands of points is a
+                // whole-layer composite the renderer may draw as nothing.
+                if let summary {
+                    let split = Self.splitTurnEntries(entries)
+                    TurnFinishedBlock(
+                        runtime: runtime,
+                        turnID: turnID,
+                        summary: summary,
+                        userEntries: split.userEntries,
+                        content: split.content,
+                        workingDirectory: context.workingDirectory,
+                        canUndo: context.canRewind
+                    )
                     .transition(.identity)
+                } else {
+                    TurnRunningBlock(runtime: runtime, entries: entries, showsWorking: showsWorking, context: context)
+                        .transition(.identity)
+                }
+            case .working(_, let liveWork):
+                WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
+            case .merging:
+                // Routed through `hydraMergePhase` above; never reached.
+                EmptyView()
+            case .headsWorking(let heads):
+                HydraHeadsWorkingRow(heads: heads, runtime: runtime)
             }
-        case .working(_, let liveWork):
-            WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
-        case .merging:
-            // Arrives and leaves like the working line: the stack gives every block the row transition.
-            // The pill shares the merged report's frame, so the outcome note morphs into it in place.
-            HydraMergingRow(runtime: runtime)
-        case .headsWorking(let heads):
-            HydraHeadsWorkingRow(heads: heads, runtime: runtime)
         }
     }
 }
@@ -1691,7 +1721,8 @@ struct TimelineGroupView: View {
     }
 }
 
-/// The one line a running turn shows: Zeron's gradient pulse, what the agent is doing
+/// The one line a running turn shows: a capsule badge like the finished turn's card,
+/// with the composer's dot field running through it under what the agent is doing
 /// right now (the live tool run's summary, or a word that changes every few seconds
 /// before any tool starts) and the elapsed time. Collapsed by default; the chevron
 /// opens the thinking (when shown) and the run's steps beneath it.
@@ -1715,26 +1746,30 @@ private struct WorkingIndicator: View {
         let elapsed = now.timeIntervalSince(startedAt)
         let word = WorkingWords.word(seed: seed, elapsedSeconds: Int64(max(0, elapsed)))
         let label = liveWork.isEmpty ? "\(word)…" : WorkGroupSummary.text(for: liveWork)
+        let time = RelativeTime.duration(elapsed)
         let canExpand = !thinkingSteps.isEmpty || !liveWork.isEmpty
         VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             Button {
                 guard canExpand else { return }
                 withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
             } label: {
-                // One piece: the pulse, the words, the time and the chevron are laid out
+                // One piece: the badge, the words, the time and the chevron are laid out
                 // together and change together. The words cross-fade in place and the chevron
                 // fades in its own slot, on one animation, so no part of the line ever appears
                 // or moves on a beat of its own; the line itself arrives as one row, with the
                 // transition every block gets.
-                HStack(spacing: TimelineMetrics.iconSpacing) {
-                    WorkingSpinner(cellSize: 3.5)
-                        .frame(width: TimelineMetrics.iconWidth)
+                HStack(spacing: 8) {
                     Text(verbatim: label)
-                        .foregroundStyle(.secondary)
+                        .font(.chat(.callout, weight: .medium, zoom: zoom))
+                        .foregroundStyle(Chrome.primaryText.opacity(0.9))
                         .contentTransition(.opacity)
-                    Text(RelativeTime.duration(elapsed))
+                    // The digits roll over, and the badge glides when they gain or lose one
+                    // ("9s" to "10s"): a plain swap snapped its edge every ten seconds.
+                    Text(verbatim: time)
                         .monospacedDigit()
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Chrome.secondaryText)
+                        .contentTransition(.numericText())
+                        .animation(Self.change, value: time)
                     Image(systemName: "chevron.right")
                         .font(.chat(.caption2, weight: .semibold, zoom: zoom))
                         .foregroundStyle(.tertiary)
@@ -1742,7 +1777,21 @@ private struct WorkingIndicator: View {
                         .opacity(canExpand ? 1 : 0)
                         .accessibilityHidden(!canExpand)
                 }
-                .contentShape(.rect)
+                .padding(.leading, 12)
+                .padding(.trailing, 10)
+                .padding(.vertical, 6)
+                // The finished turn's card, with the composer's dot field running through it:
+                // the wave crosses the whole badge under the words, the time and the chevron.
+                .background {
+                    let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    ZStack {
+                        shape.fill(.quaternary.opacity(0.32))
+                        DotFieldFill()
+                            .opacity(0.55)
+                            .clipShape(shape)
+                    }
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             .buttonStyle(.plain)
             .help(canExpand ? (isExpanded ? "Hide these steps" : "Show these steps") : "")
