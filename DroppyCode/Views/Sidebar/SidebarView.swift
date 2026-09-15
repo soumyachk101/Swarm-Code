@@ -1206,11 +1206,8 @@ private struct SidebarThreadRow: View {
 
     @State private var isHovering = false
     @State private var isMenuPresented = false
-    /// The check was just clicked: it pops green for a beat before the row takes off.
+    /// The check was just clicked: it pops green as the row takes off.
     @State private var isSettling = false
-    /// The beat between the pop and the take-off, held so a row that goes away first
-    /// (or is asked again) cancels it rather than settling from beyond the list.
-    @State private var settleTask: Task<Void, Never>?
     @State private var windowFrame = FrameHolder()
 
     var body: some View {
@@ -1350,9 +1347,6 @@ private struct SidebarThreadRow: View {
         }
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
         .accessibilityValue(Text(isSettled ? "Settled" : ""))
-        .onDisappear {
-            settleTask?.cancel()
-        }
     }
 
     private static func fill(isSelected: Bool, isHovering: Bool) -> Double {
@@ -1378,23 +1372,15 @@ private struct SidebarThreadRow: View {
 
     // MARK: Settling
 
-    /// The check pops green and the note sounds on the click; the row takes off a beat
-    /// later, so the pop lands before the flight starts.
+    /// The check pops green, the note sounds and the row takes off, all on the click:
+    /// the ghost's own check carries the pop through the flight (see `RowGlideView`),
+    /// so nothing waits for it to land first.
     private func settle() {
         guard !isSettling, !thread.isSettled else { return }
         if model.settings.settleSound { SettleChime.play() }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.45)) { isSettling = true }
-        settleTask?.cancel()
-        settleTask = Task { @MainActor in
-            do {
-                try await Task.sleep(for: .milliseconds(260))
-            } catch {
-                return
-            }
-            guard !Task.isCancelled else { return }
-            glide(.settle)
-            model.settleAnimated(thread.id, sounds: false)
-        }
+        glide(.settle)
+        model.settleAnimated(thread.id, sounds: false)
     }
 
     private func reopen() {
