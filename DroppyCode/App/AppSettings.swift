@@ -71,6 +71,7 @@ final class AppSettings {
         static let threadFinishAction = "threadFinishAction"
         static let settleSound = "settleSound"
         static let showReasoning = "showReasoning"
+        static let chatZoom = "chatZoom"
         static let sidebarActivityView = "sidebarActivityView"
         static let appTheme = "appTheme"
         static let backdropOpacity = "backdropOpacity"
@@ -145,6 +146,12 @@ final class AppSettings {
 
     var showReasoning: Bool {
         didSet { defaults.set(showReasoning, forKey: Key.showReasoning) }
+    }
+
+    /// How large the conversation reads: an index into `ChatZoom.steps`, which the slider in
+    /// the chat's chrome row moves. The row and the chat box keep their own size.
+    var chatZoom: Int {
+        didSet { defaults.set(chatZoom, forKey: Key.chatZoom) }
     }
 
     /// The sidebar lists every thread by when it was last active, instead of by project.
@@ -312,6 +319,7 @@ final class AppSettings {
         threadFinishAction = ThreadFinishAction(rawValue: defaults.string(forKey: Key.threadFinishAction) ?? "") ?? .settle
         settleSound = defaults.object(forKey: Key.settleSound) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
+        chatZoom = ChatZoom.clamped(defaults.object(forKey: Key.chatZoom) as? Int ?? ChatZoom.defaultIndex)
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
         backdropOpacity = defaults.object(forKey: Key.backdropOpacity) as? Double ?? Self.defaultBackdropOpacity
         // The old System/Light/Dark choice maps straight onto the same themes.

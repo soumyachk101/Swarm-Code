@@ -87,8 +87,9 @@ struct UserMessageRow: View {
 
 /// Heads reporting back to their lead: their glyphs and names on a line, and their reports
 /// in a popover off it. It sits on the user's side, since that is where the lead reads it from,
-/// but reads as the team's, not the user's. A note from Hydra itself (heads held back)
-/// takes the same row without the glyphs.
+/// but reads as the team's, not the user's. A note from Hydra itself (heads held back, the
+/// team's work merged) takes the same row with the Hydra mark in the glyphs' place; a note
+/// that leads with the merge request's address links to it from the pill.
 struct HydraReportRow: View {
     let message: UserMessage
 
@@ -99,18 +100,23 @@ struct HydraReportRow: View {
         let names = personas.map(\.name)
         let who = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
         // A note from Hydra itself says what it is on its first line; the rest is the message.
+        // That line ends like a sentence, and the pill reads it as a label.
         let parts = message.text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
-        let title = personas.isEmpty ? String(parts.first ?? "Hydra") : "\(who) reported back"
+        let title = personas.isEmpty ? Self.withoutTrailingStop(String(parts.first ?? "Hydra")) : "\(who) reported back"
         let body = personas.isEmpty ? String(parts.count > 1 ? parts[1] : "").trimmingCharacters(in: .whitespacesAndNewlines) : message.text
+        // A merge note puts the merge request's address on the body's first line: that becomes
+        // a link on the pill, and the chevron stays only for what the note says after it.
+        let link = personas.isEmpty ? Self.leadingURL(in: body) : nil
+        let details = link == nil ? body : Self.withoutFirstLine(body)
         Button {
+            guard !details.isEmpty else { return }
             isShowingReport.toggle()
         } label: {
             HStack(spacing: 8) {
-                // The hand takes a glyph's slot, so both rows sit the same in the pill.
+                // The mark takes a glyph's slot, so both rows sit the same in the pill.
                 // (Only one or the other: an empty stack would still keep its spacing.)
                 if personas.isEmpty {
-                    Image(systemName: "hand.raised.fill")
-                        .font(.system(size: 13, weight: .semibold))
+                    HydraMarkImage()
                         .foregroundStyle(Chrome.secondaryText)
                         .frame(width: 18, height: 18)
                 } else {
@@ -123,7 +129,15 @@ struct HydraReportRow: View {
                 Text(verbatim: title)
                     .font(.callout.weight(.medium))
                     .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                if !body.isEmpty {
+                if let link {
+                    Link(destination: link) {
+                        Text("Open")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Chrome.secondaryText)
+                    }
+                    .help("Open in the browser")
+                }
+                if !details.isEmpty {
                     Image(systemName: "chevron.right")
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.tertiary)
@@ -136,8 +150,9 @@ struct HydraReportRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .disabled(body.isEmpty)
-        .help("Show the message")
+        // The pill stays live for its link when there is nothing more to open.
+        .disabled(details.isEmpty && link == nil)
+        .help(details.isEmpty ? "" : "Show the message")
         .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
             HydraReportPopover(text: body)
         }
@@ -145,6 +160,25 @@ struct HydraReportRow: View {
         .padding(.leading, 96)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(title))
+    }
+
+    /// The title without the one full stop a note's first line ends on.
+    private static func withoutTrailingStop(_ title: String) -> String {
+        title.hasSuffix(".") ? String(title.dropLast()) : title
+    }
+
+    /// The address on the body's first line, when that line is an address and nothing else.
+    private static func leadingURL(in body: String) -> URL? {
+        guard let line = body.split(whereSeparator: \.isNewline).first.map(String.init)?.trimmingCharacters(in: .whitespaces),
+              line.lowercased().hasPrefix("http://") || line.lowercased().hasPrefix("https://"),
+              !line.contains(where: \.isWhitespace) else { return nil }
+        return URL(string: line)
+    }
+
+    /// The body past its first line: what a note says after the address it leads with.
+    private static func withoutFirstLine(_ body: String) -> String {
+        guard let newline = body.firstIndex(where: \.isNewline) else { return "" }
+        return String(body[newline...]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -162,6 +196,93 @@ private struct HydraReportPopover: View {
         .scrollBounceBehavior(.basedOnSize)
         .frame(width: 440)
         .frame(idealHeight: 320, maxHeight: 460)
+    }
+}
+
+/// The lead's delegation block, the fenced `hydra` JSON at the end of its reply, as the
+/// card it stands for: the mark, how many heads are going out and the task each one gets.
+/// Never the JSON itself. While the block is still streaming, or when it cannot be read,
+/// the card says the briefs are being written and nothing more.
+struct HydraDelegationBlock: View {
+    let json: String
+
+    var body: some View {
+        let tasks = Self.tasks(in: json)
+        HStack(alignment: .top, spacing: TimelineMetrics.iconSpacing) {
+            HydraMarkImage()
+                .foregroundStyle(Chrome.secondaryText)
+                .frame(width: 16, height: 16)
+                .accessibilityHidden(true)
+            if tasks.isEmpty {
+                Text("Writing the heads' briefs…")
+                    .font(.callout)
+                    .foregroundStyle(Chrome.secondaryText)
+            } else {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(tasks.count == 1 ? "Sending out a head" : "Sending out \(tasks.count) heads")
+                        .font(.callout.weight(.medium))
+                    ForEach(Array(tasks.enumerated()), id: \.offset) { _, task in
+                        Text(verbatim: "· " + task)
+                            .font(.caption)
+                            .foregroundStyle(Chrome.secondaryText)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    /// What each head is given, in the block's order: its task, or the start of its prompt
+    /// when it has none (as `HydraPrompts.delegations(in:)` titles it). Nothing until the
+    /// JSON is whole and holds at least one head.
+    private static func tasks(in json: String) -> [String] {
+        guard let parsed = JSONValue.parse(json) else { return [] }
+        let entries: [JSONValue] = parsed.array ?? (parsed.object == nil ? [] : [parsed])
+        return entries.compactMap { entry -> String? in
+            let task = entry["task"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if !task.isEmpty { return task }
+            let prompt = entry["prompt"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return prompt.isEmpty ? nil : TextCleanup.singleLine(prompt, limit: 60)
+        }
+    }
+}
+
+/// The team's work on its way to the remote once the lead has finished: what the merge
+/// is doing right now beside the spinner, and how long it has been at it, on the working
+/// line's own geometry and type. The timeline appends the row while the merge runs and
+/// drops it when the note about the outcome lands, so it holds no condition of its own.
+struct HydraMergingRow: View {
+    let runtime: ThreadRuntime
+    @State private var now = Date.now
+
+    /// The one motion for the stage's words changing.
+    private static let change = Animation.smooth(duration: 0.3)
+
+    var body: some View {
+        let stage = (runtime.hydraMergeStage ?? "Merging the team's work") + "…"
+        let elapsed = now.timeIntervalSince(runtime.hydraMergeStartedAt ?? now)
+        HStack(spacing: TimelineMetrics.iconSpacing) {
+            WorkingSpinner(cellSize: 3.5)
+                .frame(width: TimelineMetrics.iconWidth)
+            Text(verbatim: stage)
+                .foregroundStyle(.secondary)
+                .contentTransition(.opacity)
+            Text(RelativeTime.duration(elapsed))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .font(.callout)
+        .animation(Self.change, value: stage)
+        .accessibilityElement(children: .combine)
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                now = .now
+            }
+        }
     }
 }
 

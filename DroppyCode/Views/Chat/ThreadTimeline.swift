@@ -80,7 +80,8 @@ struct ThreadTimeline: View, Equatable {
         let meta = TimelineMeta.build(entries)
         let blocks = blockCache.blocks(
             for: entries, meta: meta,
-            showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning
+            showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning,
+            isHydraMerging: runtime.isHydraMerging
         )
         if blocks.isEmpty && !runtime.isRunning {
             NewThreadPrompt(threadID: runtime.threadID, projectName: projectName)
@@ -399,8 +400,11 @@ struct ThreadTimeline: View, Equatable {
             repairLayout()
         }
         .onChange(of: FrontMonitor.shared.revision) {
-            // The reader is back: the app came to the front or the window was uncovered.
-            // Whatever the conversation did unseen, the timeline checks itself now.
+            // The reader is back: the app came to the front or this timeline's window was
+            // uncovered. Whatever the conversation did unseen, the timeline checks itself
+            // now. Another window coming on screen, a popover or a tooltip opening over the
+            // chat included, is not the reader coming back to this one.
+            guard FrontMonitor.shared.concerns(tracking.probe?.window) else { return }
             tracking.noteReturnToFront()
         }
         .onChange(of: runtime.isRunning) { _, running in
@@ -854,12 +858,21 @@ private struct ScrollViewProbe: NSViewRepresentable {
 }
 
 /// Bumps when the app comes to the front or one of its windows is uncovered: the moments
-/// a reader comes back to a timeline that has been changing unseen.
+/// a reader comes back to a timeline that has been changing unseen. Which window it was
+/// is kept with the bump: the app coming to the front concerns every timeline, a window
+/// being uncovered only the timelines in it. Every window ordered in posts the same
+/// occlusion change, a popover's or a tooltip's included, and a timeline that took those
+/// for its own window being uncovered checked itself each time one opened over the chat:
+/// a snap to the end, and its scroll view moved a point and back, under a reader who had
+/// not gone anywhere.
 @MainActor
 @Observable
 private final class FrontMonitor {
     static let shared = FrontMonitor()
     private(set) var revision = 0
+    /// The window the last bump was for, or none when the app itself came to the front.
+    @ObservationIgnored private weak var uncovered: NSWindow?
+    @ObservationIgnored private var isAppWide = false
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
 
     private init() {
@@ -867,7 +880,7 @@ private final class FrontMonitor {
         observers.append(center.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.revision += 1 }
+            MainActor.assumeIsolated { self?.bump(for: nil) }
         })
         observers.append(center.addObserver(
             forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main
@@ -876,9 +889,23 @@ private final class FrontMonitor {
             nonisolated(unsafe) let object = note.object
             MainActor.assumeIsolated {
                 guard let window = object as? NSWindow, window.occlusionState.contains(.visible) else { return }
-                self?.revision += 1
+                self?.bump(for: window)
             }
         })
+    }
+
+    /// Whether the last bump brought the reader back to a timeline in `window`. A timeline
+    /// in no window yet has nothing to check.
+    func concerns(_ window: NSWindow?) -> Bool {
+        if isAppWide { return true }
+        guard let uncovered, let window else { return false }
+        return uncovered === window
+    }
+
+    private func bump(for window: NSWindow?) {
+        uncovered = window
+        isAppWide = window == nil
+        revision += 1
     }
 }
 
@@ -991,12 +1018,17 @@ enum DisplayBlock: Identifiable, Equatable {
     /// The working line on its own, for a running turn whose latest entries belong to no
     /// turn. Never built from the entries: the timeline appends it while waiting on a reply.
     case working(turnID: UUID?, liveWork: [TimelineEntry])
+    /// The team's work on its way to the remote once the lead's turn is over (see
+    /// `AppModel.autoMergeHydraWork`). Never built from the entries either: the timeline
+    /// appends it while the merge runs and drops it when the note about the outcome lands.
+    case merging
 
     var id: String {
         switch self {
         case .turn(let id, _, _, _, _): id
         case .group(let group, _, _): group.id
         case .working(let turnID, _): "working-\(turnID?.uuidString ?? "")"
+        case .merging: "hydra-merging"
         }
     }
 
@@ -1005,7 +1037,7 @@ enum DisplayBlock: Identifiable, Equatable {
         switch self {
         case .turn(_, let turnID, _, _, _): turnID
         case .group(.single(let entry), _, _): entry.turnID
-        case .group(.work, _, _), .working: nil
+        case .group(.work, _, _), .working, .merging: nil
         }
     }
 
@@ -1015,12 +1047,12 @@ enum DisplayBlock: Identifiable, Equatable {
         switch self {
         case .turn(_, _, let entries, _, _): entries.contains { $0.kind == .user }
         case .group(.single(let entry), _, _): entry.kind == .user
-        case .group(.work, _, _), .working: false
+        case .group(.work, _, _), .working, .merging: false
         }
     }
 
     @MainActor
-    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool) -> [DisplayBlock] {
+    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool) -> [DisplayBlock] {
         // Partition into contiguous runs sharing one turnID (nil groups together),
         // so every turn becomes one block.
         var runs: [(turnID: UUID?, entries: [TimelineEntry])] = []
@@ -1052,6 +1084,10 @@ enum DisplayBlock: Identifiable, Equatable {
         if waiting, !(blocks.last?.carriesWorkingLine ?? false) {
             blocks.append(.working(turnID: entries.last?.turnID, liveWork: []))
         }
+        // The merge begins once the lead's turn is over; while it runs, its row ends the timeline.
+        if isHydraMerging, !isRunning {
+            blocks.append(.merging)
+        }
         return blocks
     }
 
@@ -1073,21 +1109,24 @@ final class TimelineBlockCache {
         /// be written into an entry that was already there.
         var summaries: [UUID: TurnSummary]
         var isRunning: Bool
+        /// The merge's row comes and goes on this flag alone; no entry changes for it.
+        var isHydraMerging: Bool
         var showReasoning: Bool
     }
 
     private var key: Key?
     private var built: [DisplayBlock] = []
 
-    func blocks(for entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool) -> [DisplayBlock] {
+    func blocks(for entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, isHydraMerging: Bool) -> [DisplayBlock] {
         let wanted = Key(
             entries: entries.map(ObjectIdentifier.init),
             summaries: meta.summaryByTurn,
             isRunning: isRunning,
+            isHydraMerging: isHydraMerging,
             showReasoning: showReasoning
         )
         if wanted == key { return built }
-        built = DisplayBlock.build(entries, meta: meta, showReasoning: showReasoning, isRunning: isRunning)
+        built = DisplayBlock.build(entries, meta: meta, showReasoning: showReasoning, isRunning: isRunning, isHydraMerging: isHydraMerging)
         key = wanted
         return built
     }
@@ -1196,6 +1235,9 @@ private struct DisplayBlockView: View, Equatable {
             }
         case .working(_, let liveWork):
             WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
+        case .merging:
+            // Arrives and leaves like the working line: the stack gives every block the row transition.
+            HydraMergingRow(runtime: runtime)
         }
     }
 }

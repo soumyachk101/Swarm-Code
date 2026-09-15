@@ -211,7 +211,7 @@ struct ComposerView: View {
                     }
                     ModelEffortSlot(runtime: runtime, thread: thread, compact: compactModelChip)
                     ContextMeter(runtime: runtime, provider: thread.provider)
-                    SendButton(runtime: runtime, goesToHead: goesToHead(thread)) { send() }
+                    SendButton(runtime: runtime, goesToHead: goesToHead(thread), queueGoesToHead: queueGoesToHead(thread)) { send() }
                 }
                 .fixedSize()
             }
@@ -292,6 +292,12 @@ struct ComposerView: View {
         model.settings.hydraAlwaysHeads && model.hydraIsOn(thread)
     }
 
+    /// Whether a message queued behind the running turn is handed to a head of its own
+    /// rather than waiting for the lead.
+    private func queueGoesToHead(_ thread: ChatThread) -> Bool {
+        (model.settings.hydraQueueHeads || model.settings.hydraAlwaysHeads) && model.hydraIsOn(thread)
+    }
+
     // MARK: - Keys
 
     private func handleKey(_ key: ComposerKey) -> Bool {
@@ -336,7 +342,9 @@ struct ComposerView: View {
         historyIndex = nil
         suggestions = SuggestionState()
         if runtime.isRunning {
-            // Return while the turn runs stops it and sends right away.
+            // Return while the turn runs stops it and sends right away. With heads at
+            // work it queues instead (a head takes it, or it waits for the lead): the
+            // heads run inside the lead's session, and a stop would kill them.
             runtime.interruptAndSend()
         } else {
             runtime.send()
@@ -577,10 +585,14 @@ private struct SendButton: View {
     /// With every message going to a head, the send hands the message on rather than
     /// starting the lead's own turn, so the help says where it lands.
     let goesToHead: Bool
+    /// With heads at work, Return never stops the lead: the message goes to a head of its
+    /// own when queued messages do, else it waits for the lead, and the help says which.
+    let queueGoesToHead: Bool
     let send: () -> Void
 
     var body: some View {
         let isRunning = runtime.isRunning
+        let headsWorking = isRunning && runtime.hasWorkingHeads
         let isEnabled = isRunning || !runtime.draft.isEmpty
         Button {
             if isRunning { runtime.interrupt() } else { send() }
@@ -595,15 +607,22 @@ private struct SendButton: View {
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .padding(.leading, 4)
-        .help(helpText(isRunning: isRunning))
+        .help(helpText(isRunning: isRunning, headsWorking: headsWorking))
         .accessibilityLabel(Text(isRunning ? "Stop" : (goesToHead ? "Send to a head" : "Send")))
     }
 
     /// The chords come from the shortcut store, so a remap or a cleared chord never leaves
     /// the help promising a key the app no longer answers to.
-    private func helpText(isRunning: Bool) -> String {
+    private func helpText(isRunning: Bool, headsWorking: Bool) -> String {
         let queues = ShortcutStore.label(for: .queueChat)
         if isRunning {
+            // Return does not steer while heads work, it queues: the help says where the
+            // message lands rather than promising a stop that never comes.
+            if headsWorking {
+                return queueGoesToHead
+                    ? "Heads are at work: your message goes to a head"
+                    : "Heads are at work: your message waits for the lead"
+            }
             var parts = ["Stop\(ShortcutStore.hint(for: .stopTurn))", "Return steers"]
             if let queues { parts.append("\(queues) queues") }
             return parts.joined(separator: " · ")

@@ -50,9 +50,19 @@ final class ProviderRegistry {
     private static let claudeSeed = [
         ModelOption(id: "default", name: "Default", detail: "Claude Code's recommended model", efforts: claudeEfforts, isDefault: true, fastTier: "fast"),
         ModelOption(id: "opus", name: "Opus", efforts: claudeEfforts, fastTier: "fast"),
+        ModelOption(id: "claude-fable-5-1[1m]", name: "Fable", detail: "Fable 5.1 · Most capable for your hardest and longest-running tasks", efforts: claudeEfforts),
         ModelOption(id: "sonnet", name: "Sonnet", efforts: claudeEfforts),
         ModelOption(id: "haiku", name: "Haiku"),
     ]
+
+    /// A cached Claude list made only of the earlier seed's ids is that seed, persisted when another
+    /// provider's live catalog arrived, not a list the CLI reported: a live list always names `opus[1m]`
+    /// and the Fable row. Re-seeding it gives launches that cached the old seed the Fable row, while a
+    /// live list without Fable stays as it is, since that account cannot use it.
+    private static func isStaleClaudeSeed(_ list: [ModelOption]) -> Bool {
+        let earlierSeedIDs: Set<String> = ["default", "opus", "sonnet", "haiku"]
+        return list.isEmpty || list.allSatisfy { earlierSeedIDs.contains($0.id) }
+    }
 
     // Seeds come from the same tables the live fetch uses, so the two can never disagree.
     static let deepseekSeed = ["deepseek-v4-pro", "deepseek-flash"].compactMap(DeepSeekAPI.option(for:))
@@ -88,7 +98,7 @@ final class ProviderRegistry {
                 if let provider = ProviderKind(rawValue: key) { catalogs[provider] = list }
             }
         }
-        if catalogs[.claude]?.isEmpty ?? true { catalogs[.claude] = Self.claudeSeed }
+        if Self.isStaleClaudeSeed(catalogs[.claude] ?? []) { catalogs[.claude] = Self.claudeSeed }
         if catalogs[.deepseek]?.isEmpty ?? true { catalogs[.deepseek] = Self.deepseekSeed }
         if catalogs[.meta]?.isEmpty ?? true { catalogs[.meta] = Self.metaSeed }
         if catalogs[.antigravity]?.isEmpty ?? true || catalogs[.antigravity]?.contains(where: { $0.id.hasSuffix("-high") || $0.id.hasSuffix("-medium") || $0.id.hasSuffix("-low") }) == true {
