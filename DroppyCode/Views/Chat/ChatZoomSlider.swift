@@ -137,29 +137,93 @@ struct ChatZoomSlider: View {
             }
             .frame(width: width, height: proxy.size.height, alignment: .leading)
             .contentShape(.rect)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if dragX == nil {
-                            withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) { dragX = value.location.x }
-                        } else {
-                            dragX = value.location.x
-                        }
-                        let nearest = nearestStep(to: value.location.x, inset: inset, step: step)
-                        if nearest != index {
-                            index = nearest
-                            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-                        }
-                    }
-                    .onEnded { _ in
+            // The catcher sits behind the track and owns its presses and drags in AppKit:
+            // the chrome row lives under the window's extended title bar, which moves the
+            // window for any view that lets it, and a SwiftUI gesture alone does not stop
+            // it. Handling mouse down here captures the drag exclusively for zoom.
+            .background {
+                ChatZoomTrackCatcher(
+                    onPress: { press(at: $0, inset: inset, step: step) },
+                    onDrag: { move(to: $0, inset: inset, step: step) },
+                    onEnd: {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { dragX = nil }
                     }
-            )
+                )
+                .frame(width: width, height: proxy.size.height)
+            }
+        }
+    }
+
+    private func press(at x: CGFloat, inset: CGFloat, step: CGFloat) {
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) { dragX = x }
+        snap(to: x, inset: inset, step: step)
+    }
+
+    private func move(to x: CGFloat, inset: CGFloat, step: CGFloat) {
+        dragX = x
+        snap(to: x, inset: inset, step: step)
+    }
+
+    private func snap(to x: CGFloat, inset: CGFloat, step: CGFloat) {
+        let nearest = nearestStep(to: x, inset: inset, step: step)
+        if nearest != index {
+            index = nearest
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         }
     }
 
     private func nearestStep(to x: CGFloat, inset: CGFloat, step: CGFloat) -> Int {
         guard step > 0 else { return 0 }
         return ChatZoom.clamped(Int(((x - inset) / step).rounded()))
+    }
+}
+
+/// Catches the zoom track's mouse in AppKit so a thumb drag zooms and nothing
+/// else: `mouseDownCanMoveWindow` refuses the extended title bar's window drag,
+/// and the mouse-down view keeps receiving the drag exclusively until release.
+private struct ChatZoomTrackCatcher: NSViewRepresentable {
+    var onPress: (CGFloat) -> Void
+    var onDrag: (CGFloat) -> Void
+    var onEnd: () -> Void
+
+    func makeNSView(context: Context) -> ChatZoomTrackCatcherView {
+        let view = ChatZoomTrackCatcherView()
+        update(view)
+        return view
+    }
+
+    func updateNSView(_ nsView: ChatZoomTrackCatcherView, context: Context) {
+        update(nsView)
+    }
+
+    private func update(_ view: ChatZoomTrackCatcherView) {
+        view.onPress = onPress
+        view.onDrag = onDrag
+        view.onEnd = onEnd
+    }
+}
+
+private final class ChatZoomTrackCatcherView: NSView {
+    var onPress: ((CGFloat) -> Void)?
+    var onDrag: ((CGFloat) -> Void)?
+    var onEnd: (() -> Void)?
+
+    /// A press on the track zooms the conversation; the window stays put.
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func mouseDown(with event: NSEvent) {
+        onPress?(x(of: event))
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        onDrag?(x(of: event))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        onEnd?()
+    }
+
+    private func x(of event: NSEvent) -> CGFloat {
+        convert(event.locationInWindow, from: nil).x
     }
 }

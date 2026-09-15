@@ -381,7 +381,7 @@ private struct ChatChromeRow: View {
                 if git.isRepository {
                     BranchMenu(runtime: runtime, directory: directory, git: git)
                 }
-                ChromeCompactTitle(title: title, model: scrollChrome)
+                ChatChromeTitle(runtime: runtime, title: title)
                     // The thread's title cuts on a switch; it must never crossfade.
                     // Animated, the old and new titles ghost over each other
                     // mid-flight. Scroll progress still drives it per frame.
@@ -416,6 +416,61 @@ private struct ChatChromeRow: View {
         .padding(.horizontal, Chrome.chromeHorizontalPadding)
         .padding(.top, Chrome.chromeTopPadding)
         .animation(Chrome.panelSlide, value: sidebarVisible)
+    }
+}
+
+/// The thread title in the chrome row, next to the branch picker. A real Button so the
+/// extended title bar (which drags the window from this row's gaps) never swallows the
+/// click: buttons take their presses while the gaps around them still move the window.
+/// Always visible; the scroll-faded compact title it replaces stayed invisible and
+/// untappable at rest.
+private struct ChatChromeTitle: View {
+    @Environment(AppModel.self) private var model
+    let runtime: ThreadRuntime
+    let title: String
+
+    @State private var isPresented = false
+    @State private var isRenaming = false
+    @State private var renameText = ""
+
+    var body: some View {
+        Button {
+            renameText = title
+            isPresented.toggle()
+        } label: {
+            Text(verbatim: title.isEmpty ? "New thread" : title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(title.isEmpty ? Chrome.secondaryText : Chrome.primaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+                .padding(.vertical, 6)
+        }
+        .buttonStyle(.plain)
+        .help("Thread title — click to copy or rename")
+        .accessibilityLabel(Text("Thread title"))
+        .accessibilityAddTraits(.isButton)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            PopoverMenu {
+                PopoverSectionHeader("Thread title")
+                PopoverItem("Copy title", symbol: "doc.on.doc") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(title, forType: .string)
+                }
+                PopoverItem("Rename…", symbol: "pencil") {
+                    renameText = title
+                    isRenaming = true
+                }
+            }
+        }
+        .alert("Rename thread", isPresented: $isRenaming) {
+            TextField("Title", text: $renameText)
+            Button("Rename") {
+                model.rename(runtime.threadID, to: renameText)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 }
 

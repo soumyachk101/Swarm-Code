@@ -6,8 +6,11 @@ enum Chrome {
     // MARK: Window
 
     static let windowCornerRadius: CGFloat = 26
-    static let sheetInset: CGFloat = 10
-    static var sheetCornerRadius: CGFloat { windowCornerRadius - sheetInset }
+    /// The detail sheet runs to the window's edge: inset, it drew a second, tighter corner
+    /// inside the window's own, a clipped double border wherever the sidebar left it bare.
+    static let sheetInset: CGFloat = 0
+    /// The rounding of surfaces that sit on the sheet, like the terminal's top corners.
+    static let sheetCornerRadius: CGFloat = 16
 
     static let trafficLightDiameter: CGFloat = 14
     static let trafficLightSpacing: CGFloat = 9
@@ -173,13 +176,14 @@ private struct DetailSheetModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: Chrome.sheetCornerRadius, style: .continuous)
+        // Square: the window's own clip rounds the sheet's outer corners with everything
+        // else, so the sheet never draws a corner of its own inside the window's.
         content
             .background {
-                shape.fill(colorScheme == .dark ? Color.black.opacity(0.22) : Color.white.opacity(0.3))
-                shape.fill(Chrome.glassTint.opacity(colorScheme == .dark ? 0.22 : 0.16))
+                Rectangle().fill(colorScheme == .dark ? Color.black.opacity(0.22) : Color.white.opacity(0.3))
+                Rectangle().fill(Chrome.glassTint.opacity(colorScheme == .dark ? 0.22 : 0.16))
             }
-            .clipShape(shape)
+            .clipped()
     }
 }
 
@@ -240,6 +244,9 @@ struct ChromeCapsule<Content: View>: View {
         .padding(.horizontal, Chrome.iconCapsuleInnerPadding)
         .padding(.vertical, Chrome.capsuleVerticalPadding)
         .chromeGlassCapsule()
+        // The capsule is a control wherever it sits, including the zoom slider's track: presses
+        // on it work the control and never drag the window.
+        .background { NoWindowDragArea() }
     }
 }
 
@@ -300,6 +307,7 @@ struct ChromeIconButton: View {
         }
         .help(help)
         .accessibilityLabel(Text(help))
+        .background { NoWindowDragArea() }
     }
 }
 
@@ -326,6 +334,7 @@ struct ChromeMenuButton<Content: View>: View {
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             PopoverMenu { content }
         }
+        .background { NoWindowDragArea() }
     }
 }
 
@@ -352,6 +361,7 @@ struct ChromeCircleButton: View {
         }
         .help(help)
         .accessibilityLabel(Text(help))
+        .background { NoWindowDragArea() }
     }
 }
 
@@ -384,6 +394,7 @@ struct ChromeCircleMenu<Content: View>: View {
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             PopoverMenu { content }
         }
+        .background { NoWindowDragArea() }
     }
 }
 
@@ -427,6 +438,7 @@ struct ChromeTextMenu<Content: View>: View {
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             PopoverMenu { content }
         }
+        .background { NoWindowDragArea() }
     }
 }
 
@@ -466,6 +478,7 @@ struct ChromeTextButton: View {
         }
         .help(help)
         .accessibilityLabel(Text(help))
+        .background { NoWindowDragArea() }
     }
 
     private var foreground: Color {
@@ -765,6 +778,7 @@ struct ChromeSearchField: View {
         .chromeGlassCapsule()
         .fixedSize()
         .onExitCommand { query = "" }
+        .background { NoWindowDragArea() }
     }
 }
 
@@ -819,6 +833,7 @@ struct GlassPickerButton<Value: Hashable>: View {
                 }
             }
         }
+        .background { NoWindowDragArea() }
     }
 }
 
@@ -940,4 +955,42 @@ final class WindowDragView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {}
+}
+
+/// Marks a chrome control's hit area as never dragging the window.
+///
+/// The chrome row sits inside the title bar's reach (see `WindowChrome.titlebarHeight`), where
+/// AppKit moves the window for any view that lets it. Native controls refuse on their own, but a
+/// control SwiftUI renders itself — like the zoom slider's drag track — lands on the shared hosting
+/// view, which lets the window move: dragging the slider moved the window with it. This view sits
+/// behind the control's content, so it wins the hit test for presses no narrower control claims and
+/// refuses the window drag for them; the presses themselves travel on to SwiftUI, so gestures,
+/// popovers and buttons work exactly as before. Empty chrome around the controls has no such view
+/// behind it, and still drags the window like a title bar.
+struct NoWindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NoWindowDragView {
+        NoWindowDragView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NoWindowDragView, context: Context) {}
+}
+
+final class NoWindowDragView: NSView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    /// A press here works the control, never the window.
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    // The view draws nothing and keeps nothing: it only takes the hit so the window does not
+    // drag. Each press travels on to the superview, which routes it to the control under the
+    // pointer the way a directly dispatched press would.
+    override func mouseDown(with event: NSEvent) { superview?.mouseDown(with: event) }
+
+    override func mouseDragged(with event: NSEvent) { superview?.mouseDragged(with: event) }
+
+    override func mouseUp(with event: NSEvent) { superview?.mouseUp(with: event) }
+
+    override func rightMouseDown(with event: NSEvent) { superview?.rightMouseDown(with: event) }
+
+    override func rightMouseUp(with event: NSEvent) { superview?.rightMouseUp(with: event) }
 }

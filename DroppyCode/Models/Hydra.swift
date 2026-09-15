@@ -177,6 +177,21 @@ enum HydraRoster {
         guard round > 0 else { return base }
         return HydraPersona("\(base.name) \(round + 1)", base.asset, base.hex)
     }
+
+    /// The roster index for an announced head name, case-insensitive, without any
+    /// round suffix ("otto", "Otto 2"). Nil when the name is not on the roster (a
+    /// lead inventing names says "Ives", say, which is nobody: the nearest roster
+    /// name is "Ivo"). Only exact roster names are authoritative; anything else
+    /// falls back to the next sequential head so an announcement never renames a
+    /// stranger into the team.
+    static func index(named name: String) -> Int? {
+        var bare = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A trailing round number ("Otto 2") is the display suffix, not the name.
+        if let space = bare.lastIndex(of: " "), Int(bare[bare.index(after: space)...]) != nil {
+            bare = String(bare[..<space]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return personas.firstIndex { $0.name.compare(bare, options: .caseInsensitive) == .orderedSame }
+    }
 }
 
 /// A head thread's place in its lead's team: who it is, what it was sent to do, how it
@@ -317,10 +332,13 @@ struct HydraLanding: Codable, Hashable, Sendable {
 }
 
 /// A head the lead asked for through the delegation block, on a provider that runs no
-/// heads of its own.
+/// heads of its own. `name` is the head's announced name when the lead gave one: it is
+/// authoritative, so the spawned head carries exactly that roster name instead of the
+/// next sequential one. Nil means the lead did not name it and the roster order decides.
 struct HydraDelegation: Hashable, Sendable {
     var task: String
     var prompt: String
+    var name: String?
 }
 
 /// What a head sends back to its lead.
@@ -417,7 +435,7 @@ enum HydraPrompts {
         - \(howToWait)
         - Give each head one self-contained task with the exact files, symbols and acceptance criteria it needs. Heads share the checkout but not your context, so write the task as if to a capable colleague who has read nothing yet.
         - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself: never send out a head to verify, redo or finish another head's work.
-        - Tell the user in one line which heads you sent out and what each one does.
+        - Tell the user in one line which heads you sent out and what each one does. Droppy Code names the heads in roster order (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on): announce each head by its task and use exactly those names in that order, never invented ones. There is no head called Ives; the roster has Ivo.
         - While they work, prepare the integration rather than starting on their tasks: how the pieces fit together, and the one check you will run at the end.
         - Heads go out through the tools above, never through a fenced hydra block: that is the delegation format for providers without agent tools of their own. If you end a reply with one anyway, Droppy Code still sends those heads out as threads of their own, but your turn ends there and their reports come back as a later message.
 
@@ -560,13 +578,13 @@ enum HydraPrompts {
             " Your heads run on \($0), a different model from yours: it is quick, so give each one a well-bounded task with everything it needs written down, and keep the design, the judgement calls and the integration for yourself. The block is the only way to send heads out: never use an agent, task or sub-agent tool of your own, which would run heads on your own model instead of the one the user chose."
         } ?? ""
         return """
-        [Hydra is on] You lead \(team) ("heads"). Delegate first, work second: anything bigger than a single obvious change to a single file is a job for heads. Audits, reviews, a feature across several files, a refactor, "check everything", research across many files, several tasks in one message: in your first reply, look at the code only long enough to write good briefs, a minute and a handful of files rather than ten, and then send the heads out, all of them in that one block. Never spend minutes reading before you delegate, and never do inline what heads could be doing in parallel. Only a truly single-focus request, one file and one obvious change, is yours to do alone. Finish your reply with one fenced block
+        [Hydra is on] You lead \(team) ("heads"). Delegate first, work second: anything bigger than a single obvious change to a single file is a job for heads. Audits, reviews, a feature across several files, a refactor, "check everything", research across many files, several tasks in one message: in your first reply, look at the code only long enough to write good briefs, a minute and a handful of files rather than ten, and then send the heads out, all of them in that one block. Never spend minutes reading before you delegate, and never do inline what heads could be doing in parallel. Only a truly single-focus request, one file and one obvious change, is yours to do alone.         Finish your reply with one fenced block
 
         ```hydra
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "")
+        and stop there: do not wait, poll or verify anything after it. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "")
         """
     }
 
@@ -665,14 +683,19 @@ enum HydraPrompts {
     }
 
     /// The heads a block body asks for: a JSON array of entries (or one bare entry), each
-    /// kept only with a prompt, and titled from the prompt when it has no task.
+    /// kept only with a prompt, and titled from the prompt when it has no task. An entry
+    /// may carry the head's announced name ("name", or "head"); it is kept as-is and the
+    /// spawner resolves it against the roster, so the announced name is authoritative.
     private static func delegations(fromBody body: String) -> [HydraDelegation]? {
         guard let json = JSONValue.parse(body) else { return nil }
         let entries: [JSONValue] = json.array ?? (json.object == nil ? [] : [json])
         let parsed = entries.compactMap { entry -> HydraDelegation? in
             guard let prompt = entry["prompt"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty else { return nil }
             let task = entry["task"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            return HydraDelegation(task: task.isEmpty ? TextCleanup.singleLine(prompt, limit: 60) : task, prompt: prompt)
+            let name = entry["name"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? entry["head"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let announced = (name?.isEmpty == false) ? name : nil
+            return HydraDelegation(task: task.isEmpty ? TextCleanup.singleLine(prompt, limit: 60) : task, prompt: prompt, name: announced)
         }
         return parsed.isEmpty ? nil : parsed
     }

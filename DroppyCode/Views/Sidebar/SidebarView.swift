@@ -1429,8 +1429,9 @@ private struct SettledHeader: View {
             }
         } label: {
             HStack(spacing: 5) {
-                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
                 Text(verbatim: "Settled")
                     .font(.system(size: 12, weight: .semibold))
                 Text(verbatim: "\(count)")

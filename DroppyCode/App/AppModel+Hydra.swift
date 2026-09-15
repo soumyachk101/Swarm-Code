@@ -214,9 +214,10 @@ extension AppModel {
         origin: HydraHeadInfo.Origin,
         attachments: [Attachment] = [],
         batchID: UUID? = nil,
+        preferredIndex: Int? = nil,
         brief: @escaping @Sendable (HydraPersona, HydraPrompts.Workplace) -> String
     ) -> ChatThread? {
-        guard let head = insertHydraHead(from: parentID, task: task, kind: .droppy, origin: origin, native: nil, batchID: batchID) else { return nil }
+        guard let head = insertHydraHead(from: parentID, task: task, kind: .droppy, origin: origin, native: nil, batchID: batchID, preferredIndex: preferredIndex) else { return nil }
         Task { await startDroppyHead(head.id, attachments: attachments, brief: brief) }
         return head
     }
@@ -227,14 +228,24 @@ extension AppModel {
         kind: HydraHeadInfo.Kind,
         origin: HydraHeadInfo.Origin,
         native: AgentSpawn?,
-        batchID: UUID?
+        batchID: UUID?,
+        preferredIndex: Int? = nil
     ) -> ChatThread? {
         guard let parent = thread(parentID) else { return nil }
         // A lead with no heads left starts the roster over. The count would otherwise
         // climb for the life of the chat, and a lead that has sent out twenty-five heads
         // over a morning would name its next one "Hank 2" with one head in the panel.
-        let index = hydraTeam(of: parentID).isEmpty ? 0 : parent.hydraSpawnCount
-        updateThread(parentID) { $0.hydraSpawnCount = index + 1 }
+        let sequential = hydraTeam(of: parentID).isEmpty ? 0 : parent.hydraSpawnCount
+        // A delegation that announced its head by name is authoritative: the spawned head
+        // carries exactly the announced roster name, so "Sent Gus" never spawns Otto.
+        // The pin holds only while no head on the team already carries that index: two
+        // heads sharing one index would merge each other's reports, so a reused or
+        // unknown name falls back to the next head in order. The spawn count still moves
+        // forward either way, so ordering and future names never shift for a pin.
+        let taken = Set(hydraTeam(of: parentID).compactMap { $0.hydra?.index })
+        let pinned = preferredIndex.flatMap { $0 >= 0 && !taken.contains($0) ? $0 : nil }
+        let index = pinned ?? sequential
+        updateThread(parentID) { $0.hydraSpawnCount = max(sequential + 1, parent.hydraSpawnCount + 1) }
         let launch = hydraLaunch(for: parent)
         let persona = HydraRoster.persona(at: index)
 
