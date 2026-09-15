@@ -709,17 +709,33 @@ struct HydraMergingRow: View {
             // from below, each with its own shimmer at its own width. A content transition
             // over the shimmer crossfaded the band's mask between the two lengths, so the
             // words tore mid-fade.
-            ZStack(alignment: .leading) {
-                Text(verbatim: stage)
-                    .font(.chat(.callout, weight: .medium, zoom: zoom))
-                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                    .modifier(HydraShimmer())
-                    .id(stage)
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .offset(y: 5)),
-                        removal: .opacity.combined(with: .offset(y: -5))
-                    ))
-            }
+            //
+            // Only the new words take part in layout: a hidden copy of them sizes the slot,
+            // so the pill glides straight from the old width to the new one. The words on
+            // show are drawn over that slot at their own size and clipped to it, so the
+            // outgoing text neither holds the pill wide until its fade ends (it snapped
+            // narrower afterwards) nor runs past the slot over the time beside it.
+            Text(verbatim: stage)
+                .font(.chat(.callout, weight: .medium, zoom: zoom))
+                .hidden()
+                .overlay(alignment: .leading) {
+                    ZStack(alignment: .leading) {
+                        Text(verbatim: stage)
+                            .font(.chat(.callout, weight: .medium, zoom: zoom))
+                            .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                            .modifier(HydraShimmer())
+                            .fixedSize()
+                            .id(stage)
+                            .transition(.asymmetric(
+                                insertion: .opacity.combined(with: .offset(y: 5)),
+                                removal: .opacity.combined(with: .offset(y: -5))
+                            ))
+                    }
+                }
+                // Room above and below for the words' lift, given back after the clip.
+                .padding(.vertical, 6)
+                .clipped()
+                .padding(.vertical, -6)
             Text(RelativeTime.duration(elapsed))
                 .font(.chat(.caption, zoom: zoom))
                 .foregroundStyle(Chrome.secondaryText)
