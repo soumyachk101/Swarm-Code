@@ -11,6 +11,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case devin
     case antigravity
     case copilot
+    case commandcode
 
     var id: String { rawValue }
 
@@ -26,6 +27,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .devin: "Devin"
         case .antigravity: "Antigravity"
         case .copilot: "Copilot"
+        case .commandcode: "Command Code"
         }
     }
 
@@ -41,6 +43,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .devin: "devin"
         case .antigravity: "agy"
         case .copilot: "copilot"
+        case .commandcode: "cmd"
         }
     }
 
@@ -58,6 +61,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .devin: "devin auth login"
         case .antigravity: "agy"
         case .copilot: "copilot login"
+        case .commandcode: "cmd login"
         }
     }
 
@@ -73,11 +77,17 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .devin: URL(string: "https://cli.devin.ai")!
         case .antigravity: URL(string: "https://antigravity.google/docs/cli/overview")!
         case .copilot: URL(string: "https://github.com/github/copilot-cli")!
+        case .commandcode: URL(string: "https://commandcode.ai/docs/quickstart")!
         }
     }
 
     /// API-key providers talk to their cloud API directly instead of a local CLI.
     var isAPIKeyBased: Bool { self == .deepseek || self == .meta }
+
+    /// Providers with an API key field in Settings: the API-key providers, which need one,
+    /// and Command Code, whose CLI takes a Studio key through `COMMAND_CODE_API_KEY` as an
+    /// alternative to `cmd login`.
+    var acceptsAPIKey: Bool { isAPIKeyBased || self == .commandcode }
 
     /// Host shown in Settings for API-key providers, e.g. "api.meta.ai/v1".
     var apiHost: String? {
@@ -93,6 +103,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .deepseek: "platform.deepseek.com"
         case .meta: "dev.meta.ai"
+        case .commandcode: "commandcode.ai/studio"
         default: nil
         }
     }
@@ -102,6 +113,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .deepseek: "DEEPSEEK_API_KEY"
         case .meta: "MODEL_API_KEY"
+        case .commandcode: "COMMAND_CODE_API_KEY"
         default: nil
         }
     }
