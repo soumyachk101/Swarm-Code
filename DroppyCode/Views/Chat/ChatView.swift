@@ -57,8 +57,8 @@ struct ChatView: View {
                     && (paneSize == .zero || paneSize.width - scene.reserve.leading - scene.reserve.trailing >= 900)
             )
             .equatable()
-            // The zoom the chrome row's slider sets, for the conversation alone: the row and
-            // the chat box keep their own size. macOS ignores Dynamic Type, so the timeline
+            // The text size set in Settings, for the conversation alone: the row and the
+            // chat box keep their own size. macOS ignores Dynamic Type, so the timeline
             // scales its fonts by this factor itself (see `Font.chat`).
             .environment(\.chatZoom, ChatZoom.scale(at: model.settings.chatZoom))
             // The room the docked panels take from either side; the conversation and the
@@ -543,7 +543,6 @@ private struct ChatChromeRow: View {
         // Follows the buttons, not the sidebar's state: they leave for the sidebar only once it
         // is wide enough to hold them, and the row closes up as they go.
         let sidebarVisible = model.sidebar.holdsTrafficLights
-        @Bindable var settings = model.settings
         // One glass pass for the whole row. The row floats over the conversation, so its
         // capsules sample fresh content on every scrolled frame; drawn separately, each was
         // a pass of its own. The spacing is well under the gaps, so nothing morphs together.
@@ -576,7 +575,6 @@ private struct ChatChromeRow: View {
                     // mid-flight. Scroll progress still drives it per frame.
                     .animation(nil, value: title)
                 HStack(spacing: 8) {
-                    ChatZoomSlider(index: $settings.chatZoom)
                     ChromeCapsule {
                         OpenInMenu(directory: directory)
                         if let project {

@@ -56,7 +56,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var keywords: [String] {
         switch self {
-        case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "panel", "limits", "credits", "heatmap", "daily", "weekly", "cumulative", "settle", "settled", "finish", "finished", "done", "sound", "chime"]
+        case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "panel", "limits", "credits", "text", "size", "font", "zoom", "heatmap", "daily", "weekly", "cumulative", "settle", "settled", "finish", "finished", "done", "sound", "chime"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .hydra: ["hydra", "heads", "subagents", "sub-agents", "agents", "team", "orchestrator", "worker", "pair", "pairs", "parallel", "delegate", "queue"]
         case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "copilot", "github", "command code", "commandcode", "cmd", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
@@ -366,7 +366,99 @@ private struct GeneralSettingsPage: View {
                     BackdropOpacitySlider(value: $settings.backdropOpacity)
                 }
             }
+            ChatTextSizeCard(index: $settings.chatZoom)
         }
+    }
+}
+
+/// The conversation's text size: a sample of a chat drawn at the chosen size, so the
+/// change is seen here before any thread is opened, over the row that sets it.
+private struct ChatTextSizeCard: View {
+    @Binding var index: Int
+
+    var body: some View {
+        let zoom = ChatZoom.scale(at: index)
+        let percentage = ChatZoom.percentage(at: index)
+        ChromeCard {
+            // The sample: a message in its bubble and the start of a reply, in the
+            // conversation's own type at the chosen size.
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Spacer(minLength: 48)
+                    Text("Where does the composer decide how far the draft photo sits from the edges?")
+                        .font(.chat(.body, zoom: zoom))
+                        .foregroundStyle(Chrome.primaryText)
+                        .padding(.leading, 14)
+                        .padding(.trailing, 14 + UserBubble.tail)
+                        .padding(.vertical, 9)
+                        .background(.tint.opacity(0.14), in: UserBubble())
+                }
+                Text("In `DraftAttachments`, inside **ComposerView.swift**. The strip pads its leading edge with `attachmentInset` but leaves the top on the stack's default spacing, which is why the photo hugs the top of the pill.")
+                    .font(.chat(.body, zoom: zoom))
+                    .foregroundStyle(Chrome.primaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .animation(.snappy(duration: 0.2), value: index)
+            .accessibilityHidden(true)
+            ChromeRowDivider()
+            ChromeRow(title: "Text size", detail: percentage == 100 ? "The stock size" : "\(percentage)% of the stock size") {
+                ChatTextSizeSlider(index: $index)
+            }
+        }
+    }
+}
+
+/// Smaller type on the left, larger on the right, the stock size in the middle, with a
+/// reset that shows only once the slider has left it (see `BackdropOpacitySlider`).
+private struct ChatTextSizeSlider: View {
+    @Binding var index: Int
+
+    private var isOffStock: Bool { index != ChatZoom.defaultIndex }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "textformat.size.smaller")
+                .font(.system(size: 11))
+                .foregroundStyle(Chrome.secondaryText)
+                .help("Smaller")
+            Slider(
+                value: Binding(
+                    get: { Double(index) },
+                    set: { index = ChatZoom.clamped(Int($0.rounded())) }
+                ),
+                in: 0...Double(ChatZoom.stepCount - 1),
+                step: 1
+            )
+            .controlSize(.small)
+            .frame(width: 140)
+            Image(systemName: "textformat.size.larger")
+                .font(.system(size: 11))
+                .foregroundStyle(Chrome.secondaryText)
+                .help("Larger")
+        }
+        .overlay(alignment: .leading) {
+            if isOffStock {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) { index = ChatZoom.defaultIndex }
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .frame(width: 22, height: 22)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Back to the stock size")
+                .offset(x: -28)
+                .transition(.opacity.combined(with: .offset(x: 6)))
+            }
+        }
+        .animation(.snappy(duration: 0.2), value: isOffStock)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Text size"))
+        .accessibilityValue(Text("\(ChatZoom.percentage(at: index)) percent"))
     }
 }
 

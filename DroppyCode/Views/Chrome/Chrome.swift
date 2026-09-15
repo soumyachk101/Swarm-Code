@@ -246,8 +246,8 @@ struct ChromeCapsule<Content: View>: View {
         .padding(.horizontal, Chrome.iconCapsuleInnerPadding)
         .padding(.vertical, Chrome.capsuleVerticalPadding)
         .chromeGlassCapsule()
-        // The capsule is a control wherever it sits, including the zoom slider's track: presses
-        // on it work the control and never drag the window.
+        // The capsule is a control wherever it sits: presses on it work the control and
+        // never drag the window.
         .background { NoWindowDragArea() }
     }
 }
@@ -963,8 +963,8 @@ final class WindowDragView: NSView {
 ///
 /// The chrome row sits inside the title bar's reach (see `WindowChrome.titlebarHeight`), where
 /// AppKit moves the window for any view that lets it. Native controls refuse on their own, but a
-/// control SwiftUI renders itself — like the zoom slider's drag track — lands on the shared hosting
-/// view, which lets the window move: dragging the slider moved the window with it. This view sits
+/// control SwiftUI renders itself — a drag track, say — lands on the shared hosting view, which
+/// lets the window move: dragging such a control moved the window with it. This view sits
 /// behind the control's content, so it wins the hit test for presses no narrower control claims and
 /// refuses the window drag for them; the presses themselves travel on to SwiftUI, so gestures,
 /// popovers and buttons work exactly as before. Empty chrome around the controls has no such view
