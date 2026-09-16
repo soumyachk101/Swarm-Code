@@ -1289,46 +1289,33 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 .tile--plain .tile__caption { max-width: 34ch; text-wrap: pretty; }
 
-/* Picture tiles: the capture bleeds off one side under a fade, the copy on the other. */
+/* Picture tiles: the copy sits at the top, and the capture stands under it, running off
+   the bottom and one side of the tile and fading out before the edge. Never under the
+   words: the copy keeps its own band, the picture takes what is left. */
 .tile--fade {
-  min-height: 360px;
-  padding: 44px;
+  min-height: 460px;
+  padding: 44px 44px 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  gap: 26px;
 }
-.tile__copy { position: relative; z-index: 1; max-width: 30ch; }
-.tile__fade { position: absolute; inset: 0; pointer-events: none; }
+.tile__copy { position: relative; z-index: 1; max-width: 34ch; }
+.tile__fade { position: relative; flex: 1; min-height: 240px; pointer-events: none; }
 .tile__fade-img {
   position: absolute;
-  top: 50%;
-  width: 78%;
+  top: 0;
+  width: 96%;
   height: auto;
-  transform: translateY(-50%);
-  border-radius: 18px;
+  border-radius: 18px 18px 0 0;
+  -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
 }
-.tile--fade-right .tile__fade-img {
-  right: -14%;
-  -webkit-mask-image: linear-gradient(to left, #000 55%, transparent 100%);
-  mask-image: linear-gradient(to left, #000 55%, transparent 100%);
-}
-.tile--fade-left .tile__fade-img {
-  left: -14%;
-  -webkit-mask-image: linear-gradient(to right, #000 55%, transparent 100%);
-  mask-image: linear-gradient(to right, #000 55%, transparent 100%);
-}
-.tile--fade-right .tile__copy { margin-right: auto; }
-.tile--fade-left .tile__copy { margin-left: auto; text-align: left; }
+.tile--fade-right .tile__fade-img { right: -14%; }
+.tile--fade-left .tile__fade-img { left: -14%; }
 @media (max-width: 720px) {
-  .tile--fade { flex-direction: column; }
-  .tile__fade { position: relative; inset: auto; margin-top: 18px; }
-  .tile__fade-img {
-    position: static;
-    width: 100%;
-    transform: none;
-    -webkit-mask-image: none;
-    mask-image: none;
-  }
+  .tile--fade { min-height: 0; padding-bottom: 0; }
+  .tile__fade { min-height: 200px; }
+  .tile__fade-img { width: 108%; }
 }
 
 /* Agents: ten marks in one tile. */
@@ -1832,18 +1819,6 @@ html.nav-intro-done .nav__pill { animation: none; }
 
 /* The demo stills are whole 16:10 frames, shown whole: the box matches, so no bars and no crop. */
 .wordscroll__demo-video { aspect-ratio: 16 / 10; object-fit: contain; }
-/* #live still: span the pinned stage's full inner width, shrinking to fit its
-   height on short viewports, never cropped. Scoped to the id because
-   wordscroll.css loads later and caps this box at a narrower 2400:1646 frame. */
-#live .wordscroll__demo-video {
-  width: 100%;
-  height: auto;
-  max-height: 76vh;
-  aspect-ratio: 16 / 10;
-  object-fit: contain;
-  border-radius: 24px;
-}
-
 /* Theme picker: one big window in the chosen theme, and the names to pick from. Lives
    inside the second wordscroll's demo slot. */
 .themes {
