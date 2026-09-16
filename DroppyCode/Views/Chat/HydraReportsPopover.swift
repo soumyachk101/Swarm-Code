@@ -98,10 +98,15 @@ struct HydraReportDigest {
         }
         var outcome = Outcome.done
         var efforts: [String] = []
+        let metaEfforts: Set<String> = ["low", "medium", "high", "xhigh", "max", "minimal", "fast", "default"]
         while rest.hasSuffix(")"), let open = rest.lastIndex(of: "(") {
             let group = String(rest[rest.index(after: open)..<rest.index(before: rest.endIndex)])
-            rest = String(rest[..<open]).trimmingCharacters(in: .whitespaces)
             let lower = group.lowercased()
+            let isMeta = lower == "failed" || lower.hasPrefix("stopped")
+                || group.rangeOfCharacter(from: .decimalDigits) != nil
+                || metaEfforts.contains(lower)
+            guard isMeta else { break }
+            rest = String(rest[..<open]).trimmingCharacters(in: .whitespaces)
             if lower == "failed" {
                 outcome = .failed
             } else if lower.hasPrefix("stopped") {
@@ -214,12 +219,9 @@ struct HydraReportsPopover: View {
             header
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     if let digest {
                         ForEach(Array(digest.heads.enumerated()), id: \.element.id) { index, head in
-                            if index > 0 {
-                                Divider().opacity(0.5)
-                            }
                             headCard(head, index: index, collapsible: digest.heads.count > 1)
                         }
                     } else {
@@ -229,11 +231,11 @@ struct HydraReportsPopover: View {
                             .padding(.vertical, 40)
                     }
                 }
-                .padding(12)
+                .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(idealHeight: 360, maxHeight: 520)
+            .frame(maxHeight: 520)
         }
         .frame(width: 460)
         // The popover reads at its own size, not the conversation's zoom.
@@ -268,6 +270,12 @@ struct HydraReportsPopover: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)
                     .lineLimit(2)
+                if let digest {
+                    Text(Self.totalsLine(for: digest))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .monospacedDigit()
+                }
                 if let intro = digest?.intro, let sentence = Self.stillAtWorkSentence(in: intro) {
                     Text(sentence)
                         .font(.system(size: 11))
@@ -305,6 +313,26 @@ struct HydraReportsPopover: View {
         return String(string.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
     }
 
+    /// '<N> heads · <F> files · +<A> −<D>', dropping the files part when no files.
+    private static func totalsLine(for digest: HydraReportDigest) -> String {
+        let n = digest.heads.count
+        var files: [HydraReportDigest.LandedFile] = []
+        for head in digest.heads {
+            switch head.landing {
+            case .landed(let f): files.append(contentsOf: f)
+            case .notLanded(let f, _): files.append(contentsOf: f)
+            default: break
+            }
+        }
+        var line = "\(n) \(n == 1 ? "head" : "heads")"
+        guard !files.isEmpty else { return line }
+        let f = files.count
+        let a = files.reduce(0) { $0 + $1.additions }
+        let d = files.reduce(0) { $0 + $1.deletions }
+        line += " · \(f) \(f == 1 ? "file" : "files") · +\(a) −\(d)"
+        return line
+    }
+
     /// The sentence holding 'still at work', from its start to the intro's end.
     private static func stillAtWorkSentence(in intro: String) -> String? {
         guard let match = intro.range(of: "still at work") else { return nil }
@@ -320,6 +348,20 @@ struct HydraReportsPopover: View {
 
     // MARK: Cards
 
+    private func persona(for head: HydraReportDigest.Head) -> HydraPersona {
+        if let match = personas.first(where: { $0.name == head.name }) { return match }
+        if let index = HydraRoster.index(named: head.name) { return HydraRoster.persona(at: index) }
+        return HydraRoster.persona(at: 0)
+    }
+
+    private static func status(_ outcome: HydraReportDigest.Outcome) -> HydraHeadInfo.Status {
+        switch outcome {
+        case .done: return .completed
+        case .failed: return .failed
+        case .stopped: return .stopped
+        }
+    }
+
     /// One head: its name over its outcome, its task, its files, then its report. With
     /// several heads the name row is the toggle that opens and closes the report.
     private func headCard(_ head: HydraReportDigest.Head, index: Int, collapsible: Bool) -> some View {
@@ -334,7 +376,7 @@ struct HydraReportsPopover: View {
                         }
                     }
                 } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HStack(alignment: .center, spacing: 6) {
                         nameRow(head)
                         Spacer(minLength: 0)
                         Image(systemName: "chevron.right")
@@ -352,8 +394,8 @@ struct HydraReportsPopover: View {
             let task = Self.withoutNamePrefix(Self.cleanedTitle(head.task, names: [head.name]), name: head.name)
             if !task.isEmpty {
                 Text(task)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Chrome.secondaryText)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.primaryText)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -362,20 +404,20 @@ struct HydraReportsPopover: View {
                 reportBody(head)
             }
         }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Chrome.overlay(0.05)))
     }
 
     /// The head's name and, beside it, its outcome as a seal or caption plus its effort.
     private func nameRow(_ head: HydraReportDigest.Head) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .center, spacing: 8) {
+            HydraGlyph(persona: persona(for: head), size: 20, status: Self.status(head.outcome))
             Text(head.name)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Chrome.primaryText)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(persona(for: head).color)
             switch head.outcome {
             case .done:
-                Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Chrome.success)
-                    .accessibilityLabel(Text("Done"))
+                EmptyView()
             case .failed:
                 Text("Failed")
                     .font(.system(size: 11))
@@ -385,6 +427,7 @@ struct HydraReportsPopover: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Chrome.warning)
             }
+            Spacer(minLength: 8)
             if let effort = head.effort, !effort.isEmpty {
                 Text(effort)
                     .font(.system(size: 11))
@@ -441,24 +484,37 @@ struct HydraReportsPopover: View {
     @ViewBuilder
     private func fileRows(_ files: [HydraReportDigest.LandedFile]) -> some View {
         if !files.isEmpty {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 ForEach(files) { file in
                     HStack(spacing: 8) {
-                        Text(file.path)
+                        filePathText(file)
                             .lineLimit(1)
-                            .truncationMode(.middle)
-                            .foregroundStyle(file.hasConflicts ? Chrome.warning : Chrome.secondaryText)
+                            .truncationMode(.head)
                         Spacer(minLength: 8)
-                        Text("+\(file.additions) −\(file.deletions)")
-                            .foregroundStyle(Chrome.secondaryText)
-                            .lineLimit(1)
-                            .layoutPriority(1)
+                        HStack(spacing: 6) {
+                            Text("+\(file.additions)").foregroundStyle(Chrome.success)
+                            Text("−\(file.deletions)").foregroundStyle(Chrome.danger)
+                        }
+                        .monospacedDigit()
+                        .layoutPriority(1)
                     }
                     .font(.system(size: 11, design: .monospaced))
                     .help(file.hasConflicts ? "\(file.path) (with conflicts)" : file.path)
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Chrome.overlay(0.05)))
         }
+    }
+
+    private func filePathText(_ file: HydraReportDigest.LandedFile) -> Text {
+        let path = file.path
+        let slash = path.lastIndex(of: "/")
+        let directory = slash.map { String(path[...$0]) } ?? ""
+        let filename = slash.map { String(path[path.index(after: $0)...]) } ?? path
+        return Text(directory).foregroundStyle(Chrome.secondaryText)
+            + Text(filename).foregroundStyle(file.hasConflicts ? Chrome.warning : Chrome.primaryText)
     }
 
     /// The head's own report at the popover's reading size; a missing report says so.
@@ -475,6 +531,7 @@ struct HydraReportsPopover: View {
                         .equatable()
                 }
             }
+            .padding(.top, 2)
             .font(.system(size: 12))
             .environment(\.markdownPointSize, 12)
             .environment(\.markdownDimmed, false)
