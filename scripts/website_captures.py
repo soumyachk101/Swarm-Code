@@ -137,17 +137,17 @@ def wait_for_run(marker, budget):
     # A fresh bundle's first launch can take a minute to clear LaunchServices.
     for _ in range(60):
         time.sleep(2)
-        if subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.strip():
+        if subprocess.run(["pgrep", "-f", "--", marker], capture_output=True, text=True).stdout.strip():
             break
     else:
         sys.exit(f"the run never launched ({marker})")
     deadline = time.time() + budget
     while time.time() < deadline:
         time.sleep(2)
-        alive = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.strip()
+        alive = subprocess.run(["pgrep", "-f", "--", marker], capture_output=True, text=True).stdout.strip()
         if not alive:
             return
-    subprocess.run(["pkill", "-9", "-f", marker])
+    subprocess.run(["pkill", "-9", "-f", "--", marker])
     print("  the run overran its budget and was killed")
 
 
