@@ -1157,18 +1157,25 @@ struct AssistantMessageRow: View {
     /// takes the selection up from there, so a drag across paragraphs just works without
     /// the menu's Select text first.
     @State private var dragSelection: SelectableMessageText.DragOrigin?
+    /// The selectable view's height at the width it was given, once it has laid out.
+    @State private var selectableHeight: CGFloat?
 
     var body: some View {
         if case .assistant(let message) = entry.item.content {
             VStack(alignment: .leading, spacing: 2) {
                 ZStack(alignment: .topLeading) {
                     if isSelecting {
-                        SelectableMessageText(text: message.text, pointSize: pointSize * zoom, dragOrigin: dragSelection) {
+                        SelectableMessageText(text: message.text, pointSize: pointSize * zoom, dragOrigin: dragSelection, onResign: {
                             // Clicking elsewhere ends the mode; the markdown blocks come back.
                             isSelecting = false
                             dragSelection = nil
-                        }
+                        }, onHeightChange: { height in
+                            if selectableHeight != height { selectableHeight = height }
+                        })
+                        // Framed to the text's height at its real width (see `onHeightChange`).
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: selectableHeight)
+                        .clipped()
                     } else {
                         MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
                             // A drag on a finished reply selects across the whole of it: the
@@ -1293,12 +1300,18 @@ private struct FoldedAnswerView: View {
     let runtime: ThreadRuntime
     @State private var menuRequests = MessageMenuRequests()
     @State private var isSelecting = false
+    /// The selectable view's height at the width it was given, once it has laid out.
+    @State private var selectableHeight: CGFloat?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             if isSelecting {
-                SelectableMessageText(text: text, pointSize: pointSize * zoom)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                SelectableMessageText(text: text, pointSize: pointSize * zoom, onHeightChange: { height in
+                    if selectableHeight != height { selectableHeight = height }
+                })
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: selectableHeight)
+                .clipped()
             } else {
                 MarkdownView(text: text).equatable()
             }
