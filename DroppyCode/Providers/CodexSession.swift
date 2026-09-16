@@ -435,11 +435,17 @@ final class CodexSession: ProviderSession {
     private func headStarted(_ thread: JSONValue) {
         guard let id = thread["id"]?.string, let threadID, !headThreads.contains(id) else { return }
         guard thread["parentThreadId"]?.string == threadID else {
-            // Another thread on the same server, or a child whose parent the server names
-            // differently: logged, so a team that never shows in the panel can be traced.
-            if let parent = thread["parentThreadId"]?.string {
-                Self.log.notice("thread/started \(id, privacy: .public) names parent \(parent, privacy: .public), not this lead \(threadID, privacy: .public)")
-            }
+            // Another thread on the same server, unless it is a spawned agent whose parent
+            // the server names otherwise (a resumed lead whose id rotated): a thread with
+            // an agent nickname or role is a head of this session's team and is taken in,
+            // logged, so a team that never shows in the panel can be traced.
+            let nickname = thread["agentNickname"]?.string, role = thread["agentRole"]?.string
+            guard nickname != nil || role != nil else { return }
+            Self.log.notice("thread/started \(id, privacy: .public) names parent \(thread["parentThreadId"]?.string ?? "none", privacy: .public), not this lead \(threadID, privacy: .public); taken as a head by its agent nickname")
+            headThreads.insert(id)
+            let preview = thread["preview"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let description = !preview.isEmpty ? TextCleanup.singleLine(preview, limit: 80) : ([nickname, role].compactMap { $0 }.joined(separator: " · ").nilIfEmpty ?? "Subagent")
+            onEvent?(.agentStarted(AgentSpawn(id: id, taskID: nil, toolUseID: nil, description: description, prompt: preview.nilIfEmpty, model: thread["model"]?.string)))
             return
         }
         headThreads.insert(id)
@@ -468,6 +474,9 @@ final class CodexSession: ProviderSession {
             break
         default:
             if let call = toolCall(from: item) { sink(.toolStarted(id: id, call: call)) }
+            // A spawn that already names its heads registers them as it starts, so a
+            // completion lost to compaction never leaves them unknown.
+            if item["type"]?.string == "collabAgentToolCall" { describeHeads(from: item) }
         }
     }
 
@@ -489,7 +498,9 @@ final class CodexSession: ProviderSession {
                 sink(.toolStarted(id: id, call: call))
                 sink(.toolUpdated(id: id, update: toolUpdate(from: item)))
             }
-            if case .lead = target { describeHeads(from: item) }
+            // On either target: the payload says whose head it is, whatever thread the
+            // server filed the notice under.
+            describeHeads(from: item)
         }
     }
 
@@ -500,11 +511,13 @@ final class CodexSession: ProviderSession {
     private func describeHeads(from item: JSONValue) {
         switch item["type"]?.string {
         case "collabAgentToolCall":
-            guard item["tool"]?.string == "spawnAgent",
-                  let prompt = item["prompt"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty else { return }
+            // A spawn names the heads it reached; the brief is the best task line when it
+            // carries one, and a spawn without one still registers its heads.
+            guard item["tool"]?.string == "spawnAgent" else { return }
+            let prompt = item["prompt"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             for receiver in (item["receiverThreadIds"]?.array ?? []).compactMap(\.string) {
                 if !headThreads.contains(receiver) { headThreads.insert(receiver) }
-                onEvent?(.agentStarted(AgentSpawn(id: receiver, taskID: nil, toolUseID: item["id"]?.string, description: TextCleanup.singleLine(prompt, limit: 80), prompt: prompt, model: item["model"]?.string)))
+                onEvent?(.agentStarted(AgentSpawn(id: receiver, taskID: nil, toolUseID: item["id"]?.string, description: prompt.isEmpty ? "Head" : TextCleanup.singleLine(prompt, limit: 80), prompt: prompt.nilIfEmpty, model: item["model"]?.string)))
             }
         case "subAgentActivity":
             guard let agentThread = item["agentThreadId"]?.string else { return }

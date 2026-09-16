@@ -352,6 +352,7 @@ final class ClaudeSession: ProviderSession {
             case "stopped": .interrupted
             default: .completed
             }
+            agentStreams[agentID] = nil
             onEvent?(.agentFinished(agentID: agentID, status: status, summary: message["summary"]?.string))
         default:
             break
@@ -487,7 +488,9 @@ final class ClaudeSession: ProviderSession {
         for requestID in pendingTools.keys { onEvent?(.requestResolved(id: requestID)) }
         pendingTools.removeAll()
         mainStream = StreamState()
-        agentStreams.removeAll()
+        // The heads' streams stay: a head running in the background outlives the lead's
+        // turn, and clearing its stream here made its next delta orphaned and dropped.
+        // Each head's stream goes with its own task_notification.
         let isError = message["is_error"]?.bool ?? (message["subtype"]?.string != "success")
         if interruptRequested {
             onEvent?(.turnCompleted(status: .interrupted, error: nil))
