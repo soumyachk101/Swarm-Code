@@ -466,19 +466,33 @@ final class ProviderRegistry {
         }
     }
 
-    /// Spends one of Codex's banked resets, then re-reads the limits so the bars show the cleared windows.
-    func consumeCodexResetCredit(_ creditID: String?) async throws -> PlanLimits.ResetOutcome {
-        redeemingReset = creditID ?? "codex"
+    /// Spends one of a provider's banked resets and re-reads its limits so the bars show the cleared window. Codex through its app-server, Z.ai through its reset-card endpoint.
+    func consumeResetCredit(_ provider: ProviderKind, _ creditID: String?) async throws -> PlanLimits.ResetOutcome {
+        redeemingReset = creditID ?? provider.rawValue
         defer { redeemingReset = nil }
-        await LoginEnvironment.load()
-        guard let executable = executable(for: .codex) else { throw ResetCreditError.codexUnavailable }
-        let environment = environment(for: .codex)
-        let outcome = try await CodexSession.consumeResetCredit(executable: executable, environment: environment, creditID: creditID)
-        if let limits = try? await CodexSession.readPlanLimits(executable: executable, environment: environment) {
-            planLimits[.codex] = limits
-            limitsFetchedAt[.codex] = .now
+        switch provider {
+        case .codex:
+            await LoginEnvironment.load()
+            guard let executable = executable(for: .codex) else { throw ResetCreditError.codexUnavailable }
+            let environment = environment(for: .codex)
+            let outcome = try await CodexSession.consumeResetCredit(executable: executable, environment: environment, creditID: creditID)
+            if let limits = try? await CodexSession.readPlanLimits(executable: executable, environment: environment) {
+                planLimits[.codex] = limits
+                limitsFetchedAt[.codex] = .now
+            }
+            return outcome
+        case .zai:
+            let apiKey = settings.apiKey(for: .zai)
+            guard !apiKey.isEmpty, let creditID else { throw ResetCreditError.unknownOutcome }
+            let outcome = try await ZaiAPI.consumeResetCredit(apiKey: apiKey, creditID: creditID)
+            if let limits = await ZaiAPI.planLimits(apiKey: apiKey) {
+                planLimits[.zai] = limits
+                limitsFetchedAt[.zai] = .now
+            }
+            return outcome
+        default:
+            throw ResetCreditError.unknownOutcome
         }
-        return outcome
     }
 
     /// Reads a pay-as-you-go provider's balance, at most once a minute after a successful

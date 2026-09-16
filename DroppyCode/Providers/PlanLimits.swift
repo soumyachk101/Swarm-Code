@@ -47,11 +47,13 @@ struct PlanLimits: Sendable, Equatable {
 enum ResetCreditError: LocalizedError {
     case codexUnavailable
     case unknownOutcome
+    case rejected(String)
 
     var errorDescription: String? {
         switch self {
         case .codexUnavailable: "Codex CLI not found."
         case .unknownOutcome: "Codex returned an unknown reset result."
+        case .rejected(let message): message
         }
     }
 }

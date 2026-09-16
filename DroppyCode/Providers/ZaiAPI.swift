@@ -8,6 +8,8 @@ enum ZaiAPI {
     static let chatURL = baseURL.appendingPathComponent("chat/completions")
     static let modelsURL = baseURL.appendingPathComponent("models")
     static let quotaURL = URL(string: "https://api.z.ai/api/monitor/usage/quota/limit")!
+    static let resetListURL = URL(string: "https://api.z.ai/api/biz/customer-package-reset/list?targetType=PERSONAL")!
+    static let resetUseURL = URL(string: "https://api.z.ai/api/biz/customer-package-reset/use")!
     static let subscriptionURL = URL(string: "https://z.ai/manage-apikey/subscription")!
 
     static let zaiEfforts = ["low", "high", "max"]
@@ -75,7 +77,9 @@ enum ZaiAPI {
               (response as? HTTPURLResponse)?.statusCode == 200,
               let json = JSONValue.parse(data) else { return nil }
         guard json["code"]?.int == 200 || json["success"]?.bool == true else { return nil }
-        return limits(from: json)
+        guard var limits = limits(from: json) else { return nil }
+        limits.resetCredits = await resetCredits(apiKey: key)
+        return limits
     }
 
     static func limits(from json: JSONValue) -> PlanLimits? {
@@ -140,6 +144,66 @@ enum ZaiAPI {
         }
         guard !windows.isEmpty else { return nil }
         return PlanLimits(planName: planName, windows: windows)
+    }
+
+    /// The reset cards the account holds, one row per card: the 5-hour ones first, then
+    /// the weekly ones. Nil when the list cannot be read, so the section stays hidden.
+    static func resetCredits(apiKey: String) async -> PlanLimits.ResetCredits? {
+        var request = URLRequest(url: resetListURL, timeoutInterval: 15)
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let json = JSONValue.parse(data), json["code"]?.int == 200,
+              let payload = json["data"] else { return nil }
+        var credits: [PlanLimits.ResetCredit] = []
+        for (key, type, title) in [("fiveHourResets", "FIVE_HOUR", "Resets the 5-hour limit"), ("weekResets", "WEEK", "Resets the weekly limit")] {
+            for card in payload[key]?.array ?? [] {
+                guard card["available"]?.bool != false, let record = card["recordId"]?.int else { continue }
+                credits.append(PlanLimits.ResetCredit(
+                    id: "\(type):\(record)",
+                    title: title,
+                    detail: nil,
+                    expiresAt: card["expireTime"]?.string.flatMap(resetDate)
+                ))
+            }
+        }
+        return PlanLimits.ResetCredits(availableCount: credits.count, credits: credits)
+    }
+
+    /// Spends one card. The id is the `type:recordId` pair `resetCredits` built.
+    static func consumeResetCredit(apiKey: String, creditID: String) async throws -> PlanLimits.ResetOutcome {
+        let parts = creditID.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let record = Int(parts[1]) else { throw ResetCreditError.unknownOutcome }
+        var request = URLRequest(url: resetUseURL, timeoutInterval: 20)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let body: JSONValue = .object([
+            "targetType": .string("PERSONAL"),
+            "resetType": .string(parts[0]),
+            "recordId": .int(record),
+            "requestId": .string(UUID().uuidString.lowercased()),
+        ])
+        request.httpBody = body.data()
+        let (data, _) = try await URLSession.shared.data(for: request)
+        guard let json = JSONValue.parse(data) else { throw ResetCreditError.unknownOutcome }
+        guard json["code"]?.int == 200, json["success"]?.bool == true else {
+            throw ResetCreditError.rejected(json["msg"]?.string ?? "Z.ai declined the reset.")
+        }
+        // The meters lag the reset by a moment; the dashboard waits the same two seconds.
+        try? await Task.sleep(for: .seconds(2))
+        return .reset
+    }
+
+    /// Z.ai writes its card expiries as naive `yyyy-MM-dd HH:mm:ss` in the operator's zone.
+    private static func resetDate(_ text: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "Asia/Shanghai")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter.date(from: text)
     }
 
     private static let countFormatter: NumberFormatter = {
