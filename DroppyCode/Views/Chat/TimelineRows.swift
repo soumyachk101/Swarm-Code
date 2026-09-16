@@ -50,8 +50,6 @@ private func lastCodeBlock(in text: String) -> String? {
 @Observable
 private final class MessageMenuRequests {
     var confirmRevert = false
-    /// The 'Select text' intent: the menu posts it, the row takes it up into select mode.
-    var selectText = false
 }
 
 struct UserMessageRow: View {
@@ -1199,8 +1197,6 @@ struct AssistantMessageRow: View {
     let summary: TurnSummary?
     let runtime: ThreadRuntime
     @State private var isHovering = false
-    /// Carries the select-text intent out of the context menu without retaining the row.
-    @State private var menuRequests = MessageMenuRequests()
     /// Select-text mode: one AppKit view for the whole reply, since SwiftUI's
     /// `.textSelection` stops at each paragraph and a drag cannot span them.
     @State private var isSelecting = false
@@ -1229,6 +1225,7 @@ struct AssistantMessageRow: View {
                         .clipped()
                     } else {
                         MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
+                            .environment(\.markdownBlockSelection, message.isStreaming)
                             // A drag on a finished reply selects across the whole of it: the
                             // blocks swap for the selectable view, which carries the drag on.
                             .simultaneousGesture(
@@ -1269,7 +1266,7 @@ struct AssistantMessageRow: View {
             .onHover { [hovering = $isHovering] isOver in
                 withAnimation(.easeOut(duration: 0.12)) { hovering.wrappedValue = isOver }
             }
-            .messageMenu(text: message.text, runtime: runtime, selectText: message.isStreaming ? nil : $menuRequests.selectText)
+            .messageMenu(text: message.text, runtime: runtime)
             // Same trade as the user row: the hover line's room stays inside the row
             // (so hovering it works and text never moves), but not in its height, so
             // the controls fill the gap below instead of adding to it. (2 = the
@@ -1281,14 +1278,6 @@ struct AssistantMessageRow: View {
                     dragSelection = nil
                 }
             }
-            .onChange(of: menuRequests.selectText) { _, asked in
-                guard asked else { return }
-                // The menu posts the intent, the row takes it up: select mode swaps the
-                // markdown blocks for one selectable view until Done or Escape.
-                menuRequests.selectText = false
-                dragSelection = nil
-                isSelecting = true
-            }
         }
     }
 
@@ -1298,7 +1287,7 @@ struct AssistantMessageRow: View {
 
     /// The context menu's items, from value snapshots with weak captures: the AppKit menu
     /// outlives the right-click, so its callbacks must not retain the row.
-    static func messageActions(text: String, code: String?, runtime: ThreadRuntime, selectText: Binding<Bool>? = nil) -> [RowAction] {
+    static func messageActions(text: String, code: String?, runtime: ThreadRuntime) -> [RowAction] {
         let textSnapshot = text
         let codeSnapshot = code
         var items = [
@@ -1315,28 +1304,21 @@ struct AssistantMessageRow: View {
             guard !runtime.draft.quotes.contains(where: { $0.text == textSnapshot }) else { return }
             runtime.draft.quotes.append(ReplyQuote(text: textSnapshot))
         })
-        if let selectText {
-            items.append(RowAction(title: "Select text", symbol: "character.cursor.ibeam", startsGroup: true) { [select = selectText] in
-                select.wrappedValue = true
-            })
-        }
         return items
     }
 }
 
 extension View {
     /// The right-click popover of a reply, opened at the pointer, wherever its text
-    /// is shown: copy, the last code block, quoting it into the chat box,
-    /// select-text mode. Snapshots only: the popover builder must not capture the
+    /// is shown: copy, the last code block, quoting it into the chat box.
+    /// Snapshots only: the popover builder must not capture the
     /// row, so the popover cannot pin the row's state storage after dismiss.
-    /// A nil select binding leaves 'Select text' out (streaming rows).
-    func messageMenu(text: String, runtime: ThreadRuntime, selectText: Binding<Bool>? = nil) -> some View {
-        rightClickPopover { [text, runtime, select = selectText] in
+    func messageMenu(text: String, runtime: ThreadRuntime) -> some View {
+        rightClickPopover { [text, runtime] in
             AssistantMessageRow.messageActions(
                 text: text,
                 code: lastCodeBlock(in: text),
-                runtime: runtime,
-                selectText: select
+                runtime: runtime
             )
         }
     }
@@ -1349,41 +1331,54 @@ private struct FoldedAnswerView: View {
     @Environment(\.chatZoom) private var zoom
     let text: String
     let runtime: ThreadRuntime
-    @State private var menuRequests = MessageMenuRequests()
     @State private var isSelecting = false
+    @State private var dragSelection: SelectableMessageText.DragOrigin?
     /// The selectable view's height at the width it was given, once it has laid out.
     @State private var selectableHeight: CGFloat?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            if isSelecting {
-                SelectableMessageText(text: text, pointSize: pointSize * zoom, onHeightChange: { height in
-                    if selectableHeight != height { selectableHeight = height }
-                })
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .frame(height: selectableHeight)
-                .clipped()
-            } else {
-                MarkdownView(text: text).equatable()
+            ZStack(alignment: .topLeading) {
+                if isSelecting {
+                    SelectableMessageText(text: text, pointSize: pointSize * zoom, dragOrigin: dragSelection, onResign: {
+                        isSelecting = false
+                        dragSelection = nil
+                    }, onHeightChange: { height in
+                        if selectableHeight != height { selectableHeight = height }
+                    })
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(height: selectableHeight)
+                    .clipped()
+                } else {
+                    MarkdownView(text: text).equatable()
+                        .environment(\.markdownBlockSelection, false)
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.foldedSpace))
+                                .onChanged { value in
+                                    guard !isSelecting else { return }
+                                    dragSelection = SelectableMessageText.DragOrigin(start: value.startLocation, current: value.location)
+                                    isSelecting = true
+                                },
+                            including: .all
+                        )
+                }
             }
+            .coordinateSpace(name: Self.foldedSpace)
             if isSelecting {
                 HStack {
                     Spacer(minLength: 8)
-                    Button("Done") { isSelecting = false }
+                    Button("Done") { isSelecting = false; dragSelection = nil }
                         .buttonStyle(.glass)
                         .controlSize(.small)
                 }
                 .frame(height: TimelineMetrics.hoverLineHeight)
             }
         }
-        .messageMenu(text: text, runtime: runtime, selectText: $menuRequests.selectText)
-        .onExitCommand { if isSelecting { isSelecting = false } }
-        .onChange(of: menuRequests.selectText) { _, asked in
-            guard asked else { return }
-            menuRequests.selectText = false
-            isSelecting = true
-        }
+        .messageMenu(text: text, runtime: runtime)
+        .onExitCommand { if isSelecting { isSelecting = false; dragSelection = nil } }
     }
+
+    private static let foldedSpace = "foldedAnswer"
 }
 
 /// Consecutive tool calls, rendered inline with no card: a summary header

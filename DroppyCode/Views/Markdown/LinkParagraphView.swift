@@ -24,11 +24,13 @@ struct LinkParagraphView: NSViewRepresentable {
         let view = LinkTextView()
         view.delegate = context.coordinator
         view.mergeTarget = context.environment.mergeRequestTarget
+        view.passesProseThrough = !context.environment.markdownBlockSelection
         onHost?(view)
         return view
     }
 
     func updateNSView(_ view: LinkTextView, context: Context) {
+        view.passesProseThrough = !context.environment.markdownBlockSelection
         // Read so a favicon-load bump rebuilds the string with icons.
         _ = revision
         let coordinator = context.coordinator
@@ -173,6 +175,10 @@ final class LinkTextView: NSTextView {
     /// leaves Merge off every link's popover.
     var mergeTarget: MergeRequestTarget?
 
+    /// Inside a finished reply the prose passes the mouse through to SwiftUI, whose drag
+    /// swaps in the whole-reply selection; links still take the click and open.
+    var passesProseThrough = false
+
     /// The view owns its text storage. `init(frame:textContainer:)` only takes a
     /// container and holds it weakly; a bare container with no layout manager or
     /// storage behind it is released on the spot, leaving the view with no
@@ -265,6 +271,13 @@ final class LinkTextView: NSTextView {
     /// text menu; the popover puts Merge first on a merge or pull request link. Handled here
     /// rather than in `menu(for:)` so the click never moves the selection. Prose keeps the
     /// system's menu.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard passesProseThrough, let superview else { return super.hitTest(point) }
+        // `hitTest` gets the superview's coordinates; the link lookup wants this view's.
+        let local = convert(point, from: superview)
+        return linkAndRange(at: local) == nil ? nil : super.hitTest(point)
+    }
+
     override func rightMouseDown(with event: NSEvent) {
         guard !presentLinkPopover(for: event) else { return }
         super.rightMouseDown(with: event)

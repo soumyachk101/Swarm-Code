@@ -27,8 +27,8 @@ struct PlanLimitsView: View {
                     LimitRow(window: window)
                         .padding(.top, 14)
                 }
-                if provider == .codex, let credits = limits.resetCredits {
-                    BankedResetsView(credits: credits)
+                if let credits = limits.resetCredits {
+                    BankedResetsView(provider: provider, credits: credits)
                         .padding(.top, 14)
                 }
             } else if !isLoading {
@@ -160,11 +160,10 @@ fileprivate struct BankedResetRowModel: Identifiable {
     var credit: PlanLimits.ResetCredit?
 }
 
-/// Codex's banked resets: a header with how many the account holds, then a row per reset with
-/// a button to spend it. Spending goes through the registry so the bars refresh in the same
-/// pass; the header line carries the outcome for a few seconds before it reads the count again.
+/// A provider's banked resets (Codex's reset credits, Z.ai's reset cards): a header with how many the account holds, then a row per reset with a button to spend it. Spending goes through the registry so the bars refresh in the same pass; the header line carries the outcome for a few seconds before it reads the count again.
 private struct BankedResetsView: View {
     @Environment(AppModel.self) private var model
+    let provider: ProviderKind
     let credits: PlanLimits.ResetCredits
 
     fileprivate enum Phase: Equatable {
@@ -241,9 +240,9 @@ private struct BankedResetsView: View {
 
     private var countText: String {
         switch credits.availableCount {
-        case 0: "None available. Codex grants them now and then; one clears the active windows."
-        case 1: "1 available. Spending it clears the active windows."
-        default: "\(credits.availableCount) available. Spending one clears the active windows."
+        case 0: "None available. \(provider.displayName) grants them now and then."
+        case 1: "1 available. Spending it puts the limit back to zero."
+        default: "\(credits.availableCount) available. Spending one puts the limit back to zero."
         }
     }
 
@@ -252,7 +251,7 @@ private struct BankedResetsView: View {
         settle?.cancel()
         settle = Task {
             do {
-                let outcome = try await model.providers.consumeCodexResetCredit(row.credit?.id)
+                let outcome = try await model.providers.consumeResetCredit(provider, row.credit?.id)
                 phase = .done(outcome)
             } catch {
                 phase = .failed(error.localizedDescription)

@@ -240,7 +240,7 @@ struct MarkdownBlockView: View, Equatable {
                             + Text(RichLink.prettyAttributed(rest, streaming: streaming))
                     }
                 }
-                .textSelection(.enabled)
+                .modifier(MarkdownBlockSelection())
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
@@ -583,6 +583,13 @@ private struct MarkdownStreamingKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+/// Whether each block selects its own text. Off inside a finished reply, whose drag
+/// swaps the blocks for one selectable view across the whole of it; on everywhere
+/// else (streaming replies, popovers, cards), where a block's own selection is all there is.
+private struct MarkdownBlockSelectionKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
 extension EnvironmentValues {
     var markdownPointSize: CGFloat {
         get { self[MarkdownPointSizeKey.self] }
@@ -595,6 +602,22 @@ extension EnvironmentValues {
     var markdownStreaming: Bool {
         get { self[MarkdownStreamingKey.self] }
         set { self[MarkdownStreamingKey.self] = newValue }
+    }
+    var markdownBlockSelection: Bool {
+        get { self[MarkdownBlockSelectionKey.self] }
+        set { self[MarkdownBlockSelectionKey.self] = newValue }
+    }
+}
+
+/// `.textSelection(.enabled)` only while the environment allows blocks their own selection.
+struct MarkdownBlockSelection: ViewModifier {
+    @Environment(\.markdownBlockSelection) private var enabled
+    func body(content: Content) -> some View {
+        if enabled {
+            content.textSelection(.enabled)
+        } else {
+            content.textSelection(.disabled)
+        }
     }
 }
 
@@ -759,7 +782,7 @@ struct InlineText: View {
             // Link-free, so the attributed string renders as one Text; bold, italic and
             // code come through as inline presentation intents.
             Text(RichLink.prettyAttributed(source, streaming: streaming))
-                .textSelection(.enabled)
+                .modifier(MarkdownBlockSelection())
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -852,7 +875,7 @@ struct CodeBlock: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(visible)
                     .font(.chat(.callout, design: .monospaced, zoom: zoom))
-                    .textSelection(.enabled)
+                    .modifier(MarkdownBlockSelection())
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 12)
@@ -932,7 +955,7 @@ struct TableBlock: View {
                         }
                     }
                 }
-                .textSelection(.enabled)
+                .modifier(MarkdownBlockSelection())
                 .padding(12)
             }
             if !showsAll, rows.count > Self.collapsedRowLimit {
