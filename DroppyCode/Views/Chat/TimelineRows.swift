@@ -1586,6 +1586,44 @@ struct ToolRow: View {
         }
     }
 
+    /// The head a delegation call is sending out, read from the call itself before its
+    /// thread is linked: a roster name leading the title ("Pip: the merge popover") names
+    /// the face; otherwise the team's first face stands in and the row speaks of "a head".
+    /// The task is the title past the name.
+    private static func departingHead(for call: ToolCall) -> (persona: HydraPersona, name: String?, task: String) {
+        let title = call.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        // "Subagent" and the like are the tool's own word for itself, not a task.
+        let generic: Set<String> = ["subagent", "agent", "task", ""]
+        if let colon = title.firstIndex(of: ":") {
+            let name = String(title[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if let index = HydraRoster.index(named: name) {
+                let task = String(title[title.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
+                return (HydraRoster.persona(at: index), HydraRoster.persona(at: index).name, task)
+            }
+        }
+        return (HydraRoster.persona(at: 0), nil, generic.contains(title.lowercased()) ? "" : title)
+    }
+
+    /// What the departing row says: on its way, out, or never sent.
+    private static func departureLabel(for call: ToolCall, name: String?, task: String) -> String {
+        let who = name ?? "a head"
+        let rest = task.isEmpty ? "" : ": \(task)"
+        switch call.status {
+        case .running: return "Sending out \(who)\(rest)"
+        case .failed: return "Could not send out \(who)\(rest)"
+        default: return "Sent out \(who)\(rest)"
+        }
+    }
+
+    /// The glyph's badge for a departing row: nothing on its way, the outcome once known.
+    private static func departureStatus(for call: ToolCall) -> HydraHeadInfo.Status? {
+        switch call.status {
+        case .running: return nil
+        case .failed: return .failed
+        default: return .completed
+        }
+    }
+
     /// The row itself: icon, text, stats and chevron, laid out the same whether or not
     /// the line can be tapped.
     @ViewBuilder
@@ -1596,17 +1634,27 @@ struct ToolRow: View {
         // A row that sent out a head wears the head's glyph and name, in the badge the
         // finished turn's card and the working line wear, rather than as a line of text.
         let head = call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
-        let isBadge = head != nil
+        // Before the head's thread is linked to the call (the moment it goes out, or a
+        // call that failed to send one), the row still wears a head's glyph and speaks of
+        // sending it out: the name from the call's own title when it leads with one from
+        // the roster, else the team's first face. Never a spinner and "Delegating Subagent".
+        let departing: (persona: HydraPersona, name: String?, task: String)? = call.kind == .agent && head == nil ? Self.departingHead(for: call) : nil
+        let isBadge = head != nil || departing != nil
         HStack(spacing: TimelineMetrics.iconSpacing) {
             HStack(spacing: isBadge ? 8 : TimelineMetrics.iconSpacing) {
                 if let head {
                     HydraGlyph(persona: head.persona, size: 18, isRunning: call.status == .running && head.status == .running, status: head.status)
+                } else if let departing {
+                    HydraGlyph(persona: departing.persona, size: 18, isRunning: call.status == .running, status: Self.departureStatus(for: call))
+                        .transition(.scale(scale: 0.6).combined(with: .opacity))
                 } else {
                     ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)
                 }
                 // One text run after the icon, so the row reads as
                 // icon + space + text instead of three spaced items.
-                Text(head.map { "\(call.status == .running ? "Sending out" : "Sent out") \($0.persona.name): \(call.title)" } ?? ToolPresentation.label(for: call))
+                Text(head.map { "\(call.status == .running ? "Sending out" : "Sent out") \($0.persona.name): \(call.title)" }
+                    ?? departing.map { Self.departureLabel(for: call, name: $0.name, task: $0.task) }
+                    ?? ToolPresentation.label(for: call))
                     .font(isBadge ? .chat(.callout, weight: .medium, zoom: zoom) : .chat(.callout, zoom: zoom))
                     .foregroundStyle(isBadge ? AnyShapeStyle(Chrome.primaryText.opacity(0.9)) : AnyShapeStyle(.secondary))
                     .lineLimit(1)

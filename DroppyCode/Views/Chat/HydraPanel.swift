@@ -140,13 +140,11 @@ struct HydraPanel: View {
                             .font(.system(size: 12.5, weight: .medium))
                             .foregroundStyle(Chrome.primaryText.opacity(0.92))
                             .lineLimit(1)
-                        // A head on another provider than its lead wears that provider's
-                        // mark: the strip says whose model is at work on stage.
-                        if selected.provider != model.thread(runtime.threadID)?.provider {
-                            ProviderIcon(provider: selected.provider, size: 12)
-                                .foregroundStyle(Chrome.secondaryText)
-                                .help(selected.provider.displayName)
-                        }
+                        // The provider's mark: the strip says whose model is at work on
+                        // stage, whether or not it is the lead's own.
+                        ProviderIcon(provider: selected.provider, size: 12)
+                            .foregroundStyle(Chrome.secondaryText)
+                            .help(model.providers.model(selected.model, for: selected.provider)?.shortName ?? selected.provider.displayName)
                         Text(verbatim: HydraStatusText.short(info))
                             .font(.system(size: 12))
                             .foregroundStyle(Chrome.secondaryText)
@@ -323,14 +321,11 @@ private struct HydraHeadRow: View {
                                 Text(verbatim: info.persona.name)
                                     .font(.system(size: 13, weight: .medium))
                                     .foregroundStyle(Chrome.primaryText)
-                                // A head on another provider than its lead wears that
-                                // provider's mark, so the team reads as what it is: one
-                                // model leading, another doing the work.
-                                if let parentID = head.parentThreadID, head.provider != model.thread(parentID)?.provider {
-                                    ProviderIcon(provider: head.provider, size: 11)
-                                        .foregroundStyle(Chrome.secondaryText)
-                                        .help(model.providers.model(head.model, for: head.provider)?.shortName ?? head.provider.displayName)
-                                }
+                                // The provider's mark, so the list says whose model each
+                                // head runs on.
+                                ProviderIcon(provider: head.provider, size: 11)
+                                    .foregroundStyle(Chrome.secondaryText)
+                                    .help(model.providers.model(head.model, for: head.provider)?.shortName ?? head.provider.displayName)
                                 Text(verbatim: HydraStatusText.long(info))
                                     .font(.system(size: 11))
                                     .foregroundStyle(info.status == .failed ? Chrome.danger : Chrome.secondaryText)

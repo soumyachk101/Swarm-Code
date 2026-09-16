@@ -48,6 +48,13 @@ struct SidebarView: View {
     /// The built list, kept while its inputs stand (see `SidebarItemCache`): a render
     /// that changed no thread, project or setting hands back the same items.
     @State private var itemCache = SidebarItemCache()
+    /// While the list scrolls its rows take no hover and no clicks, the way the timeline's
+    /// do: a click cannot land on a moving row anyway, and skipping the hover states keeps
+    /// a scroll at one layout pass per frame.
+    @State private var isListScrolling = false
+    /// Settles `isListScrolling` back to false 150 ms after the last scroll movement, so
+    /// wheel ticks (which report no scroll phase) re-arm the freeze instead of flickering it.
+    @State private var scrollSettle: Task<Void, Never>?
 
     private var query: String {
         search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -102,6 +109,7 @@ struct SidebarView: View {
                         searchList(helpers: helpers)
                     }
                 }
+                .allowsHitTesting(!isListScrolling)
                 // Adding or deleting a thread opens and closes its space with the same motion as every other row.
                 .animation(Chrome.panelSlide, value: model.threads.count)
                 .animation(Chrome.panelSlide, value: model.settings.settledCollapsed)
@@ -125,6 +133,17 @@ struct SidebarView: View {
             }
             .scrollIndicators(.never)
             .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { listFrame.note($0) }
+            .onScrollPhaseChange { _, phase in
+                if phase == .idle {
+                    scrollSettle?.cancel()
+                    isListScrolling = false
+                } else {
+                    noteListScroll()
+                }
+            }
+            .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { old, new in
+                if old != new { noteListScroll() }
+            }
 
             VStack(alignment: .leading, spacing: 1) {
                 SidebarRow(title: "Add project", action: { addProject() }) {
@@ -161,17 +180,6 @@ struct SidebarView: View {
                 model.delete(thread.id)
             }
         }
-        .alert("Rename thread", isPresented: Binding(
-            get: { renaming != nil },
-            set: { if !$0 { renaming = nil } }
-        )) {
-            TextField("Title", text: $renameText)
-            Button("Rename") {
-                if let thread = renaming { model.rename(thread.id, to: renameText) }
-                renaming = nil
-            }
-            Button("Cancel", role: .cancel) { renaming = nil }
-        }
     }
 
     /// The delete question, asked in a popover on the row itself rather than a sheet over
@@ -201,6 +209,22 @@ struct SidebarView: View {
                 isDeletePopoverShown = false
                 carryOutConfirmedDeletion()
             }
+        }
+    }
+
+    /// The rename field, asked in a popover on the row itself like the delete question.
+    /// Clicking away keeps the thread's title.
+    private func renamePopover<Row: View>(for thread: ChatThread, on row: Row) -> some View {
+        let threadID = thread.id
+        return row.popover(
+            isPresented: Binding(
+                get: { renaming?.id == threadID },
+                set: { if !$0 { renaming = nil } }
+            ),
+            arrowEdge: .bottom
+        ) {
+            RenameThreadPopover(title: renameText, onRename: { model.rename(threadID, to: $0); renaming = nil }, onCancel: { renaming = nil })
+                .presentedChrome()
         }
     }
 
@@ -271,7 +295,7 @@ struct SidebarView: View {
                         model.delete(thread.id)
                     }
                 }
-            ))
+            ).equatable())
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.note(item.id, $0) }
             .modifier(RidesWithDraggedParent(parentID: thread.parentThreadID, drag: drag))
         case .helperStub(let parent, let helpers):
@@ -282,9 +306,24 @@ struct SidebarView: View {
     }
 
     /// Where every thread sits in the list (see `ThreadPlacement`): the key the grouping and
-    /// the list below are kept under.
+    /// the list below are kept under. Kept while a cheap fingerprint of the threads stands,
+    /// so an unrelated re-render (selection, hover) does not rebuild placements for
+    /// hundreds of threads.
+    @State private var placementCache = PlacementCache()
     private var threadPlacements: [ThreadPlacement] {
-        model.threads.map(ThreadPlacement.init)
+        placementCache.placements(for: model.threads)
+    }
+
+    /// A scroll movement (re)arms the list's scroll freeze: rows take no hover or clicks
+    /// for 150 ms after the last movement, covering wheel ticks, which report no phase.
+    private func noteListScroll() {
+        isListScrolling = true
+        scrollSettle?.cancel()
+        scrollSettle = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled else { return }
+            isListScrolling = false
+        }
     }
 
     /// Every helper by the thread it hangs under, worked out once for the whole list. Asking
@@ -377,16 +416,20 @@ struct SidebarView: View {
             guard project.isExpanded else { continue }
             // The settled threads close the project's list (see `threads(in:)`), a small
             // step below the ones still open, under a header that folds them away.
+            // Pinned threads lead each project's open list; settled ones never do.
             let collapsed = model.settings.settledCollapsed
             var hasOpen = false
             var reachedSettled = false
-            for thread in projectThreads {
+            var openThreads = projectThreads.filter { !$0.isSettled }
+            openThreads = openThreads.filter(\.isPinned) + openThreads.filter { !$0.isPinned }
+            let orderedThreads = openThreads + projectThreads.filter(\.isSettled)
+            for thread in orderedThreads {
                 if thread.isSettled, !reachedSettled {
                     reachedSettled = true
                     if hasOpen {
                         items.append(SidebarItem(id: "settled-gap-\(project.id)", kind: .gap(ThreadRowMetrics.settledGap)))
                     }
-                    let settledCount = projectThreads.count(where: \.isSettled)
+                    let settledCount = orderedThreads.count(where: \.isSettled)
                     if settledCount > 0 {
                         items.append(SidebarItem(id: "settled-header-\(project.id)", kind: .settledHeader(count: settledCount, isFirst: false)))
                     }
@@ -420,7 +463,14 @@ struct SidebarView: View {
             items.append(SidebarItem(id: "attention", kind: .header("Needs attention", isFirst: true)))
             items.append(contentsOf: activityThreadItems(attention, helpers: helpers))
         }
-        for group in Self.activityGroups(rest.filter { !$0.isSettled }) {
+        // Open pinned threads sit above the day groups, in the activity sort's order.
+        let open = rest.filter { !$0.isSettled }
+        let pinned = Self.placed(open.filter(\.isPinned))
+        if !pinned.isEmpty {
+            items.append(SidebarItem(id: "day-Pinned", kind: .header("Pinned", isFirst: items.isEmpty)))
+            items.append(contentsOf: activityThreadItems(pinned, helpers: helpers))
+        }
+        for group in Self.activityGroups(open.filter { !$0.isPinned }) {
             // Without an attention section the day header is the first row, so it takes the tighter top padding.
             items.append(SidebarItem(id: "day-\(group.title)", kind: .header(group.title, isFirst: items.isEmpty)))
             items.append(contentsOf: activityThreadItems(group.threads, helpers: helpers))
@@ -690,7 +740,9 @@ struct SidebarView: View {
 
     private func threadRow(_ thread: ChatThread, projectName: String?, hasHelpers: Bool, isDragged: Bool = false) -> some View {
         // A thread with helpers under it gets the fold button; a settled one shows none.
-        return deletePopover(for: thread, on: SidebarThreadRow(
+        // `.equatable()` skips the parent's re-evaluation for rows whose value inputs did
+        // not change; the row still observes the model's per-thread cells inside its body.
+        return renamePopover(for: thread, on: deletePopover(for: thread, on: SidebarThreadRow(
             snapshot: thread,
             projectName: projectName,
             menuRequests: menuRequests,
@@ -711,7 +763,7 @@ struct SidebarView: View {
                     model.delete(thread.id)
                 }
             }
-        ))
+        ).equatable()))
     }
 }
 
@@ -732,6 +784,48 @@ private struct DeleteThreadPopover: View {
             }
         }
         .frame(width: 280)
+    }
+}
+
+/// What the rename popover asks: the title field and the choice, on the row itself
+/// like the delete question. Clicking away keeps the thread's title.
+private struct RenameThreadPopover: View {
+    let title: String
+    let onRename: (String) -> Void
+    let onCancel: () -> Void
+
+    @State private var text: String
+    @FocusState private var isFocused: Bool
+
+    init(title: String, onRename: @escaping (String) -> Void, onCancel: @escaping () -> Void) {
+        self.title = title
+        self.onRename = onRename
+        self.onCancel = onCancel
+        _text = State(initialValue: title)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Rename thread")
+                .font(.system(size: 13, weight: .semibold))
+            TextField("Title", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .focused($isFocused)
+                .onSubmit { onRename(text) }
+            HStack {
+                Spacer()
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(.bordered)
+                Button("Rename") { onRename(text) }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+            .controlSize(.regular)
+        }
+        .padding(14)
+        .frame(width: 300)
+        .onAppear { isFocused = true }
     }
 }
 
@@ -945,7 +1039,7 @@ private enum ThreadRowMetrics {
 /// A helper under the thread it was spawned from: one small line, joined to its parent by a
 /// dotted connector that runs down the rows and ends at the last. The connector folds the
 /// helpers away; the folded line (HelperStubRow) unfolds them.
-private struct SidebarHelperRow: View {
+private struct SidebarHelperRow: View, Equatable {
     @Environment(AppModel.self) private var model
     /// The helper as the list last built it; `thread` below is the live record.
     let snapshot: ChatThread
@@ -1041,6 +1135,15 @@ private struct SidebarHelperRow: View {
     }
 
     /// The ellipsis popover's items. Kept on the instance: a popover is not an AppKit menu.
+
+    static func == (lhs: SidebarHelperRow, rhs: SidebarHelperRow) -> Bool {
+        lhs.snapshot.id == rhs.snapshot.id
+            && lhs.snapshot.title == rhs.snapshot.title
+            && lhs.snapshot.updatedAt == rhs.snapshot.updatedAt
+            && lhs.snapshot.isPinned == rhs.snapshot.isPinned
+            && lhs.snapshot.isSettled == rhs.snapshot.isSettled
+            && lhs.isLast == rhs.isLast
+    }
 
     private func makeActions() -> [RowAction] {
         ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
@@ -1180,7 +1283,7 @@ private struct HelperConnectorShape: Shape {
 /// switching layouts animates its height and contents rather than swapping one row for another.
 /// Settled, it is one small grey line with a green check at the front in either layout: a row of its
 /// own that the open row's ghost glides down to (see RowGlideAnimator).
-private struct SidebarThreadRow: View {
+private struct SidebarThreadRow: View, Equatable {
     @Environment(AppModel.self) private var model
     @Environment(\.colorScheme) private var colorScheme
     /// The thread as the list last built it; `thread` below is the live record.
@@ -1245,8 +1348,13 @@ private struct SidebarThreadRow: View {
             .background {
                 // Only the fill animates with selection; the row's place is never animated from here.
                 shape
-                    .fill(Chrome.overlay(Self.fill(isSelected: isSelected, isHovering: isHovering)))
+                    .fill(thread.isPinned && !isSelected ? Chrome.danger.opacity(0.10) : Chrome.overlay(Self.fill(isSelected: isSelected, isHovering: isHovering)))
                     .animation(Chrome.hover, value: isSelected)
+            }
+            .overlay {
+                if thread.isPinned && isSelected {
+                    shape.fill(Chrome.danger.opacity(0.06))
+                }
             }
             .contentShape(shape)
         }
@@ -1303,6 +1411,12 @@ private struct SidebarThreadRow: View {
             if hovering { model.warmDocuments([thread.id]) }
         }
         .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { frame in
+            // Scrolling moves every row every frame: the frame is tracked only while a
+            // settle or reopen can need it — while this row is dragged, under the pointer
+            // (a settle starts from the row under it), or while a glide is in the air (the
+            // arriving row reports where the ghost lands). `glides` is read in the event
+            // closure, not the body, so it observes nothing.
+            guard isDragged || isHovering || !RowGlideAnimator.shared.glides.isEmpty else { return }
             windowFrame.note(frame)
             // A row that has just arrived where a ghost of it is headed tells the ghost where to land.
             RowGlideAnimator.shared.land(threadID: thread.id, settled: snapshot.isSettled, at: frame)
@@ -1352,6 +1466,20 @@ private struct SidebarThreadRow: View {
     private static func fill(isSelected: Bool, isHovering: Bool) -> Double {
         if isSelected { return 0.12 }
         return isHovering ? 0.06 : 0
+    }
+
+    /// Value inputs only: closures and the frame holder are ignored, so the parent's
+    /// re-evaluation skips rows whose thread did not change. Live state still reaches the
+    /// body through the model's per-thread cells.
+    static func == (lhs: SidebarThreadRow, rhs: SidebarThreadRow) -> Bool {
+        lhs.snapshot.id == rhs.snapshot.id
+            && lhs.snapshot.title == rhs.snapshot.title
+            && lhs.snapshot.updatedAt == rhs.snapshot.updatedAt
+            && lhs.snapshot.isPinned == rhs.snapshot.isPinned
+            && lhs.snapshot.isSettled == rhs.snapshot.isSettled
+            && lhs.projectName == rhs.projectName
+            && lhs.isDragged == rhs.isDragged
+            && (lhs.onToggleFold != nil) == (rhs.onToggleFold != nil)
     }
 
     /// The room the title leaves for what sits at the row's trailing end: the check and the
@@ -1548,6 +1676,7 @@ private struct ThreadGhostBadge: View {
                 MiniSpinner(cellSize: 2.4, isStill: true)
             } else if thread.isPinned {
                 SidebarSymbol("pin.fill", scale: 0.9)
+                    .foregroundStyle(Chrome.danger.opacity(0.85))
             } else {
                 ProviderIcon(provider: thread.provider, size: 14)
             }
@@ -1605,6 +1734,7 @@ private struct ThreadBadge: View {
                     .help(mergeStage ?? "")
             } else if thread.isPinned {
                 SidebarSymbol("pin.fill", scale: 0.9)
+                    .foregroundStyle(Chrome.danger.opacity(0.85))
             } else {
                 ProviderIcon(provider: thread.provider, size: 14)
             }
@@ -1955,6 +2085,63 @@ private struct SidebarSearchResult {
     let project: Project
     let threads: [ChatThread]
     let count: Int
+}
+
+/// The sidebar's `threadPlacements`, kept while a cheap fingerprint of the threads stands:
+/// a selection change or hover re-renders the list without rebuilding placements for
+/// hundreds of threads. The fingerprint covers every field `ThreadPlacement` reads, so a
+/// placement change always rebuilds.
+private final class PlacementCache {
+    private struct Fingerprint: Equatable {
+        let id: UUID
+        let projectID: UUID
+        let parentThreadID: UUID?
+        let isArchived: Bool
+        let isInPanel: Bool
+        let isSettled: Bool
+        let settledAt: Date?
+        let isPinned: Bool
+        let sortOrder: Double?
+        let activityOrder: Double?
+        let activityOrderDay: Date?
+        let createdAt: Date
+        let updatedAt: Date
+        let foldsHelpers: Bool
+        let isHydraHead: Bool
+        let hydraIndex: Int?
+        let hasUnread: Bool
+
+        init(_ thread: ChatThread) {
+            id = thread.id
+            projectID = thread.projectID
+            parentThreadID = thread.parentThreadID
+            isArchived = thread.isArchived
+            isInPanel = thread.isInPanel
+            isSettled = thread.isSettled
+            settledAt = thread.settledAt
+            isPinned = thread.isPinned
+            sortOrder = thread.sortOrder
+            activityOrder = thread.activityOrder
+            activityOrderDay = thread.activityOrderDay
+            createdAt = thread.createdAt
+            updatedAt = thread.updatedAt
+            foldsHelpers = thread.foldsHelpers
+            isHydraHead = thread.isHydraHead
+            hydraIndex = thread.hydra?.index
+            hasUnread = thread.hasUnread
+        }
+    }
+
+    private var fingerprint: [Fingerprint]?
+    private var cached: [ThreadPlacement] = []
+
+    func placements(for threads: [ChatThread]) -> [ThreadPlacement] {
+        let next = threads.map(Fingerprint.init)
+        if next == fingerprint { return cached }
+        fingerprint = next
+        cached = threads.map(ThreadPlacement.init)
+        return cached
+    }
 }
 
 /// The fields that decide where a thread sits in the list and how its group is ordered:

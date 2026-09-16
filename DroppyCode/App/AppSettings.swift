@@ -531,7 +531,7 @@ final class AppSettings {
         showsWorkingCard = defaults.object(forKey: Key.showsWorkingCard) as? Bool ?? true
         chatZoom = ChatZoom.clamped(defaults.object(forKey: Key.chatZoom) as? Int ?? ChatZoom.defaultIndex)
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
-        settledCollapsed = defaults.object(forKey: Key.settledCollapsed) as? Bool ?? false
+        settledCollapsed = defaults.object(forKey: Key.settledCollapsed) as? Bool ?? true
         backdropOpacity = defaults.object(forKey: Key.backdropOpacity) as? Double ?? Self.defaultBackdropOpacity
         // The old System/Light/Dark choice maps straight onto the same themes.
         let initialTheme = AppTheme(rawValue: defaults.string(forKey: Key.appTheme) ?? "")

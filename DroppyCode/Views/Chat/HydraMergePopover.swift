@@ -12,6 +12,15 @@ struct HydraMergeNote {
     let target: String
     let branch: String
     let notes: [String]
+    let heads: [Head]
+
+    struct Head: Hashable, Identifiable {
+        let name: String
+        let index: Int
+        let task: String
+        let files: [String]
+        var id: String { "\(index)-\(name)" }
+    }
 
     /// The files line, which is what makes a body a merge note at all: without it the
     /// caller keeps the generic popover.
@@ -19,12 +28,42 @@ struct HydraMergeNote {
         pattern: #"^(\d+) files? \(\+(\d+) −(\d+)\) landed on `([^`]+)` from `([^`]+)`\.$"#
     )
 
+    static let headPattern = try! NSRegularExpression(pattern: "^- (.+?) \\((\\d+)\\): (.*?) — (?:no files|(\\d+) files?: (.*))$")
+
     static func parse(_ body: String, link: MergeRequestLink) -> HydraMergeNote? {
         var match: (files: Int, additions: Int, deletions: Int, target: String, branch: String)?
         var notes: [String] = []
+        var heads: [Head] = []
+        var inHeads = false
         for rawLine in body.components(separatedBy: "\n") {
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty else { continue }
+            guard !line.isEmpty else {
+                inHeads = false
+                continue
+            }
+            if line == "Heads" {
+                inHeads = true
+                continue
+            }
+            if inHeads {
+                if line.hasPrefix("- ") {
+                    let range = NSRange(line.startIndex..., in: line)
+                    if let found = headPattern.firstMatch(in: line, range: range) {
+                        func group(_ i: Int) -> String {
+                            let ns = found.range(at: i)
+                            guard ns.location != NSNotFound, let swift = Range(ns, in: line) else { return "" }
+                            return String(line[swift])
+                        }
+                        let filesText = group(5)
+                        heads.append(Head(
+                            name: group(1), index: Int(group(2)) ?? 0, task: group(3),
+                            files: found.range(at: 4).location != NSNotFound && !filesText.isEmpty ? filesText.components(separatedBy: ", ") : []
+                        ))
+                    }
+                    continue
+                }
+                inHeads = false
+            }
             let range = NSRange(line.startIndex..., in: line)
             if let found = filesPattern.firstMatch(in: line, range: range), match == nil {
                 func group(_ i: Int) -> String {
@@ -43,7 +82,7 @@ struct HydraMergeNote {
         guard let match else { return nil }
         return HydraMergeNote(
             link: link, files: match.files, additions: match.additions, deletions: match.deletions,
-            target: match.target, branch: match.branch, notes: notes
+            target: match.target, branch: match.branch, notes: notes, heads: heads
         )
     }
 }
@@ -58,6 +97,7 @@ struct HydraMergePopover: View {
     @State private var favicon: NSImage?
     /// The link was just copied: the button says so for a beat.
     @State private var didCopyLink = false
+    @State private var hoveredHead: HydraMergeNote.Head?
 
     /// GitLab calls it a merge request; the other forges call it a pull request.
     private var openTitle: String {
@@ -104,6 +144,24 @@ struct HydraMergePopover: View {
             }
             // The branch chip spans whatever the arrow and the target leave, so the row
             // runs the card's full width and the name only shortens once it truly cannot fit.
+            if !note.heads.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(note.heads) { head in
+                        HydraGlyph(persona: HydraRoster.persona(at: head.index), size: 26)
+                            .help("\(head.name): \(head.task)")
+                            .onHover { inside in
+                                if inside { hoveredHead = head } else if hoveredHead == head { hoveredHead = nil }
+                            }
+                    }
+                    Spacer(minLength: 8)
+                    Text(verbatim: note.heads.count == 1 ? "1 head landed" : "\(note.heads.count) heads landed")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+                .popover(item: $hoveredHead, arrowEdge: .bottom) { head in
+                    headCard(head)
+                }
+            }
             HStack(spacing: 6) {
                 chip(note.branch, fills: true)
                     .help(note.branch)
@@ -172,6 +230,34 @@ struct HydraMergePopover: View {
     }
 
     /// One number tile: the count large, what it counts small beneath it.
+    private func headCard(_ head: HydraMergeNote.Head) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: head.name)
+                .font(.system(size: 13, weight: .semibold))
+            Text(verbatim: head.task)
+                .font(.system(size: 12))
+                .foregroundStyle(Chrome.secondaryText)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+            Divider()
+            if head.files.isEmpty {
+                Text("No files of its own in this merge")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+            } else {
+                ForEach(head.files, id: \.self) { path in
+                    Text(verbatim: path)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+        .padding(12)
+        .frame(width: 320)
+    }
+
     private func stat(value: String, label: String, tint: Color? = nil) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(verbatim: value)
