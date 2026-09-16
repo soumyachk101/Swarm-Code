@@ -1,12 +1,45 @@
-// Zoomed-in settings preview mocks: tiny crops of the app's own interface,
-// drawn with flat shapes so they follow the theme. Each fills its tile frame.
 import SwiftUI
 
-private struct MockLine: View { var width: CGFloat; var opacity: Double = 0.35; var body: some View { Capsule(style: .continuous).fill(Chrome.primaryText.opacity(opacity)).frame(width: width, height: 3) } }
+// Tiny mocks of the app's own interface for the tiles of `ChromeVisualPicker`: a zoomed-in
+// corner of the surface a setting changes rather than an icon, drawn with flat shapes in the
+// chrome's own colours so they follow the theme. Each fills the 100x48 or 72x48 tile it is
+// handed.
 
-private struct MockRow: View { var width: CGFloat = 20; var opacity: Double = 0.35; var body: some View { RoundedRectangle(cornerRadius: 2, style: .continuous).fill(Chrome.primaryText.opacity(opacity)).frame(width: width, height: 5) } }
+/// A line of text.
+private struct MockLine: View {
+    var width: CGFloat
+    var opacity: Double = 0.35
 
-private struct MockDot: View { var size: CGFloat = 5; var color: Color = Chrome.accent; var body: some View { Circle().fill(color).frame(width: size, height: size) } }
+    var body: some View {
+        Capsule(style: .continuous)
+            .fill(Chrome.primaryText.opacity(opacity))
+            .frame(width: width, height: 3)
+    }
+}
+
+/// A thread row in the sidebar.
+private struct MockRow: View {
+    var width: CGFloat = 20
+    var opacity: Double = 0.35
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 2, style: .continuous)
+            .fill(Chrome.primaryText.opacity(opacity))
+            .frame(width: width, height: 5)
+    }
+}
+
+/// A working dot or a head's mark.
+private struct MockDot: View {
+    var size: CGFloat = 5
+    var color: Color = Chrome.accent
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: size, height: size)
+    }
+}
 
 struct WorkspacePreview: View {
     let mode: WorkspaceMode
@@ -172,9 +205,8 @@ struct HeadCheckoutPreview: View {
 struct HeadPanelPreview: View {
     let showsSteps: Bool
     var body: some View {
+        // The steps or the bar sit inside the panel, so the overlay goes on before the inset.
         RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Chrome.overlay(0.12))
-            .padding(.horizontal, 10).padding(.vertical, 7)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .overlay(alignment: .topLeading) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 4) { MockDot(); MockLine(width: 24, opacity: 0.55) }
@@ -191,6 +223,8 @@ struct HeadPanelPreview: View {
                 }
                 .padding(6)
             }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

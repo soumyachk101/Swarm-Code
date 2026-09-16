@@ -47,13 +47,33 @@ struct HydraSettingsPage: View {
         Group {
             ChromeSection(title: "Heads", accessory: AnyView(InfoHoverButton(help: "How heads work") { HydraInfoPopover(topic: .heads) })) {
                 ChromeCard {
-                    toggleRow("Own copy of the checkout", detail: "Changes land in the chat's checkout when the head reports.", isOn: $settings.hydraIsolateHeads)
+                    ChromeRow(
+                        title: "Checkout",
+                        detail: settings.hydraIsolateHeads
+                            ? "Each head works in a copy of its own; its changes land in the chat's checkout when it reports."
+                            : "Heads work in the chat's checkout itself."
+                    ) {
+                        ChromeVisualPicker(options: [(true, "Own copy"), (false, "Shared")], selection: $settings.hydraIsolateHeads) { isolated in
+                            HeadCheckoutPreview(isolated: isolated)
+                        }
+                    }
                     ChromeRowDivider()
                     toggleRow("Clear finished heads", detail: "A finished head moves from the panel to the sidebar.", isOn: $settings.hydraAutoClearFinished)
                     ChromeRowDivider()
-                    toggleRow("Show every step", detail: "Each step in the head's panel instead of its progress bar.", isOn: $settings.hydraShowsHeadDetails)
+                    ChromeRow(title: "Head panel", detail: "The head's progress bar, or each of its steps as it goes.") {
+                        ChromeVisualPicker(options: [(false, "Progress"), (true, "Every step")], selection: $settings.hydraShowsHeadDetails) { showsSteps in
+                            HeadPanelPreview(showsSteps: showsSteps)
+                        }
+                    }
                     ChromeRowDivider()
-                    toggleRow("Pop heads out automatically", detail: "While there is room beside the chat, each head after the first gets a panel of its own, on the left and the right, until each side is full; the usage panel keeps its spot.", isOn: $settings.hydraAutoPopsHeads)
+                    ChromeRow(
+                        title: "Heads' panels",
+                        detail: "Popped out, each head after the first gets a panel of its own beside the chat while there is room, left and right until each side is full; the usage panel keeps its spot."
+                    ) {
+                        ChromeVisualPicker(options: [(false, "In the chat"), (true, "Popped out")], selection: $settings.hydraAutoPopsHeads) { popped in
+                            HeadsPlacementPreview(popped: popped)
+                        }
+                    }
                     ChromeRowDivider()
                     toggleRow("Heads work at a working effort", detail: "A lead thinking above medium sends its heads out at medium on the same model — on a scale without a medium (Z.ai), at the scale's own middle rung; a pair that names the heads' effort keeps it.", isOn: $settings.hydraTempersHeadEffort)
                 }
