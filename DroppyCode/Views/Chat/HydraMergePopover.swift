@@ -56,6 +56,8 @@ struct HydraMergePopover: View {
     /// The forge's mark beside the title, loaded on appear so the header reads as the
     /// merge request's home rather than a bare label.
     @State private var favicon: NSImage?
+    /// The link was just copied: the button says so for a beat.
+    @State private var didCopyLink = false
 
     /// GitLab calls it a merge request; the other forges call it a pull request.
     private var openTitle: String {
@@ -124,9 +126,28 @@ struct HydraMergePopover: View {
             }
             HStack(spacing: 8) {
                 Spacer()
-                Button("Copy link") {
+                // Answers in place like a popover row: the words say the link is copied, a
+                // checkmark comes for the beat, then the button is itself again.
+                Button {
+                    guard !didCopyLink else { return }
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(note.link.url.absoluteString, forType: .string)
+                    withAnimation(.snappy(duration: 0.22)) { didCopyLink = true }
+                    Task { [copied = $didCopyLink] in
+                        try? await Task.sleep(for: .seconds(1.4))
+                        withAnimation(.snappy(duration: 0.22)) { copied.wrappedValue = false }
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        if didCopyLink {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Chrome.success)
+                                .transition(.scale(scale: 0.6).combined(with: .opacity))
+                        }
+                        Text(verbatim: didCopyLink ? "Copied" : "Copy link")
+                            .contentTransition(.numericText())
+                    }
                 }
                 .buttonStyle(.glass)
                 Button {
