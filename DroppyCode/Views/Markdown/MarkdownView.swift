@@ -583,9 +583,9 @@ private struct MarkdownStreamingKey: EnvironmentKey {
     static let defaultValue = false
 }
 
-/// Whether each block selects its own text. Off inside a finished reply, whose drag
-/// swaps the blocks for one selectable view across the whole of it; on everywhere
-/// else (streaming replies, popovers, cards), where a block's own selection is all there is.
+/// Whether each block selects its own text. On everywhere, replies included: a
+/// finished reply's blocks are copyable at all times, one paragraph at a time. Whole
+/// replies go to the clipboard through the row menu's Copy message (`MessageText`).
 private struct MarkdownBlockSelectionKey: EnvironmentKey {
     static let defaultValue = true
 }
