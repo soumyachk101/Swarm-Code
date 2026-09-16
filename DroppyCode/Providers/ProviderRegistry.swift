@@ -241,8 +241,12 @@ final class ProviderRegistry {
         for provider in ProviderKind.allCases where status(provider).auth != .signedOut {
             refreshPlanLimits(provider, force: true)
         }
+        // Every installed provider, the ACP ones included: OpenCode, Cursor, Grok and Devin
+        // report their models from a session of their own, and a list of the others left
+        // them out, so a model OpenCode gained after launch (its catalog follows models.dev)
+        // could not be found in Settings until the app was relaunched.
         await withTaskGroup(of: Void.self) { group in
-            for provider in [ProviderKind.claude, .codex, .antigravity, .copilot, .commandcode, .pi, .deepseek, .meta, .zai] where status(provider).isInstalled {
+            for provider in ProviderKind.allCases where status(provider).isInstalled {
                 group.addTask { await self.loadCatalog(provider, force: true) }
             }
         }
