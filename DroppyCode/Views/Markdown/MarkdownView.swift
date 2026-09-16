@@ -29,6 +29,10 @@ struct MarkdownView: View, Equatable {
                     .transition(.softAppear)
             }
         }
+        // Every block of a streaming reply veils what arrives (see `StreamVeil`), not only
+        // the last: a paragraph that just closed keeps dissolving its tail instead of
+        // snapping the moment the next block starts.
+        .environment(\.markdownVeiled, isStreaming)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -228,16 +232,17 @@ struct MarkdownBlockView: View, Equatable {
                             InlineText(String(rest.drop(while: { $0 == " " })), hasLinks: true)
                         }
                     } else {
-                        // One flowing Text, so wrapped lines start under the glyph.
+                        // One flowing Text, so wrapped lines start under the glyph; the
+                        // name leads and only what streams after it is veiled.
                         let size = 16 * zoom
-                        Text(Self.mentionGlyph(mention.persona, size: size))
+                        let name = Text(Self.mentionGlyph(mention.persona, size: size))
                             .foregroundColor(mention.persona.color)
                             .baselineOffset(Self.mentionGlyphOffset(size: size))
                             + Text(verbatim: " ")
                             + Text(verbatim: mention.name)
                             .fontWeight(.bold)
                             .foregroundColor(mention.persona.color)
-                            + Text(RichLink.prettyAttributed(rest, streaming: streaming))
+                        VeiledText(RichLink.prettyAttributed(rest, streaming: streaming), leading: name)
                     }
                 }
                 .modifier(MarkdownBlockSelection())
@@ -780,8 +785,9 @@ struct InlineText: View {
                 }
         } else {
             // Link-free, so the attributed string renders as one Text; bold, italic and
-            // code come through as inline presentation intents.
-            Text(RichLink.prettyAttributed(source, streaming: streaming))
+            // code come through as inline presentation intents. Streamed characters fade
+            // in through the veil.
+            VeiledText(RichLink.prettyAttributed(source, streaming: streaming))
                 .modifier(MarkdownBlockSelection())
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -873,7 +879,8 @@ struct CodeBlock: View {
             .padding(.trailing, 6)
             .padding(.top, 6)
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(visible)
+                // Code streams line by line and veils in like prose.
+                VeiledText(verbatim: visible)
                     .font(.chat(.callout, design: .monospaced, zoom: zoom))
                     .modifier(MarkdownBlockSelection())
                     .fixedSize(horizontal: true, vertical: true)

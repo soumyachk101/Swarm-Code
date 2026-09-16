@@ -34,15 +34,19 @@ struct LinkParagraphView: NSViewRepresentable {
         // Read so a favicon-load bump rebuilds the string with icons.
         _ = revision
         let coordinator = context.coordinator
+        let veiled = context.environment.markdownVeiled
         if coordinator.lastSource != source || coordinator.lastPointSize != pointSize
             || coordinator.lastDimmed != dimmed || coordinator.lastStreaming != streaming
-            || coordinator.lastRevision != revision {
+            || coordinator.lastRevision != revision || coordinator.lastVeiled != veiled {
             coordinator.lastSource = source
             coordinator.lastPointSize = pointSize
             coordinator.lastDimmed = dimmed
             coordinator.lastStreaming = streaming
             coordinator.lastRevision = revision
+            coordinator.lastVeiled = veiled
             view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming))
+            // After the text is in place: the veil reads what the storage holds now.
+            view.streamVeil.update(view, active: veiled)
         }
         view.mergeTarget = context.environment.mergeRequestTarget
     }
@@ -61,6 +65,7 @@ struct LinkParagraphView: NSViewRepresentable {
     static func dismantleNSView(_ view: LinkTextView, coordinator: Coordinator) {
         view.delegate = nil
         view.mergeTarget = nil
+        view.streamVeil.detach(view)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -70,6 +75,7 @@ struct LinkParagraphView: NSViewRepresentable {
         var lastDimmed = false
         var lastStreaming = false
         var lastRevision: Int = 0
+        var lastVeiled = false
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             if let url = link as? URL {
                 NSWorkspace.shared.open(url)
@@ -178,6 +184,9 @@ final class LinkTextView: NSTextView {
     /// Inside a finished reply the prose passes the mouse through to SwiftUI, whose drag
     /// swaps in the whole-reply selection; links still take the click and open.
     var passesProseThrough = false
+
+    /// Fades streamed characters in over the laid-out text (see `StreamVeil`).
+    let streamVeil = LinkTextVeil()
 
     /// The view owns its text storage. `init(frame:textContainer:)` only takes a
     /// container and holds it weakly; a bare container with no layout manager or
