@@ -85,7 +85,11 @@ final class CodexSession: ProviderSession {
                 params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))
             } else {
                 // Heads on another provider are Droppy-run: the lead asks for them with the
-                // delegation block, and Codex's own agents stay off.
+                // delegation block, and Codex's own agents are switched off for the thread,
+                // whatever the user's config enables. Told only in words, a lead still
+                // reached for spawn_agent, ran its heads on itself and the pair's model never
+                // saw them.
+                params["config"] = ["features": ["multi_agent": false]]
                 params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
             }
         }
