@@ -119,6 +119,10 @@ enum AppShortcut: String, CaseIterable, Identifiable {
     /// Settles or archives the selected thread, as Settings chose. Stored under its old
     /// name, so a chord recorded for "Archive thread" still applies.
     case finishThread = "archiveThread"
+    /// Asks whether to archive the selected thread or delete it.
+    case archiveThread = "archiveThreadPrompt"
+    /// Settles the selected thread, or reopens one that is settled.
+    case settleThread
     case commandPalette
     case toggleSidebar
     case toggleTerminal
@@ -163,7 +167,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
 
     var section: Section {
         switch self {
-        case .newThread, .newWorktreeThread, .addProject, .stopTurn, .queueChat, .togglePlanMode, .previousThread, .nextThread, .runScript, .finishThread:
+        case .newThread, .newWorktreeThread, .addProject, .stopTurn, .queueChat, .togglePlanMode, .previousThread, .nextThread, .runScript, .finishThread, .archiveThread, .settleThread:
             .threads
         case .commandPalette, .toggleSidebar, .toggleTerminal, .toggleChanges, .toggleActivityView, .showMainWindow, .openSettings:
             .window
@@ -182,6 +186,8 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .nextThread: "Next thread"
         case .runScript: "Run top script"
         case .finishThread: "Finish thread"
+        case .archiveThread: "Archive thread"
+        case .settleThread: "Settle thread"
         case .commandPalette: "Command palette"
         case .toggleSidebar: "Toggle sidebar"
         case .toggleTerminal: "Toggle terminal"
@@ -204,6 +210,8 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .nextThread: "Selects the thread below in the sidebar."
         case .runScript: "Runs the first project script in the selected thread's terminal."
         case .finishThread: "Settles the selected thread, or archives it, whichever General chose. Reopens a settled one."
+        case .archiveThread: "Asks to archive the selected thread; Return archives it, and Delete is a click away."
+        case .settleThread: "Settles the selected thread. Reopens one that is settled."
         case .commandPalette: "Searches threads, projects and actions."
         case .toggleSidebar: "Shows or hides the sidebar."
         case .toggleTerminal: "Shows or hides the thread's terminal."
@@ -226,6 +234,8 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .nextThread: KeyChord(keyCode: 48, modifiers: .control)
         case .runScript: KeyChord(keyCode: 15, modifiers: .command)
         case .finishThread: KeyChord(keyCode: 51, modifiers: [.shift, .command])
+        case .archiveThread: KeyChord(keyCode: 13, modifiers: .command)
+        case .settleThread: KeyChord(keyCode: 1, modifiers: .command)
         case .commandPalette: KeyChord(keyCode: 40, modifiers: .command)
         case .toggleSidebar: KeyChord(keyCode: 1, modifiers: [.control, .command])
         case .toggleTerminal: KeyChord(keyCode: 38, modifiers: .command)
@@ -251,7 +261,7 @@ final class ShortcutStore {
 
     /// Chords macOS and the app already answer to, which no command may take.
     private static let reserved: [KeyChord] = {
-        var chords = [12, 13, 4, 46, 8, 9, 7, 0, 6].map { KeyChord(keyCode: $0, modifiers: .command) }
+        var chords = [12, 4, 46, 8, 9, 7, 0, 6].map { KeyChord(keyCode: $0, modifiers: .command) }
         chords.append(KeyChord(keyCode: 6, modifiers: [.shift, .command]))
         chords += [18, 19, 20, 21, 23, 22, 26, 28, 25].map { KeyChord(keyCode: $0, modifiers: .command) }
         return chords

@@ -74,7 +74,7 @@ final class WindowManager {
     }
 
     private func makeSettingsWindow() -> NSWindow {
-        let window = makeWindow(title: "Settings", size: Size.settings, resizable: false) { SettingsView() }
+        let window = makeWindow(title: "Settings", size: Size.settings, resizable: false, windowClass: SecondaryWindow.self) { SettingsView() }
         window.center()
         return window
     }

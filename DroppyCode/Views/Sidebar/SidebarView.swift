@@ -16,6 +16,7 @@ struct SidebarView: View {
     /// UUIDs and never reaches into a thread snapshot that may since have changed hands.
     @State private var pendingDeletionID: UUID?
     /// The thread whose archive question is open, by id, the same way.
+    @State private var pendingArchiveID: UUID?
     /// A delete the popover confirmed, carried out once the popover has closed (see
     /// `confirmDeletion` and `deletePopover`).
     @State private var confirmedDeletion: ConfirmedDeletion?
@@ -181,6 +182,12 @@ struct SidebarView: View {
                 model.delete(thread.id)
             }
         }
+        // The shortcut's question lands on the thread's own row.
+        .onChange(of: model.archiveRequest) { _, request in
+            guard let request, model.thread(request.threadID) != nil else { return }
+            model.archiveRequest = nil
+            pendingArchiveID = request.threadID
+        }
     }
 
     /// The delete question, asked in a popover on the row itself rather than a sheet over
@@ -236,8 +243,39 @@ struct SidebarView: View {
     private func confirmDeletion(of id: UUID, removeWorktree: Bool) {
         confirmedDeletion = ConfirmedDeletion(threadID: id, removeWorktree: removeWorktree)
         pendingDeletionID = nil
+        pendingArchiveID = nil
         if !isDeletePopoverShown { carryOutConfirmedDeletion() }
     }
+
+    /// The shortcut's question on a row: archive, which Return answers, or delete. The
+    /// delete goes the delete popover's way (see `confirmDeletion`), so the row the
+    /// question hangs on is gone only once the popover is.
+    private func archivePopover<Row: View>(for thread: ChatThread, on row: Row) -> some View {
+        let threadID = thread.id
+        return row.popover(
+            isPresented: Binding(
+                get: { pendingArchiveID == threadID },
+                set: { if !$0, pendingArchiveID == threadID { pendingArchiveID = nil } }
+            ),
+            arrowEdge: .trailing
+        ) {
+            ArchiveThreadPopover(
+                thread: model.thread(threadID) ?? thread,
+                onArchive: {
+                    pendingArchiveID = nil
+                    withAnimation(Chrome.panelSlide) { model.archive(threadID) }
+                },
+                onDelete: { confirmDeletion(of: threadID, removeWorktree: false) }
+            )
+            .onAppear { isDeletePopoverShown = true }
+            .onDisappear {
+                isDeletePopoverShown = false
+                carryOutConfirmedDeletion()
+            }
+        }
+    }
+
+
 
     /// Runs the delete the popover confirmed, once the popover has closed and a turn
     /// later: the model changes outside the view update that removed the presentation,
@@ -278,7 +316,7 @@ struct SidebarView: View {
                 // A row that has left the list (scrolled out, settled, deleted) is not there to grab.
                 .onDisappear { rowFrames.forget(thread.id) }
         case .helper(let thread, let isLast):
-            deletePopover(for: thread, on: SidebarHelperRow(
+            archivePopover(for: thread, on: deletePopover(for: thread, on: SidebarHelperRow(
                 snapshot: thread,
                 isLast: isLast,
                 menuRequests: menuRequests,
@@ -296,7 +334,7 @@ struct SidebarView: View {
                         model.delete(thread.id)
                     }
                 }
-            ).equatable())
+            ).equatable()))
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.note(item.id, $0) }
             .modifier(RidesWithDraggedParent(parentID: thread.parentThreadID, drag: drag))
         case .helperStub(let parent, let helpers):
@@ -743,7 +781,7 @@ struct SidebarView: View {
         // A thread with helpers under it gets the fold button; a settled one shows none.
         // `.equatable()` skips the parent's re-evaluation for rows whose value inputs did
         // not change; the row still observes the model's per-thread cells inside its body.
-        return renamePopover(for: thread, on: deletePopover(for: thread, on: SidebarThreadRow(
+        return archivePopover(for: thread, on: renamePopover(for: thread, on: deletePopover(for: thread, on: SidebarThreadRow(
             snapshot: thread,
             projectName: projectName,
             menuRequests: menuRequests,
@@ -764,12 +802,37 @@ struct SidebarView: View {
                     model.delete(thread.id)
                 }
             }
-        ).equatable()))
+        ).equatable())))
     }
 }
 
 /// The shortcut's question: Archive on the right, lit and answered by Return, Delete on
 /// the left. A click away asks nothing.
+private struct ArchiveThreadPopover: View {
+    let thread: ChatThread
+    let onArchive: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        PopoverMenu {
+            PopoverSectionHeader("Archive this thread?")
+            PopoverNote("“\(thread.title)” leaves the list and stays in Archived. Delete removes it and its history; files in your project stay as they are.")
+            HStack(spacing: 8) {
+                Button("Delete", role: .destructive, action: onDelete)
+                    .buttonStyle(.glass)
+                    .tint(.red)
+                Spacer(minLength: 8)
+                Button("Archive", action: onArchive)
+                    .buttonStyle(.glassProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .controlSize(.small)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+        .frame(width: 300)
+    }
+}
 
 /// What the delete popover asks: the thread by name, what stays, and the destructive choice
 /// as a red row like the ellipsis menu's, with a second one for a thread's worktree.

@@ -748,6 +748,38 @@ final class AppModel {
         }
     }
 
+    /// Settles the selected thread, or reopens it when it is settled already: the shortcut's
+    /// toggle, whatever General chose for Finish. A helper has no place of its own to settle
+    /// into, so it stays as it is.
+    func settleSelectedThread() {
+        guard let id = selectedThreadID, let thread = thread(id), !thread.isHelper else { return }
+        let request = FinishRequest(threadID: id, reopens: thread.isSettled)
+        finishRequest = request
+        Task {
+            // No row took it up (the sidebar is hidden, say): the thread just moves.
+            try? await Task.sleep(for: .milliseconds(80))
+            guard finishRequest == request else { return }
+            finishRequest = nil
+            if request.reopens { reopenAnimated(id) } else { settleAnimated(id) }
+        }
+    }
+
+    /// Asks before archiving the selected thread: its row shows the question, with
+    /// Archive the answer Return gives and Delete beside it.
+    func askToArchiveSelectedThread() {
+        guard let id = selectedThreadID, thread(id) != nil else { return }
+        let request = ArchiveRequest(threadID: id)
+        archiveRequest = request
+        Task {
+            // No row to ask on (the sidebar is hidden, say): the thread is archived, which
+            // is what Return would have done.
+            try? await Task.sleep(for: .milliseconds(80))
+            guard archiveRequest == request else { return }
+            archiveRequest = nil
+            withAnimation(Chrome.panelSlide) { archive(id) }
+        }
+    }
+
     /// A settle or reopen asked for away from the row: the menu, the shortcut, the palette.
     /// The thread's row takes it up and settles the way a click on its check does, pop, note
     /// and glide included.
@@ -758,6 +790,15 @@ final class AppModel {
     }
 
     var finishRequest: FinishRequest?
+
+    /// An archive asked for with the shortcut, which the thread's row takes up as a
+    /// question on itself.
+    struct ArchiveRequest: Equatable {
+        let id = UUID()
+        let threadID: UUID
+    }
+
+    var archiveRequest: ArchiveRequest?
 
     func delete(_ id: UUID, removeWorktree: Bool = false) {
         guard let thread = thread(id) else { return }
