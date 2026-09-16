@@ -220,14 +220,19 @@ extension AppModel {
         return "The pair's heads run on \(pair.provider.displayName) for now: \(provider.displayName) \(reason)."
     }
 
-    /// The effort heads inherit from a lead when the pair leaves it open: medium when
-    /// the lead thinks above medium on a model with a medium, since a head's brief is a
-    /// bounded task and the lead keeps the judgement; the lead's own effort at medium or
-    /// below, or on a scale with no medium; nil when the lead has none.
+    /// The effort heads inherit from a lead when the pair leaves it open: a working
+    /// effort when the lead thinks above it, since a head's brief is a bounded task and
+    /// the lead keeps the judgement; the lead's own effort at the working rung or below,
+    /// or on a scale the lead's word is not on; nil when the lead has none. The working
+    /// rung is a literal medium when the model's scale has one, else the scale's own
+    /// middle rung — Z.ai's low/high/max works out at high, which its API counts as the
+    /// medium effort (see `ZaiSession.reasoningEffort`).
     static func hydraHeadsEffort(leadEffort: String?, scale: [String]) -> String? {
         guard let leadEffort, !leadEffort.isEmpty else { return nil }
-        guard let lead = scale.firstIndex(of: leadEffort), let medium = scale.firstIndex(of: "medium") else { return leadEffort }
-        return lead > medium ? "medium" : leadEffort
+        guard let lead = scale.firstIndex(of: leadEffort) else { return leadEffort }
+        let working = scale.firstIndex(of: "medium") ?? (scale.isEmpty ? nil : (scale.count - 1) / 2)
+        guard let working else { return leadEffort }
+        return lead > working ? scale[working] : leadEffort
     }
 
     /// What the heads run on while the chat leads, or nil with Hydra off. Without a pair

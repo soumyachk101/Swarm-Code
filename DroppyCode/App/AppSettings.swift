@@ -524,7 +524,8 @@ final class AppSettings {
     }
 
     /// Heads think at a working effort rather than the lead's own: a lead above medium
-    /// sends out medium heads on the same model, unless the pair names an effort for
+    /// sends out medium heads on the same model (a scale without a medium works out at
+    /// its middle rung), unless the pair names an effort for
     /// them (see `AppModel.hydraHeadsEffort`).
     var hydraTempersHeadEffort: Bool {
         didSet { defaults.set(hydraTempersHeadEffort, forKey: Key.hydraTempersHeadEffort) }

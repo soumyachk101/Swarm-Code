@@ -55,7 +55,7 @@ struct HydraSettingsPage: View {
                     ChromeRowDivider()
                     toggleRow("Pop heads out automatically", detail: "While there is room beside the chat, each head after the first gets a panel of its own, on the left and the right, until each side is full; the usage panel keeps its spot.", isOn: $settings.hydraAutoPopsHeads)
                     ChromeRowDivider()
-                    toggleRow("Heads work at a working effort", detail: "A lead thinking above medium sends its heads out at medium on the same model; a pair that names the heads' effort keeps it.", isOn: $settings.hydraTempersHeadEffort)
+                    toggleRow("Heads work at a working effort", detail: "A lead thinking above medium sends its heads out at medium on the same model — on a scale without a medium (Z.ai), at the scale's own middle rung; a pair that names the heads' effort keeps it.", isOn: $settings.hydraTempersHeadEffort)
                 }
             }
             ChromeSection(title: "Messages") {

@@ -48,6 +48,7 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Automatic
         DEAD_CODE_STRIPPING: YES
+        SWIFT_OBJC_BRIDGING_HEADER: DroppyCode/Support/DroppyCode-Bridging-Header.h
       configs:
         Debug:
           PRODUCT_NAME: "Droppy Code Dev"

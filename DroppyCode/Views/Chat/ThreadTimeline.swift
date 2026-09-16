@@ -244,6 +244,9 @@ struct ThreadTimeline: View, Equatable {
     )
 
     private func timelineScroll(visible: [DisplayBlock], hidden: Int, rewindable: Set<UUID>) -> some View {
+        // What the stack renders last: the newest question badge, or the newest block.
+        // Its change is something arriving at the end of the conversation.
+        let lastEntryID = runtime.questions.last.map { "question-" + $0.id } ?? visible.last?.id
         // The outline the rail resolves against, kept in step with what is laid out. Rows
         // coming and going is when the stack can lose its place; a look a beat from now
         // costs nothing and catches it whether or not any row says so.
@@ -556,6 +559,19 @@ struct ThreadTimeline: View, Equatable {
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
             withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
+        }
+        .onChange(of: lastEntryID) {
+            // A message, tool row, turn or question badge landing at the end of the
+            // conversation always brings the view down to it, pinned or not. History
+            // loading itself above the viewport must not yank the reader down, and an
+            // active drag is never fought: the next entry, or the geometry branch, catches
+            // up once it lets go. Growth inside an existing row stays with the pinned
+            // machinery above; this is for new rows only.
+            guard !historyLoadPending, !tracking.isUserScrolling else { return }
+            tracking.isPinnedToBottom = true
+            anchorsBottomOnGrowth = true
+            scrollState.showsJumpButton = false
+            withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
         }
         .onChange(of: runtime.threadID) {
             // A new thread starts with a fresh window on its newest messages, and no

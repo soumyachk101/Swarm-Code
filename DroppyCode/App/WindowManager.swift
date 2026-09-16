@@ -1,4 +1,5 @@
 import AppKit
+import OSLog
 import SwiftUI
 
 /// Builds Droppy Code's windows the way Droppy builds its settings window: a plain titled AppKit window
@@ -192,4 +193,43 @@ private final class WindowHostingView: NSHostingView<AnyView> {
     /// navigable item, and AppKit asks on every display cycle while content scrolls
     /// under the title bar to work out the window's drag region.
     override var acceptsFirstResponder: Bool { true }
+
+    /// SwiftUI marks the hosting view dirty by raising these two flags. AppKit refuses
+    /// the raise while the window is inside its own display cycle, and on macOS 26 the
+    /// refusal is an exception that ends the app: after layout, the window works out its
+    /// drag region by asking this view for its opaque content (the title bar sits over
+    /// it), SwiftUI answers by evaluating the view graph, and a scroll view whose
+    /// geometry the layout just changed publishes it with a fresh transaction, right
+    /// there inside the ask (the Sept 16 2026 crash, `_postWindowNeedsUpdateConstraints`
+    /// under `_resetDragMargins`). The flag is raised again on the next run loop turn
+    /// instead, once the cycle is over; nothing is lost but a frame.
+    override var needsUpdateConstraints: Bool {
+        get { super.needsUpdateConstraints }
+        set { raiseFlag(newValue, retrying: false) { self.setNeedsUpdateConstraintsUnguarded($0) } }
+    }
+
+    override var needsLayout: Bool {
+        get { super.needsLayout }
+        set { raiseFlag(newValue, retrying: false) { self.setNeedsLayoutUnguarded($0) } }
+    }
+
+    private func setNeedsUpdateConstraintsUnguarded(_ value: Bool) { super.needsUpdateConstraints = value }
+    private func setNeedsLayoutUnguarded(_ value: Bool) { super.needsLayout = value }
+
+    private func raiseFlag(_ value: Bool, retrying: Bool, _ set: @escaping (Bool) -> Void) {
+        guard let exception = DCCatchException({ set(value) }) else { return }
+        guard !retrying else {
+            Self.log.error("Display flag refused twice: \(exception.name.rawValue, privacy: .public) \(exception.reason ?? "", privacy: .public)")
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            // Lowered first: AppKit may have kept the view's own flag from the refused
+            // raise, and a raise that finds it already up tells the window nothing.
+            _ = DCCatchException { set(false) }
+            self.raiseFlag(value, retrying: true, set)
+        }
+    }
+
+    private static let log = Logger(subsystem: "iordv.droppycode", category: "window")
 }
