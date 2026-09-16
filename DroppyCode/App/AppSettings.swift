@@ -42,6 +42,31 @@ enum ThreadFinishAction: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the thread list is shown: as a column beside the chat, as a floating panel whenever the column is collapsed, or as the floating panel alone.
+enum SidebarMode: String, CaseIterable, Identifiable {
+    case column
+    case floating
+    case panelOnly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .column: "Column"
+        case .floating: "Floating"
+        case .panelOnly: "Panel only"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .column: "A column beside the chat; the list button in the toolbar shows and hides it"
+        case .floating: "With the column collapsed, the thread list floats as a panel over the chat and stays where you leave it"
+        case .panelOnly: "No column and no toolbar button; the floating panel is the sidebar"
+        }
+    }
+}
+
 /// A model the composer's picker offers.
 struct ModelPin: Codable, Hashable, Identifiable, Sendable {
     var provider: ProviderKind
@@ -549,6 +574,18 @@ final class AppSettings {
     /// with `sidebarFloats` on.
     var sidebarOnlyFloats: Bool {
         didSet { defaults.set(sidebarOnlyFloats, forKey: Key.sidebarOnlyFloats) }
+    }
+
+    /// The two sidebar switches as one choice: the settings page offers Column, Floating and Panel only.
+    var sidebarMode: SidebarMode {
+        get {
+            guard sidebarFloats else { return .column }
+            return sidebarOnlyFloats ? .panelOnly : .floating
+        }
+        set {
+            sidebarFloats = newValue != .column
+            sidebarOnlyFloats = newValue == .panelOnly
+        }
     }
 
     /// Where the floating sidebar was last left, from the chat area's top-left.
