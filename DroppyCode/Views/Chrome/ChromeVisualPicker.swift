@@ -1,9 +1,11 @@
 import SwiftUI
 
-/// A row control of two or three tiles, each a zoomed-in mock of what the option
-/// does with a short caption under it, the way macOS Appearance offers
-/// Light / Dark / Auto; the chosen tile wears an accent ring.
+// A row control of two or three tiles, each a zoomed-in mock of what the option does with a
+// short caption under it, the way macOS Appearance offers Light / Dark / Auto; the chosen
+// tile wears an accent ring. The mocks live in `SettingsPreviewMocks.swift`.
 
+/// The tile's measures: two options get the regular width, three the dense one, so a
+/// three-tile row still leaves room for the row's title.
 enum ChromeVisualTileMetrics {
     static let height: CGFloat = 48
     static let regularWidth: CGFloat = 100
@@ -15,6 +17,7 @@ enum ChromeVisualTileMetrics {
     static let captionGap: CGFloat = 5
 }
 
+/// The row control: one tile per option, the chosen one ringed.
 struct ChromeVisualPicker<Value: Hashable, Preview: View>: View {
     let options: [(value: Value, title: String)]
     @Binding var selection: Value
@@ -45,6 +48,7 @@ struct ChromeVisualPicker<Value: Hashable, Preview: View>: View {
     }
 }
 
+/// One tile: the mock on a stage, the caption under it.
 struct ChromeVisualTile<Content: View>: View {
     let title: String
     let isSelected: Bool

@@ -290,7 +290,9 @@ private struct GeneralSettingsPage: View {
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Workspace", detail: "Where a new thread makes its changes") {
-                    GlassPickerButton(options: WorkspaceMode.allCases.map { ($0, $0.title) }, selection: $settings.defaultWorkspaceMode)
+                    ChromeVisualPicker(options: WorkspaceMode.allCases.map { ($0, $0.title) }, selection: $settings.defaultWorkspaceMode) { mode in
+                        WorkspacePreview(mode: mode)
+                    }
                 }
             }
         }
@@ -300,8 +302,10 @@ private struct GeneralSettingsPage: View {
                         SettingsSwitch(isOn: $settings.showReasoning)
                     }
                     ChromeRowDivider()
-                    ChromeRow(title: "Show activity while working", detail: "The working line is a card with the turn's progress bar; off, a plain line") {
-                        SettingsSwitch(isOn: $settings.showsWorkingCard)
+                    ChromeRow(title: "Working line", detail: "A card with the turn's progress bar, or a plain line") {
+                        ChromeVisualPicker(options: [(true, "Card"), (false, "Line")], selection: $settings.showsWorkingCard) { isCard in
+                            WorkingLinePreview(isCard: isCard)
+                        }
                     }
                     ChromeRowDivider()
                     ChromeRow(title: "Recent downloads", detail: "The attach button offers recent downloads first") {
@@ -346,10 +350,9 @@ private struct GeneralSettingsPage: View {
         ChromeSection(title: "Finished threads") {
             ChromeCard {
                 ChromeRow(title: "Done with a thread", detail: settings.threadFinishAction.detail) {
-                    GlassPickerButton(
-                        options: ThreadFinishAction.allCases.map { ($0, $0.title) },
-                        selection: $settings.threadFinishAction
-                    )
+                    ChromeVisualPicker(options: ThreadFinishAction.allCases.map { ($0, $0.title) }, selection: $settings.threadFinishAction) { action in
+                        ThreadFinishPreview(action: action)
+                    }
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Sound when settling", detail: "A small note as the thread settles") {
@@ -373,23 +376,32 @@ private struct GeneralSettingsPage: View {
                     BackdropOpacitySlider(value: $settings.backdropOpacity)
                 }
                 ChromeRowDivider()
+                ChromeRow(title: "Sidebar", detail: settings.sidebarMode.detail) {
+                    ChromeVisualPicker(options: SidebarMode.allCases.map { ($0, $0.title) }, selection: $settings.sidebarMode) { mode in
+                        SidebarModePreview(style: Self.previewStyle(mode))
+                    }
+                }
+                ChromeRowDivider()
+                // Meaningless without a column: dimmed while only the panel is shown.
                 ChromeRow(title: "Open the sidebar at launch", detail: "Collapsed otherwise; the list button in the toolbar shows and hides it any time") {
                     SettingsSwitch(isOn: Binding(
                         get: { model.sidebar.startsOpen },
                         set: { model.sidebar.startsOpen = $0 }
                     ))
                 }
-                ChromeRowDivider()
-                ChromeRow(title: "Float the sidebar over the chat", detail: "With the column collapsed, the thread list floats as a panel over the chat instead of opening from the toolbar button, and stays where you leave it") {
-                    SettingsSwitch(isOn: $settings.sidebarFloats)
-                }
-                ChromeRowDivider()
-                ChromeRow(title: "Only the floating panel", detail: "No column and no toolbar button; the panel is the sidebar") {
-                    SettingsSwitch(isOn: $settings.sidebarOnlyFloats)
-                        .disabled(!settings.sidebarFloats)
-                }
+                .disabled(settings.sidebarMode == .panelOnly)
+                .opacity(settings.sidebarMode == .panelOnly ? 0.5 : 1)
             }
             ChatTextSizeCard(index: $settings.chatZoom)
+        }
+    }
+
+    /// The mock keeps its own style so the mocks file owes nothing to the settings model.
+    private static func previewStyle(_ mode: SidebarMode) -> SidebarModePreview.Style {
+        switch mode {
+        case .column: .column
+        case .floating: .floating
+        case .panelOnly: .panelOnly
         }
     }
 }
