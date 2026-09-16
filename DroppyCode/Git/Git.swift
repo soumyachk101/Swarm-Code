@@ -25,19 +25,7 @@ struct Git: Sendable {
         directory = URL(fileURLWithPath: path)
     }
 
-    /// Where git was found, and the PATH it was found on. Finding it walks every folder on
-    /// the PATH, and a turn runs dozens of git commands, so the answer is kept. The login
-    /// environment can load after the first call, so a different PATH looks again.
-    private static let foundExecutable = Mutex<(path: String, url: URL)?>(nil)
-
-    private static var executable: URL {
-        let environment = LoginEnvironment.current
-        let path = environment["PATH"] ?? ""
-        if let found = foundExecutable.withLock({ $0 }), found.path == path { return found.url }
-        let url = LoginEnvironment.which("git", in: environment) ?? URL(fileURLWithPath: "/usr/bin/git")
-        foundExecutable.withLock { $0 = (path, url) }
-        return url
-    }
+    private static var executable: URL { LoginEnvironment.git }
 
     @discardableResult
     func run(
@@ -74,6 +62,15 @@ struct Git: Sendable {
 
     func isRepository() async -> Bool {
         (try? await run(["rev-parse", "--is-inside-work-tree"]))?.trimmedOutput == "true"
+    }
+
+    func repositoryRoot() async throws -> URL {
+        let prefix = try await output(["rev-parse", "--show-prefix"])
+        var root = directory
+        for _ in prefix.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: "/") {
+            root.deleteLastPathComponent()
+        }
+        return root
     }
 
     func hasCommits() async -> Bool {
@@ -252,7 +249,7 @@ struct Git: Sendable {
         let index = fileManager.temporaryDirectory.appendingPathComponent("droppy-code-index-\(UUID().uuidString)")
         defer { try? fileManager.removeItem(at: index) }
         let environment = ["GIT_INDEX_FILE": index.path]
-        try Self.check(await run(["read-tree", "HEAD"], environment: environment))
+        if await hasCommits() { try Self.check(await run(["read-tree", "HEAD"], environment: environment)) }
         try Self.check(await run(["add", "-A", "--ignore-errors", "--pathspec-from-file=-", "--pathspec-file-nul"], environment: environment, input: Self.nulSeparated(paths), timeout: 300))
         let tree = try await run(["write-tree"], environment: environment)
         try Self.check(tree)
@@ -405,29 +402,61 @@ struct Git: Sendable {
         "refs/droppy-code/checkpoints/\(thread.uuidString.lowercased())/\(turn)-\(phase)"
     }
 
-    /// The checkout's real index file, kept per checkout. Asking git for it is a process of
-    /// its own, and every working-tree snapshot starts from it; the path only changes when
-    /// the repository does, and a path that has gone is looked up again.
-    private static let foundIndexPaths = Mutex<[String: String]>([:])
-
-    private func indexPath() async -> String? {
-        let fileManager = FileManager.default
-        if let cached = Self.foundIndexPaths.withLock({ $0[directory.path] }), fileManager.fileExists(atPath: cached) {
-            return cached
+    /// Snapshots the working tree into a hidden ref without touching the user's index or
+    /// branch. A tree already checkpointed since anything changed reuses its commit, so a
+    /// turn starting on an untouched tree costs the `update-ref` alone.
+    func captureCheckpoint(_ ref: String) async throws {
+        let tree = try await currentTree()
+        let watch = await watch()
+        let commit: String
+        if let known = watch?.commit(of: tree) {
+            commit = known
+        } else {
+            let result = try await run(["commit-tree", tree, "-m", "Droppy Code checkpoint"], environment: Self.identity)
+            try Self.check(result)
+            commit = result.trimmedOutput
+            watch?.remember(commit: commit, of: tree)
         }
-        guard let resolved = try? await output(["rev-parse", "--path-format=absolute", "--git-path", "index"])
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-            fileManager.fileExists(atPath: resolved) else { return nil }
-        Self.foundIndexPaths.withLock { $0[directory.path] = resolved }
-        return resolved
+        try Self.check(await run(["update-ref", ref, commit]))
     }
 
-    /// Snapshots the working tree into a hidden ref without touching the user's index or branch.
-    func captureCheckpoint(_ ref: String) async throws {
-        let tree = try await captureTree()
-        let commit = try await run(["commit-tree", tree, "-m", "Droppy Code checkpoint"], environment: Self.identity)
-        try Self.check(commit)
-        try Self.check(await run(["update-ref", ref, commit.trimmedOutput]))
+    /// The working tree as a tree object, from the directory's watch when it can vouch
+    /// that nothing changed since the last capture, else captured now.
+    func currentTree() async throws -> String {
+        guard let indexPath = await indexPath(), let watch = await watch() else { return try await captureTree() }
+        return try await watch.currentTree(indexPath: indexPath) { scratch, paths in
+            guard let scratch else { return try await captureTree() }
+            return try await captureTree(scratch: scratch, paths: paths)
+        }
+    }
+
+    /// `captureTree` over a scratch index kept between captures: with `paths`, the
+    /// directories the watch saw change since the last capture, only they are walked and
+    /// the rest of the index stands. A walk that fails, as when a path vanished with
+    /// nothing of it in the index, is redone whole.
+    private func captureTree(scratch: URL, paths: [String]?) async throws -> String {
+        let environment = ["GIT_INDEX_FILE": scratch.path]
+        if let paths, !paths.isEmpty, FileManager.default.fileExists(atPath: scratch.path),
+           (try? await run(["add", "-A", "--pathspec-from-file=-", "--pathspec-file-nul"], environment: environment, input: Self.nulSeparated(paths), timeout: 300))?.succeeded == true {
+            let tree = try await run(["write-tree"], environment: environment)
+            try Self.check(tree)
+            return tree.trimmedOutput
+        }
+        try? FileManager.default.removeItem(at: scratch)
+        if let indexPath = await indexPath(), FileManager.default.fileExists(atPath: indexPath) {
+            try? FileManager.default.copyItem(atPath: indexPath, toPath: scratch.path)
+        } else if await hasCommits() {
+            try Self.check(await run(["read-tree", "HEAD"], environment: environment))
+        }
+        try Self.check(await run(["add", "-A", "--", "."], environment: environment, timeout: 300))
+        let tree = try await run(["write-tree"], environment: environment)
+        try Self.check(tree)
+        return tree.trimmedOutput
+    }
+
+    private func watch() async -> WorkingTreeWatch? {
+        guard let indexPath = await indexPath() else { return nil }
+        return WorkingTreeWatch.shared(for: directory.path, gitDirectory: (indexPath as NSString).deletingLastPathComponent)
     }
 
     /// The working tree as a tree object: a cheap before/after marker for a
@@ -439,7 +468,7 @@ struct Git: Sendable {
         let environment = ["GIT_INDEX_FILE": index.path]
 
         // Starting from the real index keeps git's stat cache, so unchanged files are not re-hashed.
-        if let indexPath = await indexPath() {
+        if let indexPath = await indexPath(), fileManager.fileExists(atPath: indexPath) {
             try? fileManager.copyItem(atPath: indexPath, toPath: index.path)
         } else if await hasCommits() {
             try Self.check(await run(["read-tree", "HEAD"], environment: environment))
@@ -448,6 +477,56 @@ struct Git: Sendable {
         let tree = try await run(["write-tree"], environment: environment)
         try Self.check(tree)
         return tree.trimmedOutput
+    }
+
+    /// What a worktree's index path was resolved from: its `.git` file, which names the
+    /// git directory, and the environment overrides git would honour over it.
+    struct GitFileStamp: Equatable {
+        var identifier: UInt64?
+        var modified: Date?
+        var size: Int?
+        var overrides: String
+
+        init(gitFile: String, environment: [String: String]) {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: gitFile)
+            identifier = (attributes?[.systemFileNumber] as? NSNumber)?.uint64Value
+            modified = attributes?[.modificationDate] as? Date
+            size = attributes?[.size] as? Int
+            overrides = (environment["GIT_DIR"] ?? "") + "\u{0}" + (environment["GIT_INDEX_FILE"] ?? "")
+        }
+    }
+
+    /// Resolved index paths of worktrees by working directory. A session works in a
+    /// handful of directories; past the bound the cache is simply dropped.
+    static let worktreeIndexPaths = Mutex<[String: (stamp: GitFileStamp, path: String?)]>([:])
+
+    /// The repository's index file. A checkout with its own `.git` directory keeps it right
+    /// there, which saves the git process that asking would cost on every snapshot. A
+    /// worktree (`.git` is a file naming the git directory) asks once and keeps the answer
+    /// while that file stands unchanged: a snapshot asks three or four times, and every
+    /// command tool takes two snapshots. A directory inside a repository, with no `.git`
+    /// of its own, still asks every time, since the answer depends on its ancestors.
+    private func indexPath() async -> String? {
+        var isDirectory: ObjCBool = false
+        let dotGit = directory.appendingPathComponent(".git").path
+        let environment = LoginEnvironment.current
+        let exists = FileManager.default.fileExists(atPath: dotGit, isDirectory: &isDirectory)
+        if exists, isDirectory.boolValue, environment["GIT_DIR"] == nil, environment["GIT_INDEX_FILE"] == nil {
+            return dotGit + "/index"
+        }
+        let stamp = exists ? GitFileStamp(gitFile: dotGit, environment: environment) : nil
+        if let stamp, let cached = Self.worktreeIndexPaths.withLock({ $0[directory.path] }), cached.stamp == stamp {
+            return cached.path
+        }
+        let path = try? await output(["rev-parse", "--path-format=absolute", "--git-path", "index"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let stamp {
+            Self.worktreeIndexPaths.withLock { paths in
+                if paths.count >= 64 { paths.removeAll() }
+                paths[directory.path] = (stamp, path)
+            }
+        }
+        return path
     }
 
     /// The patch between two trees or refs. `binary` puts whole binary blobs in it, so a
@@ -460,6 +539,81 @@ struct Git: Sendable {
         return result.output
     }
 
+    /// What undoing a thread's file changes would touch: of `paths` (the files its agent
+    /// changed, relative to this directory), the ones that differ between `base` and `end`,
+    /// the tree the thread last left. A file the checkout has changed again since then is
+    /// somebody else's work now, so it is marked kept. Other threads' files never appear:
+    /// only `paths` are looked at. Without an `end` tree (no turn finished) the files are
+    /// compared to the checkout as it is, which then counts as what the thread left.
+    func previewRestore(base: String, end known: String?, paths: [String]) async throws -> RevertPreview {
+        guard !paths.isEmpty else { return RevertPreview(files: []) }
+        let end: String
+        if let known { end = known } else { end = try await captureTree(paths: paths) }
+        // `git diff` takes no pathspec file; a turn touches tens of files, well within the arguments.
+        var preview = try RevertPreview(numstat: await output(["diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", base, end, "--"] + paths))
+        guard !preview.files.isEmpty else { return preview }
+        let root = try await repositoryRoot()
+        let left = try await blobs(in: end, at: preview.files.map(\.path), root: root)
+        let now = try await workingBlobs(at: preview.files.map(\.path), root: root)
+        preview.files = preview.files.map { file in
+            var file = file
+            file.isKept = left[file.path] != now[file.path]
+            return file
+        }
+        return preview
+    }
+
+    /// Puts `paths` (repository-relative) back as they are in `ref`, deleting the ones it
+    /// lacks. Nothing outside `paths` is touched.
+    func restore(_ paths: [String], from ref: String) async throws {
+        guard !paths.isEmpty else { return }
+        let root = try await repositoryRoot()
+        let present = try await blobs(in: ref, at: paths, root: root)
+        let restored = paths.filter { present[$0] != nil }
+        if !restored.isEmpty {
+            let result = try await run(
+                ["restore", "--source", ref, "--worktree", "--staged", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                input: Data(restored.map { root.appendingPathComponent($0).path }.joined(separator: "\0").utf8)
+            )
+            try Self.check(result)
+        }
+        let created = paths.filter { present[$0] == nil }
+        if !created.isEmpty {
+            _ = try? await run(
+                ["rm", "-q", "--cached", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"],
+                input: Data(created.map { root.appendingPathComponent($0).path }.joined(separator: "\0").utf8)
+            )
+            for path in created { try? FileManager.default.removeItem(at: root.appendingPathComponent(path)) }
+        }
+    }
+
+    /// The blob of each of `paths` (repository-relative) in `ref`, for the ones it has.
+    private func blobs(in ref: String, at paths: [String], root: URL) async throws -> [String: String] {
+        let listing = try await output(["ls-tree", "-r", "-z", "--full-name", ref, "--"] + paths.map { root.appendingPathComponent($0).path })
+        var blobs: [String: String] = [:]
+        blobs.reserveCapacity(paths.count)
+        for entry in listing.split(separator: "\0") {
+            // "<mode> <type> <hash>\t<path>"
+            guard let tab = entry.firstIndex(of: "\t") else { continue }
+            let fields = entry[..<tab].split(separator: " ")
+            guard fields.count == 3 else { continue }
+            blobs[String(entry[entry.index(after: tab)...])] = String(fields[2])
+        }
+        return blobs
+    }
+
+    /// The blob each of `paths` (repository-relative) would hash to as it is on disk; a
+    /// missing file has none.
+    private func workingBlobs(at paths: [String], root: URL) async throws -> [String: String] {
+        let existing = paths.filter { FileManager.default.fileExists(atPath: root.appendingPathComponent($0).path) }
+        guard !existing.isEmpty else { return [:] }
+        let result = try await run(["hash-object", "--stdin-paths"], input: Data(existing.map { root.appendingPathComponent($0).path }.joined(separator: "\n").utf8))
+        try Self.check(result)
+        let hashes = result.output.split(whereSeparator: \.isNewline)
+        guard hashes.count == existing.count else { throw ShellError("git hash-object answered for \(hashes.count) of \(existing.count) files.") }
+        return Dictionary(uniqueKeysWithValues: zip(existing, hashes.map(String.init)))
+    }
+
     func restoreCheckpoint(_ ref: String) async throws {
         try Self.check(await run(["restore", "--source", ref, "--worktree", "--staged", "--", "."]))
         _ = try? await run(["clean", "-fd", "--", "."])
@@ -468,9 +622,9 @@ struct Git: Sendable {
     func deleteCheckpoints(thread: UUID) async {
         let prefix = "refs/droppy-code/checkpoints/\(thread.uuidString.lowercased())/"
         guard let refs = try? await output(["for-each-ref", "--format=%(refname)", prefix]) else { return }
-        for ref in refs.split(separator: "\n") {
-            _ = try? await run(["update-ref", "-d", String(ref)])
-        }
+        let commands = refs.split(separator: "\n").map { "delete \($0)\n" }.joined()
+        guard !commands.isEmpty else { return }
+        _ = try? await run(["update-ref", "--stdin"], input: Data(commands.utf8))
     }
 
     // MARK: - Copies of the checkout
@@ -517,7 +671,7 @@ struct Git: Sendable {
         let index = fileManager.temporaryDirectory.appendingPathComponent("droppy-code-apply-\(UUID().uuidString)")
         defer { try? fileManager.removeItem(at: index) }
         let environment = ["GIT_INDEX_FILE": index.path]
-        if let indexPath = await indexPath() {
+        if let indexPath = await indexPath(), fileManager.fileExists(atPath: indexPath) {
             try? fileManager.copyItem(atPath: indexPath, toPath: index.path)
         } else if await hasCommits() {
             try Self.check(await run(["read-tree", "HEAD"], environment: environment))

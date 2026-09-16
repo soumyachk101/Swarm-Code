@@ -313,16 +313,16 @@
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Droppy Code";
+				INFOPLIST_KEY_CFBundleDisplayName = "Droppy Code Dev";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Droppy Code, the coding app by Droppy. MIT License.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = iordv.droppycode;
+				PRODUCT_BUNDLE_IDENTIFIER = iordv.droppycode.dev;
 				PRODUCT_MODULE_NAME = DroppyCode;
-				PRODUCT_NAME = "Droppy Code";
+				PRODUCT_NAME = "Droppy Code Dev";
 				SDKROOT = macosx;
 			};
 			name = Debug;

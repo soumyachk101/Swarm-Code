@@ -4,10 +4,11 @@ import Foundation
 enum TouchedPaths {
     /// The repository-relative form of a path an agent reported, whether absolute or relative.
     nonisolated static func normalize(_ path: String, root: String) -> String {
-        var path = path
-        let prefix = root.hasSuffix("/") ? root : root + "/"
+        guard !path.isEmpty else { return "" }
+        let base = URL(fileURLWithPath: root, isDirectory: true).standardizedFileURL
+        var path = URL(fileURLWithPath: path, relativeTo: base).standardizedFileURL.path
+        let prefix = base.path.hasSuffix("/") ? base.path : base.path + "/"
         if path.hasPrefix(prefix) { path = String(path.dropFirst(prefix.count)) }
-        if path.hasPrefix("./") { path = String(path.dropFirst(2)) }
         return path
     }
 

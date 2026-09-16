@@ -15,7 +15,7 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(before: .windowArrangement) {
-            Button("Droppy Code") { WindowManager.shared.showMain() }
+            Button(AppInfo.name) { WindowManager.shared.showMain() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .showMainWindow))
             Divider()
         }

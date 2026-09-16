@@ -13,10 +13,12 @@ struct DiffFile: Identifiable, Hashable, Sendable {
     var change: Change
     var isBinary: Bool
     var hunks: [DiffHunk]
+    var reportedAdditions: Int?
+    var reportedDeletions: Int?
 
     var id: String { path }
-    var additions: Int { hunks.reduce(0) { $0 + $1.lines.count(where: { $0.kind == .addition }) } }
-    var deletions: Int { hunks.reduce(0) { $0 + $1.lines.count(where: { $0.kind == .deletion }) } }
+    var additions: Int { reportedAdditions ?? hunks.reduce(0) { $0 + $1.lines.count(where: { $0.kind == .addition }) } }
+    var deletions: Int { reportedDeletions ?? hunks.reduce(0) { $0 + $1.lines.count(where: { $0.kind == .deletion }) } }
     var name: String { (path as NSString).lastPathComponent }
     var directory: String {
         let parent = (path as NSString).deletingLastPathComponent
