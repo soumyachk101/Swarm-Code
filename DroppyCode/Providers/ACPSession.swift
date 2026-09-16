@@ -310,7 +310,7 @@ final class ACPSession: ProviderSession {
                 id: id,
                 name: entry["name"]?.string ?? id,
                 detail: entry["description"]?.string,
-                efforts: efforts.compactMap { $0["value"]?.string },
+                efforts: Self.orderedEfforts(efforts.compactMap { $0["value"]?.string }),
                 defaultEffort: efforts.first { $0["default"]?.bool == true }?["value"]?.string,
                 isDefault: id == current
             )
@@ -363,7 +363,7 @@ final class ACPSession: ProviderSession {
                 guard Self.isEffortScale(scale) else { break }
                 effortConfigID = id
                 currentEffort = current
-                efforts = scale
+                efforts = Self.orderedEfforts(scale)
             case "model_config":
                 if id == "fast" {
                     fastConfigID = id
@@ -400,6 +400,25 @@ final class ACPSession: ProviderSession {
     private static func isEffortScale(_ values: [String]) -> Bool {
         let known: Set<String> = ["none", "low", "medium", "high", "xhigh", "max", "extra-high"]
         return values.contains { known.contains($0.lowercased()) }
+    }
+
+    /// The scale low to high, whatever order the agent lists it in: Grok's ACP advertises
+    /// its levels from extra high down to low, and the slider (see `EffortSlider`) reads
+    /// the list left to right as low to high, so its knob sat at Low for the highest. A
+    /// level the ranks do not know keeps its place among its neighbours.
+    static func orderedEfforts(_ values: [String]) -> [String] {
+        let ranks: [String: Int] = [
+            "none": 0, "minimal": 1, "low": 2, "medium": 3, "high": 4,
+            "xhigh": 5, "extra-high": 5, "extra_high": 5, "extra high": 5, "max": 6, "ultra": 6,
+        ]
+        let ranked = values.enumerated().map { (offset: $0.offset, value: $0.element, rank: ranks[$0.element.lowercased()]) }
+        guard ranked.count { $0.rank != nil } > 1 else { return values }
+        return ranked.sorted { lhs, rhs in
+            switch (lhs.rank, rhs.rank) {
+            case (let l?, let r?) where l != r: return l < r
+            default: return lhs.offset < rhs.offset
+            }
+        }.map(\.value)
     }
 
     /// Cursor's parameterized IDs are `model[effort=high,…]`; the picker stores the base name.

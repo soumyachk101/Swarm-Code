@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The onboarding tour's captures: six scenes (plus four theme variants) photographed
-/// over curated gradient backdrops as 16:10 images:
+/// The onboarding tour's captures: eight scenes (plus four theme variants) photographed
+/// over this Mac's desktop picture as 16:10 images:
 ///
 ///     open -n -W "Droppy Code.app" --args --tour-captures <folder>
 ///
@@ -16,32 +16,22 @@ enum TourCaptures {
     }
 
     static func backdropView(_ backdrop: Backdrop) -> some View {
-        let colors: [Color]
+        let alignment: Alignment
         switch backdrop {
         case .welcome:
-            colors = hexes(["#12153F", "#4B36C4", "#2E7CF6", "#0B0D2A", "#3A2A9E", "#1C4FB8", "#07081A", "#1B1650", "#0D2A6B"])
+            alignment = .center
         case .hydra:
-            colors = hexes(["#07201F", "#0E5A4A", "#12836B", "#041412", "#0B3D34", "#E39A2E", "#020A09", "#062421", "#0A4A3C"])
+            alignment = .top
         case .pairs:
-            colors = hexes(["#2B1548", "#6A2C9E", "#F0655E", "#1B0D30", "#4A1F7A", "#B8407A", "#0E0619", "#2A1240", "#5A2260"])
+            alignment = .bottomLeading
         case .slider:
-            colors = hexes(["#2A0F3A", "#8E2E6C", "#F5A54A", "#1B0A28", "#C2416B", "#E3743F", "#0F0518", "#5C1F48", "#8A3A2E"])
+            alignment = .bottomTrailing
         case .panels:
-            colors = hexes(["#0D1B2A", "#1F4E79", "#6FB1E8", "#08121C", "#173B5E", "#2F6FA8", "#04090F", "#0F2942", "#1A4C78"])
+            alignment = .topLeading
         case .themes:
-            colors = hexes(["#1A1033", "#7B2FF7", "#F72F8B", "#120A26", "#4E1FA6", "#FFB347", "#0A0518", "#2B1160", "#B0286A"])
+            alignment = .center
         }
-        let corners: [SIMD2<Float>] = [
-            SIMD2(0, 0), SIMD2(0.5, 0), SIMD2(1, 0),
-            SIMD2(0, 0.52), SIMD2(0.48, 0.46), SIMD2(1, 0.55),
-            SIMD2(0, 1), SIMD2(0.54, 1), SIMD2(1, 1),
-        ]
-        return ZStack {
-            MeshGradient(width: 3, height: 3, points: corners, colors: colors)
-            RadialGradient(colors: [.white.opacity(0.1), .clear], center: .topLeading, startRadius: 0, endRadius: 900)
-            RadialGradient(colors: [.white.opacity(0.1), .clear], center: .bottomTrailing, startRadius: 0, endRadius: 900)
-        }
-        .ignoresSafeArea()
+        return BackdropWallpaper(screen: NSScreen.main ?? NSScreen.screens[0], alignment: alignment).ignoresSafeArea()
     }
 
     /// One quarter of a double-size gradient, so four stills tile into one seamless
@@ -56,17 +46,18 @@ enum TourCaptures {
         .ignoresSafeArea()
     }
 
-    private static func hexes(_ values: [String]) -> [Color] {
-        values.map { Color(hex: $0) }
-    }
-
     static func run(model: AppModel) async {
         guard let output = WebsiteCaptures.outputDirectory else { return }
+        // Thirty-odd stills, each with an activation wait: six minutes of budget.
         Task {
-            try? await Task.sleep(for: .seconds(300))
+            try? await Task.sleep(for: .seconds(600))
             WebsiteCaptures.log("out of time, quitting")
             exit(0)
         }
+        // The run's fresh defaults never saw the Hydra intro, and the first chat with
+        // Hydra on would show it over the welcome overview; the intro has a scene of its
+        // own (web-intro) that presents it on purpose.
+        model.settings.hasSeenHydraIntro = true
         let stage = Stage(model: model)
         stage.show(size: NSSize(width: 1200, height: 660))
         await stage.ensureActive()
@@ -74,9 +65,10 @@ enum TourCaptures {
         try? await Task.sleep(for: .milliseconds(1_400))
 
         // 1. tour-welcome: the whole window in one overview — large 16:10 stage,
-        // sidebar open, settled after the scene lands so nothing important is cropped.
+        // sidebar hidden (the chat alone on the glass; the list has a scene of its own),
+        // settled after the scene lands so nothing important is cropped.
         await capture(model, stage, recorder, name: "tour-welcome", backdrop: .welcome, size: NSSize(width: 1280, height: 800)) {
-            if !model.sidebar.isVisible { model.sidebar.toggle() }
+            if model.sidebar.isVisible { model.sidebar.toggle() }
             model.settings.theme = .dark
             model.selectedThreadID = WebsiteCaptures.composerThreadID
             await WebsiteCaptures.editingScene(model, stage, recorder, film: false)
@@ -132,6 +124,30 @@ enum TourCaptures {
             await stage.holdPopover(popover, seconds: 2.0)
             return popover
         }
+        // 4a. tour-threads: the hidden sidebar's list floating from the toolbar's Threads
+        // button, at the sidebar's own width.
+        await capture(model, stage, recorder, name: "tour-threads", backdrop: .panels, size: NSSize(width: 960, height: 600)) {
+            if model.sidebar.isVisible { model.sidebar.toggle() }
+            model.selectedThreadID = WebsiteCaptures.composerThreadID
+            try? await Task.sleep(for: .milliseconds(900))
+            let width = model.sidebar.width
+            let list = SidebarView(inPopover: true, dismiss: {}).frame(width: width, height: 560).presentedChrome().environment(model)
+            let popover = stage.presentPopover(list, width: width, chipOf: WebsiteCaptures.composerThreadID, at: WebsiteCaptures.threadsButtonFrame)
+            await stage.holdPopover(popover, seconds: 2.0)
+            return popover
+        }
+        // 4b. tour-recipes: Hydra's cookbook hanging from the composer's chip.
+        await capture(model, stage, recorder, name: "tour-recipes", backdrop: .hydra, size: NSSize(width: 960, height: 600)) {
+            if model.sidebar.isVisible { model.sidebar.toggle() }
+            model.selectedThreadID = WebsiteCaptures.freshThreadID
+            model.settings.hydraEnabled = true
+            try? await Task.sleep(for: .milliseconds(900))
+            // The panel sizes itself (460 by 540); the popover takes that width whole.
+            let panel = HydraCookbookPanel().environment(model)
+            let popover = stage.presentPopover(panel, width: 460, chipOf: WebsiteCaptures.freshThreadID)
+            await stage.holdPopover(popover, seconds: 2.0)
+            return popover
+        }
         // 5. tour-panels: the team's panel and a popped-out head over the lead's chat.
         await TourCaptures.panelsScene(model, stage, recorder)
         // 5b. web-diff, web-palette, web-plans, web-question, web-queue: the site's
@@ -151,6 +167,18 @@ enum TourCaptures {
         await siteScene(model, stage, recorder, name: "web-queue", backdrop: .slider, size: NSSize(width: 1200, height: 660)) {
             await WebsiteCaptures.queueScene(model, stage, recorder, film: false, stillName: "web-queue")
         }
+        // 5c. web-intro: the Hydra intro popover over the chat, for the site.
+        await capture(model, stage, recorder, name: "web-intro", backdrop: .pairs, size: NSSize(width: 1200, height: 660)) {
+            if model.sidebar.isVisible { model.sidebar.toggle() }
+            model.selectedThreadID = WebsiteCaptures.composerThreadID
+            try? await Task.sleep(for: .milliseconds(900))
+            let intro = HydraIntroPopover(dismiss: {}).environment(model)
+            // From the toolbar's mark, where the app shows it, at the intro's own width
+            // (420); the chip is the fallback.
+            let popover = stage.presentPopover(intro, width: 420, chipOf: WebsiteCaptures.composerThreadID, at: WebsiteCaptures.hydraMarkFrame)
+            await stage.holdPopover(popover, seconds: 2.0)
+            return popover
+        }
         // 6. tour-theme-<rawValue>: four themes far apart, one of them light. Each shows
         // one quarter of a double-size gradient, so the four tile into one seamless image.
         let quadrantThemes = [AppTheme.tokyoNight, .gruvbox, .catppuccinLatte, .rosePine]
@@ -161,7 +189,7 @@ enum TourCaptures {
             stage.resize(to: NSSize(width: 960, height: 600))
             await stage.ensureActive()
             try? await Task.sleep(for: .milliseconds(1_100))
-            if !model.sidebar.isVisible { model.sidebar.toggle() }
+            if model.sidebar.isVisible { model.sidebar.toggle() }
             model.selectedThreadID = WebsiteCaptures.composerThreadID
             model.settings.theme = theme
             try? await Task.sleep(for: .milliseconds(900))
@@ -172,7 +200,7 @@ enum TourCaptures {
         // 6b. web-theme-<rawValue>: the same window in every theme, for the theme picker.
         for theme in AppTheme.allCases {
             await capture(model, stage, recorder, name: "web-theme-\(theme.rawValue)", backdrop: .themes, size: NSSize(width: 960, height: 600)) {
-                if !model.sidebar.isVisible { model.sidebar.toggle() }
+                if model.sidebar.isVisible { model.sidebar.toggle() }
                 model.selectedThreadID = WebsiteCaptures.composerThreadID
                 model.settings.theme = theme
                 try? await Task.sleep(for: .milliseconds(650))

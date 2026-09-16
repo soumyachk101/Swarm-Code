@@ -91,6 +91,10 @@ struct HydraButton: View {
                 .interactiveDismissDisabled()
         }
         .onAppear { if !model.settings.hasSeenHydraIntro, isOn { isIntroShown = true } }
+        // The capture run hangs the intro's still from the mark, where the app shows it.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            if WebsiteCaptures.isEnabled { WebsiteCaptures.hydraMarkFrame = frame }
+        }
         .help(help(isOn: isOn, running: running, hasHeads: !heads.isEmpty))
         .accessibilityLabel(Text(panelHelp(running: running, hasHeads: !heads.isEmpty)))
         .accessibilityValue(Text(isOn ? "On" : "Off"))

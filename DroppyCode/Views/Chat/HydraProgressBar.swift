@@ -22,6 +22,8 @@ struct HydraProgressBar: View {
     let status: HydraHeadInfo.Status
     /// The head's persona colour.
     let tint: Color
+    /// The entries to draw, the runtime's whole list when nil.
+    var entries: [TimelineEntry]? = nil
 
     @State private var width: CGFloat = 0
     /// The head is done and its last stave has risen: nothing left to animate.
@@ -47,7 +49,7 @@ struct HydraProgressBar: View {
     private static let cardLines = 4
 
     var body: some View {
-        let events = Self.events(in: runtime.entries)
+        let events = Self.events(in: entries ?? runtime.entries)
         let capacity = max(1, Int(((width + Self.gap) / Self.pitch).rounded(.down)))
         let staves = Self.staves(for: events, capacity: capacity)
         let counts = Counts(of: events)
@@ -381,9 +383,10 @@ struct HydraHeadProgress: View {
 /// The head's task. While the head works the text breathes, and a slightly darker band
 /// drifts across it from left to right, so a bar with nothing on it yet still reads as a
 /// head at work. Done, or with reduced motion, it is plain text.
-private struct HydraWorkingTitle: View {
+struct HydraWorkingTitle: View {
     let text: String
     let isRunning: Bool
+    var alignment: TextAlignment = .center
 
     /// One pass of the band across the text.
     private static let sweep: TimeInterval = 3.2
@@ -424,7 +427,7 @@ private struct HydraWorkingTitle: View {
                 .opacity(0.86 + 0.14 * breath)
         }
         .lineLimit(2)
-        .multilineTextAlignment(.center)
+        .multilineTextAlignment(alignment)
     }
 
     private static func clamped(_ location: Double) -> CGFloat {

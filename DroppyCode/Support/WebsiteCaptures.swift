@@ -56,6 +56,11 @@ enum WebsiteCaptures {
     /// Where each thread's composer chip sits in the window (SwiftUI's global space, which
     /// is the hosting view's flipped coordinates), for a popover hung from the window itself.
     static var modelChipFrames: [UUID: CGRect] = [:]
+    /// Where the toolbar's Hydra mark is, in the window, for the intro scene: the intro
+    /// hangs from the mark in the app, so its capture hangs it there too.
+    static var hydraMarkFrame: CGRect?
+    /// Where the toolbar's Threads button is (the hidden sidebar's list hangs from it).
+    static var threadsButtonFrame: CGRect?
     /// Where each lead's docked Hydra panel sits in the window (SwiftUI's global space),
     /// so the tour's Hydra page can zoom on the team's panel.
     static var hydraPanelFrames: [UUID: CGRect] = [:]
@@ -827,23 +832,31 @@ final class Stage {
         }
     }
 
-    func presentPopover<Content: View>(_ content: Content, width: CGFloat, chipOf threadID: UUID? = nil) -> NSPopover {
+    func presentPopover<Content: View>(_ content: Content, width: CGFloat, chipOf threadID: UUID? = nil, at frame: CGRect? = nil) -> NSPopover {
         let popover = NSPopover()
         popover.behavior = .applicationDefined
         let probe = NSHostingView(rootView: content.frame(width: width))
         probe.frame = NSRect(x: 0, y: 0, width: width, height: 10)
         let height = probe.fittingSize.height
         popover.setFixedContent(content, size: NSSize(width: width, height: height))
+        // A rect of the window's content given outright (the Hydra mark's), the same way
+        // the chip's is used below.
+        if let frame, let content = window?.contentView {
+            let rect = content.isFlipped ? frame : NSRect(x: frame.minX, y: content.bounds.height - frame.maxY, width: frame.width, height: frame.height)
+            WebsiteCaptures.log("popover \(width)x\(height) at the given frame \(rect)")
+            popoverAnchor = (content, rect)
+            popover.show(relativeTo: rect, of: content, preferredEdge: content.isFlipped ? .minY : .maxY)
+        }
         // The chip's view is SwiftUI's to make and remake (the chip turns compact and back
         // with the composer's width, and a remade view takes a popover hung from it down),
         // so the popover hangs from the window's own content view instead, at the rect
         // where the thread's chip is right now.
-        if let threadID, let frame = WebsiteCaptures.modelChipFrames[threadID], let content = window?.contentView {
+        if !popover.isShown, let threadID, let frame = WebsiteCaptures.modelChipFrames[threadID], let content = window?.contentView {
             let rect = content.isFlipped ? frame : NSRect(x: frame.minX, y: content.bounds.height - frame.maxY, width: frame.width, height: frame.height)
             WebsiteCaptures.log("popover \(width)x\(height) at the chip's frame \(rect)")
             popoverAnchor = (content, rect)
             popover.show(relativeTo: rect, of: content, preferredEdge: content.isFlipped ? .minY : .maxY)
-        } else if let anchor = WebsiteCaptures.modelChipAnchor?.value, anchor.window === window, !anchor.isHiddenOrHasHiddenAncestor,
+        } else if !popover.isShown, let anchor = WebsiteCaptures.modelChipAnchor?.value, anchor.window === window, !anchor.isHiddenOrHasHiddenAncestor,
            let content = window?.contentView {
             let rect = anchor.convert(anchor.bounds, to: content)
             WebsiteCaptures.log("popover \(width)x\(height) at the chip's rect \(rect)")
@@ -864,8 +877,9 @@ final class Stage {
 
 /// What the glass blurs: this Mac's desktop picture, filling the screen the way the desktop
 /// shows it. Falls back to the system's default wallpaper.
-private struct BackdropWallpaper: View {
+struct BackdropWallpaper: View {
     let screen: NSScreen
+    var alignment: Alignment = .center
 
     private static let systemDefault = URL(fileURLWithPath: "/System/Library/Wallpapers/.default/DefaultAerial.heic")
 
@@ -880,7 +894,7 @@ private struct BackdropWallpaper: View {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .frame(width: proxy.size.width, height: proxy.size.height)
+                    .frame(width: proxy.size.width, height: proxy.size.height, alignment: alignment)
                     .clipped()
             } else {
                 Color.black

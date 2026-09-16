@@ -281,7 +281,7 @@
     ["matrix", "Matrix", "Dark · Green"]
   ];
 
-  var THEME_BASE = "https://droppy-releases.jordylegrand.workers.dev/site-assets/droppy-code/themes/";
+  var THEME_BASE = "https://droppy-releases.jordylegrand.workers.dev/site-assets/droppy-code/tour/v4/themes/";
 
   /* One big window, the real app in the chosen theme, and the 26 names under it. Cycles on
      its own until the visitor picks one, and only fetches a theme when it is about to show. */
@@ -303,7 +303,7 @@
       var img = document.createElement("img");
       img.src = THEME_BASE + id + ".webp";
       img.width = 2080;
-      img.height = 1426;
+      img.height = 1300;
       img.decoding = "async";
       img.alt = "Droppy Code in the " + id + " theme";
       stage.appendChild(img);
