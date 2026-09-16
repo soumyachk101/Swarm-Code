@@ -48,6 +48,8 @@ final class ProviderRegistry {
     @ObservationIgnored private let cacheKey = "providerModelCatalogs"
     private(set) var planLimits: [ProviderKind: PlanLimits] = [:]
     private(set) var loadingLimits: Set<ProviderKind> = []
+    /// The banked reset being spent right now: its credit id, or "codex" for one the app-server listed only by count.
+    private(set) var redeemingReset: String?
     @ObservationIgnored private var limitsFetchedAt: [ProviderKind: Date] = [:]
 
     /// Pay-as-you-go balances (DeepSeek's credit), shown where subscriptions show their windows.
@@ -462,6 +464,21 @@ final class ProviderRegistry {
             planLimits[provider] = limits
             limitsFetchedAt[provider] = .now
         }
+    }
+
+    /// Spends one of Codex's banked resets, then re-reads the limits so the bars show the cleared windows.
+    func consumeCodexResetCredit(_ creditID: String?) async throws -> PlanLimits.ResetOutcome {
+        redeemingReset = creditID ?? "codex"
+        defer { redeemingReset = nil }
+        await LoginEnvironment.load()
+        guard let executable = executable(for: .codex) else { throw ResetCreditError.codexUnavailable }
+        let environment = environment(for: .codex)
+        let outcome = try await CodexSession.consumeResetCredit(executable: executable, environment: environment, creditID: creditID)
+        if let limits = try? await CodexSession.readPlanLimits(executable: executable, environment: environment) {
+            planLimits[.codex] = limits
+            limitsFetchedAt[.codex] = .now
+        }
+        return outcome
     }
 
     /// Reads a pay-as-you-go provider's balance, at most once a minute after a successful

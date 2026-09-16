@@ -353,7 +353,7 @@ final class CodexSession: ProviderSession {
             configure: { _ in }
         )
         defer { connection.close() }
-        let result = try await connection.request("account/rateLimits/read", ["excludeResetCreditDetails": true])
+        let result = try await connection.request("account/rateLimits/read")
         var snapshots: [JSONValue] = []
         if let byID = result["rateLimitsByLimitId"]?.object, !byID.isEmpty {
             snapshots = byID.keys.sorted().compactMap { byID[$0] }
@@ -378,7 +378,55 @@ final class CodexSession: ProviderSession {
             }
         }
         guard !windows.isEmpty else { return nil }
-        return PlanLimits(planName: PlanLimitsReader.planName(plan), windows: windows)
+        return PlanLimits(planName: PlanLimitsReader.planName(plan), windows: windows, resetCredits: parseResetCredits(result["rateLimitResetCredits"] ?? result["rate_limit_reset_credits"]))
+    }
+
+    /// The banked resets in a rate-limits answer: a count, plus the credits it described that are still spendable.
+    private static func parseResetCredits(_ raw: JSONValue?) -> PlanLimits.ResetCredits? {
+        guard let raw, let count = raw["availableCount"]?.int ?? raw["available_count"]?.int else { return nil }
+        let credits = (raw["credits"]?.array ?? []).compactMap { credit -> PlanLimits.ResetCredit? in
+            guard let id = credit["id"]?.string, !id.isEmpty else { return nil }
+            let status = credit["status"]?.string
+            guard status == nil || status == "available" || status == "unknown" else { return nil }
+            return PlanLimits.ResetCredit(
+                id: id,
+                title: credit["title"]?.string,
+                detail: credit["description"]?.string,
+                expiresAt: resetDate(credit["expiresAt"] ?? credit["expires_at"])
+            )
+        }
+        return PlanLimits.ResetCredits(availableCount: max(0, count), credits: credits)
+    }
+
+    /// Epoch seconds or milliseconds (anything above 1e10 is milliseconds), or an ISO 8601 string.
+    private static func resetDate(_ value: JSONValue?) -> Date? {
+        guard let value else { return nil }
+        if let number = value.double ?? value.string.flatMap(Double.init) {
+            guard number > 0 else { return nil }
+            return Date(timeIntervalSince1970: number > 10_000_000_000 ? number / 1_000 : number)
+        }
+        guard let text = value.string else { return nil }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: text) ?? ISO8601DateFormatter().date(from: text)
+    }
+
+    /// Spends one of the account's banked resets. Without a credit id the app-server picks one.
+    static func consumeResetCredit(executable: URL, environment: [String: String], creditID: String?) async throws -> PlanLimits.ResetOutcome {
+        let connection = try await connect(
+            executable: executable,
+            directory: FileManager.default.temporaryDirectory,
+            environment: environment,
+            configure: { _ in }
+        )
+        defer { connection.close() }
+        var params: [String: JSONValue] = ["idempotencyKey": .string(UUID().uuidString.lowercased())]
+        if let creditID { params["creditId"] = .string(creditID) }
+        let result = try await connection.request("account/rateLimitResetCredit/consume", .object(params))
+        guard let outcome = result["outcome"]?.string.flatMap(PlanLimits.ResetOutcome.init(rawValue:)) else {
+            throw ResetCreditError.unknownOutcome
+        }
+        return outcome
     }
 
     /// The tier Codex offers for faster responses on a model, if any.
