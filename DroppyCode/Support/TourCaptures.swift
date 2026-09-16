@@ -48,7 +48,7 @@ enum TourCaptures {
 
     static func run(model: AppModel) async {
         guard let output = WebsiteCaptures.outputDirectory else { return }
-        // Thirty-odd stills, each with an activation wait: six minutes of budget.
+        // Thirty-odd stills, each with an activation wait: ten minutes of budget.
         Task {
             try? await Task.sleep(for: .seconds(600))
             WebsiteCaptures.log("out of time, quitting")
@@ -219,6 +219,27 @@ enum TourCaptures {
         await recorder.still("tour-window", Stage.tourRect(around: tourWindow.frame))
         TourWindowController.shared.close()
         stage.setWindowHidden(false)
+
+        // 8. web-notify at 1280x800: the thread that needs you — sidebar shown so the
+        // question badge and the sidebar's attention state are in the picture.
+        WebsiteCaptures.log("scene web-notify")
+        stage.setBackdrop(backdropView(.welcome))
+        stage.resize(to: NSSize(width: 1280, height: 800))
+        if !model.sidebar.isVisible { model.sidebar.toggle() }
+        model.selectedThreadID = WebsiteCaptures.composerThreadID
+        await stage.ensureActive()
+        try? await Task.sleep(for: .milliseconds(900))
+        await WebsiteCaptures.questionScene(model, stage, recorder, film: false, stillName: "web-notify")
+        if model.sidebar.isVisible { model.sidebar.toggle() }
+        // 9. web-slash at 1280x800: the composer with its slash command menu open.
+        await siteScene(model, stage, recorder, name: "web-slash", backdrop: .welcome, size: NSSize(width: 1280, height: 800)) {
+            await WebsiteCaptures.slashScene(model, stage, recorder, film: false, stillName: "web-slash")
+        }
+        // 10. web-quote at 1280x800: a reply quote in the composer with a short draft
+        // under it.
+        await siteScene(model, stage, recorder, name: "web-quote", backdrop: .welcome, size: NSSize(width: 1280, height: 800)) {
+            await WebsiteCaptures.quoteScene(model, stage, recorder, film: false, stillName: "web-quote")
+        }
 
         await recorder.finish()
         WebsiteCaptures.log("tour done")

@@ -616,6 +616,49 @@ enum WebsiteCaptures {
         try? await Task.sleep(for: .milliseconds(400))
     }
 
+    /// The composer with a slash command menu open: the draft holds a leading slash,
+    /// so the caret-anchored suggestions list shows the registry's commands for the
+    /// thread's provider and directory, seeded here since the run never launches CLIs.
+    static func slashScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder, film: Bool = false, stillName: String? = nil) async {
+        log("scene slashScene")
+        model.selectedThreadID = ID.composer
+        try? await Task.sleep(for: .milliseconds(900))
+        let runtime = model.runtime(for: ID.composer)
+        runtime.draft = ComposerDraft()
+        if let thread = model.thread(ID.composer), let project = model.project(thread.projectID) {
+            let directory = thread.worktreePath ?? project.path
+            model.providers.updateCommands([
+                SlashCommand(name: "compact", detail: "Summarize the conversation to free up context", isBuiltIn: true),
+                SlashCommand(name: "review", detail: "Review the working tree for issues"),
+                SlashCommand(name: "commit", detail: "Commit the staged changes"),
+                SlashCommand(name: "test", detail: "Run the project's tests"),
+                SlashCommand(name: "plan", detail: "Turn plan mode on or off", isBuiltIn: true),
+            ], for: thread.provider, directory: directory)
+        }
+        runtime.draft.text = "/"
+        try? await Task.sleep(for: .milliseconds(900))
+        await recorder.still(stillName ?? "slash", film ? stage.captureRect : stage.tourCaptureRect)
+        runtime.draft = ComposerDraft()
+        try? await Task.sleep(for: .milliseconds(500))
+    }
+
+    /// A reply quote in the composer: one line of the assistant's reply as the quoted
+    /// chip, with a short draft under it.
+    static func quoteScene(_ model: AppModel, _ stage: Stage, _ recorder: Recorder, film: Bool = false, stillName: String? = nil) async {
+        log("scene quoteScene")
+        model.selectedThreadID = ID.composer
+        try? await Task.sleep(for: .milliseconds(900))
+        let runtime = model.runtime(for: ID.composer)
+        var draft = ComposerDraft()
+        draft.quotes = [ReplyQuote(text: "In `DraftAttachments`, inside **ComposerView.swift**.")]
+        draft.text = "Do that for the sidebar too."
+        runtime.draft = draft
+        try? await Task.sleep(for: .milliseconds(900))
+        await recorder.still(stillName ?? "quote", film ? stage.captureRect : stage.tourCaptureRect)
+        runtime.draft = ComposerDraft()
+        try? await Task.sleep(for: .milliseconds(500))
+    }
+
     /// Streams `text` into the timeline a few characters at a time, as a provider does.
     private static func stream(_ runtime: ThreadRuntime, id: String, reasoning: Bool, _ text: String, step: Int) async {
         var index = text.startIndex
