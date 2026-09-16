@@ -1074,7 +1074,6 @@ struct AttachmentStrip: View {
 }
 
 struct AttachmentThumbnail: View {
-    @Environment(\.chatZoom) private var zoom
     let attachment: Attachment
     var size: CGFloat = 56
     /// The panel the photo opens in: either a slot, which makes its panel on the first
@@ -1147,21 +1146,22 @@ struct AttachmentThumbnail: View {
             } else if attachment.isVideo {
                 AttachmentVideoThumbnail(attachment: attachment, size: size)
             } else {
-                VStack(spacing: 3) {
+                // A file fills its chip the way a photo does: the Finder icon at the
+                // chip's full size on the same plate, so a text file, a PDF and a
+                // folder all read at a glance. The name is the tooltip and the preview
+                // panel; at 48pt it never fit under a 16pt icon anyway.
+                ZStack {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(.quaternary.opacity(0.6))
                     Image(nsImage: FileIcons.icon(for: attachment.path))
                         .resizable()
+                        .interpolation(.high)
                         .aspectRatio(contentMode: .fit)
-                        .frame(width: 16, height: 16)
-                    Text(attachment.name)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
+                        .padding(size * 0.08)
                 }
-                .font(.chat(.caption, zoom: zoom))
-                .padding(.horizontal, 6)
                 .frame(width: size, height: size)
-                .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 10, style: .continuous))
-                .clipShape(.rect(cornerRadius: 10, style: .continuous))
+                .clipShape(.rect(cornerRadius: 12, style: .continuous))
+                .accessibilityLabel(Text(attachment.name))
             }
         }
         .buttonStyle(.plain)
