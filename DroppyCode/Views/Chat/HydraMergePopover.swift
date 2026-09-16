@@ -152,14 +152,20 @@ struct HydraMergePopover: View {
                             .onHover { inside in
                                 if inside { hoveredHead = head } else if hoveredHead == head { hoveredHead = nil }
                             }
+                            // Each glyph carries its own popover, so the card hangs from the
+                            // face under the cursor; one popover on the row hung from the
+                            // row's middle, between the faces and the count.
+                            .popover(isPresented: Binding(
+                                get: { hoveredHead == head },
+                                set: { shown in if !shown, hoveredHead == head { hoveredHead = nil } }
+                            ), arrowEdge: .bottom) {
+                                headCard(head)
+                            }
                     }
                     Spacer(minLength: 8)
                     Text(verbatim: note.heads.count == 1 ? "1 head landed" : "\(note.heads.count) heads landed")
                         .font(.system(size: 11))
                         .foregroundStyle(Chrome.secondaryText)
-                }
-                .popover(item: $hoveredHead, arrowEdge: .bottom) { head in
-                    headCard(head)
                 }
             }
             HStack(spacing: 6) {
