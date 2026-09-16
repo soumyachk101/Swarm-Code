@@ -16,6 +16,15 @@ enum TimelineMetrics {
     /// so the column sits on the reply text's own x and all labels line up after it.
     static let iconWidth: CGFloat = 16
     static let iconSpacing: CGFloat = 8
+    /// One pill for everything that sits in the conversation as a badge or a card: the
+    /// head pills, the question badge, the merge pill, a notice, the lead's delegation
+    /// card, the working line. Same corner, same insets, so they line up in the column
+    /// and read as one family. Trailing is wider than leading because most end in a
+    /// chevron or a time, which sits lighter than the glyph that opens them.
+    static let pillLeading: CGFloat = 12
+    static let pillTrailing: CGFloat = 14
+    static let pillVertical: CGFloat = 8
+    static let pillRadius: CGFloat = 18
 }
 
 /// The pasteboard half of `CopyButton` (see MarkdownView.swift), for the message menus.
@@ -302,10 +311,10 @@ struct HydraReportRow: View {
                 .help("Open in the browser")
             }
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 14)
-        .padding(.vertical, 8)
-        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.leading, TimelineMetrics.pillLeading)
+        .padding(.trailing, TimelineMetrics.pillTrailing)
+        .padding(.vertical, TimelineMetrics.pillVertical)
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
         // The report parses off the main thread as the pill appears, so the tap that
         // opens it finds the blocks ready rather than parsing the whole batch first.
         .task(id: body) {
@@ -377,65 +386,26 @@ struct HydraReportRow: View {
     }
 }
 
-/// The heads still out on the lead's behalf: who they are, working, until they report back.
-/// The report pill's twin while the work is still on.
+/// The heads finished while their batch is still out: one small pill each, the report one
+/// tap away. The heads still at work get no pill here: the floating panel already shows
+/// them, and a row saying the same thing was noise.
 struct HydraHeadsWorkingRow: View {
-    @Environment(\.chatZoom) private var zoom
     @Environment(AppModel.self) private var model
     let heads: [Int]
     let runtime: ThreadRuntime
 
     var body: some View {
-        let personas = heads.map(HydraRoster.persona(at:))
-        let names = personas.map(\.name)
-        let who: String = {
-            if names.isEmpty { return "" }
-            if names.count == 1 { return names[0] }
-            return names.dropLast().joined(separator: ", ") + " and " + (names.last ?? "")
-        }()
-        // Every head out has gone quiet for three minutes (no tool, no word): the pill
-        // says so. The watchdog labels a head's row at the same moment, and that label is
-        // what redraws this one (see `AppModel.startHydraWatchdog`).
-        // The whole team, not only the panel: a finished head leaves the panel on its own
-        // (`hydraAutoClearFinished`), and its pill below has to stay until the report lands.
         // Read through this thread's own cells (`helpers(of:)` holds every unarchived head,
         // in the panel or not), the same list as `hydraTeam(of:)` without its scan of
-        // `model.threads`: a write to some other chat never re-renders this pill.
+        // `model.threads`: a write to some other chat never re-renders these pills.
         let team = model.helpers(of: runtime.threadID)
             .filter(\.isHydraHead)
             .sorted { ($0.hydra?.index ?? 0) < ($1.hydra?.index ?? 0) }
-        let running = team.filter { $0.hydra?.status == .running && heads.contains($0.hydra?.index ?? -1) }
-        let thinking = !running.isEmpty && running.allSatisfy { head in
-            guard let live = model.existingRuntime(for: head.id) else { return false }
-            return live.hydraActivity?.hasPrefix("Thinking for") == true || live.hydraIdleSeconds >= 180
-        }
-        let title = (names.isEmpty ? "Heads are working" : "\(who) \(names.count == 1 ? "is" : "are") working") + (thinking ? " · thinking" : "")
-        // Heads already finished while the rest of their batch still works: one small
-        // pill each below, with the report one tap away.
         let finished = Self.finishedHeads(in: team)
         // Every pill starts at the same left edge, glyphs in one column, whatever its
         // width: trailing alignment hung each narrower pill off the widest one's right
         // edge, and a head coming or going moved them all.
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                HStack(spacing: -4) {
-                    ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
-                        HydraGlyph(persona: persona, size: 18, isRunning: true)
-                    }
-                }
-                Text(verbatim: title)
-                    .font(.chat(.callout, weight: .medium, zoom: zoom))
-                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                    .modifier(HydraShimmer())
-                    .contentTransition(.opacity)
-            }
-            .padding(.leading, 12)
-            .padding(.trailing, 14)
-            .padding(.vertical, 8)
-            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .animation(.smooth(duration: 0.3), value: heads)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(Text(title))
             ForEach(finished, id: \.index) { head in
                 FinishedHeadPill(head: head)
             }
@@ -491,10 +461,10 @@ private struct FinishedHeadPill: View {
                     .font(.chat(.caption2, weight: .semibold, zoom: zoom))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 14)
-            .padding(.vertical, 8)
-            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(.leading, TimelineMetrics.pillLeading)
+            .padding(.trailing, TimelineMetrics.pillTrailing)
+            .padding(.vertical, TimelineMetrics.pillVertical)
+            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -605,10 +575,10 @@ struct HydraBriefRow: View {
                         .font(.chat(.caption2, weight: .semibold, zoom: zoom))
                         .foregroundStyle(.tertiary)
                 }
-                .padding(.leading, 12)
-                .padding(.trailing, 14)
-                .padding(.vertical, 8)
-                .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .padding(.leading, TimelineMetrics.pillLeading)
+                .padding(.trailing, TimelineMetrics.pillTrailing)
+                .padding(.vertical, TimelineMetrics.pillVertical)
+                .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
@@ -715,9 +685,10 @@ struct HydraDelegationBlock: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
-        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .padding(.leading, TimelineMetrics.pillLeading)
+        .padding(.trailing, TimelineMetrics.pillTrailing)
+        .padding(.vertical, TimelineMetrics.pillVertical)
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
@@ -859,10 +830,10 @@ struct HydraMergeRow: View {
             // the transaction; the pill around it follows the slot's animated width.
             .animation(Self.change, value: isMerging)
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 14)
-        .padding(.vertical, 8)
-        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(.leading, TimelineMetrics.pillLeading)
+        .padding(.trailing, TimelineMetrics.pillTrailing)
+        .padding(.vertical, TimelineMetrics.pillVertical)
+        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 96)
         .accessibilityElement(children: .contain)
@@ -1643,12 +1614,12 @@ struct ToolRow: View {
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
             }
-            .padding(.leading, isBadge ? 12 : 0)
-            .padding(.trailing, isBadge ? 10 : 0)
-            .padding(.vertical, isBadge ? 6 : 0)
+            .padding(.leading, isBadge ? TimelineMetrics.pillLeading : 0)
+            .padding(.trailing, isBadge ? TimelineMetrics.pillTrailing : 0)
+            .padding(.vertical, isBadge ? TimelineMetrics.pillVertical : 0)
             .background {
                 if isBadge {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous)
                         .fill(.quaternary.opacity(0.32))
                 }
             }
@@ -2184,7 +2155,7 @@ struct TodoListRow: View {
                 }
             }
             .padding(14)
-            .background(.quaternary.opacity(0.3), in: .rect(cornerRadius: 14, style: .continuous))
+            .background(.quaternary.opacity(0.32), in: .rect(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
             // The card hugs its longest step, like the badges: the row takes the
             // width (less the badges' trailing room) only to lead-align the card and
             // give long steps a line to wrap at.
@@ -2219,10 +2190,11 @@ struct NoticeRow: View {
                     .foregroundStyle(notice.level == .info ? .secondary : .primary)
             }
             .font(.chat(.callout, zoom: zoom))
-            .padding(.horizontal, notice.level == .info ? 0 : 12)
-            .padding(.vertical, notice.level == .info ? 0 : 9)
+            .padding(.leading, notice.level == .info ? 0 : TimelineMetrics.pillLeading)
+            .padding(.trailing, notice.level == .info ? 0 : TimelineMetrics.pillTrailing)
+            .padding(.vertical, notice.level == .info ? 0 : TimelineMetrics.pillVertical)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Self.background(for: notice.level), in: .rect(cornerRadius: 12, style: .continuous))
+            .background(Self.background(for: notice.level), in: .rect(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
         }
     }
 
@@ -2620,11 +2592,11 @@ private struct TurnFileCard: View {
             }
             .help("Show this turn's changes")
         }
-        .padding(.leading, 12)
+        .padding(.leading, TimelineMetrics.pillLeading)
         // The round buttons sit in the card with the same clearance on every side.
         .padding(.trailing, 6)
         .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.32), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(.quaternary.opacity(0.32), in: RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
         .fixedSize(horizontal: true, vertical: false)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
