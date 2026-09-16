@@ -7,6 +7,10 @@ struct Project: Codable, Identifiable, Hashable, Sendable {
     var addedAt: Date
     var isExpanded: Bool
     var scripts: [ProjectScript]
+    /// The pair that each new chat in this project starts on. Nil means no rule: the chat
+    /// starts on the pair the app remembers (see `AppModel.newThread`). The pair must be
+    /// in Settings and its provider must be on, or the rule does not apply.
+    var hydraPairID: UUID?
 
     init(name: String, path: String) {
         id = UUID()
@@ -25,6 +29,7 @@ struct Project: Codable, Identifiable, Hashable, Sendable {
         addedAt = container.value(.addedAt, default: .now)
         isExpanded = container.value(.isExpanded, default: true)
         scripts = container.value(.scripts, default: [])
+        hydraPairID = container.value(.hydraPairID, default: nil)
     }
 
     var url: URL { URL(fileURLWithPath: path) }

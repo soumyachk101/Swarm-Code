@@ -1010,6 +1010,19 @@ private struct ProjectRow: View {
                 hasOverride: overrideSnapshot,
                 model: modelSnapshot
             ))
+            // The pair that new chats in this project start on. The menu shows only when
+            // there is a pair to choose. Value snapshots only, as above.
+            let pairsSnapshot = modelSnapshot.hydraPickerPairs.map { pair in
+                ProjectPairChoice(id: pair.id, title: HydraPairSummary.title(pair, registry: modelSnapshot.providers))
+            }
+            if !pairsSnapshot.isEmpty {
+                Divider()
+                Menu {
+                    ProjectPairMenuItems(projectID: projectSnapshot.id, selectedID: projectSnapshot.hydraPairID, pairs: pairsSnapshot, model: modelSnapshot)
+                } label: {
+                    Label("Start new chats on", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+            }
         }
     }
 
@@ -1077,6 +1090,46 @@ private struct ProjectRow: View {
             })
         }
         return items
+    }
+}
+
+/// One pair as the submenu shows it: its id and its title.
+private struct ProjectPairChoice: Identifiable {
+    let id: UUID
+    let title: String
+}
+
+/// The items of the project row's pair submenu: one per pair the picker offers, plus one
+/// that removes the rule. A check mark shows the current choice. Callbacks hold the model
+/// weakly, as the other context-menu actions do.
+private struct ProjectPairMenuItems: View {
+    let projectID: UUID
+    let selectedID: UUID?
+    let pairs: [ProjectPairChoice]
+    let model: AppModel
+
+    var body: some View {
+        Button { [weak model, projectID] in
+            model?.setHydraPair(nil, forProject: projectID)
+        } label: {
+            if selectedID == nil {
+                Label("The chat's last pair", systemImage: "checkmark")
+            } else {
+                Text("The chat's last pair")
+            }
+        }
+        Divider()
+        ForEach(pairs) { pair in
+            Button { [weak model, projectID, pairID = pair.id] in
+                model?.setHydraPair(pairID, forProject: projectID)
+            } label: {
+                if selectedID == pair.id {
+                    Label(pair.title, systemImage: "checkmark")
+                } else {
+                    Text(pair.title)
+                }
+            }
+        }
     }
 }
 

@@ -55,6 +55,15 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
     static func clampedCap(_ cap: Int?) -> Int? {
         cap.map { min(max($0, maxHeadsRange.lowerBound), maxHeadsRange.upperBound) }
     }
+
+    /// The pair a project's new chats start on. The rule applies only when all three hold:
+    /// Hydra is on, the project names a pair, and that pair is in `available` (the pairs
+    /// the model picker can offer now). In every other case the result is nil and the
+    /// caller uses its own fallback.
+    static func projectPair(_ id: UUID?, hydraOn: Bool, in available: [HydraPair]) -> HydraPair? {
+        guard hydraOn, let id else { return nil }
+        return available.first { $0.id == id }
+    }
 }
 
 /// What a session launches with while Hydra is on: where the heads run and on what,
