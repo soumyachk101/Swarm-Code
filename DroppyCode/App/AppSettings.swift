@@ -75,6 +75,7 @@ final class AppSettings {
         static let threadFinishAction = "threadFinishAction"
         static let settleSound = "settleSound"
         static let showReasoning = "showReasoning"
+        static let showsWorkingCard = "showsWorkingCard"
         static let chatZoom = "chatZoom"
         static let sidebarActivityView = "sidebarActivityView"
         static let settledCollapsed = "settledSectionCollapsed"
@@ -172,6 +173,11 @@ final class AppSettings {
 
     var showReasoning: Bool {
         didSet { defaults.set(showReasoning, forKey: Key.showReasoning) }
+    }
+    /// The running turn's line as the head panel's progress card (the task, the stave bar
+    /// of the turn's steps, the time); off, it is the one-line badge with the words and the time.
+    var showsWorkingCard: Bool {
+        didSet { defaults.set(showsWorkingCard, forKey: Key.showsWorkingCard) }
     }
 
     /// How large the conversation reads: a step of `ChatZoom` (see its percentages), which the slider in
@@ -510,6 +516,7 @@ final class AppSettings {
         threadFinishAction = ThreadFinishAction(rawValue: defaults.string(forKey: Key.threadFinishAction) ?? "") ?? .settle
         settleSound = defaults.object(forKey: Key.settleSound) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
+        showsWorkingCard = defaults.object(forKey: Key.showsWorkingCard) as? Bool ?? true
         chatZoom = ChatZoom.clamped(defaults.object(forKey: Key.chatZoom) as? Int ?? ChatZoom.defaultIndex)
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
         settledCollapsed = defaults.object(forKey: Key.settledCollapsed) as? Bool ?? false

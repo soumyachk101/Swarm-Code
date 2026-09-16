@@ -300,6 +300,10 @@ private struct GeneralSettingsPage: View {
                         SettingsSwitch(isOn: $settings.showReasoning)
                     }
                     ChromeRowDivider()
+                    ChromeRow(title: "Show activity while working", detail: "The working line is a card with the turn's progress bar; off, a plain line") {
+                        SettingsSwitch(isOn: $settings.showsWorkingCard)
+                    }
+                    ChromeRowDivider()
                     ChromeRow(title: "Recent downloads", detail: "The attach button offers recent downloads first") {
                         SettingsSwitch(isOn: $settings.recentDownloadsPicker)
                     }
