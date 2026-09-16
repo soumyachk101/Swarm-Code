@@ -14,6 +14,7 @@ struct LinkParagraphView: NSViewRepresentable {
     var streaming: Bool = false
     /// Bumped when favicons finish loading, so the icons appear.
     var revision: Int = 0
+    var mentions: [HydraPersona] = []
 
     /// Receives the text view, so the hover that sets the cursor can ask it what is under
     /// the pointer. The closure lives as long as the representable: capture only a weak
@@ -37,14 +38,16 @@ struct LinkParagraphView: NSViewRepresentable {
         let veiled = context.environment.markdownVeiled
         if coordinator.lastSource != source || coordinator.lastPointSize != pointSize
             || coordinator.lastDimmed != dimmed || coordinator.lastStreaming != streaming
-            || coordinator.lastRevision != revision || coordinator.lastVeiled != veiled {
+            || coordinator.lastRevision != revision || coordinator.lastVeiled != veiled
+            || coordinator.lastMentions != mentions.map(\.name) {
             coordinator.lastSource = source
             coordinator.lastPointSize = pointSize
             coordinator.lastDimmed = dimmed
             coordinator.lastStreaming = streaming
             coordinator.lastRevision = revision
             coordinator.lastVeiled = veiled
-            view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming))
+            coordinator.lastMentions = mentions.map(\.name)
+            view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming, mentions: mentions))
             // After the text is in place: the veil reads what the storage holds now.
             view.streamVeil.update(view, active: veiled)
         }
@@ -76,6 +79,7 @@ struct LinkParagraphView: NSViewRepresentable {
         var lastStreaming = false
         var lastRevision: Int = 0
         var lastVeiled = false
+        var lastMentions: [String] = []
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             if let url = link as? URL {
                 NSWorkspace.shared.open(url)
@@ -97,7 +101,7 @@ struct LinkParagraphView: NSViewRepresentable {
     @MainActor private static var fonts: [CGFloat: (base: NSFont, bold: NSFont, italic: NSFont, mono: NSFont)] = [:]
 
     @MainActor
-    static func attributed(source: String, pointSize: CGFloat, dimmed: Bool, streaming: Bool = false) -> NSAttributedString {
+    static func attributed(source: String, pointSize: CGFloat, dimmed: Bool, streaming: Bool = false, mentions: [HydraPersona] = []) -> NSAttributedString {
         let pretty = RichLink.prettyAttributed(source, streaming: streaming)
         let (base, bold, italic, mono) = fonts[pointSize] ?? {
             let base = NSFont.systemFont(ofSize: pointSize)
@@ -138,13 +142,84 @@ struct LinkParagraphView: NSViewRepresentable {
                     .link: url,
                 ]))
             } else {
-                out.append(NSAttributedString(string: string, attributes: [
-                    .font: font,
-                    .foregroundColor: textColor,
-                ]))
+                appendProse(string, font: font, color: textColor, base: base, bold: bold, mentions: mentions, into: out)
             }
         }
         return out
+    }
+
+    @MainActor private static var dragonCache: [String: NSImage] = [:]
+
+    private static func nsColor(_ persona: HydraPersona) -> NSColor {
+        NSColor(red: Double((persona.hex >> 16) & 0xFF) / 255, green: Double((persona.hex >> 8) & 0xFF) / 255, blue: Double(persona.hex & 0xFF) / 255, alpha: 1)
+    }
+
+    @MainActor private static func dragonImage(_ persona: HydraPersona, size: CGFloat) -> NSImage {
+        let key = persona.asset + "@" + String(format: "%06X", persona.hex) + "@\(size)"
+        if let cached = dragonCache[key] { return cached }
+        let tint = nsColor(persona)
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: false) { rect in
+            let source = NSImage(named: persona.asset)
+            source?.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+            tint.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
+        dragonCache[key] = image
+        return image
+    }
+
+    @MainActor private static func appendProse(_ string: String, font: NSFont, color: NSColor, base: NSFont, bold: NSFont, mentions: [HydraPersona], into out: NSMutableAttributedString) {
+        if mentions.isEmpty {
+            out.append(NSAttributedString(string: string, attributes: [
+                .font: font,
+                .foregroundColor: color,
+            ]))
+            return
+        }
+        let sorted = mentions.sorted { $0.name.count > $1.name.count }
+        let glyphSize = (base.pointSize * 1.25).rounded()
+        var i = string.startIndex
+        var runStart = i
+        func flush(from: String.Index, to: String.Index) {
+            if from < to {
+                out.append(NSAttributedString(string: String(string[from ..< to]), attributes: [
+                    .font: font,
+                    .foregroundColor: color,
+                ]))
+            }
+        }
+        while i < string.endIndex {
+            var hit: HydraPersona?
+            for persona in sorted where string[i...].hasPrefix(persona.name) {
+                let beforeOK: Bool = {
+                    guard i > string.startIndex else { return true }
+                    let c = string[string.index(before: i)]
+                    return !c.isLetter && !c.isNumber
+                }()
+                let after = string.index(i, offsetBy: persona.name.count)
+                let afterOK: Bool = {
+                    guard after < string.endIndex else { return true }
+                    let c = string[after]
+                    return !c.isLetter && !c.isNumber
+                }()
+                if beforeOK && afterOK { hit = persona; break }
+            }
+            guard let persona = hit else {
+                i = string.index(after: i)
+                continue
+            }
+            flush(from: runStart, to: i)
+            let attachment = NSTextAttachment()
+            attachment.image = dragonImage(persona, size: glyphSize)
+            attachment.bounds = NSRect(x: 0, y: base.descender + 1, width: glyphSize, height: glyphSize)
+            out.append(NSAttributedString(attachment: attachment))
+            out.append(NSAttributedString(string: " ", attributes: [.font: base, .foregroundColor: color]))
+            out.append(NSAttributedString(string: persona.name, attributes: [.font: bold, .foregroundColor: nsColor(persona)]))
+            i = string.index(i, offsetBy: persona.name.count)
+            runStart = i
+        }
+        flush(from: runStart, to: string.endIndex)
     }
 }
 

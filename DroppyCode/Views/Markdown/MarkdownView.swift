@@ -218,38 +218,17 @@ struct MarkdownBlockView: View, Equatable {
                 .font(headingFont(level))
                 .padding(.top, level <= 2 ? 6 : 2)
         case .paragraph(let text):
-            if listDepth == 0, let mention = leadingMention(in: text) {
-                let rest = String(text.dropFirst(mention.consumed))
-                Group {
-                    if RichLink.containsLinks(in: rest, streaming: streaming) {
-                        // Links need the AppKit paragraph, which cannot join the name's
-                        // Text; the trimmed rest keeps the gap to the name even.
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            HydraGlyph(persona: mention.persona, size: 16 * zoom)
-                            Text(verbatim: mention.name)
-                                .fontWeight(.bold)
-                                .foregroundStyle(mention.persona.color)
-                            InlineText(String(rest.drop(while: { $0 == " " })), hasLinks: true)
-                        }
-                    } else {
-                        // One flowing Text, so wrapped lines start under the glyph; the
-                        // name leads and only what streams after it is veiled.
-                        let size = 16 * zoom
-                        let name = Text(Self.mentionGlyph(mention.persona, size: size))
-                            .foregroundColor(mention.persona.color)
-                            .baselineOffset(Self.mentionGlyphOffset(size: size))
-                            + Text(verbatim: " ")
-                            + Text(verbatim: mention.name)
-                            .fontWeight(.bold)
-                            .foregroundColor(mention.persona.color)
-                        VeiledText(RichLink.prettyAttributed(rest, streaming: streaming), leading: name)
-                    }
-                }
-                .modifier(MarkdownBlockSelection())
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            // Every head named anywhere in the paragraph is decorated inline: glyph +
+            // coloured bold name inside one flowing Text, with only the prose veiled.
+            if RichLink.containsLinks(in: text, streaming: streaming) {
+                InlineText(text, hasLinks: true)
+            } else if listDepth == 0, let segments = mentionSegments(in: text) {
+                VeiledText(segments: segments)
+                    .modifier(MarkdownBlockSelection())
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                InlineText(text, hasLinks: RichLink.containsLinks(in: text, streaming: streaming))
+                InlineText(text, hasLinks: false)
             }
         case .code(let language, let code):
             // The lead's delegation block (info string `hydra`) is a brief for the team, not
@@ -330,38 +309,63 @@ struct MarkdownBlockView: View, Equatable {
 
     @MainActor private static var glyphCache: [String: Image] = [:]
 
-    /// The head a paragraph opens with, if it opens with one of this thread's heads: the
-    /// name itself, or the name wrapped in one inline emphasis marker (`**Otto**`), and
-    /// then the end of the text or a word boundary, never another letter (`Bo` is not
-    /// `Bob`). `consumed` is how much of the source the glyph and the coloured name
-    /// replace, marker included. A name that only opens a list of heads ("Vera, Mira and
-    /// Odin are still at work") is not that head's part, and stays plain text.
-    private func leadingMention(in text: String) -> (persona: HydraPersona, name: String, consumed: Int)? {
-        let boundaries = " :,.;'’-–—("
-        for persona in hydraMentionPersonas {
-            for marker in ["", "**", "__", "*", "_", "`"] {
-                let opener = marker + persona.name + marker
-                guard text.hasPrefix(opener) else { continue }
-                let rest = text.dropFirst(opener.count)
-                guard rest.first == nil || boundaries.contains(rest.first!) else { continue }
-                guard !opensList(rest) else { return nil }
-                return (persona, persona.name, opener.count)
+    /// Every head name mentioned anywhere in the paragraph, as prose/fixed segments so
+    /// each renders as glyph + coloured bold name inline in one flowing Text. Matches are
+    /// word-bounded (never another letter) and longest-name-first, so 'Hank 2' beats 'Hank'.
+    private func mentionSegments(in text: String) -> [VeiledText.Segment]? {
+        let pretty = RichLink.prettyAttributed(text, streaming: streaming)
+        let chars = String(pretty.characters)
+        guard !hydraMentionPersonas.isEmpty else { return nil }
+        let ordered = hydraMentionPersonas.sorted { $0.name.count > $1.name.count }
+        var matches: [(range: Range<String.Index>, persona: HydraPersona)] = []
+        var i = chars.startIndex
+        while i < chars.endIndex {
+            var hit: HydraPersona?
+            for persona in ordered where chars[i...].hasPrefix(persona.name) {
+                let after = chars.index(i, offsetBy: persona.name.count, limitedBy: chars.endIndex) ?? chars.endIndex
+                let beforeOK: Bool
+                if i == chars.startIndex { beforeOK = true } else { let c = chars[chars.index(before: i)]; beforeOK = !c.isLetter && !c.isNumber }
+                let afterOK: Bool
+                if after == chars.endIndex { afterOK = true } else { let c = chars[after]; afterOK = !c.isLetter && !c.isNumber }
+                if beforeOK && afterOK { hit = persona; break }
+            }
+            if let hit {
+                let end = chars.index(i, offsetBy: hit.name.count)
+                matches.append((i..<end, hit))
+                i = end
+            } else {
+                i = chars.index(after: i)
             }
         }
-        return nil
+        guard !matches.isEmpty else { return nil }
+        func prettyRange(_ r: Range<String.Index>) -> Range<AttributedString.Index> {
+            let lo = chars.distance(from: chars.startIndex, to: r.lowerBound)
+            let hi = chars.distance(from: chars.startIndex, to: r.upperBound)
+            let base = pretty.characters
+            return base.index(base.startIndex, offsetBy: lo)..<base.index(base.startIndex, offsetBy: hi)
+        }
+        var segments: [VeiledText.Segment] = []
+        var cursor = chars.startIndex
+        for match in matches {
+            if cursor < match.range.lowerBound {
+                segments.append(.prose(AttributedString(pretty[prettyRange(cursor..<match.range.lowerBound)])))
+            }
+            segments.append(.fixed(mentionText(match.persona)))
+            cursor = match.range.upperBound
+        }
+        if cursor < chars.endIndex {
+            segments.append(.prose(AttributedString(pretty[prettyRange(cursor..<chars.endIndex)])))
+        }
+        return segments
     }
 
-    /// Whether what follows a head's name goes straight on to another head's name, as a
-    /// list does: ", Mira" or " and Odin", with or without an emphasis marker.
-    private func opensList(_ rest: Substring) -> Bool {
-        for joiner in [", ", " and ", " & "] where rest.hasPrefix(joiner) {
-            var next = rest.dropFirst(joiner.count)
-            for marker in ["**", "__", "*", "_", "`"] where next.hasPrefix(marker) {
-                next = next.dropFirst(marker.count)
-            }
-            return hydraMentionPersonas.contains { next.hasPrefix($0.name) }
-        }
-        return false
+    private func mentionText(_ persona: HydraPersona) -> Text {
+        let size = 16 * zoom
+        return Text(Self.mentionGlyph(persona, size: size))
+            .foregroundColor(persona.color)
+            .baselineOffset(Self.mentionGlyphOffset(size: size))
+            + Text(verbatim: " ")
+            + Text(verbatim: persona.name).fontWeight(.bold).foregroundColor(persona.color)
     }
 
     @ViewBuilder
@@ -723,6 +727,7 @@ struct InlineText: View {
     @Environment(\.chatZoom) private var zoom
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.markdownStreaming) private var streaming
+    @Environment(\.hydraMentionPersonas) private var hydraMentionPersonas
     @State private var faviconRevision = 0
     /// The link paragraph's text view, for the hover that sets the cursor.
     @State private var linkView = WeakView()
@@ -758,7 +763,7 @@ struct InlineText: View {
             // paragraph (and its styled text) alive after it scrolls away.
             let linkBox = linkView
             let hand = $showsHand
-            LinkParagraphView(source: source, pointSize: scaled, dimmed: dimmed, streaming: streaming, revision: faviconRevision, onHost: { [weak linkBox] view in linkBox?.value = view })
+            LinkParagraphView(source: source, pointSize: scaled, dimmed: dimmed, streaming: streaming, revision: faviconRevision, mentions: hydraMentionPersonas, onHost: { [weak linkBox] view in linkBox?.value = view })
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { _ in ascender }
                 .alignmentGuide(.lastTextBaseline) { $0.height - lineHeight + ascender }

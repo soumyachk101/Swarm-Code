@@ -214,22 +214,36 @@ struct VeiledText: View {
     }
 
     private let source: Source
-    /// Drawn before the veiled text in the same flowing `Text`, never veiled itself: the
-    /// mention name a hydra reply opens with.
-    private let leading: Text?
+    enum Segment {
+        case prose(AttributedString)
+        case fixed(Text)
+    }
+    /// Fixed runs (head-name glyph + coloured name) interleaved with the veiled prose,
+    /// in order: every head named anywhere in a paragraph renders decorated, inline in
+    /// the same flowing `Text`, and only the prose runs veil.
+    private let segments: [Segment]?
 
     @Environment(\.markdownVeiled) private var veiled
     @Environment(\.markdownDimmed) private var dimmed
     @State private var veil = StreamVeil()
 
-    init(_ attributed: AttributedString, leading: Text? = nil) {
+    init(_ attributed: AttributedString) {
         source = .attributed(attributed)
-        self.leading = leading
+        segments = nil
+    }
+
+    init(segments: [Segment]) {
+        var joined = AttributedString()
+        for segment in segments {
+            if case .prose(let a) = segment { joined.append(a) }
+        }
+        source = .attributed(joined)
+        self.segments = segments
     }
 
     init(verbatim string: String) {
         source = .plain(string)
-        leading = nil
+        segments = nil
     }
 
     var body: some View {
@@ -255,7 +269,16 @@ struct VeiledText: View {
     /// quiet beat between two flushes would make the next one arrive unveiled.
     private func settledText() -> Text {
         if !veiled { veil.reset() }
-        if let leading { return Text("\(leading)\(source.text)") }
+        if let segments {
+            var out = Text(verbatim: "")
+            for segment in segments {
+                switch segment {
+                case .fixed(let t): out = out + t
+                case .prose(let a): out = out + Text(a)
+                }
+            }
+            return out
+        }
         return source.text
     }
 
@@ -271,7 +294,20 @@ struct VeiledText: View {
             let upper = characters.index(lower, offsetBy: range.count)
             styled[lower..<upper].foregroundColor = base.opacity(span.alpha)
         }
-        if let leading { return Text("\(leading)\(Text(styled))") }
+        if let segments {
+            var out = Text(verbatim: "")
+            var cursor = styled.startIndex
+            for segment in segments {
+                switch segment {
+                case .fixed(let t): out = out + t
+                case .prose(let a):
+                    let end = styled.characters.index(cursor, offsetBy: a.characters.count)
+                    out = out + Text(AttributedString(styled[cursor..<end]))
+                    cursor = end
+                }
+            }
+            return out
+        }
         return Text(styled)
     }
 }
