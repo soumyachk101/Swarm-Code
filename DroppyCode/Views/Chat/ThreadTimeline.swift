@@ -1733,6 +1733,8 @@ private struct WorkingIndicator: View {
     /// The tool run in progress, folded into this line while it runs.
     let liveWork: [TimelineEntry]
     let turnEntries: [TimelineEntry]
+    /// The card with the bar (see `AppSettings.showsWorkingCard`); off, the one-line badge.
+    let showsCard: Bool
     var workingDirectory: String?
     @Environment(\.chatZoom) private var zoom
     @State private var now = Date.now
@@ -1756,7 +1758,7 @@ private struct WorkingIndicator: View {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         HydraWorkingTitle(text: label, isRunning: true, alignment: .leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(maxWidth: showsCard ? .infinity : nil, alignment: .leading)
                         HydraElapsedTime(startedAt: startedAt, finishedAt: nil, isRunning: true)
                         // The chevron only once there is something to open: an empty slot
                         // held for it left the time short of the card's edge, as if misaligned.
@@ -1769,11 +1771,14 @@ private struct WorkingIndicator: View {
                                 .transition(.opacity)
                         }
                     }
-                    HydraProgressBar(runtime: runtime, startedAt: startedAt, finishedAt: nil, status: .running, tint: Chrome.accent, entries: turnEntries)
+                    // The bar is the card's; the badge is the line above alone, hugging its words.
+                    if showsCard {
+                        HydraProgressBar(runtime: runtime, startedAt: startedAt, finishedAt: nil, status: .running, tint: Chrome.accent, entries: turnEntries)
+                    }
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .frame(width: Self.cardWidth)
+                .padding(.vertical, showsCard ? 11 : 8)
+                .frame(width: showsCard ? Self.cardWidth : nil)
                 .background {
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .fill(.quaternary.opacity(0.32))
@@ -1854,6 +1859,7 @@ private struct WorkingBlockView: View {
             thinkingSteps: model.settings.showReasoning ? thinking : [],
             liveWork: liveWork,
             turnEntries: turnEntries,
+            showsCard: model.settings.showsWorkingCard,
             workingDirectory: workingDirectory
         )
     }
