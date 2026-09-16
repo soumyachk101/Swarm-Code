@@ -81,6 +81,13 @@ struct ModelsSettingsPage: View {
                     .padding(.horizontal, 4)
             }
         }
+        .onChange(of: pins) { _, pins in
+            // An unpinned model takes its measured height with it.
+            if rowHeights.count > pins.count {
+                let kept = Set(pins)
+                rowHeights = rowHeights.filter { kept.contains($0.key) }
+            }
+        }
     }
 
     // MARK: - Reorder

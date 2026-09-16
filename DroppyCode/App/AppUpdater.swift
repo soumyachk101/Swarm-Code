@@ -209,7 +209,10 @@ final class UpdateInstallProgress {
                 try? await Task.sleep(for: .milliseconds(125))
                 guard let self, !Task.isCancelled else { return }
                 let remaining = creepCeiling - fraction
-                guard remaining > 0.0005 else { continue }
+                guard remaining > 0.0005 else {
+                    creepTask = nil
+                    return
+                }
                 apply(fraction + remaining * creepRate)
             }
         }

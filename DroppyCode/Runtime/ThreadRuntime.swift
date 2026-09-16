@@ -376,13 +376,13 @@ final class ThreadRuntime {
     @ObservationIgnored private var hydraFallbackNoted: UUID?
     /// The turn a new row is filed under.
     private var turnIDForNewRows: UUID? { currentTurnID ?? closingTurnID }
+    @ObservationIgnored private var resumeAnchor: String?
     /// The provider's latest diff and resume anchor for the running turn. Codex re-sends its
     /// whole turn diff on every file change and Claude names an anchor per message; both land
     /// on the turn record once, as the turn finishes, since every write to `turns` re-runs
     /// the whole timeline body.
     @ObservationIgnored private var currentProviderDiff: String?
     @ObservationIgnored private var currentProviderAnchor: String?
-    @ObservationIgnored private var resumeAnchor: String?
     @ObservationIgnored private var interruptWatchdog: Task<Void, Never>?
     /// Working-tree snapshots taken as command tools start, by tool id, and
     /// the diffs being settled as they finish (see `watchCommand`).
@@ -952,9 +952,11 @@ final class ThreadRuntime {
     private func handleLocalCommand(_ text: String) -> Bool {
         switch text {
         case "/plan":
+            if let provider = thread?.provider { app?.providers.recordCommand("plan", for: provider) }
             app?.updateThread(threadID) { $0.interactionMode = $0.interactionMode == .plan ? .build : .plan }
             return true
         case "/compact" where thread?.provider == .codex || thread?.provider == .copilot || thread?.provider == .deepseek || thread?.provider == .meta || thread?.provider == .zai || thread?.provider == .pi:
+            if let provider = thread?.provider { app?.providers.recordCommand("compact", for: provider) }
             compact()
             return true
         default:
@@ -1055,8 +1057,14 @@ final class ThreadRuntime {
                 updateTurn(turn.id) { $0.baseCheckpoint = checkpointRef }
             }
             try await start.value
+            if SlashCommand.name(in: text) != nil {
+                await app.providers.loadCommands(initialThread.provider, directory: directory)
+            }
             // The user can stop a turn while it is still starting.
             guard currentTurnID == turn.id, let session, let thread = app.thread(threadID) else { return }
+            let command = SlashCommand.name(in: text).flatMap { name in
+                app.providers.commands[ProviderRegistry.commandKey(thread.provider, directory: directory)]?.first { $0.name == name }
+            }
             var prompt = text
             let files = attachments.filter { !$0.isImage }
             if !files.isEmpty {
@@ -1088,8 +1096,10 @@ final class ThreadRuntime {
                 fastMode: thread.fastMode,
                 runtimeMode: thread.runtimeMode,
                 interactionMode: thread.interactionMode,
-                isFinalReport: isFinalReport
+                isFinalReport: isFinalReport,
+                command: command
             ))
+            if let command { app.providers.recordCommand(command.name, for: thread.provider) }
             if isFirstTurn { generateTitle(from: text) }
         } catch {
             guard currentTurnID == turn.id else { return }
@@ -1741,10 +1751,13 @@ final class ThreadRuntime {
         // off here is closed by hand: left running, the thread showed the working line
         // for good once reopened, Return queued instead of sending, a head's lead heard
         // nothing until the budget fired. `finishTurn` saves what the turn had.
+        guard phase != .idle else { return }
+        // A turn cut off here has events its save timer has not written yet, and the timer
+        // may not outlive the runtime.
+        saveNow()
         // Nothing is left to end the turn, so it ends here, as interrupted. It leaves
         // `currentTurnID` first, the way a stop during a start does, so a message still on
         // its way to the session never goes.
-        guard phase != .idle else { return }
         let turnID = currentTurnID
         currentTurnID = nil
         Task { await finishTurn(status: .interrupted, turnID: turnID) }
@@ -1824,7 +1837,9 @@ final class ThreadRuntime {
         case .models(let list, _):
             if let provider = thread?.provider { app?.providers.updateCatalog(list, for: provider) }
         case .commands(let list):
-            if let provider = thread?.provider { app?.providers.updateCommands(list, for: provider) }
+            if let app, let thread, let project = app.project(thread.projectID) {
+                app.providers.updateCommands(list, for: thread.provider, directory: thread.worktreePath ?? project.path)
+            }
         case .title(let title):
             // Provider titles are only a fallback; they must not replace the one Droppy Code writes.
             guard turns.count <= 1, let app, let thread, !thread.hasCustomTitle,
@@ -1888,9 +1903,8 @@ final class ThreadRuntime {
         // commands settle with them: their files are part of this turn's work.
         for id in Array(commandTrees.keys) { settleCommand(id) }
         for key in Array(hydraCommandTrees.keys) { settleHydraCommand(key) }
-        // A completion queued behind a replacement turn cannot finish the replacement:
-        // the turn it names is over, and the one running is left alone. Checked before
-        // the diffs are waited for, so a stale completion never hangs on the new turn's.
+        // A completion queued behind a stop can arrive after the next turn has begun; the
+        // turn it names is over, and the one running is left alone.
         guard currentTurnID == nil || currentTurnID == turnID else { return }
         // A finished turn waits for its diffs; a stopped or failed one gives them three
         // seconds and lets the rest land on their own, so Stop never hangs on git.

@@ -57,7 +57,8 @@ final class WindowManager {
     }
 
     private func makeMainWindow() -> NSWindow {
-        let window = makeWindow(title: AppInfo.name, size: Size.main, resizable: true) { RootView() }
+        let window = makeWindow(title: AppInfo.name, size: Size.main, resizable: true, windowClass: ThreadWindow.self) { RootView() }
+        (window as? ThreadWindow)?.selectThread = { [weak model] offset in model?.selectThread(offset: offset) }
         window.contentMinSize = Size.mainMinimum
         if !window.setFrameUsingName(Self.mainFrameName) {
             window.center()

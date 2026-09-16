@@ -57,14 +57,16 @@ private final class MessageMenuRequests {
 struct UserMessageRow: View {
     let entry: TimelineEntry
     let runtime: ThreadRuntime
-    /// Whether the message's turn can be reverted right now. Decided by the timeline, which
-    /// reads the provider and the turn list once for every row.
+    /// Whether the message can be edited right now, which rewinds its turn. Decided by the
+    /// timeline, which reads the provider and the turn list once for every row.
     let canRevert: Bool
 
     @State private var isHovering = false
     @State private var isConfirmingRevert = false
     /// Carries the edit-from-here intent out of the context menu without retaining the row.
     @State private var menuRequests = MessageMenuRequests()
+    /// The editor popover, anchored to the pencil.
+    @State private var editor = PromptEditorPopover<MessageEditor>()
 
     var body: some View {
         if case .user(let message) = entry.item.content, message.isFromHydra {
@@ -72,6 +74,10 @@ struct UserMessageRow: View {
         } else if case .user(let message) = entry.item.content, message.isHydraBrief {
             HydraBriefRow(message: message, entry: entry, runtime: runtime)
         } else if case .user(let message) = entry.item.content {
+            // Which message is open for editing is the thread's, so the editor survives
+            // the row: leaving the thread closes the popover only, and the row coming
+            // back reopens it on the edit as it was left.
+            let isEditing = entry.turnID != nil && runtime.messageEdit?.id == entry.turnID
             VStack(alignment: .trailing, spacing: 6) {
                 if !message.attachments.isEmpty {
                     AttachmentStrip(attachments: message.attachments)
@@ -86,23 +92,37 @@ struct UserMessageRow: View {
                         .background(.tint.opacity(0.14), in: UserBubble())
                 }
                 HStack(spacing: 2) {
-                    if canRevert {
+                    if canRevert, let turnID = entry.turnID {
                         Button {
-                            isConfirmingRevert = true
+                            // The pencil toggles: a second tap while open closes the editor.
+                            runtime.messageEdit = isEditing ? nil : PromptEdit(id: turnID, text: message.text, attachments: message.attachments)
                         } label: {
-                            Image(systemName: "arrow.uturn.backward")
+                            Image(systemName: "pencil")
                                 .frame(width: 22, height: 22)
                                 .contentShape(.rect)
                         }
                         .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .help("Edit from here")
+                        .foregroundStyle(isEditing ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                        .help("Edit message")
+                        // The pointer settling on the pencil is the editor about to open: its
+                        // file preview starts now, so the click finds it done or nearly so.
+                        .onHover { hovering in
+                            if hovering { _ = runtime.revertPreview(for: turnID) }
+                        }
+                        .background {
+                            AttachmentAnchorCapture { anchor in
+                                editor.setAnchor(anchor)
+                                // The anchor lands in its window after the row appears: the
+                                // moment a reopened thread can show the editor again.
+                                syncEditor(isEditing)
+                            }
+                        }
                     }
                 }
                 // Pinned to the hover line's room, so the row keeps it (and the gap
                 // math below holds) with no copy button left to size it.
                 .frame(height: TimelineMetrics.hoverLineHeight)
-                .opacity(isHovering ? 1 : 0)
+                .opacity(isHovering || isEditing ? 1 : 0)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.leading, 96)
@@ -138,12 +158,21 @@ struct UserMessageRow: View {
             } message: {
                 Text("This message and everything after it leave the thread, and your prompt returns to the composer.")
             }
+            .onChange(of: isEditing) { _, editing in syncEditor(editing) }
+            .onDisappear { editor.close() }
         }
     }
 
     private func revert(restoreFiles: Bool) {
         guard let turnID = entry.turnID else { return }
+        // A revert that cannot start (a turn still running) says so in the thread itself.
         Task { _ = try? await runtime.revert(to: turnID, restoreFiles: restoreFiles) }
+    }
+
+    private func syncEditor(_ isEditing: Bool) {
+        editor.sync(isEditing ? runtime.messageEdit : nil, dismiss: { runtime.messageEdit = nil }) { edit in
+            MessageEditor(edit: edit, runtime: runtime)
+        }
     }
 
     /// The context menu's items, from value snapshots with weak captures: the AppKit menu
@@ -257,7 +286,7 @@ struct HydraReportRow: View {
         // opens it finds the blocks ready rather than parsing the whole batch first.
         .task(id: body) {
             guard !details.isEmpty else { return }
-            await MarkdownView.warm([body])
+            try? await MarkdownView.warm([body])
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 96)
@@ -615,7 +644,7 @@ private struct HydraReportPopover: View {
         .frame(width: width)
         .frame(idealHeight: 320, maxHeight: 460)
         .task(id: text) {
-            await MarkdownView.warm([text])
+            try? await MarkdownView.warm([text])
             guard !Task.isCancelled else { return }
             blocks = MarkdownView.blocks(for: text)
         }
@@ -815,7 +844,7 @@ struct HydraMergeRow: View {
         // opens it finds the blocks ready rather than parsing the whole batch first.
         .task(id: outcome?.body) {
             guard let outcome, !outcome.details.isEmpty else { return }
-            await MarkdownView.warm([outcome.body])
+            try? await MarkdownView.warm([outcome.body])
         }
     }
 
@@ -1081,6 +1110,7 @@ struct AttachmentThumbnail: View {
                     if let image {
                         Image(decorative: image, scale: 2)
                             .resizable()
+                            .interpolation(.high)
                             .aspectRatio(contentMode: .fill)
                             .transition(.opacity)
                     }
@@ -1091,7 +1121,7 @@ struct AttachmentThumbnail: View {
                 AttachmentVideoThumbnail(attachment: attachment, size: size)
             } else {
                 VStack(spacing: 3) {
-                    Image(nsImage: NSWorkspace.shared.icon(forFile: attachment.path))
+                    Image(nsImage: FileIcons.icon(for: attachment.path))
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: 16, height: 16)
@@ -1127,7 +1157,7 @@ struct AttachmentThumbnail: View {
                 if image !== known { image = known }
                 return
             }
-            guard let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size) else { return }
+            guard let thumbnail = await ThumbnailCache.shared.thumbnail(for: attachment.path, pointSize: size, fillingSquare: true) else { return }
             ThumbnailMemory.store(thumbnail.image, for: attachment.path, pointSize: size)
             withAnimation(.easeOut(duration: 0.15)) { image = thumbnail.image }
         }
@@ -1462,20 +1492,20 @@ struct HydraHeadsList: View {
 /// the main actor, so this can only run where view bodies run.
 @MainActor
 enum WorkGroupSummary {
+    private static let order: [ToolCall.Kind] = [.edit, .read, .command, .search, .web, .mcp, .agent, .other]
+
     static func text(for entries: [TimelineEntry]) -> String {
-        var kinds: [ToolCall.Kind] = []
+        // Kind → whether a call of it is still running, in one pass; this runs once a
+        // second under the working indicator.
+        var running: [ToolCall.Kind: Bool] = [:]
         for entry in entries {
-            guard case .tool(let call) = entry.item.content, !kinds.contains(call.kind) else { continue }
-            kinds.append(call.kind)
+            guard case .tool(let call) = entry.item.content else { continue }
+            running[call.kind, default: false] = running[call.kind, default: false] || call.status == .running
         }
-        let order: [ToolCall.Kind] = [.edit, .read, .command, .search, .web, .mcp, .agent, .other]
         var parts: [String] = []
-        for kind in order where kinds.contains(kind) {
-            let running = entries.contains {
-                guard case .tool(let call) = $0.item.content else { return false }
-                return call.kind == kind && call.status == .running
-            }
-            parts.append(label(for: kind, running: running))
+        for kind in order {
+            guard let isRunning = running[kind] else { continue }
+            parts.append(label(for: kind, running: isRunning))
         }
         if parts.isEmpty { return "Worked" }
         guard parts.count > 1 else { return parts[0] }
@@ -1973,6 +2003,16 @@ private struct ToolDetailView: View {
     /// thousands of characters at once is what made expanding feel laggy.
     private static let outputLineLimit = 30
 
+    /// The first `lines` lines of `text`, without splitting the rest.
+    private static func head(of text: String, lines: Int) -> String {
+        var remaining = lines
+        for index in text.utf8.indices where text.utf8[index] == 0x0A {
+            remaining -= 1
+            if remaining == 0 { return String(text[..<index]) }
+        }
+        return text
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             if let imagePath = PreviewImages.resolveToolImagePath(for: call, workingDirectory: workingDirectory) {
@@ -2000,10 +2040,13 @@ private struct ToolDetailView: View {
                 }
             }
             if !call.output.isEmpty {
+                // A running command's row re-renders on every flush of its output: the
+                // preview scans for its thirty-first newline rather than splitting the
+                // whole output into lines, as `CodeBlock` does.
                 let output = call.output.trimmingCharacters(in: .newlines)
-                let lines = output.components(separatedBy: "\n")
-                let collapsed = !showsFullOutput && lines.count > Self.outputLineLimit
-                let visible = collapsed ? lines.prefix(Self.outputLineLimit).joined(separator: "\n") : output
+                let lineCount = 1 + output.utf8.count { $0 == 0x0A }
+                let collapsed = !showsFullOutput && lineCount > Self.outputLineLimit
+                let visible = collapsed ? Self.head(of: output, lines: Self.outputLineLimit) : output
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     Text(visible)
                         .font(.chat(.caption, design: .monospaced, zoom: zoom))
@@ -2011,8 +2054,8 @@ private struct ToolDetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(10)
                         .background(.quaternary.opacity(0.45), in: .rect(cornerRadius: 10, style: .continuous))
-                    if lines.count > Self.outputLineLimit {
-                        Button(showsFullOutput ? "Show less" : "Show full output (\(lines.count) lines)") {
+                    if lineCount > Self.outputLineLimit {
+                        Button(showsFullOutput ? "Show less" : "Show full output (\(lineCount) lines)") {
                             showsFullOutput.toggle()
                         }
                         .buttonStyle(.link)
@@ -2356,11 +2399,7 @@ struct TurnFinishedBlock: View {
         var expanded: Bool
     }
 
-    struct FileStat: Hashable {
-        var path: String
-        var additions: Int
-        var deletions: Int
-    }
+    @State private var legacyChanges: FileChangeSummary?
 
     /// Everything the body derives from the turn's content, gathered in one pass per
     /// render instead of a filter per use.
@@ -2376,9 +2415,7 @@ struct TurnFinishedBlock: View {
         /// Errors and warnings stay visible even when collapsed, so a failed turn
         /// never hides what went wrong. Plain info notices stay in the expanded view.
         var collapsedNotices: [TimelineEntry] = []
-        /// Per-file totals aggregated from this turn's tool edits. The header totals
-        /// come from the turn summary itself, which is measured from the actual diff.
-        var fileStats: [FileStat] = []
+        var hasEdits = false
         var hasResponse = false
         /// The heads the turn sent out, always shown below the final response, folded or not.
         var headEntries: [TimelineEntry] = []
@@ -2388,7 +2425,6 @@ struct TurnFinishedBlock: View {
 
         @MainActor
         init(content: [TimelineEntry], expanded: Bool) {
-            var totals: [String: FileStat] = [:]
             for entry in content {
                 switch entry.kind {
                 case .assistant:
@@ -2413,19 +2449,13 @@ struct TurnFinishedBlock: View {
                     answerEntries.removeAll(keepingCapacity: true)
                     guard case .tool(let call) = entry.item.content else { continue }
                     if call.kind == .agent { headEntries.append(entry) }
-                    for edit in call.edits where !edit.path.isEmpty {
-                        var stat = totals[edit.path] ?? FileStat(path: edit.path, additions: 0, deletions: 0)
-                        stat.additions += edit.additions
-                        stat.deletions += edit.deletions
-                        totals[edit.path] = stat
-                    }
+                    if !call.edits.isEmpty { hasEdits = true }
                 default:
                     break
                 }
             }
             if answerEntries.isEmpty, let last = assistantEntries.last { answerEntries = [last] }
             if !collapsedPlans.isEmpty || !collapsedNotices.isEmpty { hasResponse = true }
-            fileStats = totals.values.sorted { $0.path < $1.path }
             if expanded {
                 detailGroups = TimelineGroup.build(content, showReasoning: false).filter {
                     if case .heads = $0 { return false }
@@ -2439,7 +2469,11 @@ struct TurnFinishedBlock: View {
         let key = DerivedKey(ids: content.map(ObjectIdentifier.init), expanded: isExpanded)
         let derived = (self.derived?.key == key ? self.derived?.value : nil) ?? Derived(content: content, expanded: isExpanded)
         let showsHeads = !derived.headEntries.isEmpty
-        let showsBody = showsHeads || summary.filesChanged > 0 || (isExpanded ? !derived.detailGroups.isEmpty : derived.hasResponse)
+        // The files as the turn's own diff saw them, or as an older turn's were worked out
+        // once (see the task below).
+        let changes = summary.changes ?? legacyChanges
+        let hasFiles = changes?.files.isEmpty == false
+        let showsBody = showsHeads || hasFiles || (isExpanded ? !derived.detailGroups.isEmpty : derived.hasResponse)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(userEntries) { entry in
                 UserMessageRow(entry: entry, runtime: runtime, canRevert: canUndo)
@@ -2522,16 +2556,15 @@ struct TurnFinishedBlock: View {
             // The heads the turn sent out stay in view under the response, folded or not.
             if showsHeads {
                 HydraHeadsList(entries: derived.headEntries, runtime: runtime, workingDirectory: workingDirectory)
-                    .padding(.bottom, summary.filesChanged > 0 ? TimelineMetrics.rowSpacing : 0)
+                    .padding(.bottom, hasFiles ? TimelineMetrics.rowSpacing : 0)
             }
 
-            if summary.filesChanged > 0 {
+            if let changes, !changes.files.isEmpty {
                 // Weak runtime: the card (and its review closure) must not keep the thread
                 // alive after its turn scrolls away.
                 let reviewRuntime = runtime
                 TurnFileCard(
-                    summary: summary,
-                    files: derived.fileStats,
+                    changes: changes,
                     canUndo: canUndo,
                     onRevert: { Task { _ = try? await runtime.revert(to: turnID, restoreFiles: true) } },
                     // On the button itself, so the changes open where the reader
@@ -2545,13 +2578,22 @@ struct TurnFinishedBlock: View {
         .onChange(of: key, initial: true) { _, _ in
             if self.derived?.key != key { self.derived = (key, derived) }
         }
+        .task(id: turnID) {
+            guard summary.changes == nil, summary.filesChanged > 0 || derived.hasEdits else { return }
+            let files = await runtime.parsedDiff(selection: turnID)
+            guard !Task.isCancelled else { return }
+            let changes = FileChangeSummary(files: files)
+            legacyChanges = changes
+            runtime.storeLegacyChanges(changes, turnID: turnID)
+        }
     }
 }
 
 private struct TurnFileCard: View {
     @Environment(\.chatZoom) private var zoom
-    let summary: TurnSummary
-    let files: [TurnFinishedBlock.FileStat]
+    /// The turn's files, header totals included: one list, so the count in the title and
+    /// the rows behind it can never disagree.
+    let changes: FileChangeSummary
     let canUndo: Bool
     /// Runs the revert; the card confirms first.
     let onRevert: () -> Void
@@ -2569,7 +2611,8 @@ private struct TurnFileCard: View {
         // The anchor box alone: the hover responder and the anchor view must not keep
         // this card alive after it scrolls away.
         let reviewBox = reviewAnchor
-        let title = summary.filesChanged == 1 ? "Edited 1 file" : "Edited \(summary.filesChanged) files"
+        let files = changes.files
+        let title = files.count == 1 ? "Edited 1 file" : "Edited \(files.count) files"
         HStack(spacing: 8) {
             Button { isShowingFiles.toggle() } label: {
                 HStack(spacing: 8) {
@@ -2581,7 +2624,7 @@ private struct TurnFileCard: View {
                     Text(verbatim: title)
                         .font(.chat(.callout, weight: .medium, zoom: zoom))
                         .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                    DiffStatLabel(additions: summary.additions, deletions: summary.deletions)
+                    DiffStatLabel(additions: changes.additions, deletions: changes.deletions)
                     if !files.isEmpty {
                         Image(systemName: "chevron.right")
                             .font(.chat(.caption2, weight: .semibold, zoom: zoom))
@@ -2659,7 +2702,8 @@ private struct TurnFileCard: View {
     }
 
     private var filesPopover: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let files = changes.files
+        return VStack(alignment: .leading, spacing: 0) {
             ForEach(files.prefix(12), id: \.path) { file in
                 HStack(spacing: 8) {
                     Text(verbatim: file.path)
@@ -2667,7 +2711,13 @@ private struct TurnFileCard: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 8)
-                    DiffStatLabel(additions: file.additions, deletions: file.deletions)
+                    if file.isBinary {
+                        Text("Binary")
+                            .font(.chat(.caption, zoom: zoom))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        DiffStatLabel(additions: file.additions, deletions: file.deletions)
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 7)
@@ -2680,7 +2730,5 @@ private struct TurnFileCard: View {
                     .padding(.vertical, 7)
             }
         }
-        .padding(.vertical, 6)
-        .frame(width: 420)
     }
 }

@@ -2,6 +2,31 @@ import AppKit
 import Testing
 @testable import DroppyCode
 
+@Test @MainActor func threadAndScriptDefaultShortcuts() {
+    #expect(AppShortcut.nextThread.defaultChord == KeyChord(keyCode: 48, modifiers: .control))
+    #expect(AppShortcut.previousThread.defaultChord == KeyChord(keyCode: 48, modifiers: [.control, .shift]))
+    #expect(AppShortcut.runScript.defaultChord == KeyChord(keyCode: 15, modifiers: .command))
+}
+
+@Test @MainActor func controlTabCyclesWhileEditing() throws {
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    let window = ThreadWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    let editor = NSTextView(frame: window.contentView!.bounds)
+    editor.string = "Keep this draft"
+    window.contentView?.addSubview(editor)
+    window.makeFirstResponder(editor)
+    var offsets: [Int] = []
+    window.selectThread = { offsets.append($0) }
+    for flags: NSEvent.ModifierFlags in [.control, [.control, .shift]] {
+        let event = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\t", charactersIgnoringModifiers: "\t", isARepeat: false, keyCode: 48))
+        #expect(window.performKeyEquivalent(with: event))
+    }
+    #expect(offsets == [1, -1])
+    #expect(editor.string == "Keep this draft")
+    window.close()
+}
+
 @Test func revertTouchesOnlyTheThreadsOwnFiles() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("droppy-revert-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

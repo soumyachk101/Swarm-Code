@@ -170,7 +170,7 @@ struct ThreadTimeline: View, Equatable {
             tracking.isPinnedToBottom = (id == blocks.last?.id)
             anchorsBottomOnGrowth = tracking.isPinnedToBottom || needsExpand
         }
-        let scroll = { position.scrollTo(id: id, anchor: .top) }
+        let scroll = { @MainActor in position.scrollTo(id: id, anchor: .top) }
         if animated {
             if needsExpand {
                 DispatchQueue.main.async { withAnimation(.smooth(duration: 0.35)) { scroll() } }
@@ -216,7 +216,7 @@ struct ThreadTimeline: View, Equatable {
             texts.append(message.text)
         }
         guard !texts.isEmpty else { return }
-        await MarkdownView.warm(texts)
+        try? await MarkdownView.warm(texts)
     }
 
     /// How a block arrives and leaves. It arrives softly, like everything in the app, and
@@ -1113,9 +1113,13 @@ private struct ScrollViewProbe: NSViewRepresentable {
 /// not gone anywhere.
 @MainActor
 @Observable
-private final class FrontMonitor {
+final class FrontMonitor {
     static let shared = FrontMonitor()
     private(set) var revision = 0
+    /// Whether anyone can see the app: it is frontmost and one of its windows is on screen.
+    /// What the decorations that run without end follow, so a hidden or backgrounded
+    /// window animates nothing.
+    private(set) var isVisible = true
     /// The window the last bump was for, or none when the app itself came to the front.
     @ObservationIgnored private weak var uncovered: NSWindow?
     @ObservationIgnored private var isAppWide = false
@@ -1126,7 +1130,15 @@ private final class FrontMonitor {
         observers.append(center.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.bump(for: nil) }
+            MainActor.assumeIsolated {
+                self?.bump(for: nil)
+                self?.refreshVisibility()
+            }
+        })
+        observers.append(center.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshVisibility() }
         })
         observers.append(center.addObserver(
             forName: NSWindow.didChangeOcclusionStateNotification, object: nil, queue: .main
@@ -1134,6 +1146,7 @@ private final class FrontMonitor {
             // Delivered on the main queue; the window is read on the main actor it belongs to.
             nonisolated(unsafe) let object = note.object
             MainActor.assumeIsolated {
+                self?.refreshVisibility()
                 guard let window = object as? NSWindow, window.occlusionState.contains(.visible) else { return }
                 self?.bump(for: window)
             }
@@ -1152,6 +1165,11 @@ private final class FrontMonitor {
         uncovered = window
         isAppWide = window == nil
         revision += 1
+    }
+
+    private func refreshVisibility() {
+        let visible = NSApp.isActive && NSApp.windows.contains { $0.isVisible && $0.occlusionState.contains(.visible) }
+        if visible != isVisible { isVisible = visible }
     }
 }
 
@@ -1930,7 +1948,9 @@ private struct WorkingIndicator: View {
         .animation(Self.change, value: label)
         .animation(Self.change, value: canExpand)
         .font(.chat(.callout, zoom: zoom))
-        .task {
+        .task(id: FrontMonitor.shared.isVisible) {
+            // The elapsed-time label ticks only while someone can see it.
+            guard FrontMonitor.shared.isVisible else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 now = .now

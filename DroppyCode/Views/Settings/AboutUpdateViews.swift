@@ -83,9 +83,20 @@ struct UpdateReleaseNotesDigest: Equatable {
     }
 
     private static let bulletMarkers: Set<Character> = ["-", "\u{2010}", "\u{2013}", "\u{2014}", "\u{2212}", "*", "•"]
+    /// The last notes parsed: the About page asks on every evaluation for the one release
+    /// it shows, and the parse runs three regular expressions per bullet.
+    @MainActor private static var last: (raw: String, digest: UpdateReleaseNotesDigest)?
 
+    @MainActor
     static func parse(_ raw: String?) -> UpdateReleaseNotesDigest {
         guard let raw, !raw.isEmpty else { return UpdateReleaseNotesDigest(sections: []) }
+        if let last, last.raw == raw { return last.digest }
+        let digest = parseNotes(raw)
+        last = (raw, digest)
+        return digest
+    }
+
+    private static func parseNotes(_ raw: String) -> UpdateReleaseNotesDigest {
         var collected: [ReleaseNoteCategory: [String]] = [:]
         var current: ReleaseNoteCategory?
         for line in raw.split(separator: "\n", omittingEmptySubsequences: false) {
@@ -308,6 +319,9 @@ private final class FractionChase {
         var step = remaining * (1 - exp(-dt / max(response, 0.01)))
         step = max(step, minimumSpeed * dt)
         displayed = min(displayed + step, target)
+        // The glide is exponential and would close the last hundredth of a pixel for
+        // seconds: within a ten-thousandth it is there, and the clock can stop.
+        if target - displayed < 0.0001 { displayed = target }
         return displayed
     }
 }
@@ -322,6 +336,9 @@ struct SmoothedUpdateProgressSlider: View {
     var headDiameter: CGFloat = 20
 
     @State private var chase: FractionChase
+    /// True once the head has reached the target: the frame clock stops until the target
+    /// moves again, instead of running at the display's rate for the whole install.
+    @State private var settled = false
 
     init(target: UpdateInstallProgress.FractionTarget, response: Double = 0.3, minimumSpeed: Double = 0, trackHeight: CGFloat = 14, headDiameter: CGFloat = 20) {
         self.target = target
@@ -334,18 +351,19 @@ struct SmoothedUpdateProgressSlider: View {
     }
 
     var body: some View {
-        TimelineView(.animation) { timeline in
-            UpdateProgressSlider(
-                fraction: chase.advance(
-                    to: timeline.date.timeIntervalSinceReferenceDate,
-                    target: target.value,
-                    response: response,
-                    minimumSpeed: minimumSpeed
-                ),
-                trackHeight: trackHeight,
-                headDiameter: headDiameter
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: settled)) { timeline in
+            let fraction = chase.advance(
+                to: timeline.date.timeIntervalSinceReferenceDate,
+                target: target.value,
+                response: response,
+                minimumSpeed: minimumSpeed
             )
+            UpdateProgressSlider(fraction: fraction, trackHeight: trackHeight, headDiameter: headDiameter)
+                .onChange(of: fraction == target.value, initial: true) { _, reached in
+                    if reached != settled { settled = reached }
+                }
         }
+        .onChange(of: target.value) { _, _ in settled = false }
     }
 }
 
@@ -707,8 +725,11 @@ struct AboutSoftwareUpdateSection: View {
             digest = UpdateReleaseNotesDigest.parse(checker.update?.notes)
         }
         .onDisappear {
+            // Leaving mid-sweep lands the pill on Up to date at once; left celebrating, it
+            // would host the frame-driven slider on every later visit and never settle.
             celebration?.cancel()
             celebration = nil
+            progress.completeCelebration()
         }
     }
 

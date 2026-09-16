@@ -18,25 +18,83 @@ struct MarkdownListItem: Hashable, Sendable {
 }
 
 enum MarkdownParser {
-    static func parse(_ text: String) -> [MarkdownBlock] {
-        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
-        return parse(lines[...])
+    /// A parse, with how much of it survives the text growing by appending, as a streaming
+    /// reply does. The parser decides each line from that line and the next, so with `m` the
+    /// index of the last line (the one still being written), every decision up to a block
+    /// that starts at line `m - 2` or earlier is final: the blocks before it are `stable`,
+    /// and a longer text is parsed again from `restart`, that block's UTF-8 offset (see
+    /// `parse(_:extending:)`). With no such block, nothing is reused.
+    struct Parse: Equatable, Sendable {
+        var blocks: [MarkdownBlock]
+        var stable: Int
+        var restart: Int
     }
 
-    private static func parse(_ lines: ArraySlice<String>) -> [MarkdownBlock] {
+    static func parse(_ text: String) -> [MarkdownBlock] {
+        parse(text[...]).blocks
+    }
+
+    /// The parse of `text` given `previous`, the parse of an earlier text. When `text` merely
+    /// extends it, the stable blocks are reused and only the tail is parsed.
+    static func parse(_ text: String, extending previous: (text: String, parse: Parse)?) -> Parse {
+        guard let previous, previous.parse.stable > 0,
+              text.utf8.count > previous.text.utf8.count, text.utf8.starts(with: previous.text.utf8) else {
+            return parse(text[...])
+        }
+        let restart = previous.parse.restart
+        let tail = parse(text[text.utf8.index(text.utf8.startIndex, offsetBy: restart)...])
+        return Parse(
+            blocks: Array(previous.parse.blocks[..<previous.parse.stable]) + tail.blocks,
+            stable: previous.parse.stable + tail.stable,
+            restart: restart + tail.restart
+        )
+    }
+
+    /// Splits on `\n`, dropping a `\r` before it, without a whole-text copy first.
+    private static func parse(_ text: Substring) -> Parse {
+        let utf8 = text.utf8
+        let pieces = utf8.split(separator: 0x0A, omittingEmptySubsequences: false)
+        var lines: [String] = []
+        lines.reserveCapacity(pieces.count)
+        var starts: [Int] = []
+        starts.reserveCapacity(pieces.count)
+        for piece in pieces {
+            starts.append(utf8.distance(from: utf8.startIndex, to: piece.startIndex))
+            lines.append(String(Substring(piece.last == 0x0D ? piece.dropLast() : piece)))
+        }
+        let parsed = parse(lines[...])
+        // The last block that starts at least two lines above the last line: the decisions
+        // that end everything before it never read the line still being written.
+        guard let stable = parsed.blockLines.lastIndex(where: { $0 <= lines.count - 3 }) else {
+            return Parse(blocks: parsed.blocks, stable: 0, restart: 0)
+        }
+        return Parse(blocks: parsed.blocks, stable: stable, restart: starts[parsed.blockLines[stable]])
+    }
+
+    /// Quotes and list items nest by recursion, one level per `>` or indent step, which model
+    /// output decides. Past this many levels the inner lines are paragraph text.
+    private static let maxDepth = 8
+
+    /// The blocks of `lines`, and the line each top-level block starts on.
+    private static func parse(_ lines: ArraySlice<String>, depth: Int = 0) -> (blocks: [MarkdownBlock], blockLines: [Int]) {
         var blocks: [MarkdownBlock] = []
+        var blockLines: [Int] = []
         var index = lines.startIndex
         var paragraph: [String] = []
+        var paragraphStart = index
 
         func flushParagraph() {
             let text = paragraph.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty { blocks.append(.paragraph(text)) }
+            if !text.isEmpty {
+                blocks.append(.paragraph(text))
+                blockLines.append(paragraphStart)
+            }
             paragraph.removeAll()
         }
 
         while index < lines.endIndex {
             let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = self.trimmed(line)
 
             if trimmed.isEmpty {
                 flushParagraph()
@@ -46,11 +104,12 @@ enum MarkdownParser {
 
             if let fence = fenceMarker(trimmed) {
                 flushParagraph()
+                blockLines.append(index)
                 let language = String(trimmed.dropFirst(fence.count)).trimmingCharacters(in: .whitespaces)
                 var code: [String] = []
                 index += 1
                 while index < lines.endIndex {
-                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                    let candidate = self.trimmed(lines[index])
                     if candidate.hasPrefix(fence), candidate.allSatisfy({ $0 == fence.first }) { index += 1; break }
                     code.append(lines[index])
                     index += 1
@@ -61,6 +120,7 @@ enum MarkdownParser {
 
             if let heading = headingLevel(trimmed) {
                 flushParagraph()
+                blockLines.append(index)
                 let content = trimmed.drop(while: { $0 == "#" }).trimmingCharacters(in: .whitespaces)
                 blocks.append(.heading(level: heading, text: content.trimmingCharacters(in: CharacterSet(charactersIn: "# "))))
                 index += 1
@@ -69,33 +129,36 @@ enum MarkdownParser {
 
             if isRule(trimmed) {
                 flushParagraph()
+                blockLines.append(index)
                 blocks.append(.rule)
                 index += 1
                 continue
             }
 
-            if trimmed.hasPrefix(">") {
+            if trimmed.hasPrefix(">"), depth < maxDepth {
                 flushParagraph()
+                blockLines.append(index)
                 var quoted: [String] = []
                 while index < lines.endIndex {
-                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                    let candidate = self.trimmed(lines[index])
                     guard candidate.hasPrefix(">") else { break }
                     var content = candidate.dropFirst()
                     if content.hasPrefix(" ") { content = content.dropFirst() }
                     quoted.append(String(content))
                     index += 1
                 }
-                blocks.append(.quote(parse(quoted[...])))
+                blocks.append(.quote(parse(quoted[...], depth: depth + 1).blocks))
                 continue
             }
 
             if index + 1 < lines.endIndex, trimmed.contains("|"), isTableDelimiter(lines[index + 1]) {
                 flushParagraph()
+                blockLines.append(index)
                 let header = tableCells(trimmed)
                 var rows: [[String]] = []
                 index += 2
                 while index < lines.endIndex {
-                    let candidate = lines[index].trimmingCharacters(in: .whitespaces)
+                    let candidate = self.trimmed(lines[index])
                     guard !candidate.isEmpty, candidate.contains("|") else { break }
                     rows.append(tableCells(candidate))
                     index += 1
@@ -104,19 +167,21 @@ enum MarkdownParser {
                 continue
             }
 
-            if let marker = listMarker(line), paragraph.isEmpty || !marker.ordered || marker.start == 1 {
+            if depth < maxDepth, let marker = listMarker(line), paragraph.isEmpty || !marker.ordered || marker.start == 1 {
                 flushParagraph()
-                let (list, next) = parseList(lines, from: index)
+                blockLines.append(index)
+                let (list, next) = parseList(lines, from: index, depth: depth)
                 blocks.append(list)
                 index = next
                 continue
             }
 
+            if paragraph.isEmpty { paragraphStart = index }
             paragraph.append(line)
             index += 1
         }
         flushParagraph()
-        return blocks
+        return (blocks, blockLines)
     }
 
     private struct ListMarker {
@@ -127,7 +192,7 @@ enum MarkdownParser {
         var content: String
     }
 
-    private static func parseList(_ lines: ArraySlice<String>, from start: Int) -> (MarkdownBlock, Int) {
+    private static func parseList(_ lines: ArraySlice<String>, from start: Int, depth: Int) -> (MarkdownBlock, Int) {
         guard let first = listMarker(lines[start]) else { return (.paragraph(lines[start]), start + 1) }
         var items: [MarkdownListItem] = []
         var index = start
@@ -146,17 +211,17 @@ enum MarkdownParser {
                 checked = true
                 text.removeFirst(4)
             }
-            items.append(MarkdownListItem(text: text, checked: checked, children: parse(childLines[...])))
+            items.append(MarkdownListItem(text: text, checked: checked, children: parse(childLines[...], depth: depth + 1).blocks))
             currentText.removeAll()
             childLines.removeAll()
         }
 
         while index < lines.endIndex {
             let line = lines[index]
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let trimmed = self.trimmed(line)
             if trimmed.isEmpty {
                 let next = index + 1
-                if next < lines.endIndex, indentation(lines[next]) > first.indent, !lines[next].trimmingCharacters(in: .whitespaces).isEmpty {
+                if next < lines.endIndex, indentation(lines[next]) > first.indent, !self.trimmed(lines[next]).isEmpty {
                     childLines.append("")
                     index += 1
                     continue
@@ -194,6 +259,14 @@ enum MarkdownParser {
         }
         flushItem()
         return (.list(ordered: first.ordered, start: first.start, items: items), index)
+    }
+
+    /// `trimmingCharacters(in: .whitespaces)`, skipped for the usual line that starts and ends
+    /// with printable ASCII: no space or tab there, and no lead byte of a Unicode space either.
+    private static func trimmed(_ line: String) -> String {
+        if let first = line.utf8.first, let last = line.utf8.last,
+           first > 0x20, first < 0x7F, last > 0x20, last < 0x7F { return line }
+        return line.trimmingCharacters(in: .whitespaces)
     }
 
     private static func listMarker(_ line: String) -> ListMarker? {
@@ -238,20 +311,25 @@ enum MarkdownParser {
         return rest.isEmpty || rest.hasPrefix(" ") ? hashes : nil
     }
 
+    /// Three or more of one of `-`, `*`, `_`, spaces between them allowed. Every bullet line
+    /// starts with one of those, so this checks bytes rather than building a string.
     private static func isRule(_ trimmed: String) -> Bool {
-        let compact = trimmed.replacingOccurrences(of: " ", with: "")
-        guard compact.count >= 3, let first = compact.first, "-*_".contains(first) else { return false }
-        return compact.allSatisfy { $0 == first }
+        guard let first = trimmed.utf8.first, first == 0x2D || first == 0x2A || first == 0x5F else { return false }
+        var count = 0
+        for byte in trimmed.utf8 {
+            if byte == first { count += 1 } else if byte != 0x20 { return false }
+        }
+        return count >= 3
     }
 
     private static func isTableDelimiter(_ line: String) -> Bool {
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let trimmed = self.trimmed(line)
         guard trimmed.contains("-") else { return false }
         return trimmed.allSatisfy { "|:- ".contains($0) }
     }
 
     private static func tableCells(_ line: String) -> [String] {
-        var content = line.trimmingCharacters(in: .whitespaces)
+        var content = trimmed(line)
         if content.hasPrefix("|") { content.removeFirst() }
         if content.hasSuffix("|") { content.removeLast() }
         return content.split(separator: "|", omittingEmptySubsequences: false)

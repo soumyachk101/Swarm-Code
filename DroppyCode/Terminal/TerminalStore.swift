@@ -40,7 +40,13 @@ final class TerminalSession: Identifiable {
         view.startProcess(executable: shell, args: arguments, environment: pairs, execName: shellName, currentDirectory: directory)
     }
 
+    /// The appearance last applied: setting the colours again clears SwiftTerm's attribute
+    /// caches and redraws the whole screen, so the host applies them only on a change.
+    private var appliedDark: Bool?
+
     func applyAppearance(isDark: Bool) {
+        guard appliedDark != isDark else { return }
+        appliedDark = isDark
         view.nativeBackgroundColor = isDark ? NSColor(white: 0.08, alpha: 1) : NSColor(white: 0.985, alpha: 1)
         view.nativeForegroundColor = isDark ? NSColor(white: 0.9, alpha: 1) : NSColor(white: 0.12, alpha: 1)
         // The caret and the selection follow the theme's accent, like every other

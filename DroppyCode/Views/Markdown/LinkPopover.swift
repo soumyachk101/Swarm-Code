@@ -12,6 +12,9 @@ final class LinkPopover: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
     private var escapeMonitor: Any?
 
+    /// One box for the popover's life, so the rows in it never see a new one.
+    private lazy var closeBox = PopoverCloseBox { [weak self] in self?.close() }
+
     private override init() {
         super.init()
         popover.behavior = .transient
@@ -28,7 +31,7 @@ final class LinkPopover: NSObject, NSPopoverDelegate {
             self?.close()
             mergeTarget?.merge(request)
         }
-        .environment(\.closePopover, { [weak self] in self?.close() })
+        .environment(\.closePopoverBox, closeBox)
         var size = NSHostingView(rootView: content).intrinsicContentSize
         if size.width <= 0 || size.height <= 0 { size = NSSize(width: 220, height: 110) }
         popover.setFixedContent(content, size: size)

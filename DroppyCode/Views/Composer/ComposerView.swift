@@ -121,6 +121,8 @@ struct ComposerView: View {
 
     @State private var controller = ComposerController()
     @State private var suggestions = SuggestionState()
+    /// Escape closed the list; the next caret move may open it again.
+    @State private var dismissedSuggestions = false
     @State private var historyIndex: Int?
     @State private var showingRecents = false
     @State private var fileIndex = FileIndex()
@@ -129,7 +131,7 @@ struct ComposerView: View {
     @State private var attachmentNotice: String?
 
     /// How many files one message carries.
-    static let maxAttachments = 8
+    static let maxAttachments = Storage.attachmentLimit
 
     var body: some View {
         // Layout only: the resolved thread and help strings are plain values handed down,
@@ -145,8 +147,7 @@ struct ComposerView: View {
                 takesFocusOnAppear: takesFocusOnAppear,
                 attachmentNotice: attachmentNotice,
                 onKey: handleKey,
-                onFiles: attach(urls:),
-                onImage: attach(imageData:),
+                onAttach: attach,
                 onCursorChange: cursorMoved(to:),
                 onBlur: blur
             )
@@ -163,7 +164,7 @@ struct ComposerView: View {
                     queueGoesToHead: queueGoesToHead(thread),
                     headsProvider: headsProvider(thread),
                     showingRecents: $showingRecents,
-                    onAttach: attach(urls:),
+                    onAttach: { attach($0.map(AttachmentSource.file)) },
                     onChooseFiles: chooseFiles,
                     onSend: send
                 )
@@ -192,8 +193,20 @@ struct ComposerView: View {
         }
         .onDisappear { controller.hideSuggestions() }
         .onChange(of: runtime.threadID) { _, _ in controller.hideSuggestions() }
+        .task(id: commandKey) { await loadCommands() }
+        .onChange(of: model.providers.commands[commandKey]) { _, _ in
+            if controller.hasFocus { cursorMoved(to: controller.cursorLocation) }
+        }
+        .onChange(of: model.providers.commandErrors[commandKey]) { _, _ in
+            if controller.hasFocus, suggestions.isVisible {
+                controller.showSuggestions(AnyView(suggestionMenu()), itemCount: suggestions.items.count)
+            }
+        }
+        .onChange(of: suggestions.isVisible) { _, visible in
+            if visible, suggestions.kind == .command { Task { await loadCommands() } }
+        }
         .task(id: workingDirectory) {
-            if let workingDirectory { fileIndex.prepare(workingDirectory) }
+            if let workingDirectory { await fileIndex.prepare(workingDirectory) }
         }
         // The notice says its piece and goes; a second drop restarts the wait.
         .task(id: attachmentNotice) {
@@ -218,17 +231,37 @@ struct ComposerView: View {
     /// The slash/@ list hosted in a caret-anchored NSPopover (see ComposerController).
     @ViewBuilder
     private func suggestionMenu() -> some View {
-        PopoverMenu {
-            PopoverSectionHeader(suggestions.kind == .command ? "Commands" : "Files")
-            ForEach(Array(suggestions.items.enumerated()), id: \.element.id) { index, item in
-                SuggestionPopoverRow(
-                    item: item,
-                    isSelected: index == suggestions.selected,
-                    select: { suggestions.selected = index },
-                    pick: { pick(item) }
-                )
+        ScrollViewReader { proxy in
+            PopoverMenu {
+                PopoverSectionHeader(suggestions.kind == .command ? "Commands · Recently used first" : "Files")
+                if suggestions.kind == .command, let error = model.providers.commandErrors[commandKey] {
+                    PopoverNote(error)
+                    PopoverItem("Retry loading commands", symbol: "arrow.clockwise") { Task { await loadCommands(force: true) } }
+                }
+                ForEach(suggestions.items.indices, id: \.self) { index in
+                    let item = suggestions.items[index]
+                    SuggestionPopoverRow(
+                        item: item,
+                        isSelected: index == suggestions.selected,
+                        select: { suggestions.selected = index },
+                        pick: { pick(item) }
+                    )
+                    .id(index)
+                }
             }
+            .onChange(of: suggestions.selected) { _, selected in proxy.scrollTo(selected) }
         }
+    }
+
+    private var commandKey: String {
+        guard let thread = model.thread(runtime.threadID), let workingDirectory else { return "" }
+        return ProviderRegistry.commandKey(thread.provider, directory: workingDirectory)
+    }
+
+    private func loadCommands(force: Bool = false) async {
+        guard let thread = model.thread(runtime.threadID), let workingDirectory else { return }
+        await model.providers.loadCommands(thread.provider, directory: workingDirectory, force: force)
+        if controller.hasFocus { cursorMoved(to: controller.cursorLocation) }
     }
 
     private func placeholder(for thread: ChatThread?) -> String {
@@ -280,6 +313,7 @@ struct ComposerView: View {
                 pick(suggestions.items[suggestions.selected])
                 return true
             case .escape:
+                dismissedSuggestions = true
                 suggestions = SuggestionState()
                 return true
             case .deleteAtStart:
@@ -376,8 +410,11 @@ struct ComposerView: View {
     /// as the caret's move, and each report scored the whole file index; the earlier refresh
     /// is dropped and the one that runs reads the caret where it is then.
     private func cursorMoved(to _: Int) {
+        dismissedSuggestions = false
+        if !runtime.draft.text.isEmpty { runtime.warmSession() }
         controller.suggestionRefresh?.cancel()
         controller.suggestionRefresh = Task { @MainActor in
+            guard !dismissedSuggestions else { return }
             await refreshSuggestions(cursor: controller.cursorLocation)
         }
     }
@@ -424,13 +461,8 @@ struct ComposerView: View {
         if thread.provider == .codex || thread.provider == .claude || thread.provider == .copilot || thread.provider == .deepseek || thread.provider == .meta || thread.provider == .zai || thread.provider == .pi {
             commands.append(SlashCommand(name: "compact", detail: "Summarize the conversation to free up context", isBuiltIn: true))
         }
-        for command in model.providers.commands[thread.provider] ?? [] where !commands.contains(where: { $0.name == command.name }) {
-            commands.append(command)
-        }
-        let needle = query.lowercased()
-        let prefixed = commands.filter { needle.isEmpty || $0.name.lowercased().hasPrefix(needle) }
-        let contained = needle.isEmpty ? [] : commands.filter { !$0.name.lowercased().hasPrefix(needle) && $0.name.lowercased().contains(needle) }
-        return (prefixed + contained).prefix(8).map { command in
+        commands += model.providers.commands[commandKey] ?? []
+        return SlashCommand.suggestions(commands, matching: query, recent: model.providers.recentCommands[thread.provider.rawValue] ?? []).map { command in
             Suggestion(value: "/\(command.name) ", title: "/\(command.name)", detail: command.detail, symbol: command.isBuiltIn ? "command" : "sparkles", command: command)
         }
     }
@@ -453,43 +485,21 @@ struct ComposerView: View {
 
     // MARK: - Attachments
 
-    private func attach(urls: [URL]) {
-        var dropped = 0
-        for url in urls {
-            guard runtime.draft.attachments.count < Self.maxAttachments else {
-                dropped += 1
-                continue
-            }
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { continue }
-            let fileExtension = url.pathExtension.lowercased()
-            if fileExtension == "heic" || fileExtension == "heif" {
-                guard let image = NSImage(contentsOf: url), let data = image.jpegData,
-                      let attachment = try? Storage.importAttachment(
-                        data: data,
-                        name: url.deletingPathExtension().lastPathComponent + ".jpg",
-                        fileExtension: "jpg"
-                      ) else { continue }
-                runtime.draft.attachments.append(attachment)
-            } else if let attachment = try? Storage.importAttachment(from: url) {
-                runtime.draft.attachments.append(attachment)
-            }
-        }
+    /// Files and images go through `Storage.attach`: the slots are counted here, the
+    /// copies and transcodes run off the main actor, and what lands past the cap is said.
+    private func attach(_ sources: [AttachmentSource]) {
+        let room = max(0, Self.maxAttachments - runtime.draft.attachments.count)
+        let dropped = sources.count - min(sources.count, room)
+        Storage.attach(sources, to: Bindable(runtime).draft.attachments)
         if dropped > 0 {
-            note(dropped == 1
-                ? "One file was left out: a message holds \(Self.maxAttachments) attachments"
-                : "\(dropped) files were left out: a message holds \(Self.maxAttachments) attachments")
+            let isImage = sources.count == 1 && { if case .image = sources[0] { return true }; return false }()
+            note(isImage
+                ? "The image was left out: a message holds \(Self.maxAttachments) attachments"
+                : dropped == 1
+                    ? "One file was left out: a message holds \(Self.maxAttachments) attachments"
+                    : "\(dropped) files were left out: a message holds \(Self.maxAttachments) attachments")
         }
         controller.focus()
-    }
-
-    private func attach(imageData data: Data) {
-        guard runtime.draft.attachments.count < Self.maxAttachments else {
-            note("The image was left out: a message holds \(Self.maxAttachments) attachments")
-            return
-        }
-        guard let attachment = try? Storage.importAttachment(data: data, name: "Pasted image.png", fileExtension: "png") else { return }
-        runtime.draft.attachments.append(attachment)
     }
 
     private func note(_ message: String) {
@@ -502,7 +512,7 @@ struct ComposerView: View {
         panel.canChooseDirectories = false
         panel.prompt = "Attach"
         guard panel.runModal() == .OK else { return }
-        attach(urls: panel.urls)
+        attach(panel.urls.map(AttachmentSource.file))
     }
 }
 
@@ -518,8 +528,7 @@ private struct ComposerTextColumn: View {
     let takesFocusOnAppear: Bool
     let attachmentNotice: String?
     let onKey: (ComposerKey) -> Bool
-    let onFiles: ([URL]) -> Void
-    let onImage: (Data) -> Void
+    let onAttach: ([AttachmentSource]) -> Void
     let onCursorChange: (Int) -> Void
     let onBlur: () -> Void
 
@@ -561,8 +570,7 @@ private struct ComposerTextColumn: View {
                 placeholder: placeholder,
                 controller: controller,
                 onKey: onKey,
-                onFiles: onFiles,
-                onImage: onImage,
+                onAttach: onAttach,
                 onCursorChange: onCursorChange,
                 onBlur: onBlur,
                 takesFocusOnAppear: takesFocusOnAppear
@@ -812,7 +820,7 @@ private struct SendDraftState: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-        .disabled(!isEnabled)
+        .disabled(!isEnabled || runtime.isReverting)
         .padding(.leading, 4)
         .help(helpText(isRunning: isRunning, headsWorking: headsWorking))
         .accessibilityLabel(Text(isRunning ? "Stop" : (goesToHead ? "Send to a head" : "Send")))
@@ -1082,6 +1090,8 @@ final class FileIndex {
         /// How much the path's length costs its score, taken at build time: a Swift string's
         /// count walks the whole string, and the search used to take it for every match.
         var lengthPenalty: Int
+        /// Whether the path is plain ASCII, so the scan can match on its bytes.
+        var isASCII: Bool
     }
 
     @ObservationIgnored private var entries: [Entry] = []
@@ -1089,27 +1099,41 @@ final class FileIndex {
 
     /// Built indexes per directory, shared by every composer, so switching threads in a project
     /// never lists and lowercases its files again. A stale index is served and rebuilt behind it.
-    private static var built: [String: (entries: [Entry], builtAt: Date)] = [:]
-    private static var building: Set<String> = []
+    /// A composer that finds its directory already building joins that build rather than
+    /// waiting on nothing; two builds run at most, and two indexes are kept.
+    private static var built = RecentCache<String, (entries: [Entry], builtAt: Date)>(limit: 2)
+    private static var building: [String: Task<[Entry], Never>] = [:]
     private static let freshness: TimeInterval = 60
 
-    func prepare(_ directory: String) {
-        guard self.directory != directory else { return }
+    func prepare(_ directory: String) async {
+        guard !Task.isCancelled else { return }
         self.directory = directory
-        if let cached = Self.built[directory] {
-            entries = cached.entries
-            guard Date.now.timeIntervalSince(cached.builtAt) > Self.freshness else { return }
-        } else {
-            entries = []
-        }
-        guard !Self.building.contains(directory) else { return }
-        Self.building.insert(directory)
-        Task {
-            let fresh = await Self.build(directory)
-            Self.building.remove(directory)
-            Self.built[directory] = (fresh, .now)
-            guard self.directory == directory else { return }
+        while !Task.isCancelled, self.directory == directory {
+            if let cached = Self.built.value(for: directory) {
+                entries = cached.entries
+                guard Date.now.timeIntervalSince(cached.builtAt) > Self.freshness else { return }
+            } else {
+                entries = []
+            }
+            let task: Task<[Entry], Never>
+            if let pending = Self.building[directory] {
+                task = pending
+            } else if Self.building.count >= 2, let pending = Self.building.values.first {
+                _ = await pending.value
+                continue
+            } else {
+                task = Task {
+                    let fresh = await Self.build(directory)
+                    Self.built.insert((fresh, .now), for: directory)
+                    Self.building.removeValue(forKey: directory)
+                    return fresh
+                }
+                Self.building[directory] = task
+            }
+            let fresh = await task.value
+            guard !Task.isCancelled, self.directory == directory else { return }
             entries = fresh
+            return
         }
     }
 
@@ -1121,7 +1145,8 @@ final class FileIndex {
                 path: path,
                 lowercased: lowercased,
                 name: (lowercased as NSString).lastPathComponent,
-                lengthPenalty: min(path.count, 99)
+                lengthPenalty: min(path.count, 99),
+                isASCII: lowercased.utf8.allSatisfy { $0 < 128 }
             )
         }
     }
@@ -1140,20 +1165,23 @@ final class FileIndex {
     private nonisolated static func search(_ needle: String, in entries: [Entry], limit: Int) async -> [String] {
         // The best `limit` so far, highest score first. An insertion into a list this short
         // beats collecting every match and sorting them all.
+        guard limit > 0 else { return [] }
         var best: [(path: String, score: Int)] = []
-        best.reserveCapacity(limit + 1)
+        best.reserveCapacity(min(limit, entries.count) + 1)
+        let isASCII = needle.utf8.allSatisfy { $0 < 128 }
         for (offset, entry) in entries.enumerated() {
             if offset % 2_048 == 0, Task.isCancelled { return [] }
+            let ascii = isASCII && entry.isASCII
             let score: Int
             if entry.name == needle {
                 score = 1_000
             } else if entry.name.hasPrefix(needle) {
                 score = 800
-            } else if entry.name.contains(needle) {
+            } else if contains(needle, in: entry.name, ascii: ascii) {
                 score = 600
-            } else if entry.lowercased.contains(needle) {
+            } else if contains(needle, in: entry.lowercased, ascii: ascii) {
                 score = 400
-            } else if isSubsequence(needle, of: entry.lowercased) {
+            } else if isSubsequence(needle, of: entry.lowercased, ascii: ascii) {
                 score = 100
             } else {
                 continue
@@ -1167,7 +1195,35 @@ final class FileIndex {
         return best.map(\.path)
     }
 
-    private nonisolated static func isSubsequence(_ needle: String, of haystack: String) -> Bool {
+    /// Substring search on the bytes when both sides are ASCII: `String.contains` walks
+    /// graphemes, and it ran twice per entry per keystroke, which was most of a scan. A
+    /// carriage return in the path is the one byte a grapheme can span, so it takes the
+    /// slow path, as in `isSubsequence`.
+    private nonisolated static func contains(_ needle: String, in haystack: String, ascii: Bool) -> Bool {
+        guard ascii else { return haystack.contains(needle) }
+        let found: Bool? = haystack.utf8.withContiguousStorageIfAvailable { bytes in
+            needle.utf8.withContiguousStorageIfAvailable { pattern -> Bool? in
+                guard let base = bytes.baseAddress, let start = pattern.baseAddress else { return nil }
+                if memchr(base, 13, bytes.count) != nil { return nil }
+                return memmem(base, bytes.count, start, pattern.count) != nil
+            } ?? nil
+        } ?? nil
+        return found ?? haystack.contains(needle)
+    }
+
+    nonisolated static func isSubsequence(_ needle: String, of haystack: String, ascii: Bool) -> Bool {
+        if ascii {
+            var remaining = needle.utf8.makeIterator()
+            var next = remaining.next()
+            for byte in haystack.utf8 {
+                if byte == 13 { return isSubsequence(needle, of: haystack, ascii: false) }
+                if byte == next {
+                    next = remaining.next()
+                    if next == nil { return true }
+                }
+            }
+            return next == nil
+        }
         var remaining = needle[...]
         for character in haystack where character == remaining.first {
             remaining = remaining.dropFirst()

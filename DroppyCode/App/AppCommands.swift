@@ -59,7 +59,7 @@ struct AppCommands: Commands {
             // rather than the chord doing nothing at all.
             Button("Queue a chat") { runtime?.queueDraftAsFollowUp() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .queueChat))
-                .disabled((runtime?.draft.isEmpty ?? true)
+                .disabled((runtime?.draftIsEmpty ?? true)
                     || !(runtime?.approvals.isEmpty ?? true))
             Button("Toggle plan mode") {
                 guard let id = model.selectedThreadID else { return }
@@ -72,6 +72,12 @@ struct AppCommands: Commands {
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .previousThread))
             Button("Next thread") { model.selectThread(offset: 1) }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .nextThread))
+            Button(model.topScript.map { "Run \($0.name)" } ?? "Run top script") {
+                guard let script = model.topScript, let threadID = model.selectedThreadID else { return }
+                model.runScript(script, threadID: threadID)
+            }
+            .keyboardShortcut(shortcuts.keyboardShortcut(for: .runScript))
+            .disabled(model.topScript == nil)
             ForEach(1...9, id: \.self) { number in
                 Button("Thread \(number)") { model.selectThread(number: number) }
                     .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)

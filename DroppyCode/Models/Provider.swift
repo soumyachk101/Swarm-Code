@@ -277,13 +277,58 @@ struct SlashCommand: Hashable, Identifiable, Sendable {
     var name: String
     var detail: String
     var isBuiltIn: Bool = false
+    var skillPath: String?
 
     var id: String { name }
+
+    static func name(in text: String) -> String? {
+        guard text.first == "/" || text.first == "$" else { return nil }
+        return text.dropFirst().split(whereSeparator: \.isWhitespace).first.map(String.init)
+    }
+
+    static func suggestions(_ commands: [Self], matching query: String, recent: [String]) -> [Self] {
+        let needle = query.lowercased()
+        let ranks = Dictionary(recent.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
+        var seen = Set<String>()
+        // Lowercased once per command, not once per comparison of the sort.
+        var matched: [(command: Self, name: String, prefixed: Bool, rank: Int)] = []
+        matched.reserveCapacity(commands.count)
+        for command in commands where seen.insert(command.name).inserted {
+            let name = command.name.lowercased()
+            guard needle.isEmpty || name.contains(needle) else { continue }
+            matched.append((command, name, name.hasPrefix(needle), ranks[command.name] ?? Int.max))
+        }
+        matched.sort { lhs, rhs in
+            if lhs.prefixed != rhs.prefixed { return lhs.prefixed }
+            return lhs.rank == rhs.rank ? lhs.name < rhs.name : lhs.rank < rhs.rank
+        }
+        return matched.map(\.command)
+    }
+
+    func codexInput(for text: String) -> [JSONValue] {
+        guard let skillPath, Self.name(in: text) == name else {
+            return [["type": "text", "text": .string(text)]]
+        }
+        return [
+            ["type": "text", "text": .string("$" + text.dropFirst())],
+            ["type": "skill", "name": .string(name), "path": .string(skillPath)],
+        ]
+    }
 
     static func claudeCommands(_ entries: [JSONValue]) -> [Self] {
         entries.compactMap { entry in
             guard let name = entry["name"]?.string ?? entry.string else { return nil }
             return Self(name: name, detail: entry["description"]?.string ?? "Claude Code command")
+        }
+    }
+
+    static func codexSkills(_ result: JSONValue) -> [Self] {
+        (result["data"]?.array ?? []).flatMap { entry in
+            (entry["skills"]?.array ?? []).compactMap { skill in
+                guard skill["enabled"]?.bool != false,
+                      let name = skill["name"]?.string, let path = skill["path"]?.string else { return nil }
+                return Self(name: name, detail: skill["interface"]?["shortDescription"]?.string ?? skill["description"]?.string ?? "", skillPath: path)
+            }
         }
     }
 }

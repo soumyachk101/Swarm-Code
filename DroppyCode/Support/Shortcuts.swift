@@ -115,6 +115,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
     case togglePlanMode
     case previousThread
     case nextThread
+    case runScript
     /// Settles or archives the selected thread, as Settings chose. Stored under its old
     /// name, so a chord recorded for "Archive thread" still applies.
     case finishThread = "archiveThread"
@@ -162,7 +163,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
 
     var section: Section {
         switch self {
-        case .newThread, .newWorktreeThread, .addProject, .stopTurn, .queueChat, .togglePlanMode, .previousThread, .nextThread, .finishThread:
+        case .newThread, .newWorktreeThread, .addProject, .stopTurn, .queueChat, .togglePlanMode, .previousThread, .nextThread, .runScript, .finishThread:
             .threads
         case .commandPalette, .toggleSidebar, .toggleTerminal, .toggleChanges, .toggleActivityView, .showMainWindow, .openSettings:
             .window
@@ -179,6 +180,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .togglePlanMode: "Plan mode"
         case .previousThread: "Previous thread"
         case .nextThread: "Next thread"
+        case .runScript: "Run top script"
         case .finishThread: "Finish thread"
         case .commandPalette: "Command palette"
         case .toggleSidebar: "Toggle sidebar"
@@ -200,6 +202,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .togglePlanMode: "Plans before building."
         case .previousThread: "Selects the thread above in the sidebar."
         case .nextThread: "Selects the thread below in the sidebar."
+        case .runScript: "Runs the first project script in the selected thread's terminal."
         case .finishThread: "Settles the selected thread, or archives it, whichever General chose. Reopens a settled one."
         case .commandPalette: "Searches threads, projects and actions."
         case .toggleSidebar: "Shows or hides the sidebar."
@@ -219,8 +222,9 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .stopTurn: KeyChord(keyCode: 47, modifiers: .command)
         case .queueChat: KeyChord(keyCode: 36, modifiers: .command)
         case .togglePlanMode: KeyChord(keyCode: 35, modifiers: [.shift, .command])
-        case .previousThread: KeyChord(keyCode: 126, modifiers: [.option, .command])
-        case .nextThread: KeyChord(keyCode: 125, modifiers: [.option, .command])
+        case .previousThread: KeyChord(keyCode: 48, modifiers: [.control, .shift])
+        case .nextThread: KeyChord(keyCode: 48, modifiers: .control)
+        case .runScript: KeyChord(keyCode: 15, modifiers: .command)
         case .finishThread: KeyChord(keyCode: 51, modifiers: [.shift, .command])
         case .commandPalette: KeyChord(keyCode: 40, modifiers: .command)
         case .toggleSidebar: KeyChord(keyCode: 1, modifiers: [.control, .command])

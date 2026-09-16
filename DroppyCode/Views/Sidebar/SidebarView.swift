@@ -15,6 +15,7 @@ struct SidebarView: View {
     /// The thread whose delete popover is open, by id: the popover's binding compares two
     /// UUIDs and never reaches into a thread snapshot that may since have changed hands.
     @State private var pendingDeletionID: UUID?
+    /// The thread whose archive question is open, by id, the same way.
     /// A delete the popover confirmed, carried out once the popover has closed (see
     /// `confirmDeletion` and `deletePopover`).
     @State private var confirmedDeletion: ConfirmedDeletion?
@@ -766,6 +767,9 @@ struct SidebarView: View {
         ).equatable()))
     }
 }
+
+/// The shortcut's question: Archive on the right, lit and answered by Return, Delete on
+/// the left. A click away asks nothing.
 
 /// What the delete popover asks: the thread by name, what stays, and the destructive choice
 /// as a red row like the ellipsis menu's, with a second one for a thread's worktree.

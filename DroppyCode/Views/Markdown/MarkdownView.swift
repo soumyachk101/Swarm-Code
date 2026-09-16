@@ -3,6 +3,7 @@ import SwiftUI
 
 struct MarkdownView: View, Equatable {
     let text: String
+    static let warmCandidateLimit = 96
     /// True while the text is still arriving. A streaming message parses through a slot of
     /// its own instead of the shared cache: it changes on every flush, and each of those
     /// would otherwise take a cache entry away from a finished message that scrolling back
@@ -34,162 +35,32 @@ struct MarkdownView: View, Equatable {
     /// Parsed blocks by source. Rows are rebuilt as they scroll into view, but a finished
     /// message parses to the same blocks, so each distinct text parses once.
     @MainActor private static var blockCache = RecentCache<String, [MarkdownBlock]>(limit: 800)
-    /// The one streaming message's latest parse, so re-renders between flushes never parse.
-    /// `headCount`/`headBlocks` are the stable prefix both flushes share: the blocks of the
-    /// first `headCount` characters, parsed once and reused while the reply grows.
-    @MainActor private static var streamingParse: StreamingParse?
-
-    /// One streaming reply's latest parse, plus its stable head: the leading characters
-    /// whose blocks no later flush can change, so only the tail re-parses each flush.
-    @MainActor private struct StreamingParse {
-        var text: String
-        var blocks: [MarkdownBlock]
-        var headCount: Int
-        var headBlocks: [MarkdownBlock]
-        var flushes: Int
-    }
+    /// The latest parse of each message still streaming, newest last: re-renders between
+    /// flushes never parse, and a flush parses only the block the new text extends. A few
+    /// slots, so a lead and the heads in its panel streaming together keep theirs.
+    @MainActor private static var streamingParses: [(text: String, parse: MarkdownParser.Parse)] = []
+    private static let streamingSlots = 4
 
     @MainActor
     static func blocks(for text: String, streaming: Bool = false) -> [MarkdownBlock] {
         if streaming {
-            if let parse = streamingParse, parse.text == text { return parse.blocks }
-            let flushes = (streamingParse?.flushes ?? 0) + 1
-            if let parse = streamingParse, text.hasPrefix(parse.text),
-               let incremental = incrementalBlocks(for: text, from: parse, flushes: flushes) {
-                streamingParse = incremental
-                return incremental.blocks
-            }
-            let parsed = MarkdownParser.parse(text)
-            streamingParse = StreamingParse(text: text, blocks: parsed, headCount: 0, headBlocks: [], flushes: flushes)
-            return parsed
+            if let parse = streamingParses.last(where: { $0.text == text }) { return parse.parse.blocks }
+            let slot = streamingParses.lastIndex { text.utf8.starts(with: $0.text.utf8) }
+            let parsed = MarkdownParser.parse(text, extending: slot.map { streamingParses[$0] })
+            if let slot { streamingParses.remove(at: slot) } else if streamingParses.count == streamingSlots { streamingParses.removeFirst() }
+            streamingParses.append((text, parsed))
+            return parsed.blocks
         }
         if let cached = blockCache.value(for: text) { return cached }
         // A message that just finished streaming is already parsed; keep that parse.
         let parsed: [MarkdownBlock]
-        if let parse = streamingParse, parse.text == text {
-            parsed = parse.blocks
-            streamingParse = nil
+        if let slot = streamingParses.lastIndex(where: { $0.text == text }) {
+            parsed = streamingParses.remove(at: slot).parse.blocks
         } else {
             parsed = MarkdownParser.parse(text)
         }
         blockCache.insert(parsed, for: text)
         return parsed
-    }
-
-    /// Streaming tail-split: only the text after the last settled blank line re-parses.
-    /// Flushes only append, so the head (everything through that blank line) parses to
-    /// the same blocks; it parses once and is reused while the tail re-parses per flush.
-    /// Anything else (edits, resets) falls back to a full parse via the nil return.
-    @MainActor
-    private static func incrementalBlocks(for text: String, from parse: StreamingParse, flushes: Int) -> StreamingParse? {
-        // The tail must cover the last block or two (constructs can join across one
-        // blank line), so the boundary is the last blank line before the previous text
-        // minus their approximate source length.
-        let unstable = approximateSourceLength(parse.blocks.suffix(2))
-        let searchEnd = max(0, parse.text.count - unstable)
-        let endIndex = parse.text.index(parse.text.startIndex, offsetBy: searchEnd, limitedBy: parse.text.endIndex) ?? parse.text.endIndex
-        guard let blank = parse.text[..<endIndex].range(of: "\n\n", options: .backwards) else { return nil }
-        var boundary = blank.upperBound
-        // A list item, continuation or table row past the blank line can still belong
-        // to the head's block, so step back over whole blank lines until the tail
-        // starts something the head cannot absorb.
-        while boundary > parse.text.startIndex {
-            let offset = parse.text.distance(from: parse.text.startIndex, to: boundary)
-            let split = text.index(text.startIndex, offsetBy: offset)
-            guard let first = firstContentLine(after: split, in: text),
-                  let last = lastContentLine(of: parse.text[..<boundary]),
-                  joinsAcross(headLast: last, tailFirst: first) else { break }
-            let earlier = parse.text[..<parse.text.index(before: boundary)].range(of: "\n\n", options: .backwards)
-            guard let earlier else { return nil }
-            boundary = earlier.upperBound
-        }
-        // A fence opened in the head and not yet closed stays whole in the tail.
-        var offset = parse.text.distance(from: parse.text.startIndex, to: boundary)
-        if let opener = openFenceOffset(in: parse.text[..<boundary]) { offset = opener }
-        // The head parses once while it does not move; the tail re-parses per flush.
-        let headBlocks: [MarkdownBlock]
-        if offset == parse.headCount {
-            headBlocks = parse.headBlocks
-        } else {
-            headBlocks = MarkdownParser.parse(String(parse.text.prefix(offset)))
-        }
-        let split = text.index(text.startIndex, offsetBy: offset)
-        let blocks = headBlocks + MarkdownParser.parse(String(text[split...]))
-        #if DEBUG
-        // A divergence is a bug in the split, not a reason to crash a stream: it is
-        // logged, and the full parse stands in for this flush.
-        if flushes % 50 == 0 {
-            let full = MarkdownParser.parse(text)
-            if blocks != full {
-                print("MarkdownView: streaming incremental parse diverged from the full parse at offset \(offset)")
-                return StreamingParse(text: text, blocks: full, headCount: 0, headBlocks: [], flushes: flushes)
-            }
-        }
-        #endif
-        return StreamingParse(text: text, blocks: blocks, headCount: offset, headBlocks: headBlocks, flushes: flushes)
-    }
-
-    /// Whether the tail's first line still belongs to a block the head ends in: a
-    /// same-level item or an indented continuation joins the head's list, and a row
-    /// joins the head's table. Paragraphs, quotes, headings and rules all end at the
-    /// blank line, so anything else splits cleanly.
-    private static func joinsAcross(headLast: String, tailFirst: String) -> Bool {
-        if let head = listMarker(line: headLast), let tail = listMarker(line: tailFirst),
-           head.indent == tail.indent, head.ordered == tail.ordered { return true }
-        if indentation(of: tailFirst) > 0, listMarker(line: tailFirst) == nil,
-           listMarker(line: headLast) != nil || indentation(of: headLast) > 0 { return true }
-        if tailFirst.contains("|"), headLast.contains("|") { return true }
-        return false
-    }
-
-    /// Mirrors the parser's item test: indent and kind only, for the merge check.
-    private static func listMarker(line: String) -> (indent: Int, ordered: Bool)? {
-        let indent = indentation(of: line)
-        let body = line.dropFirst(indent)
-        if let first = body.first, "-*+".contains(first) {
-            let rest = body.dropFirst()
-            guard rest.hasPrefix(" ") || rest.hasPrefix("\t") else { return nil }
-            return (indent, false)
-        }
-        let digits = body.prefix(while: \.isNumber)
-        guard !digits.isEmpty, digits.count <= 9 else { return nil }
-        let rest = body.dropFirst(digits.count)
-        guard let delimiter = rest.first, delimiter == "." || delimiter == ")",
-              rest.dropFirst().hasPrefix(" ") || rest.dropFirst().isEmpty else { return nil }
-        return (indent, true)
-    }
-
-    /// Mirrors the parser's indent: spaces count one, tabs four.
-    private static func indentation(of line: String) -> Int {
-        var count = 0
-        for character in line {
-            if character == " " { count += 1 } else if character == "\t" { count += 4 } else { break }
-        }
-        return count
-    }
-
-    /// The offset of the fence still open at the end of `head`, if any. Skipped fast
-    /// when no fence marker exists; otherwise walks the lines the way the parser does.
-    private static func openFenceOffset(in head: Substring) -> Int? {
-        guard head.contains("```") || head.contains("~~~") else { return nil }
-        var fence: String?
-        var opener: Int?
-        var rest = head
-        var offset = 0
-        while true {
-            let end = rest.firstIndex(of: "\n") ?? rest.endIndex
-            let trimmed = rest[..<end].trimmingCharacters(in: .whitespaces)
-            if let open = fence {
-                if trimmed.hasPrefix(open), trimmed.allSatisfy({ $0 == open.first }) { fence = nil; opener = nil }
-            } else if let marker = fenceMarker(in: trimmed) {
-                fence = marker
-                opener = offset
-            }
-            if end == rest.endIndex { break }
-            offset += rest.distance(from: rest.startIndex, to: end) + 1
-            rest = rest[rest.index(after: end)...]
-        }
-        return fence == nil ? nil : opener
     }
 
     /// Mirrors the parser's fence test for the open-fence walk.
@@ -250,42 +121,76 @@ struct MarkdownView: View, Equatable {
     /// scrolling into view finds its blocks and its paragraphs' runs already made instead of
     /// parsing them on the frame. Texts already cached cost nothing.
     @MainActor
-    static func warm(_ texts: [String]) async {
-        let missing = texts.filter { !blockCache.contains($0) }
+    static func warm(_ texts: some Sequence<String>) async throws {
+        try Task.checkCancellation()
+        let missing = warmTexts(texts)
         guard !missing.isEmpty else { return }
-        let parsed = await Task.detached(priority: .utility) {
-            missing.map { text -> (String, [MarkdownBlock], [(String, AttributedString)]) in
-                let blocks = MarkdownParser.parse(text)
-                var inline: [(String, AttributedString)] = []
-                for source in inlineSources(of: blocks) { inline.append((source, RichLink.build(source))) }
-                return (text, blocks, inline)
-            }
-        }.value
+        let parsed = try await parseWarm(missing)
+        try Task.checkCancellation()
         for (text, blocks, inline) in parsed {
+            try Task.checkCancellation()
             if !blockCache.contains(text) { blockCache.insert(blocks, for: text) }
-            for (source, pretty) in inline { RichLink.warm(source, with: pretty) }
+            for (source, pretty) in inline {
+                try Task.checkCancellation()
+                RichLink.warm(source, with: pretty)
+            }
         }
     }
 
-    /// Every inline-styled string a set of blocks renders: paragraphs, headings, list items.
-    nonisolated private static func inlineSources(of blocks: [MarkdownBlock]) -> [String] {
-        var out: [String] = []
+    @MainActor
+    static func warmTexts(_ texts: some Sequence<String>) -> [String] {
+        var missing: [String] = []
+        var seen: Set<String> = []
+        var remainingBytes = 1_048_576
+        for text in texts.prefix(warmCandidateLimit) {
+            let bytes = text.utf8.prefix(262_145).count
+            guard bytes <= 262_144, bytes <= remainingBytes,
+                  !blockCache.contains(text), seen.insert(text).inserted else { continue }
+            missing.append(text)
+            remainingBytes -= bytes
+            if missing.count == 24 { break }
+        }
+        return missing
+    }
+
+    @concurrent
+    private nonisolated static func parseWarm(_ texts: [String]) async throws -> [(String, [MarkdownBlock], [(String, AttributedString)])] {
+        var parsed: [(String, [MarkdownBlock], [(String, AttributedString)])] = []
+        var seenInline: Set<String> = []
+        for text in texts {
+            try Task.checkCancellation()
+            let blocks = MarkdownParser.parse(text)
+            var sources: Set<String> = []
+            try inlineSources(of: blocks, into: &sources)
+            var inline: [(String, AttributedString)] = []
+            for source in sources where seenInline.insert(source).inserted {
+                try Task.checkCancellation()
+                inline.append((source, RichLink.build(source)))
+            }
+            parsed.append((text, blocks, inline))
+        }
+        try Task.checkCancellation()
+        return parsed
+    }
+
+    nonisolated private static func inlineSources(of blocks: [MarkdownBlock], into sources: inout Set<String>) throws {
         for block in blocks {
+            try Task.checkCancellation()
             switch block {
             case .paragraph(let text), .heading(_, let text):
-                out.append(text)
+                sources.insert(text)
             case .list(_, _, let items):
                 for item in items {
-                    if !item.text.isEmpty { out.append(item.text) }
-                    out += inlineSources(of: item.children)
+                    try Task.checkCancellation()
+                    if !item.text.isEmpty { sources.insert(item.text) }
+                    try inlineSources(of: item.children, into: &sources)
                 }
             case .quote(let inner):
-                out += inlineSources(of: inner)
+                try inlineSources(of: inner, into: &sources)
             case .code, .table, .rule:
                 break
             }
         }
-        return out
     }
 }
 
@@ -332,7 +237,7 @@ struct MarkdownBlockView: View, Equatable {
                             + Text(verbatim: mention.name)
                             .fontWeight(.bold)
                             .foregroundColor(mention.persona.color)
-                            + RichInlineBuilder.text(for: rest, streaming: streaming)
+                            + Text(RichLink.prettyAttributed(rest, streaming: streaming))
                     }
                 }
                 .textSelection(.enabled)
@@ -509,22 +414,25 @@ extension EnvironmentValues {
 /// (expliciete `[titel](url)` of host+pad zonder scheme) met de favicon ervoor.
 enum RichLink {
     @MainActor private static var prettyCache = RecentCache<String, AttributedString>(limit: 1200)
-    /// The paragraph still being streamed, kept apart so its every flush leaves the cache alone.
-    @MainActor private static var streamingPretty: (source: String, value: AttributedString)?
+    /// The paragraphs still being streamed, newest last, kept apart so their every flush
+    /// leaves the cache alone. As many slots as `MarkdownView` keeps parses, so a lead and
+    /// the heads streaming beside it never evict each other between flushes.
+    @MainActor private static var streamingPretty: [(source: String, value: AttributedString)] = []
+    private static let streamingSlots = 4
 
     @MainActor
     static func prettyAttributed(_ source: String, streaming: Bool = false) -> AttributedString {
         if streaming {
-            if let pretty = streamingPretty, pretty.source == source { return pretty.value }
+            if let pretty = streamingPretty.last(where: { $0.source == source }) { return pretty.value }
             let value = build(source)
-            streamingPretty = (source, value)
+            if streamingPretty.count == streamingSlots { streamingPretty.removeFirst() }
+            streamingPretty.append((source, value))
             return value
         }
         if let hit = prettyCache.value(for: source) { return hit }
         let value: AttributedString
-        if let pretty = streamingPretty, pretty.source == source {
-            value = pretty.value
-            streamingPretty = nil
+        if let slot = streamingPretty.lastIndex(where: { $0.source == source }) {
+            value = streamingPretty.remove(at: slot).value
         } else {
             value = build(source)
         }
@@ -779,36 +687,6 @@ enum FaviconCache {
     }
 }
 
-@MainActor
-enum RichInlineBuilder {
-    /// Built runs by source. Paragraphs are rebuilt whenever their row scrolls into view,
-    /// and joining the runs is the same work every time, so a settled paragraph keeps its
-    /// text. Only link-free paragraphs come through here, so no favicon can go stale in it.
-    private static var textCache = RecentCache<String, Text>(limit: 1200)
-
-    static func text(for source: String, streaming: Bool = false) -> Text {
-        if !streaming, let cached = textCache.value(for: source) { return cached }
-        let pretty = RichLink.prettyAttributed(source, streaming: streaming)
-        var out = Text("")
-        for run in pretty.runs {
-            let slice = Text(AttributedString(pretty[run.range]))
-            if let host = run.link?.host?.lowercased(), !host.isEmpty {
-                let icon: Text
-                if let cached = FaviconCache.cached(host: host) {
-                    icon = Text(Image(nsImage: cached))
-                } else {
-                    icon = Text(Image(systemName: "globe"))
-                }
-                out = Text("\(out)\(icon) \(slice)")
-            } else {
-                out = Text("\(out)\(slice)")
-            }
-        }
-        if !streaming { textCache.insert(out, for: source) }
-        return out
-    }
-}
-
 struct InlineText: View {
     let source: String
     /// Set when the caller already branched on containsLinks, so the check runs once.
@@ -878,7 +756,9 @@ struct InlineText: View {
                     await Self.fetchFavicons(source: source, streaming: streaming, revision: revision)
                 }
         } else {
-            RichInlineBuilder.text(for: source, streaming: streaming)
+            // Link-free, so the attributed string renders as one Text; bold, italic and
+            // code come through as inline presentation intents.
+            Text(RichLink.prettyAttributed(source, streaming: streaming))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)

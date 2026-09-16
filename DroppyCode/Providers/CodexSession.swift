@@ -106,7 +106,7 @@ final class CodexSession: ProviderSession {
 
     func send(_ input: TurnInput) async throws {
         guard let connection, !connection.isClosed, let threadID else { throw ProviderError.notRunning }
-        var content: [JSONValue] = [["type": "text", "text": .string(input.text)]]
+        var content: [JSONValue] = input.command?.codexInput(for: input.text) ?? [["type": "text", "text": .string(input.text)]]
         for image in input.images where image.isImage {
             content.append(["type": "localImage", "path": .string(image.path)])
         }
@@ -214,7 +214,11 @@ final class CodexSession: ProviderSession {
                 params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))
             } else {
                 // Heads on another provider are Droppy-run: the lead asks for them with the
-                // delegation block, and Codex's own agents stay off.
+                // delegation block, and Codex's own agents are switched off for the thread,
+                // whatever the user's config enables. Told only in words, a lead still
+                // reached for spawn_agent, ran its heads on itself and the pair's model never
+                // saw them.
+                params["config"] = ["features": ["multi_agent": false]]
                 params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
             }
         }
@@ -254,32 +258,6 @@ final class CodexSession: ProviderSession {
         turnID = nil
         activeModel = result["model"]?.string ?? activeModel
         return id
-    }
-
-    private var threadParameters: [String: JSONValue] {
-        let policy = policySettings(configuration.runtimeMode)
-        var params: [String: JSONValue] = [
-            "cwd": .string(workingDirectory),
-            "approvalPolicy": policy.approvalPolicy,
-            "sandbox": policy.sandbox,
-            "approvalsReviewer": policy.reviewer,
-        ]
-        if let model = configuration.model { params["model"] = .string(model) }
-        if let hydra = configuration.hydra {
-            if hydra.runsNatively {
-                params["config"] = .object(HydraPrompts.codexConfig(hydra))
-                params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))
-            } else {
-                // Heads on another provider are Droppy-run: the lead asks for them with the
-                // delegation block, and Codex's own agents are switched off for the thread,
-                // whatever the user's config enables. Told only in words, a lead still
-                // reached for spawn_agent, ran its heads on itself and the pair's model never
-                // saw them.
-                params["config"] = ["features": ["multi_agent": false]]
-                params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
-            }
-        }
-        return params
     }
 
     func resolveApproval(_ requestID: String, optionID: String) {
@@ -323,6 +301,16 @@ final class CodexSession: ProviderSession {
     }
 
     // MARK: - Catalog
+
+    static func listCommands(executable: URL, directory: URL, environment: [String: String]) async throws -> [SlashCommand] {
+        let connection = try await connect(executable: executable, directory: directory, environment: environment, configure: { _ in })
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(20))
+            if !Task.isCancelled { connection.close() }
+        }
+        defer { watchdog.cancel(); connection.close() }
+        return SlashCommand.codexSkills(try await connection.request("skills/list", ["cwds": [.string(directory.path)], "forceReload": true]))
+    }
 
     static func listModels(executable: URL, environment: [String: String]) async throws -> [ModelOption] {
         let connection = try await connect(

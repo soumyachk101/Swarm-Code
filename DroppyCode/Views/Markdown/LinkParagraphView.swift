@@ -84,13 +84,21 @@ struct LinkParagraphView: NSViewRepresentable {
     /// Same pretty string the `Text` path renders (short titles, bold
     /// links), rebuilt on AppKit types with an explicit base font, adaptive
     /// colors and favicon attachments.
+    /// The four faces per point size, looked up once: the italic conversion goes through
+    /// the font manager, and a streaming link paragraph rebuilds its string every flush.
+    @MainActor private static var fonts: [CGFloat: (base: NSFont, bold: NSFont, italic: NSFont, mono: NSFont)] = [:]
+
     @MainActor
     static func attributed(source: String, pointSize: CGFloat, dimmed: Bool, streaming: Bool = false) -> NSAttributedString {
         let pretty = RichLink.prettyAttributed(source, streaming: streaming)
-        let base = NSFont.systemFont(ofSize: pointSize)
-        let bold = NSFont.boldSystemFont(ofSize: pointSize)
-        let italic = NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask)
-        let mono = NSFont.monospacedSystemFont(ofSize: max(9, pointSize - 1), weight: .regular)
+        let (base, bold, italic, mono) = fonts[pointSize] ?? {
+            let base = NSFont.systemFont(ofSize: pointSize)
+            let set = (base, NSFont.boldSystemFont(ofSize: pointSize),
+                       NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask),
+                       NSFont.monospacedSystemFont(ofSize: max(9, pointSize - 1), weight: .regular))
+            fonts[pointSize] = set
+            return set
+        }()
         let textColor = dimmed ? NSColor.secondaryLabelColor : NSColor.labelColor
         let out = NSMutableAttributedString()
         for run in pretty.runs {
