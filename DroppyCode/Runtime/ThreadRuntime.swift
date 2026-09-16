@@ -1733,13 +1733,20 @@ final class ThreadRuntime {
             guard let id = entry.turnID, selectedIDs.contains(id), case .tool(let call) = entry.item.content else { return [] }
             return call.edits
         }
-        let touched: Set<String>? = selectedTurns.allSatisfy { $0.touchedPaths != nil }
-            ? Set(selectedTurns.flatMap { $0.touchedPaths ?? [] }.map { TouchedPaths.normalize($0, root: root) }) : nil
+        // Only the files this chat's turns reported count. A turn without a record (one cut off
+        // by a crash) contributes nothing rather than lifting the filter: the snapshot spans the
+        // whole checkout and would otherwise show every merge and other thread's work since the
+        // chat began.
+        let touched = Set(selectedTurns.flatMap { $0.touchedPaths ?? [] }.map { TouchedPaths.normalize($0, root: root) })
+        var span: (first: String, last: String)?
+        if let ended = selectedTurns.lastIndex(where: { $0.endCheckpoint != nil }),
+           let first = selectedTurns[...ended].first(where: { $0.baseCheckpoint != nil })?.baseCheckpoint,
+           let last = selectedTurns[ended].endCheckpoint {
+            span = (first, last)
+        }
         let task = Task { () -> [DiffFile] in
             var snapshot: String?
-            if let first = selectedTurns.first?.baseCheckpoint, let last = selectedTurns.last?.endCheckpoint {
-                snapshot = try? await git.diff(from: first, to: last)
-            }
+            if let span { snapshot = try? await git.diff(from: span.first, to: span.last) }
             let providerPatch = providerFiles == nil ? selectedTurns.compactMap(\.providerDiff).joined(separator: "\n") : ""
             return await Self.resolveDiff(repositoryRoot: repository.value.path, snapshot: snapshot, providerPatch: providerPatch, providerFiles: providerFiles, edits: edits, touched: touched, root: root)
         }
@@ -1748,7 +1755,7 @@ final class ThreadRuntime {
     }
 
     @concurrent
-    private nonisolated static func resolveDiff(repositoryRoot: String, snapshot: String?, providerPatch: String, providerFiles: [DiffFile]?, edits: [FileEdit], touched: Set<String>?, root: String) async -> [DiffFile] {
+    private nonisolated static func resolveDiff(repositoryRoot: String, snapshot: String?, providerPatch: String, providerFiles: [DiffFile]?, edits: [FileEdit], touched: Set<String>, root: String) async -> [DiffFile] {
         TurnDiff.merge(snapshot: snapshot.map(DiffParser.parse), providerPatch: providerPatch, edits: edits, touched: touched, root: root, repositoryRoot: repositoryRoot, providerFiles: providerFiles)
     }
 
