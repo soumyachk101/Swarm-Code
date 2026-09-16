@@ -306,6 +306,8 @@ final class ThreadRuntime {
     /// it split the turn's rows into two blocks with one id, and the second, the running
     /// tail, stopped drawing.
     @ObservationIgnored private var closingTurnID: UUID?
+    /// The pair whose heads-provider fallback was already noted in this timeline.
+    @ObservationIgnored private var hydraFallbackNoted: UUID?
     /// The turn a new row is filed under.
     private var turnIDForNewRows: UUID? { currentTurnID ?? closingTurnID }
     @ObservationIgnored private var resumeAnchor: String?
@@ -1692,6 +1694,10 @@ final class ThreadRuntime {
         } else if status == .completed, flushHydraReports() {
             continues = true
         } else {
+            // A turn that failed or was stopped with a block in its reply: the block leaves
+            // the reply and a note says no heads went out, rather than the raw block
+            // sitting there as if something were coming.
+            if status != .completed { dropDelegationBlock(for: turnID, status: status) }
             continues = drainFollowUps(after: status)
         }
         // Reports that came in while this turn ran are heard whatever became of it. Only a
@@ -1999,13 +2005,35 @@ final class ThreadRuntime {
         case turnStarted
     }
 
+    /// A reply row of a turn that did not finish, holding a block: the block leaves it,
+    /// and the timeline says the heads never went out.
+    private func dropDelegationBlock(for turnID: UUID, status: TurnStatus) {
+        guard let entry = entries.last(where: { $0.turnID == turnID && $0.kind == .assistant && Self.holdsDelegationBlock($0) }),
+              case .assistant(var message) = entry.item.content else { return }
+        message.text = HydraPrompts.withoutDelegationBlock(message.text)
+        if message.text.isEmpty { message.text = "Asked for heads." }
+        entry.item.content = .assistant(message)
+        saveRevision += 1
+        scheduleSave()
+        appendHydraNote("Hydra sent no heads: the turn \(status == .interrupted ? "was stopped" : "failed") before they could go out. Ask again to send them.")
+    }
+
+    private static func holdsDelegationBlock(_ entry: TimelineEntry) -> Bool {
+        guard case .assistant(let message) = entry.item.content else { return false }
+        return HydraPrompts.hasDelegationBlock(in: message.text)
+    }
+
     /// A reply on any provider may end in a delegation block: its tasks go out as
     /// Droppy-run heads, up to the pair's limit at a time, and the block leaves the reply.
     /// A block Droppy Code cannot read leaves the reply as well, and the lead hears so in
     /// a turn of its own: a block never stays in a reply doing nothing.
     private func spawnDelegatedHeads(for turnID: UUID) -> DelegationOutcome {
+        // The row holding the block: the last reply row that has one, since a reply can
+        // come as several rows with tool calls between them and the block may sit in any
+        // of them; with none, the last reply row (which may be empty of blocks).
         guard let app, let thread, let launch = app.hydraLaunch(for: thread),
-              let entry = entries.last(where: { $0.turnID == turnID && $0.kind == .assistant }),
+              let entry = entries.last(where: { $0.turnID == turnID && $0.kind == .assistant && Self.holdsDelegationBlock($0) })
+                ?? entries.last(where: { $0.turnID == turnID && $0.kind == .assistant }),
               case .assistant(var message) = entry.item.content else { return .none }
         guard let delegations = HydraPrompts.delegations(in: message.text) else {
             guard HydraPrompts.hasDelegationBlock(in: message.text) else { return .none }
@@ -2080,6 +2108,12 @@ final class ThreadRuntime {
     private func spawnWaitingHeads(launch: HydraLaunch? = nil) {
         guard let app, let thread, !hydraWaiting.isEmpty else { return }
         let launch = launch ?? app.hydraLaunch(for: thread)
+        // Heads not on the provider the pair names (it is off or not installed): said once
+        // per job, in the lead's timeline, rather than never.
+        if let pair = app.hydraPair(for: thread), let note = app.hydraHeadsFallbackNote(of: pair), hydraFallbackNoted != pair.id {
+            hydraFallbackNoted = pair.id
+            appendHydraNote("Hydra: \(note)")
+        }
         while !hydraWaiting.isEmpty, launch?.hasRoom(running: app.runningDroppyHeads(of: threadID)) ?? true {
             let next = hydraWaiting.removeFirst()
             let delegation = next.delegation

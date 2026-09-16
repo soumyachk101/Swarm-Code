@@ -315,6 +315,11 @@ final class AntigravitySession: ProviderSession {
             onEvent?(.turnCompleted(status: .interrupted, error: nil))
         } else {
             switch result["status"]?.string {
+            case "WAITING" where !denied.isEmpty:
+                // Stopped for a permission nobody could grant headless, with actions held
+                // back: reported as a failure so a head's lead hears it was starved of
+                // permissions rather than reading a clean completion.
+                onEvent?(.turnCompleted(status: .failed, error: "Antigravity held back \(denied.joined(separator: ", ")) waiting for a permission it could not ask for. Use Full access for this chat."))
             case "SUCCESS", "WAITING":
                 // WAITING: the agent stopped to ask something it cannot ask
                 // headless; the turn is over and the reply says what it needs.

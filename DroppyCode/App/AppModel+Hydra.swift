@@ -211,6 +211,15 @@ extension AppModel {
         return provider
     }
 
+    /// Why a pair's heads are not on the provider the pair names, in a sentence for the
+    /// lead's timeline, or nil when they are. Read when heads go out, so the user hears
+    /// once per job rather than never (the fallback used to be silent).
+    func hydraHeadsFallbackNote(of pair: HydraPair) -> String? {
+        guard let provider = pair.workerProvider, provider != pair.provider, hydraHeadsProvider(of: pair) == pair.provider else { return nil }
+        let reason = providers.status(provider).isInstalled ? "is switched off in Settings" : "is not installed on this Mac"
+        return "The pair's heads run on \(pair.provider.displayName) for now: \(provider.displayName) \(reason)."
+    }
+
     /// The effort heads inherit from a lead when the pair leaves it open: medium when
     /// the lead thinks above medium on a model with a medium, since a head's brief is a
     /// bounded task and the lead keeps the judgement; the lead's own effort at medium or
@@ -411,7 +420,13 @@ extension AppModel {
             provider: headsProvider,
             model: native?.model ?? launch?.workerModel ?? (elsewhere ? providers.defaultModel(for: headsProvider)?.id : parent.model),
             effort: launch?.workerEffort ?? (elsewhere ? nil : parent.effort),
-            runtimeMode: parent.runtimeMode,
+            // A Droppy-run head works in its own copy under a brief that forbids git and
+            // build-output work, and its landing is a patch the lead reviews: nobody sits
+            // at its chat to answer a permission prompt, so it runs with full access. Left
+            // on the lead's supervised mode, a head stalled on its first gated tool until
+            // the watchdog stopped it. A native head lives in the lead's session and takes
+            // the lead's mode.
+            runtimeMode: kind == .droppy ? .fullAccess : parent.runtimeMode,
             fastMode: false
         )
         head.parentThreadID = parentID
