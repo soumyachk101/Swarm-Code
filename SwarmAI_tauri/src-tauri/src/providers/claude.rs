@@ -2,12 +2,11 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::session::{
-    ProviderError, ProviderEvent, ProviderSession, SessionConfiguration, SessionStatus,
-    TurnInput,
+    ProviderError, ProviderSession, SessionConfiguration, SessionStatus, TurnInput,
 };
-use crate::models::provider::ProviderKind;
-use crate::models::{AgentSpawn, ApprovalRequest, ContextUsage, ModelOption, SlashCommand, ToolCall, ToolUpdate, TodoStep, Notice};
-use crate::types::TokenSpendTracker;
+use crate::models::provider::{ModelOption, ProviderKind, SlashCommand};
+use crate::models::timeline::{ContextUsage, Notice, NoticeLevel};
+use crate::runtime::thread_runtime::{AgentSpawn, ApprovalRequest, ProviderEvent, ToolCall, ToolUpdate};
 
 // ---------------------------------------------------------------------------
 // ClaudeSession
@@ -39,8 +38,6 @@ pub struct ClaudeSession {
     turn_active: bool,
     interrupt_requested: bool,
     is_stopping: bool,
-    spend_tracker: TokenSpendTracker,
-
     // Hydra / multi-agent state
     main_stream: StreamState,
     agent_streams: std::collections::HashMap<String, StreamState>,
@@ -92,7 +89,6 @@ impl ClaudeSession {
             turn_active: false,
             interrupt_requested: false,
             is_stopping: false,
-            spend_tracker: TokenSpendTracker::default(),
             main_stream: StreamState::default(),
             agent_streams: std::collections::HashMap::new(),
             agents_by_task: std::collections::HashMap::new(),
@@ -335,7 +331,7 @@ impl ProviderSession for ClaudeSession {
             "parent_tool_use_id": serde_json::Value::Null,
         });
 
-        self.write_line(&message)?;
+        self.write_line(&message).await?;
         self.turn_active = true;
         self.interrupt_requested = false;
         self.emit(ProviderEvent::turn_started(None));
@@ -386,11 +382,11 @@ impl ProviderSession for ClaudeSession {
                 "content": [{"type": "text", "text": "/compact"}],
             },
             "parent_tool_use_id": serde_json::Value::Null,
-        }))?;
+        })).await?;
         Ok(())
     }
 
-    fn resolve_approval(&mut self, request_id: String, option_id: String) {
+    async fn resolve_approval(&mut self, request_id: String, option_id: String) {
         let pending = match self.pending_tools.remove(&request_id) {
             Some(p) => p,
             None => return,
@@ -438,7 +434,7 @@ impl ProviderSession for ClaudeSession {
         self.emit(ProviderEvent::request_resolved(request_id));
     }
 
-    fn answer_question(
+    async fn answer_question(
         &mut self,
         request_id: String,
         answers: std::collections::HashMap<String, Vec<String>>,
@@ -512,7 +508,7 @@ impl ClaudeSession {
             "request_id": request_id,
             "request": request,
         });
-        self.write_line(&wire)?;
+        self.write_line(&wire).await?;
 
         match rx.await {
             Ok(val) => Ok(val),
@@ -520,15 +516,16 @@ impl ClaudeSession {
         }
     }
 
-    fn write_line(&mut self, value: &serde_json::Value) -> Result<(), ProviderError> {
+    async fn write_line(&mut self, value: &serde_json::Value) -> Result<(), ProviderError> {
+        use tokio::io::AsyncWriteExt;
         let mut writer = self.stdin_writer.as_mut()
             .ok_or_else(|| ProviderError::not_running())?;
         let line = serde_json::to_string(value)
             .map_err(|e| ProviderError::failed(format!("JSON serialization: {}", e)))?;
-        use std::io::Write;
-        writeln!(writer, "{}", line)
+        let bytes = format!("{}\n", line);
+        writer.write_all(bytes.as_bytes()).await
             .map_err(|e| ProviderError::failed(format!("Write error: {}", e)))?;
-        writer.flush()
+        writer.flush().await
             .map_err(|e| ProviderError::failed(format!("Flush error: {}", e)))?;
         Ok(())
     }
@@ -548,7 +545,7 @@ impl ClaudeSession {
             Ok(result) => {
                 let models: Vec<ModelOption> = result.get("models")
                     .and_then(|m| m.as_array())
-                    .unwrap_or(&[])
+                    .map_or(&[], |v| v)
                     .iter()
                     .filter_map(|entry| {
                         let value = entry.get("value")?.as_str()?;
@@ -558,7 +555,7 @@ impl ClaudeSession {
                             detail: entry.get("description").and_then(|d| d.as_str()).map(|s| s.to_string()),
                             efforts: entry.get("supportedEffortLevels")
                                 .and_then(|e| e.as_array())
-                                .unwrap_or(&[])
+                                .map_or(&[], |v| v)
                                 .iter()
                                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                                 .collect(),
@@ -590,14 +587,10 @@ impl ClaudeSession {
             None => return,
         };
 
-        let stdout = match self.stdout_reader.take() {
+        let reader = match self.stdout_reader.take() {
             Some(s) => s,
             None => return,
         };
-
-        self.stdout_reader = Some(stdout); // put it back, we'll consume via lines
-
-        let reader = self.stdout_reader.take().unwrap();
 
         self.read_handle = Some(tokio::spawn(async move {
             let mut line_reader = tokio::io::AsyncBufReadExt::lines(
@@ -608,14 +601,14 @@ impl ClaudeSession {
                 match line_reader.next_line().await {
                     Ok(Some(line)) => {
                         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) {
-                            Self::dispatch_message(&value, &handler);
+                            ClaudeSession::dispatch_message(&value, &handler);
                         }
                     }
                     Ok(None) => break,
                     Err(_) => break,
                 }
             }
-        });
+        }));
     }
 
     fn dispatch_message(message: &serde_json::Value, handler: &Arc<dyn Fn(ProviderEvent) + Send + Sync>) {

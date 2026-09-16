@@ -812,8 +812,6 @@ impl PlanLimitsReader {
     }
 }
 
-use std::sync::{Arc, Mutex};
-
 /// A probe that returns plan limits for a provider. The host application
 /// sets one of these per-provider to wire the reader into its real network
 /// or subprocess stack.

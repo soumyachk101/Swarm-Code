@@ -63,7 +63,7 @@ pub async fn test_provider(
  }).collect();
  (true, "Provider is configured".to_string(), infos)
  } else {
- (false, format!("Provider not configured: {}", status.last_error.as_deref().unwrap_or("unknown")), vec![])
+ (false, format!("Provider not available: {}", status.error.as_deref().unwrap_or("unknown")), vec![])
  }
  };
  let elapsed = start.elapsed().as_millis() as u64;

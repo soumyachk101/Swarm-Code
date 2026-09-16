@@ -9,9 +9,10 @@
 //!   plays when a turn finishes.
 
 use std::io::Cursor;
-use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::time::Duration;
 
+use parking_lot::Mutex;
 use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink};
 
 // ---------------------------------------------------------------------------

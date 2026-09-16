@@ -198,6 +198,12 @@ pub struct ShortcutManager {
     id_counter: Arc<RwLock<u32>>,
 }
 
+impl std::fmt::Debug for GlobalHotKeyManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("GlobalHotKeyManager")
+    }
+}
+
 impl ShortcutManager {
     /// Create a new ShortcutManager.  The global hotkey manager is initialised
     /// so that registrations take effect immediately.

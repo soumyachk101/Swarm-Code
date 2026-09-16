@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::models::provider::{ModelOption, ProviderKind, ProviderType};
-use crate::providers::session::{ProviderError, ProviderSession, SessionStatus};
+use crate::providers::session::{ProviderError, ProviderSession};
 use crate::providers::plan_limits::PlanLimits;
 use crate::types::{ProviderCredits, ProviderTestResult};
 
@@ -989,12 +989,9 @@ impl ProviderRegistry {
         })
     }
 
-    /// Get statuses for all providers.
-    pub fn all_statuses(&self) -> Vec<(ProviderKind, ProviderStatus)> {
-        ProviderKind::ALL
-            .iter()
-            .map(|&k| (k, self.status(k)))
-            .collect()
+    /// Get all provider statuses as (kind, status) pairs.
+    pub fn statuses(&self) -> Vec<(ProviderKind, ProviderStatus)> {
+        self.all_statuses()
     }
 
     /// Update the runtime status for a provider.
