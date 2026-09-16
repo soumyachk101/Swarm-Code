@@ -300,6 +300,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = iordv.droppycode;
 				PRODUCT_MODULE_NAME = DroppyCode;
 				PRODUCT_NAME = "Droppy Code";
+				SWIFT_OBJC_BRIDGING_HEADER = "DroppyCode/Support/DroppyCode-Bridging-Header.h";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -323,6 +324,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = iordv.droppycode.dev;
 				PRODUCT_MODULE_NAME = DroppyCode;
 				PRODUCT_NAME = "Droppy Code Dev";
+				SWIFT_OBJC_BRIDGING_HEADER = "DroppyCode/Support/DroppyCode-Bridging-Header.h";
 				SDKROOT = macosx;
 			};
 			name = Debug;

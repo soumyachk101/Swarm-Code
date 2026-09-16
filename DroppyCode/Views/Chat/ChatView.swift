@@ -104,6 +104,17 @@ struct ChatView: View {
                         JumpToLatestButton(scrollState: scrollState)
                     }
                     .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { composerAreaHeight = $0 }
+                    .onChange(of: composerAreaHeight) { oldValue, newValue in
+                        // The area growing (the queued follow-ups tab expanding, an
+                        // approval card arriving) shrinks the timeline's viewport from its
+                        // bottom edge; snap the conversation's end to the new edge so the
+                        // last message stays visible above it. Nothing on shrink: a pinned
+                        // reader is re-pinned by the timeline's own geometry branch. Not
+                        // while the window is being dragged, and never off the first
+                        // measurement or a thread switch's fresh scroll state.
+                        guard newValue > oldValue + 0.5, !liveResize.isActive, oldValue > 0 else { return }
+                        scrollState.jumpToLatest()
+                    }
                     .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !holds, animatesWidth: true))
             }
             .overlay(alignment: .top) {
