@@ -561,13 +561,10 @@ final class CodexSession: ProviderSession {
             let brief = item["prompt"]?.string.map { TextCleanup.singleLine($0, limit: 90) }
             return ToolCall(kind: .agent, title: brief ?? verb, detail: brief == nil ? nil : verb)
         case "subAgentActivity":
-            let activity = switch item["kind"]?.string {
-            case "started": "started"
-            case "completed": "finished"
-            case "interrupted": "was stopped"
-            default: "reported"
-            }
-            return ToolCall(kind: .agent, title: "Head \(activity)", detail: item["agentPath"]?.string)
+            // The lead's notes on a head starting, finishing or being stopped drive the
+            // head's own status (see `describeHeads`); as rows they only doubled the
+            // head's report pill as "Delegated Head finished", so they draw nothing.
+            return nil
         case "imageView":
             return ToolCall(kind: .read, title: ToolTitles.relativePath(item["path"]?.string ?? "Image", to: workingDirectory))
         case "imageGeneration":
