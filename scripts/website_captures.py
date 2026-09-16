@@ -9,7 +9,7 @@ The app runs once in its tour capture mode (see DroppyCode/Support/TourCaptures.
 it opens the real window over gradient backdrops with mock data, photographs the tour
 scenes (tour-*.png) and the site's composer scenes (web-*.png), and quits. This script
 then encodes every still as WebP at the site's sizes into build.noindex/website-tour
-(which mirrors the R2 tour/v4 prefix one to one) and uploads the set with immutable cache
+(which mirrors the R2 tour/v5 prefix one to one) and uploads the set with immutable cache
 headers, verifying each key afterwards. The site loads these stills straight from R2,
 so nothing under website/ is touched.
 
@@ -31,7 +31,7 @@ import urllib.request
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CAPTURES = ROOT / "build.noindex" / "website-captures"
 DERIVED = ROOT / "build.noindex" / "website"
-APP = DERIVED / "Build/Products/Debug/Droppy Code.app"
+APP = DERIVED / "Build/Products/Debug/Droppy Code Dev.app"
 OUT = ROOT / "website" / "assets" / "app"
 FFMPEG = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
 FFPROBE = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
@@ -41,11 +41,11 @@ SITE_ORIGIN = "https://droppy-releases.jordylegrand.workers.dev"
 
 # The tour run's output: stills photographed over gradient backdrops, already 16:10,
 # at the display's scale (2x). Encoded one to one into TOUR_OUT, which mirrors the R2
-# tour/v4 prefix, so the site serves them straight from R2 and nothing under website/ is
+# tour/v5 prefix, so the site serves them straight from R2 and nothing under website/ is
 # touched.
 TOUR_CAPTURES = ROOT / "build.noindex" / "tour-captures"
 TOUR_OUT = ROOT / "build.noindex" / "website-tour"
-R2_TOUR_PREFIX = "site-assets/droppy-code/tour/v4"
+R2_TOUR_PREFIX = "site-assets/droppy-code/tour/v5"
 TOUR_STILLS = {
     # name: (source still from the tour run, output width)
     "hero": ("web-hero", 2400),
@@ -62,6 +62,9 @@ TOUR_STILLS = {
     "plans": ("web-plans", 2080),
     "question": ("web-question", 2080),
     "queue": ("web-queue", 2080),
+    "slash": ("web-slash", 2080),
+    "quote": ("web-quote", 2080),
+    "notify": ("web-notify", 2080),
     "intro": ("web-intro", 2080),
 }
 # The four themes whose quadrants tile into one seamless themes still, in tile order:
