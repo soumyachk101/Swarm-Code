@@ -288,10 +288,11 @@ final class AppSettings {
 
     /// DeepSeek talks to its cloud API directly, so it needs an API key instead of a CLI login.
     /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
-    /// Read once at launch and cached: a Keychain query on every render made Settings lag.
+    /// Read once, on the first ask, and cached: a Keychain query on every render made
+    /// Settings lag, and two of them before the window exists made launch wait on securityd.
     var deepseekAPIKeyInput: String {
         didSet {
-            guard deepseekAPIKeyInput != oldValue else { return }
+            guard !isReadingKeychain, deepseekAPIKeyInput != oldValue else { return }
             let kept = DeepSeekKeychain.setAPIKey(deepseekAPIKeyInput)
             storeAPIKeyFallback(kept ? "" : deepseekAPIKeyInput, forKey: Key.deepseekAPIKey)
         }
@@ -302,7 +303,7 @@ final class AppSettings {
     /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
     var metaAPIKeyInput: String {
         didSet {
-            guard metaAPIKeyInput != oldValue else { return }
+            guard !isReadingKeychain, metaAPIKeyInput != oldValue else { return }
             let kept = MetaKeychain.setAPIKey(metaAPIKeyInput)
             storeAPIKeyFallback(kept ? "" : metaAPIKeyInput, forKey: Key.metaAPIKey)
         }
@@ -311,9 +312,11 @@ final class AppSettings {
     /// Z.ai's GLM Coding Plan talks to https://api.z.ai/api/coding/paas/v4 directly,
     /// so it needs a ZAI_API_KEY instead of a CLI login.
     /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
+    /// Read once, on the first ask, and cached: a Keychain query on every render made
+    /// Settings lag, and two of them before the window exists made launch wait on securityd.
     var zaiAPIKeyInput: String {
         didSet {
-            guard zaiAPIKeyInput != oldValue else { return }
+            guard !isReadingKeychain, zaiAPIKeyInput != oldValue else { return }
             let kept = ZaiKeychain.setAPIKey(zaiAPIKeyInput)
             storeAPIKeyFallback(kept ? "" : zaiAPIKeyInput, forKey: Key.zaiAPIKey)
         }
@@ -324,10 +327,85 @@ final class AppSettings {
     /// with a UserDefaults fallback for a Mac whose Keychain refused it.
     var commandcodeAPIKeyInput: String {
         didSet {
-            guard commandcodeAPIKeyInput != oldValue else { return }
+            guard !isReadingKeychain, commandcodeAPIKeyInput != oldValue else { return }
             let kept = CommandCodeKeychain.setAPIKey(commandcodeAPIKeyInput)
             storeAPIKeyFallback(kept ? "" : commandcodeAPIKeyInput, forKey: Key.commandcodeAPIKey)
         }
+    }
+
+    @ObservationIgnored private var didReadKeychain = false
+    @ObservationIgnored private var isReadingKeychain = false
+
+    /// One provider's key as read: the Keychain's, or the plaintext copy in the defaults
+    /// for a Mac whose Keychain refused it.
+    private struct StoredKey: Sendable {
+        var value: String
+        var inKeychain: Bool
+
+        init(keychain: String, fallback: String) {
+            inKeychain = !keychain.isEmpty
+            value = inKeychain ? keychain : fallback
+        }
+    }
+
+    private struct StoredKeys: Sendable {
+        var deepseek: StoredKey
+        var meta: StoredKey
+        var zai: StoredKey
+        var commandcode: StoredKey
+    }
+
+    private var keyFallbacks: (deepseek: String, meta: String, zai: String, commandcode: String) {
+        (
+            defaults.string(forKey: Key.deepseekAPIKey) ?? "",
+            defaults.string(forKey: Key.metaAPIKey) ?? "",
+            defaults.string(forKey: Key.zaiAPIKey) ?? "",
+            defaults.string(forKey: Key.commandcodeAPIKey) ?? ""
+        )
+    }
+
+    /// One Keychain round trip per key.
+    private nonisolated static func readKeys(fallbacks: (deepseek: String, meta: String, zai: String, commandcode: String)) -> StoredKeys {
+        StoredKeys(
+            deepseek: StoredKey(keychain: DeepSeekKeychain.apiKey(fallback: ""), fallback: fallbacks.deepseek),
+            meta: StoredKey(keychain: MetaKeychain.apiKey(fallback: ""), fallback: fallbacks.meta),
+            zai: StoredKey(keychain: ZaiKeychain.apiKey(fallback: ""), fallback: fallbacks.zai),
+            commandcode: StoredKey(keychain: CommandCodeKeychain.apiKey(fallback: ""), fallback: fallbacks.commandcode)
+        )
+    }
+
+    /// The stored keys, from the Keychain the first time anything asks for one. The fill
+    /// bypasses the observers above, which write keys back to the Keychain and the
+    /// fallback: the fallback must never receive a key it did not already hold.
+    private func readKeychainIfNeeded() {
+        guard !didReadKeychain else { return }
+        fillKeys(Self.readKeys(fallbacks: keyFallbacks))
+    }
+
+    /// Reads the keys off the main thread once the window is up, so neither the first
+    /// frame nor the first ask waits on securityd. An ask that comes first reads for itself.
+    func loadKeychainInBackground() async {
+        guard !didReadKeychain else { return }
+        let fallbacks = keyFallbacks
+        let keys = await Task.detached(priority: .userInitiated) { Self.readKeys(fallbacks: fallbacks) }.value
+        fillKeys(keys)
+    }
+
+    private func fillKeys(_ keys: StoredKeys) {
+        guard !didReadKeychain else { return }
+        didReadKeychain = true
+        isReadingKeychain = true
+        deepseekAPIKeyInput = keys.deepseek.value
+        metaAPIKeyInput = keys.meta.value
+        zaiAPIKeyInput = keys.zai.value
+        commandcodeAPIKeyInput = keys.commandcode.value
+        isReadingKeychain = false
+        // Earlier builds kept a plaintext copy of every key in the defaults; one the
+        // Keychain holds needs none.
+        if keys.deepseek.inKeychain { defaults.removeObject(forKey: Key.deepseekAPIKey) }
+        if keys.meta.inKeychain { defaults.removeObject(forKey: Key.metaAPIKey) }
+        if keys.zai.inKeychain { defaults.removeObject(forKey: Key.zaiAPIKey) }
+        if keys.commandcode.inKeychain { defaults.removeObject(forKey: Key.commandcodeAPIKey) }
     }
 
     /// The plaintext copy in defaults, for a Mac whose Keychain refused the key; an empty
@@ -550,16 +628,11 @@ final class AppSettings {
         }
         projectsEnabled = defaults.object(forKey: Key.projectsEnabled) as? Bool ?? true
         projectActivationOverrides = Self.load([String: Bool].self, forKey: Key.projectActivationOverrides) ?? [:]
-        deepseekAPIKeyInput = DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "")
-        metaAPIKeyInput = MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "")
-        zaiAPIKeyInput = ZaiKeychain.apiKey(fallback: defaults.string(forKey: Key.zaiAPIKey) ?? "")
-        commandcodeAPIKeyInput = CommandCodeKeychain.apiKey(fallback: defaults.string(forKey: Key.commandcodeAPIKey) ?? "")
-        // Earlier builds kept a plaintext copy of every key in the defaults; one the
-        // Keychain holds needs none.
-        if !DeepSeekKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.deepseekAPIKey) }
-        if !MetaKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.metaAPIKey) }
-        if !ZaiKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.zaiAPIKey) }
-        if !CommandCodeKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.commandcodeAPIKey) }
+        // Read from the Keychain later (see `loadKeychainInBackground`), not before the first frame.
+        deepseekAPIKeyInput = ""
+        metaAPIKeyInput = ""
+        zaiAPIKeyInput = ""
+        commandcodeAPIKeyInput = ""
         binaryPaths = defaults.dictionary(forKey: Key.binaryPaths) as? [String: String] ?? [:]
         disabledProviders = defaults.stringArray(forKey: Key.disabledProviders) ?? []
         lastModels = defaults.dictionary(forKey: Key.models) as? [String: String] ?? [:]
@@ -718,6 +791,7 @@ final class AppSettings {
     /// (`DEEPSEEK_API_KEY` for DeepSeek, `MODEL_API_KEY` for Meta). Command Code's is
     /// optional: the CLI's own `cmd login` serves when it is empty.
     func apiKey(for provider: ProviderKind) -> String {
+        readKeychainIfNeeded()
         let stored: String = switch provider {
         case .deepseek: deepseekAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         case .meta: metaAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -736,7 +810,8 @@ final class AppSettings {
 
     /// Settings-bound value for the Providers page, per API-key provider.
     func apiKeyInput(for provider: ProviderKind) -> String {
-        switch provider {
+        readKeychainIfNeeded()
+        return switch provider {
         case .deepseek: deepseekAPIKeyInput
         case .meta: metaAPIKeyInput
         case .zai: zaiAPIKeyInput
@@ -746,6 +821,7 @@ final class AppSettings {
     }
 
     func setAPIKeyInput(_ value: String, for provider: ProviderKind) {
+        readKeychainIfNeeded()
         switch provider {
         case .commandcode: commandcodeAPIKeyInput = value
         case .deepseek: deepseekAPIKeyInput = value

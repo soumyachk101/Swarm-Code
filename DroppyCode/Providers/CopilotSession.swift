@@ -57,9 +57,11 @@ final class CopilotSession: ProviderSession {
     private var declinedTools: Set<String> = []
     /// Messages that streamed deltas, so an empty final message still ends the row.
     private var streamedMessages: Set<String> = []
-    /// Reasoning already shown from `assistant.reasoning` events, so the copy a
-    /// message carries in `reasoningText` is not shown a second time.
-    private var shownReasoning: Set<String> = []
+    /// Reasoning already shown from `assistant.reasoning` events (hashed, trimmed), so
+    /// the copy a message carries in `reasoningText` is not shown a second time.
+    private var shownReasoning: Set<Int> = []
+    /// The lead's event sink, made once rather than once per event.
+    private lazy var leadSink: (ProviderEvent) -> Void = { [weak self] event in self?.onEvent?(event) }
     /// The CLI's slash commands and their aliases, which `send` invokes instead of prompting with.
     private var commandNames: Set<String> = []
     /// The brief each `task` call gave its head, by call id, so a head that starts can be
@@ -212,9 +214,11 @@ final class CopilotSession: ProviderSession {
     }
 
     /// `/name rest…` at the start of a prompt, or nil for ordinary text.
+    private static let slashCommandPattern = #/^/([A-Za-z][\w-]*)(?:\s+([\s\S]*))?$/#
+
     static func slashCommand(in text: String) -> (name: String, input: String)? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let match = trimmed.firstMatch(of: #/^/([A-Za-z][\w-]*)(?:\s+([\s\S]*))?$/#) else { return nil }
+        guard let match = trimmed.firstMatch(of: slashCommandPattern) else { return nil }
         return (String(match.output.1), match.output.2.map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? "")
     }
 
@@ -495,7 +499,7 @@ final class CopilotSession: ProviderSession {
         let sink: (ProviderEvent) -> Void = if let agentID {
             { [weak self] event in self?.onEvent?(.agentEvent(agentID: agentID, event)) }
         } else {
-            { [weak self] event in self?.onEvent?(event) }
+            leadSink
         }
         let data = event["data"] ?? .null
         switch type {
@@ -546,7 +550,7 @@ final class CopilotSession: ProviderSession {
             handleToolResult(data, sink: sink)
         case "subagent.started":
             guard let agentID, configuration.hydra != nil else { break }
-            let brief = data["toolCallId"]?.string.flatMap { taskBriefs[$0] }
+            let brief = data["toolCallId"]?.string.flatMap { taskBriefs.removeValue(forKey: $0) }
             onEvent?(.agentStarted(AgentSpawn(
                 id: agentID,
                 taskID: nil,
@@ -609,9 +613,8 @@ final class CopilotSession: ProviderSession {
     private func handleMessage(_ data: JSONValue, sink: (ProviderEvent) -> Void) {
         guard let id = data["messageId"]?.string else { return }
         // Models that think without reasoning events carry the text on the message instead.
-        if let reasoning = data["reasoningText"]?.string, !reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           !shownReasoning.contains(Self.reasoningKey(reasoning)) {
-            shownReasoning.insert(Self.reasoningKey(reasoning))
+        if let reasoning = data["reasoningText"]?.string, reasoning.contains(where: { !$0.isWhitespace }),
+           shownReasoning.insert(Self.reasoningKey(reasoning)).inserted {
             sink(.reasoningCompleted(id: "\(id)-reasoning", text: reasoning))
         }
         let content = data["content"]?.string ?? ""
@@ -663,6 +666,12 @@ final class CopilotSession: ProviderSession {
     private func finishTurn(aborted: Bool) {
         guard turnActive else { return }
         turnActive = false
+        // Every call of the turn has had its result; the names, declines, briefs and shown
+        // reasoning were for those.
+        toolNames.removeAll()
+        declinedTools.removeAll()
+        taskBriefs.removeAll()
+        shownReasoning.removeAll()
         cancelPendingRequests()
         let error = turnError
         turnError = nil
@@ -996,10 +1005,11 @@ final class CopilotSession: ProviderSession {
     /// The files an `apply_patch` envelope touches: its `*** Update|Add|Delete File:` headers.
     static func patchPaths(_ patch: String) -> [String] {
         var paths: [String] = []
+        var seen: Set<String> = []
         for line in patch.split(whereSeparator: \.isNewline) {
             for prefix in ["*** Update File: ", "*** Add File: ", "*** Delete File: "] where line.hasPrefix(prefix) {
                 let path = line.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces)
-                if !path.isEmpty, !paths.contains(path) { paths.append(path) }
+                if !path.isEmpty, seen.insert(path).inserted { paths.append(path) }
             }
         }
         return paths
@@ -1007,10 +1017,12 @@ final class CopilotSession: ProviderSession {
 
     /// `update_todo` hands over a markdown checklist: `- [x]` done, `- [ ]` pending,
     /// anything else in the brackets in progress.
+    private static let todoLinePattern = #/^(?:[-*+]|\d+[.)])\s*\[(.?)\]\s*(.+)$/#
+
     static func todos(from markdown: String) -> [TodoStep] {
         markdown.split(whereSeparator: \.isNewline).compactMap { line in
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard let match = trimmed.firstMatch(of: #/^(?:[-*+]|\d+[.)])\s*\[(.?)\]\s*(.+)$/#) else { return nil }
+            guard let match = trimmed.firstMatch(of: todoLinePattern) else { return nil }
             let status: TodoStep.Status = switch match.output.1.lowercased() {
             case "x": .done
             case " ", "": .pending
@@ -1020,8 +1032,8 @@ final class CopilotSession: ProviderSession {
         }
     }
 
-    private static func reasoningKey(_ text: String) -> String {
-        text.trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func reasoningKey(_ text: String) -> Int {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).hashValue
     }
 
     private static func humanize(_ name: String) -> String {

@@ -46,6 +46,8 @@ final class CodexSession: ProviderSession {
     private var headThreads: Set<String> = []
     private var headTurns: [String: String] = [:]
     private var headSpend: [String: TokenSpendTracker] = [:]
+    /// The lead's event sink, made once rather than once per notification.
+    private lazy var leadSink: (ProviderEvent) -> Void = { [weak self] event in self?.onEvent?(event) }
 
     init(configuration: SessionConfiguration) {
         self.configuration = configuration
@@ -70,40 +72,27 @@ final class CodexSession: ProviderSession {
             connection.onClose = { self?.handleClose($0) }
         }
         self.connection = connection
-
-        let policy = policySettings(configuration.runtimeMode)
-        var params: [String: JSONValue] = [
-            "cwd": .string(workingDirectory),
-            "approvalPolicy": policy.approvalPolicy,
-            "sandbox": policy.sandbox,
-            "approvalsReviewer": policy.reviewer,
-        ]
-        if let model = configuration.model { params["model"] = .string(model) }
-        if let hydra = configuration.hydra {
-            if hydra.runsNatively {
-                params["config"] = .object(HydraPrompts.codexConfig(hydra))
-                params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))
-            } else {
-                // Heads on another provider are Droppy-run: the lead asks for them with the
-                // delegation block, and Codex's own agents are switched off for the thread,
-                // whatever the user's config enables. Told only in words, a lead still
-                // reached for spawn_agent, ran its heads on itself and the pair's model never
-                // saw them.
-                params["config"] = ["features": ["multi_agent": false]]
-                params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
+        var started = false
+        defer {
+            if !started {
+                connection.close()
+                self.connection = nil
             }
         }
+        let params = threadParameters
 
         if let resumeID = configuration.resumeID {
             var resume = params
             resume["threadId"] = .string(resumeID)
             resume["excludeTurns"] = true
-            if let result = try? await connection.request("thread/resume", .object(resume)),
-               let id = result["thread"]?["id"]?.string {
-                threadID = id
-                activeModel = result["model"]?.string
-                return id
+            let result = try await connection.request("thread/resume", .object(resume))
+            guard let id = result["thread"]?["id"]?.string, id == resumeID else {
+                throw ProviderError.failed("Codex could not resume the original conversation.")
             }
+            threadID = id
+            activeModel = result["model"]?.string
+            started = true
+            return id
         }
         let result = try await connection.request("thread/start", .object(params))
         guard let id = result["thread"]?["id"]?.string else {
@@ -111,6 +100,7 @@ final class CodexSession: ProviderSession {
         }
         threadID = id
         activeModel = result["model"]?.string
+        started = true
         return id
     }
 
@@ -167,6 +157,32 @@ final class CodexSession: ProviderSession {
             "threadId": .string(threadID),
             "numTurns": .int(turns),
         ])
+    }
+
+    private var threadParameters: [String: JSONValue] {
+        let policy = policySettings(configuration.runtimeMode)
+        var params: [String: JSONValue] = [
+            "cwd": .string(workingDirectory),
+            "approvalPolicy": policy.approvalPolicy,
+            "sandbox": policy.sandbox,
+            "approvalsReviewer": policy.reviewer,
+        ]
+        if let model = configuration.model { params["model"] = .string(model) }
+        if let hydra = configuration.hydra {
+            if hydra.runsNatively {
+                params["config"] = .object(HydraPrompts.codexConfig(hydra))
+                params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))
+            } else {
+                // Heads on another provider are Droppy-run: the lead asks for them with the
+                // delegation block, and Codex's own agents are switched off for the thread,
+                // whatever the user's config enables. Told only in words, a lead still
+                // reached for spawn_agent, ran its heads on itself and the pair's model never
+                // saw them.
+                params["config"] = ["features": ["multi_agent": false]]
+                params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
+            }
+        }
+        return params
     }
 
     func resolveApproval(_ requestID: String, optionID: String) {
@@ -299,10 +315,20 @@ final class CodexSession: ProviderSession {
         let connection = JSONRPCConnection(process: process, sendsVersion: false)
         configure(connection)
         try connection.start()
-        _ = try await connection.request("initialize", [
-            "clientInfo": ["name": "droppy-code", "title": "Droppy Code", "version": .string(AppInfo.version)],
-            "capabilities": ["experimentalApi": true],
-        ])
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(20))
+            if !Task.isCancelled { connection.close() }
+        }
+        defer { watchdog.cancel() }
+        do {
+            _ = try await connection.request("initialize", [
+                "clientInfo": ["name": "droppy-code", "title": "Droppy Code", "version": .string(AppInfo.version)],
+                "capabilities": ["experimentalApi": true],
+            ])
+        } catch {
+            connection.close()
+            throw error
+        }
         connection.notify("initialized")
         return connection
     }
@@ -321,7 +347,7 @@ final class CodexSession: ProviderSession {
             target = .head(eventThread)
         }
         let sink: (ProviderEvent) -> Void = switch target {
-        case .lead: { [weak self] event in self?.onEvent?(event) }
+        case .lead: leadSink
         case .head(let id): { [weak self] event in self?.onEvent?(.agentEvent(agentID: id, event)) }
         }
         switch method {

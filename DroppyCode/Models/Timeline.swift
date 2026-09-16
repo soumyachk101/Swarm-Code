@@ -94,6 +94,16 @@ struct Attachment: Codable, Hashable, Identifiable, Sendable {
 
     var url: URL { URL(fileURLWithPath: path) }
     var isImage: Bool { mimeType.hasPrefix("image/") }
+
+    /// The images among the attachments with their bytes as base64, read and encoded off
+    /// the main actor: a photo is megabytes, and its string a third larger again.
+    @concurrent
+    static func base64Images(_ attachments: [Attachment]) async -> [(image: Attachment, base64: String)] {
+        attachments.compactMap { attachment in
+            guard attachment.isImage, let data = try? Data(contentsOf: attachment.url) else { return nil }
+            return (attachment, data.base64EncodedString())
+        }
+    }
 }
 
 struct AssistantMessage: Codable, Hashable, Sendable {

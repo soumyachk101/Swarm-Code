@@ -8,6 +8,7 @@ final class DeepSeekSession: ProviderSession {
     var onEvent: ((ProviderEvent) -> Void)?
 
     private let configuration: SessionConfiguration
+    private let fileTools: NativeFileTools
     private var sessionID: String?
     private var messages: [JSONValue] = []
     private var runtimeMode: RuntimeMode
@@ -17,14 +18,13 @@ final class DeepSeekSession: ProviderSession {
     private var interrupted = false
     private var isStopping = false
     private var approveAllRemaining = false
+    /// The whole turn, so a stop reaches a tool still running and an approval still
+    /// waited on, not just the request in flight.
+    private var sendTask: Task<Void, Error>?
     private var roundTask: Task<StreamRound, Error>?
     /// The detached SSE drain for the in-flight round, so a stop cancels it
     /// directly instead of waiting for the next chunk to reach the consumer.
     private var sseDrain: Task<Void, Never>?
-    /// The tool running right now, in a task of its own so a stop can cancel it.
-    /// A shell command can hold the turn for two minutes, and nothing it produced
-    /// should reach the timeline or the history once the user has stopped the turn.
-    private var toolTask: Task<String, Never>?
     private var pendingApprovals: [String: CheckedContinuation<Bool, Never>] = [:]
 
     /// Runaway guard only. A turn used to stop after 12 rounds and report
@@ -144,6 +144,7 @@ final class DeepSeekSession: ProviderSession {
 
     init(configuration: SessionConfiguration) {
         self.configuration = configuration
+        fileTools = NativeFileTools(workingDirectory: configuration.workingDirectory.path)
         runtimeMode = configuration.runtimeMode
         interactionMode = configuration.interactionMode
         currentModel = configuration.model ?? "deepseek-v4-pro"
@@ -177,6 +178,24 @@ final class DeepSeekSession: ProviderSession {
     }
 
     func send(_ input: TurnInput) async throws {
+        guard sendTask == nil, sessionID != nil, !isStopping else { throw ProviderError.notRunning }
+        let task = Task {
+            defer { self.sendTask = nil }
+            try await self.performTurn(input)
+        }
+        sendTask = task
+        try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
+    }
+
+    private func performTurn(_ input: TurnInput) async throws {
+        guard !Task.isCancelled else {
+            await finishInterrupted()
+            return
+        }
         guard sessionID != nil, !isStopping else { throw ProviderError.notRunning }
         guard !apiKey.isEmpty else { throw ProviderError.notInstalled(.deepseek) }
         runtimeMode = input.runtimeMode
@@ -185,7 +204,7 @@ final class DeepSeekSession: ProviderSession {
         interrupted = false
         approveAllRemaining = false
 
-        let userContent = userContentValue(text: input.text, images: input.images)
+        let userContent = await userContentValue(text: input.text, images: input.images)
         messages.append(["role": "user", "content": userContent])
         trimHistory()
         onEvent?(.turnStarted(providerTurnID: nil))
@@ -200,6 +219,7 @@ final class DeepSeekSession: ProviderSession {
         var hitCeiling = false
         do {
             while !interrupted {
+                try Task.checkCancellation()
                 guard rounds < Self.maxRoundsPerTurn else { hitCeiling = true; break }
                 rounds += 1
                 // A head past its budget writes its report with no tools left to reach
@@ -265,15 +285,11 @@ final class DeepSeekSession: ProviderSession {
                     } else {
                         toolsSinceChange += 1
                     }
-                    let running = Task { [weak self] in await self?.executeTool(tool) ?? "" }
-                    toolTask = running
-                    let output = await running.value
-                    toolTask = nil
-                    // Stopped while the tool ran: its output is not recorded and no further
-                    // tool starts. A process already launched runs to its own end or its
-                    // timeout, since Shell.run cannot be cancelled, but nothing it produced
-                    // is said or remembered.
-                    if running.isCancelled || interrupted { shouldContinue = false; break }
+                    // The tool runs inside the turn's task: a stop cancels it with the turn,
+                    // an approval it is waiting on comes back declined, and a process it
+                    // launched is told to stop. Nothing it produced is said or remembered.
+                    let output = await executeTool(tool)
+                    if Task.isCancelled || interrupted { shouldContinue = false; break }
                     messages.append(["role": "tool", "tool_call_id": .string(tool.id), "content": .string(output)])
                     trimHistory()
                 }
@@ -286,7 +302,7 @@ final class DeepSeekSession: ProviderSession {
             onEvent?(.turnCompleted(status: .failed, error: error.localizedDescription))
             return
         } catch {
-            if interrupted {
+            if interrupted || Task.isCancelled {
                 await finishInterrupted()
             } else {
                 onEvent?(.turnCompleted(status: .failed, error: friendlyError(error.localizedDescription, statusCode: 0)))
@@ -294,7 +310,7 @@ final class DeepSeekSession: ProviderSession {
             return
         }
 
-        if interrupted {
+        if interrupted || Task.isCancelled {
             await finishInterrupted()
             return
         }
@@ -312,12 +328,11 @@ final class DeepSeekSession: ProviderSession {
 
     func interrupt() async {
         interrupted = true
+        sendTask?.cancel()
         roundTask?.cancel()
         roundTask = nil
         sseDrain?.cancel()
         sseDrain = nil
-        toolTask?.cancel()
-        toolTask = nil
         for (_, continuation) in pendingApprovals { continuation.resume(returning: false) }
         pendingApprovals.removeAll()
     }
@@ -348,12 +363,11 @@ final class DeepSeekSession: ProviderSession {
     func stop() {
         isStopping = true
         interrupted = true
+        sendTask?.cancel()
         roundTask?.cancel()
         roundTask = nil
         sseDrain?.cancel()
         sseDrain = nil
-        toolTask?.cancel()
-        toolTask = nil
         for (_, continuation) in pendingApprovals { continuation.resume(returning: false) }
         pendingApprovals.removeAll()
         sessionID = nil
@@ -366,10 +380,7 @@ final class DeepSeekSession: ProviderSession {
         // unanswered; either poisons every later request, so repair first.
         sanitizeHistory()
         let payload = requestPayload(model: model, effort: effort, withTools: withTools)
-        let task = Task<StreamRound, Error> { try await self.performStream(payload: payload) }
-        roundTask = task
-        defer { roundTask = nil }
-        return try await task.value
+        return try await performStream(payload: payload)
     }
 
     private func requestPayload(model: String, effort: String?, withTools: Bool = true) -> [String: JSONValue] {
@@ -380,7 +391,7 @@ final class DeepSeekSession: ProviderSession {
             "stream_options": ["include_usage": true],
         ]
         if withTools {
-            payload["tools"] = .array(toolDefinitions())
+            payload["tools"] = .array(Self.toolDefinitions)
             payload["tool_choice"] = "auto"
         }
         payload["thinking"] = ["type": "enabled"]
@@ -397,13 +408,19 @@ final class DeepSeekSession: ProviderSession {
         }
     }
 
+    @concurrent
+    private nonisolated static func encode(_ payload: [String: JSONValue]) async -> Data {
+        JSONValue.object(payload).data()
+    }
+
     private func performStream(payload: [String: JSONValue]) async throws -> StreamRound {
         var request = URLRequest(url: DeepSeekAPI.chatURL, timeoutInterval: 300)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.httpBody = JSONValue.object(payload).data()
+        // The whole history goes out every round; serializing it belongs off the main actor.
+        request.httpBody = await Self.encode(payload)
         if Task.isCancelled || interrupted { throw CancellationError() }
 
         let messageID = nextID("message")
@@ -590,8 +607,8 @@ final class DeepSeekSession: ProviderSession {
 
     // MARK: - Tools
 
-    private func toolDefinitions() -> [JSONValue] {
-        [
+    /// The same six tools every round, built once.
+    private static let toolDefinitions: [JSONValue] = [
             ["type": "function", "function": [
                 "name": "read_file",
                 "description": "Read a file inside the project. Path is relative to the project root. The whole file by default; for a big file (hundreds of lines) pass start_line and line_count to read just the part you need, and the result says how many lines the file has.",
@@ -627,7 +644,6 @@ final class DeepSeekSession: ProviderSession {
                 "parameters": ["type": "object", "properties": ["command": ["type": "string"]], "required": ["command"]],
             ]],
         ]
-    }
 
     private func executeTool(_ tool: PendingToolCall) async -> String {
         let args = JSONValue.parse(tool.arguments) ?? .object([:])
@@ -635,13 +651,13 @@ final class DeepSeekSession: ProviderSession {
         switch tool.name {
         case "read_file":
             let path = args["path"]?.string ?? ""
-            let call = ToolCall(kind: .read, title: displayPath(path))
+            let call = ToolCall(kind: .read, title: fileTools.displayPath(path))
             onEvent?(.toolStarted(id: callID, call: call))
-            guard await approveIfNeeded(kind: .read, title: "Read \(displayPath(path))", detail: path, toolItemID: nil) else {
+            guard await approveIfNeeded(kind: .read, title: "Read \(fileTools.displayPath(path))", detail: path, toolItemID: nil) else {
                 return declined(callID)
             }
             do {
-                let text = try readFile(path, startLine: args["start_line"]?.int, lineCount: args["line_count"]?.int)
+                let text = try await fileTools.readFile(path, startLine: args["start_line"]?.int, lineCount: args["line_count"]?.int)
                 onEvent?(.toolUpdated(id: callID, update: ToolUpdate(output: summary(text, limit: 4_000), status: .completed)))
                 return text
             } catch {
@@ -651,13 +667,13 @@ final class DeepSeekSession: ProviderSession {
         case "list_files":
             let path = args["path"]?.string ?? ""
             // Same shape as Claude's LS row: the folder is the subject.
-            let call = ToolCall(kind: .search, title: path.isEmpty ? (workingDirectory as NSString).lastPathComponent : displayPath(path))
+            let call = ToolCall(kind: .search, title: path.isEmpty ? (workingDirectory as NSString).lastPathComponent : fileTools.displayPath(path))
             onEvent?(.toolStarted(id: callID, call: call))
             guard await approveIfNeeded(kind: .search, title: call.title, detail: path, toolItemID: nil) else {
                 return declined(callID)
             }
             do {
-                let text = try listFiles(path, recursive: args["recursive"]?.bool ?? false)
+                let text = try await fileTools.listFiles(path, recursive: args["recursive"]?.bool ?? false)
                 onEvent?(.toolUpdated(id: callID, update: ToolUpdate(output: summary(text, limit: 4_000), status: .completed)))
                 return text
             } catch {
@@ -667,7 +683,7 @@ final class DeepSeekSession: ProviderSession {
         case "search_text":
             let pattern = args["pattern"]?.string ?? ""
             let path = args["path"]?.string ?? ""
-            let call = ToolCall(kind: .search, title: pattern.isEmpty ? "Search" : pattern, detail: path.isEmpty ? nil : displayPath(path))
+            let call = ToolCall(kind: .search, title: pattern.isEmpty ? "Search" : pattern, detail: path.isEmpty ? nil : fileTools.displayPath(path))
             onEvent?(.toolStarted(id: callID, call: call))
             guard await approveIfNeeded(kind: .search, title: "Search for “\(pattern)”", detail: path.isEmpty ? nil : path, toolItemID: nil) else {
                 return declined(callID)
@@ -679,20 +695,20 @@ final class DeepSeekSession: ProviderSession {
         case "write_file":
             let path = args["path"]?.string ?? ""
             let content = args["content"]?.string ?? ""
-            var call = ToolCall(kind: .edit, title: displayPath(path))
-            call.edits = [FileEdit(path: displayPath(path), old: "", new: content)]
+            var call = ToolCall(kind: .edit, title: fileTools.displayPath(path))
+            call.edits = [FileEdit(path: fileTools.displayPath(path), old: "", new: content)]
             onEvent?(.toolStarted(id: callID, call: call))
-            guard await approveIfNeeded(kind: .edit, title: "Write \(displayPath(path))", detail: nil, toolItemID: nil) else {
+            guard await approveIfNeeded(kind: .edit, title: "Write \(fileTools.displayPath(path))", detail: nil, toolItemID: nil) else {
                 return declined(callID)
             }
             do {
-                try writeFile(path: path, content: content)
+                try await fileTools.writeFile(path: path, content: content)
                 onEvent?(.toolUpdated(id: callID, update: ToolUpdate(
-                    output: "Wrote \(displayPath(path)) (\(content.utf8.count) bytes).",
+                    output: "Wrote \(fileTools.displayPath(path)) (\(content.utf8.count) bytes).",
                     status: .completed,
-                    edits: [FileEdit(path: displayPath(path), old: "", new: content)]
+                    edits: [FileEdit(path: fileTools.displayPath(path), old: "", new: content)]
                 )))
-                return "Wrote \(displayPath(path)) (\(content.utf8.count) bytes)."
+                return "Wrote \(fileTools.displayPath(path)) (\(content.utf8.count) bytes)."
             } catch {
                 onEvent?(.toolUpdated(id: callID, update: ToolUpdate(output: error.localizedDescription, status: .failed)))
                 return "Error: \(error.localizedDescription)"
@@ -701,20 +717,20 @@ final class DeepSeekSession: ProviderSession {
             let path = args["path"]?.string ?? ""
             let old = args["old_string"]?.string ?? args["old_text"]?.string ?? ""
             let new = args["new_string"]?.string ?? args["new_text"]?.string ?? ""
-            var call = ToolCall(kind: .edit, title: displayPath(path))
-            call.edits = [FileEdit(path: displayPath(path), old: old, new: new)]
+            var call = ToolCall(kind: .edit, title: fileTools.displayPath(path))
+            call.edits = [FileEdit(path: fileTools.displayPath(path), old: old, new: new)]
             onEvent?(.toolStarted(id: callID, call: call))
-            guard await approveIfNeeded(kind: .edit, title: "Edit \(displayPath(path))", detail: nil, toolItemID: nil) else {
+            guard await approveIfNeeded(kind: .edit, title: "Edit \(fileTools.displayPath(path))", detail: nil, toolItemID: nil) else {
                 return declined(callID)
             }
             do {
-                try editFile(path: path, old: old, new: new)
+                try await fileTools.editFile(path: path, old: old, new: new)
                 onEvent?(.toolUpdated(id: callID, update: ToolUpdate(
-                    output: "Edited \(displayPath(path)).",
+                    output: "Edited \(fileTools.displayPath(path)).",
                     status: .completed,
-                    edits: [FileEdit(path: displayPath(path), old: old, new: new)]
+                    edits: [FileEdit(path: fileTools.displayPath(path), old: old, new: new)]
                 )))
-                return "Edited \(displayPath(path))."
+                return "Edited \(fileTools.displayPath(path))."
             } catch {
                 onEvent?(.toolUpdated(id: callID, update: ToolUpdate(output: error.localizedDescription, status: .failed)))
                 return "Error: \(error.localizedDescription)"
@@ -773,58 +789,22 @@ final class DeepSeekSession: ProviderSession {
         await MainActor.run {
             self.onEvent?(.approval(ApprovalRequest(id: id, kind: approvalKind, title: title, detail: detail, options: options, toolItemID: toolItemID)))
         }
-        return await withCheckedContinuation { continuation in
-            pendingApprovals[id] = continuation
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard !Task.isCancelled, !interrupted else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                pendingApprovals[id] = continuation
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.pendingApprovals.removeValue(forKey: id)?.resume(returning: false)
+            }
         }
     }
 
     // MARK: - Local execution
-
-    private func resolveURL(_ path: String) throws -> URL {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ProviderError.failed("A file path is required.") }
-        let root = URL(fileURLWithPath: workingDirectory).standardizedFileURL
-        let candidate: URL = trimmed.hasPrefix("/") || trimmed.hasPrefix("~")
-            ? URL(fileURLWithPath: (trimmed as NSString).expandingTildeInPath)
-            : root.appendingPathComponent(trimmed)
-        let standardized = candidate.standardizedFileURL
-        guard standardized.path == root.path || standardized.path.hasPrefix(root.path + "/") else {
-            throw ProviderError.failed("That path is outside the project. Stay inside \(workingDirectory).")
-        }
-        return standardized
-    }
-
-    private func displayPath(_ path: String) -> String {
-        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return workingDirectory }
-        if trimmed.hasPrefix(workingDirectory) { return ToolTitles.relativePath(trimmed, to: workingDirectory) }
-        return trimmed
-    }
-
-    private func readFile(_ path: String, startLine: Int? = nil, lineCount: Int? = nil) throws -> String {
-        let url = try resolveURL(path)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            throw ProviderError.failed("No such file: \(displayPath(path)).")
-        }
-        let data = try Data(contentsOf: url)
-        guard data.count <= 1_000_000 else { throw ProviderError.failed("That file is too large to read (\(data.count) bytes).") }
-        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
-            throw ProviderError.failed("That file is not readable as text.")
-        }
-        // A slice of the file, when asked for: what it costs to read is what it costs to
-        // re-send every round after, so a big file is best read where it matters.
-        if startLine != nil || lineCount != nil {
-            let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            let first = max(1, startLine ?? 1)
-            guard first <= lines.count else { return "(the file has \(lines.count) lines; start_line \(first) is past the end)" }
-            let count = max(1, lineCount ?? 200)
-            let last = min(lines.count, first + count - 1)
-            let slice = lines[(first - 1)..<last].joined(separator: "\n")
-            return "(lines \(first)-\(last) of \(lines.count))\n" + slice
-        }
-        if text.count > 60_000 { return String(text.prefix(60_000)) + "\n…(truncated, \(text.count) chars total; read the rest with start_line and line_count)" }
-        return text
-    }
 
     /// Old tool results give way once history carries too much of them. Every round
     /// re-sends the whole history, and a result the model read twenty rounds ago is
@@ -836,71 +816,19 @@ final class DeepSeekSession: ProviderSession {
         var total = 0
         for (index, message) in messages.enumerated() where message["role"]?.string == "tool" {
             toolIndices.append(index)
-            total += message["content"]?.string?.count ?? 0
+            total += message["content"]?.string?.utf8.count ?? 0
         }
         guard total > Self.condenseHistoryAt else { return }
         for index in toolIndices.dropLast(Self.condenseKeepsRecent) {
             guard total > Self.condenseHistoryTo else { break }
             guard var message = messages[index].object, let content = message["content"]?.string,
-                  content.count > 1_200, !content.contains(Self.condensedMarker) else { continue }
+                  content.utf8.count > 1_200, !content.contains(Self.condensedMarker) else { continue }
             let kept = String(content.prefix(400))
-            let condensed = kept + "\n\(Self.condensedMarker) (\(content.count) characters); call the tool again if you need it]"
+            let condensed = kept + "\n\(Self.condensedMarker) (\(content.utf8.count) bytes); call the tool again if you need it]"
             message["content"] = .string(condensed)
             messages[index] = .object(message)
-            total -= content.count - condensed.count
+            total -= content.utf8.count - condensed.utf8.count
         }
-    }
-
-    private func writeFile(path: String, content: String) throws {
-        let url = try resolveURL(path)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard let data = content.data(using: .utf8) else { throw ProviderError.failed("Could not encode that content.") }
-        try data.write(to: url, options: .atomic)
-    }
-
-    private func editFile(path: String, old: String, new: String) throws {
-        guard !old.isEmpty else { throw ProviderError.failed("old_string must not be empty. Read the file first, then edit an exact block.") }
-        let url = try resolveURL(path)
-        let current = try String(contentsOf: url, encoding: .utf8)
-        let occurrences = current.components(separatedBy: old).count - 1
-        guard occurrences == 1 else {
-            if occurrences == 0 { throw ProviderError.failed("That exact text was not found in \(displayPath(path)). Read the file and copy it exactly.") }
-            throw ProviderError.failed("That text appears \(occurrences) times in \(displayPath(path)). Include more context so it matches once.")
-        }
-        try current.replacingOccurrences(of: old, with: new).write(to: url, atomically: true, encoding: .utf8)
-    }
-
-    private func listFiles(_ path: String, recursive: Bool) throws -> String {
-        let base: URL = path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? URL(fileURLWithPath: workingDirectory)
-            : try resolveURL(path)
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: base.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw ProviderError.failed("No such directory: \(displayPath(path.isEmpty ? workingDirectory : path)).")
-        }
-        let skipped: Set<String> = [".git", "node_modules", ".build", "build", "dist", "DerivedData", "Pods", "target", ".venv", "venv"]
-        var results: [String] = []
-        if recursive {
-            guard let enumerator = FileManager.default.enumerator(at: base, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles, .skipsPackageDescendants]) else {
-                return "(empty)"
-            }
-            while let url = enumerator.nextObject() as? URL {
-                if skipped.contains(url.lastPathComponent) { enumerator.skipDescendants(); continue }
-                if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { continue }
-                results.append(ToolTitles.relativePath(url.path, to: workingDirectory))
-                if results.count >= 300 { results.append("…(truncated)"); break }
-            }
-        } else {
-            let items = (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? []
-            for item in items.sorted() where !skipped.contains(item) && !item.hasPrefix(".DS_Store") {
-                var isDir: ObjCBool = false
-                let full = base.appendingPathComponent(item).path
-                FileManager.default.fileExists(atPath: full, isDirectory: &isDir)
-                results.append(ToolTitles.relativePath(full, to: workingDirectory) + (isDir.boolValue ? "/" : ""))
-                if results.count >= 300 { results.append("…(truncated)"); break }
-            }
-        }
-        return results.isEmpty ? "(empty)" : results.joined(separator: "\n")
     }
 
     private func searchText(pattern: String, path: String, regex: Bool) async -> String {
@@ -911,7 +839,7 @@ final class DeepSeekSession: ProviderSession {
         var args = ["-R", "-n", "-I", "--exclude-dir=.git", "--exclude-dir=node_modules", "--exclude-dir=.build", "--exclude-dir=build"]
         args += regex ? ["-E", trimmed] : ["-F", trimmed]
         args.append(path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "." : path)
-        guard let result = try? await Shell.run(grep, args, in: directory, environment: LoginEnvironment.current, timeout: 30) else {
+        guard let result = try? await Shell.run(grep, args, in: directory, environment: LoginEnvironment.current, timeout: 30, outputLimit: 64_000) else {
             return "Search failed."
         }
         let output = (result.output + result.errorOutput).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -926,7 +854,7 @@ final class DeepSeekSession: ProviderSession {
         guard !trimmed.isEmpty else { return ("Error: a command is required.", 1) }
         let shell = URL(fileURLWithPath: "/bin/zsh")
         let directory = URL(fileURLWithPath: workingDirectory)
-        guard let result = try? await Shell.run(shell, ["-lc", trimmed], in: directory, environment: LoginEnvironment.current, timeout: 120) else {
+        guard let result = try? await Shell.run(shell, ["-lc", trimmed], in: directory, environment: LoginEnvironment.current, timeout: 120, outputLimit: 24_000) else {
             return ("The command could not start.", 1)
         }
         var output = (result.output + (result.errorOutput.isEmpty ? "" : "\n" + result.errorOutput)).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -960,7 +888,7 @@ final class DeepSeekSession: ProviderSession {
         """
     }
 
-    private func userContentValue(text: String, images: [Attachment]) -> JSONValue {
+    private func userContentValue(text: String, images: [Attachment]) async -> JSONValue {
         let usable = images.filter(\.isImage).prefix(4)
         guard !usable.isEmpty, DeepSeekAPI.isVisionModel(currentModel) else {
             if usable.isEmpty { return .string(text) }
@@ -968,9 +896,8 @@ final class DeepSeekSession: ProviderSession {
             return .string(text + "\n\n[Attached images (model cannot see them): \(names)]")
         }
         var parts: [JSONValue] = [["type": "text", "text": .string(text)]]
-        for image in usable {
-            guard let data = try? Data(contentsOf: image.url) else { continue }
-            let url = "data:\(image.mimeType);base64,\(data.base64EncodedString())"
+        for (image, base64) in await Attachment.base64Images(Array(usable)) {
+            let url = "data:\(image.mimeType);base64,\(base64)"
             parts.append(["type": "image_url", "image_url": ["url": .string(url)]])
         }
         return .array(parts)
@@ -1066,7 +993,8 @@ final class DeepSeekSession: ProviderSession {
     }
 
     private func summary(_ text: String, limit: Int) -> String {
-        guard text.count > limit else { return text }
+        // Bytes bound characters, so a short output skips the grapheme count.
+        guard text.utf8.count > limit, text.count > limit else { return text }
         return String(text.prefix(limit)) + "\n…(truncated)"
     }
 

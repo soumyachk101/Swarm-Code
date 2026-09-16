@@ -130,7 +130,15 @@ final class ClaudeSession: ProviderSession {
             initialize["forwardSubagentText"] = true
         }
         let initialization = try await control(.object(initialize))
-        let models = (initialization["models"]?.array ?? []).compactMap { entry -> ModelOption? in
+        let models = Self.models(in: initialization)
+        if !models.isEmpty { onEvent?(.models(models, current: configuration.model)) }
+        let commands = SlashCommand.claudeCommands(initialization["commands"]?.array ?? [])
+        if !commands.isEmpty { onEvent?(.commands(commands)) }
+        return id
+    }
+
+    private static func models(in initialization: JSONValue) -> [ModelOption] {
+        (initialization["models"]?.array ?? []).compactMap { entry -> ModelOption? in
             guard let value = entry["value"]?.string else { return nil }
             return ModelOption(
                 id: value,
@@ -141,13 +149,37 @@ final class ClaudeSession: ProviderSession {
                 fastTier: entry["supportsFastMode"]?.bool == true ? "fast" : nil
             )
         }
-        if !models.isEmpty { onEvent?(.models(models, current: configuration.model)) }
-        let commands = (initialization["commands"]?.array ?? []).compactMap { entry -> SlashCommand? in
-            guard let name = entry["name"]?.string else { return nil }
-            return SlashCommand(name: name, detail: entry["description"]?.string ?? "")
+    }
+
+    /// What the CLI reports in its handshake: its models, and the slash commands it finds
+    /// for `directory`. A bare process, not a session: it gets the initialize and nothing else.
+    static func handshake(executable: URL, directory: URL, environment: [String: String]) async throws -> (models: [ModelOption], commands: [SlashCommand]) {
+        let process = StdioProcess(
+            executable: executable,
+            arguments: ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--setting-sources", "user,project,local"],
+            directory: directory,
+            environment: environment
+        )
+        try process.start()
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(20))
+            if !Task.isCancelled { process.terminate() }
         }
-        if !commands.isEmpty { onEvent?(.commands(commands)) }
-        return id
+        defer { watchdog.cancel(); process.terminate() }
+        process.send(["type": "control_request", "request_id": "handshake", "request": ["subtype": "initialize", "hooks": .null]])
+        return try await withTaskCancellationHandler {
+            for await message in process.messages {
+                guard message["type"]?.string == "control_response",
+                      message["response"]?["request_id"]?.string == "handshake" else { continue }
+                guard let response = message["response"]?["response"], let commands = response["commands"]?.array else {
+                    throw ProviderError.failed("Claude could not load its commands.")
+                }
+                return (models(in: response), SlashCommand.claudeCommands(commands))
+            }
+            throw ProviderError.failed("Claude's command discovery did not finish. Try again.")
+        } onCancel: {
+            process.terminate()
+        }
     }
 
     func send(_ input: TurnInput) async throws {
@@ -164,11 +196,10 @@ final class ClaudeSession: ProviderSession {
             model = input.model
         }
         var content: [JSONValue] = []
-        for image in input.images where image.isImage {
-            guard let data = try? Data(contentsOf: image.url) else { continue }
+        for (image, base64) in await Attachment.base64Images(input.images) {
             content.append([
                 "type": "image",
-                "source": ["type": "base64", "media_type": .string(image.mimeType), "data": .string(data.base64EncodedString())],
+                "source": ["type": "base64", "media_type": .string(image.mimeType), "data": .string(base64)],
             ])
         }
         content.append(["type": "text", "text": .string(input.text)])
@@ -380,10 +411,9 @@ final class ClaudeSession: ProviderSession {
         )))
     }
 
-    /// Where a stream's events go: straight out for the lead, wrapped for a head.
-    private var leadSink: (ProviderEvent) -> Void {
-        { [weak self] event in self?.onEvent?(event) }
-    }
+    /// Where a stream's events go: straight out for the lead, wrapped for a head. The
+    /// lead's is made once, not once per message.
+    private lazy var leadSink: (ProviderEvent) -> Void = { [weak self] event in self?.onEvent?(event) }
 
     private func agentSink(_ agentID: String) -> (ProviderEvent) -> Void {
         { [weak self] event in self?.onEvent?(.agentEvent(agentID: agentID, event)) }
@@ -464,8 +494,9 @@ final class ClaudeSession: ProviderSession {
     private func handleToolResults(_ message: JSONValue, sink: (ProviderEvent) -> Void) {
         for block in message["message"]?["content"]?.array ?? [] where block["type"]?.string == "tool_result" {
             guard let toolID = block["tool_use_id"]?.string else { continue }
-            let name = toolNames[toolID] ?? ""
-            if ["AskUserQuestion", "ExitPlanMode", "EnterPlanMode", "TodoWrite", "ToolSearch"].contains(name) { continue }
+            // The result closes the call, so its name is not needed again.
+            let name = toolNames.removeValue(forKey: toolID) ?? ""
+            if Self.hiddenResultTools.contains(name) { continue }
             let isError = block["is_error"]?.bool ?? false
             let output = Self.resultText(block["content"])
             var status: ToolCall.Status = isError ? .failed : .completed
@@ -487,6 +518,8 @@ final class ClaudeSession: ProviderSession {
         }
         for requestID in pendingTools.keys { onEvent?(.requestResolved(id: requestID)) }
         pendingTools.removeAll()
+        // Every call of the turn has had its result; an interrupted one never will.
+        toolNames.removeAll()
         mainStream = StreamState()
         // The heads' streams stay: a head running in the background outlives the lead's
         // turn, and clearing its stream here made its next delta orphaned and dropped.
@@ -550,7 +583,9 @@ final class ClaudeSession: ProviderSession {
                 toolItemID: toolUseID
             )))
         default:
-            let call = toolCall(name: name, input: input) ?? ToolCall(kind: .other, title: name)
+            // The card shows the kind, title and detail; the edits' diffs are built once,
+            // when the assistant message lands.
+            let call = toolCall(name: name, input: input, withEdits: false) ?? ToolCall(kind: .other, title: name)
             let kind: ApprovalRequest.Kind = switch call.kind {
             case .command: .command
             case .edit: .fileChange
@@ -589,7 +624,10 @@ final class ClaudeSession: ProviderSession {
 
     // MARK: - Mapping
 
-    private func toolCall(name: String, input: JSONValue) -> ToolCall? {
+    /// Tools whose results are shown by the app itself, never as a tool row.
+    private static let hiddenResultTools: Set<String> = ["AskUserQuestion", "ExitPlanMode", "EnterPlanMode", "TodoWrite", "ToolSearch"]
+
+    private func toolCall(name: String, input: JSONValue, withEdits: Bool = true) -> ToolCall? {
         func path(_ key: String) -> String? {
             input[key]?.string.map { ToolTitles.relativePath($0, to: workingDirectory) }
         }
@@ -604,19 +642,19 @@ final class ClaudeSession: ProviderSession {
             return ToolCall(kind: .read, title: path("file_path") ?? "Read file")
         case "Write":
             var call = ToolCall(kind: .edit, title: path("file_path") ?? "Write file")
-            if let file = path("file_path"), let content = input["content"]?.string {
+            if withEdits, let file = path("file_path"), let content = input["content"]?.string {
                 call.edits = [FileEdit(path: file, old: "", new: content)]
             }
             return call
         case "Edit":
             var call = ToolCall(kind: .edit, title: path("file_path") ?? "Edit file")
-            if let file = path("file_path") {
+            if withEdits, let file = path("file_path") {
                 call.edits = [FileEdit(path: file, old: input["old_string"]?.string ?? "", new: input["new_string"]?.string ?? "")]
             }
             return call
         case "MultiEdit":
             var call = ToolCall(kind: .edit, title: path("file_path") ?? "Edit file")
-            if let file = path("file_path") {
+            if withEdits, let file = path("file_path") {
                 call.edits = (input["edits"]?.array ?? []).map {
                     FileEdit(path: file, old: $0["old_string"]?.string ?? "", new: $0["new_string"]?.string ?? "")
                 }

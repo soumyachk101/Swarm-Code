@@ -210,7 +210,7 @@ final class ProviderRegistry {
             refreshPlanLimits(provider, force: true)
         }
         await withTaskGroup(of: Void.self) { group in
-            for provider in [ProviderKind.codex, .antigravity, .copilot, .commandcode, .pi, .deepseek, .meta, .zai] where status(provider).isInstalled {
+            for provider in [ProviderKind.claude, .codex, .antigravity, .copilot, .commandcode, .pi, .deepseek, .meta, .zai] where status(provider).isInstalled {
                 group.addTask { await self.loadCatalog(provider, force: true) }
             }
         }
@@ -247,6 +247,7 @@ final class ProviderRegistry {
             await refreshAPIProvider(provider)
             return
         }
+        await LoginEnvironment.load()
         guard let executable = executable(for: provider) else {
             statuses[provider] = ProviderStatus()
             return
@@ -333,32 +334,44 @@ final class ProviderRegistry {
     }
 
     func loadCatalog(_ provider: ProviderKind, force: Bool = false) async {
-        guard provider != .claude, !loadingCatalogs.contains(provider) else { return }
+        guard !loadingCatalogs.contains(provider) else { return }
         guard force || !attemptedCatalogs.contains(provider) else { return }
         if provider.isAPIKeyBased {
             await loadAPICatalog(provider, force: force)
             return
         }
         // Copilot's seed is only its Auto row, and Command Code's a handful of its seventy
-        // models, so the account's list is fetched on first use.
-        let seeded = (provider == .copilot && models(for: provider) == [Self.copilotAuto])
+        // models, so the account's list is fetched on first use. Claude's seed is the four
+        // names its CLI has always taken, so its handshake runs every launch: the CLI's own
+        // list follows its version.
+        let seeded = provider == .claude
+            || (provider == .copilot && models(for: provider) == [Self.copilotAuto])
             || (provider == .commandcode && models(for: provider) == Self.commandcodeSeed)
             || (provider == .pi && models(for: provider) == Self.piSeed)
-        guard force || seeded || models(for: provider).isEmpty, let executable = executable(for: provider) else { return }
-        attemptedCatalogs.insert(provider)
+        guard force || seeded || models(for: provider).isEmpty else { return }
         loadingCatalogs.insert(provider)
         defer { loadingCatalogs.remove(provider) }
+        await LoginEnvironment.load()
+        guard let executable = executable(for: provider) else { return }
+        attemptedCatalogs.insert(provider)
         let environment = environment(for: provider)
         let list: [ModelOption]? = switch provider {
+        case .claude: await loadClaudeCatalog(executable: executable, environment: environment)
         case .codex: try? await CodexSession.listModels(executable: executable, environment: environment)
         case .antigravity: try? await AntigravitySession.listModels(executable: executable, environment: environment)
         case .copilot: try? await CopilotSession.listModels(executable: executable, environment: environment)
         case .commandcode: try? await CommandCodeAPI.listModels(executable: executable, environment: environment)
         case .pi: try? await PiCLI.listModels(executable: executable, environment: environment)
         case .cursor, .opencode, .grok, .devin: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
-        case .claude, .deepseek, .meta, .zai: nil
+        case .deepseek, .meta, .zai: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
+    }
+
+    private func loadClaudeCatalog(executable: URL, environment: [String: String]) async -> [ModelOption]? {
+        // The handshake runs somewhere: the models are the same from any folder.
+        let directory = FileManager.default.temporaryDirectory
+        return try? await ClaudeSession.handshake(executable: executable, directory: directory, environment: environment).models
     }
 
     private func loadAPICatalog(_ provider: ProviderKind, force: Bool) async {
@@ -406,12 +419,15 @@ final class ProviderRegistry {
             }
             return
         }
-        guard let executable = executable(for: provider) else { return }
+        guard PlanLimitsReader.exposesLimits(provider), !loadingLimits.contains(provider) else { return }
         loadingLimits.insert(provider)
-        let environment = environment(for: provider)
         Task {
-            let limits = await PlanLimitsReader.read(provider, executable: executable, environment: environment)
-            loadingLimits.remove(provider)
+            defer { loadingLimits.remove(provider) }
+            // A popover opened right after launch waits for the login shell like everything
+            // else; before that read the CLI can only be found on the fallback PATH.
+            await LoginEnvironment.load()
+            guard let executable = executable(for: provider) else { return }
+            let limits = await PlanLimitsReader.read(provider, executable: executable, environment: environment(for: provider))
             guard let limits else { return }
             planLimits[provider] = limits
             limitsFetchedAt[provider] = .now
@@ -466,6 +482,7 @@ final class ProviderRegistry {
             UserDefaults.standard.set(data, forKey: cacheKey)
         }
     }
+
 
     func updateCommands(_ list: [SlashCommand], for provider: ProviderKind) {
         commands[provider] = list

@@ -279,4 +279,11 @@ struct SlashCommand: Hashable, Identifiable, Sendable {
     var isBuiltIn: Bool = false
 
     var id: String { name }
+
+    static func claudeCommands(_ entries: [JSONValue]) -> [Self] {
+        entries.compactMap { entry in
+            guard let name = entry["name"]?.string ?? entry.string else { return nil }
+            return Self(name: name, detail: entry["description"]?.string ?? "Claude Code command")
+        }
+    }
 }
