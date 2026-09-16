@@ -423,7 +423,7 @@ impl ProviderSession for ClaudeSession {
                 "request_id": request_id,
                 "response": response,
             }
-        }));
+        })).await;
 
         if pending.name == "ExitPlanMode" {
             self.emit(ProviderEvent::mode_changed(crate::models::provider::InteractionMode::Build));
@@ -462,7 +462,7 @@ impl ProviderSession for ClaudeSession {
                     "updatedInput": serde_json::Value::Object(input),
                 }
             }
-        }));
+        })).await;
 
         self.emit(ProviderEvent::request_resolved(request_id));
     }
