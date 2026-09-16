@@ -8,6 +8,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case grok
     case deepseek
     case meta
+    case zai
     case devin
     case antigravity
     case copilot
@@ -25,6 +26,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: "Grok"
         case .deepseek: "DeepSeek"
         case .meta: "Meta"
+        case .zai: "Z.ai"
         case .devin: "Devin"
         case .antigravity: "Antigravity"
         case .copilot: "Copilot"
@@ -42,6 +44,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: "grok"
         case .deepseek: ""
         case .meta: ""
+        case .zai: ""
         case .devin: "devin"
         case .antigravity: "agy"
         case .copilot: "copilot"
@@ -61,6 +64,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: "grok login"
         case .deepseek: "DEEPSEEK_API_KEY=sk-..."
         case .meta: "MODEL_API_KEY=..."
+        case .zai: "ZAI_API_KEY=..."
         case .devin: "devin auth login"
         case .antigravity: "agy"
         case .copilot: "copilot login"
@@ -78,6 +82,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         case .grok: URL(string: "https://x.ai/cli")!
         case .deepseek: URL(string: "https://platform.deepseek.com/api_keys")!
         case .meta: URL(string: "https://dev.meta.ai/")!
+        case .zai: URL(string: "https://z.ai/manage-apikey/apikey-list")!
         case .devin: URL(string: "https://cli.devin.ai")!
         case .antigravity: URL(string: "https://antigravity.google/docs/cli/overview")!
         case .copilot: URL(string: "https://github.com/github/copilot-cli")!
@@ -87,7 +92,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 
     /// API-key providers talk to their cloud API directly instead of a local CLI.
-    var isAPIKeyBased: Bool { self == .deepseek || self == .meta }
+    var isAPIKeyBased: Bool { self == .deepseek || self == .meta || self == .zai }
 
     /// Providers with an API key field in Settings: the API-key providers, which need one,
     /// and Command Code, whose CLI takes a Studio key through `COMMAND_CODE_API_KEY` as an
@@ -99,6 +104,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .deepseek: "api.deepseek.com"
         case .meta: "api.meta.ai/v1"
+        case .zai: "api.z.ai/api/coding/paas/v4"
         default: nil
         }
     }
@@ -108,6 +114,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .deepseek: "platform.deepseek.com"
         case .meta: "dev.meta.ai"
+        case .zai: "z.ai/manage-apikey/apikey-list"
         case .commandcode: "commandcode.ai/studio"
         default: nil
         }
@@ -118,6 +125,7 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         switch self {
         case .deepseek: "DEEPSEEK_API_KEY"
         case .meta: "MODEL_API_KEY"
+        case .zai: "ZAI_API_KEY"
         case .commandcode: "COMMAND_CODE_API_KEY"
         default: nil
         }
@@ -246,7 +254,7 @@ struct ModelOption: Codable, Hashable, Identifiable, Sendable {
             if let range = text.range(of: separator) { text = String(text[..<range.lowerBound]) }
         }
         let lowered = text.lowercased()
-        for vendor in ["claude ", "gpt ", "gemini ", "deepseek ", "openai ", "anthropic ", "google ", "meta ", "muse "] {
+        for vendor in ["claude ", "gpt ", "gemini ", "deepseek ", "openai ", "anthropic ", "google ", "meta ", "muse ", "glm "] {
             if lowered.hasPrefix(vendor), text.count > vendor.count {
                 text = String(text.dropFirst(vendor.count))
                 break

@@ -7,6 +7,7 @@ struct PlanLimits: Sendable, Equatable {
         var title: String
         var percent: Double
         var resetsAt: Date?
+        var detail: String? = nil
     }
 
     var planName: String?
@@ -15,10 +16,10 @@ struct PlanLimits: Sendable, Equatable {
 
 @MainActor
 enum PlanLimitsReader {
-    /// Codex, Claude, Antigravity, Copilot and Command Code report plan limits. Cursor,
+    /// Codex, Claude, Antigravity, Copilot, Command Code and Z.ai report plan limits. Cursor,
     /// OpenCode, Grok, DeepSeek, Meta and Devin expose none.
     static func exposesLimits(_ provider: ProviderKind) -> Bool {
-        provider == .codex || provider == .claude || provider == .antigravity || provider == .copilot || provider == .commandcode
+        provider == .codex || provider == .claude || provider == .antigravity || provider == .copilot || provider == .commandcode || provider == .zai
     }
 
     static func read(_ provider: ProviderKind, executable: URL, environment: [String: String]) async -> PlanLimits? {
@@ -28,11 +29,19 @@ enum PlanLimitsReader {
         case .antigravity: try? await AntigravitySession.readPlanLimits(executable: executable, environment: environment)
         case .copilot: try? await CopilotSession.readPlanLimits(executable: executable, environment: environment)
         case .commandcode: await CommandCodeAPI.planLimits(environment: environment)
-        case .cursor, .opencode, .grok, .deepseek, .meta, .devin, .pi: nil
+        case .cursor, .opencode, .grok, .deepseek, .meta, .zai, .devin, .pi: nil
         }
     }
 
-    static func windowTitle(minutes: Int?) -> String {
+    /// API-key subscriptions read their windows from the API instead of a CLI.
+    static func read(_ provider: ProviderKind, apiKey: String) async -> PlanLimits? {
+        switch provider {
+        case .zai: await ZaiAPI.planLimits(apiKey: apiKey)
+        default: nil
+        }
+    }
+
+    nonisolated static func windowTitle(minutes: Int?) -> String {
         guard let minutes else { return "Usage limit" }
         switch minutes {
         case 300: return "5-hour limit"

@@ -119,6 +119,12 @@ private struct LimitRow: View {
                     .foregroundStyle(Chrome.secondaryText)
                     .monospacedDigit()
             }
+            if let detail = window.detail {
+                Text(verbatim: detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .lineLimit(1)
+            }
             UsageBar(fraction: window.percent / 100, tint: Self.tint(for: window.percent), label: window.title)
         }
     }

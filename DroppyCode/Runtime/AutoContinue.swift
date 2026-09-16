@@ -137,8 +137,16 @@ final class AutoContinue {
 
     /// The reset time of the account's most-spent window, read fresh.
     private func readResetTime(_ provider: ProviderKind) async -> Date? {
-        guard let app, PlanLimitsReader.exposesLimits(provider), let executable = app.providers.executable(for: provider) else { return nil }
-        let limits = await PlanLimitsReader.read(provider, executable: executable, environment: app.providers.environment(for: provider))
+        guard let app, PlanLimitsReader.exposesLimits(provider) else { return nil }
+        let limits: PlanLimits?
+        if provider.isAPIKeyBased {
+            let apiKey = app.settings.apiKey(for: provider)
+            guard !apiKey.isEmpty else { return nil }
+            limits = await PlanLimitsReader.read(provider, apiKey: apiKey)
+        } else {
+            guard let executable = app.providers.executable(for: provider) else { return nil }
+            limits = await PlanLimitsReader.read(provider, executable: executable, environment: app.providers.environment(for: provider))
+        }
         var spent: PlanLimits.Window?
         for window in limits?.windows ?? [] {
             guard let resetsAt = window.resetsAt, resetsAt > Date.now else { continue }
