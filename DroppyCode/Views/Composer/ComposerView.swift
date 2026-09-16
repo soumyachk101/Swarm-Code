@@ -941,8 +941,8 @@ private struct ChipRowCollapse: ViewModifier {
     }
 }
 
-/// One capsule definition for the reply-quote and command chips above the text.
-private struct ChipChrome: ViewModifier {
+/// The capsule behind a composer chip: the reply quotes and the slash command in the chat box, and the same quotes again on the message once it is sent.
+struct ChipChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(.leading, 9)

@@ -62,6 +62,42 @@ struct ReplyQuote: Identifiable, Equatable, Sendable {
     }
 }
 
+extension ReplyQuote {
+    /// A sent message read back into the quotes it led with and the words after them,
+    /// the reverse of `ComposerDraft.outgoingText`: each `> ` block up to a blank line
+    /// that no further `>` line follows. A leading slash command stays with the words.
+    /// A message with no leading quote comes back whole.
+    nonisolated static func peel(_ text: String) -> (quotes: [ReplyQuote], body: String) {
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var command: String?
+        if let first = lines.first, first.hasPrefix("/"), lines.count > 2, lines[1].isEmpty, lines[2].hasPrefix(">") {
+            command = first
+            lines.removeFirst(2)
+        }
+        var quotes: [ReplyQuote] = []
+        var index = 0
+        while index < lines.count, lines[index].hasPrefix(">") {
+            var block: [String] = []
+            while index < lines.count, lines[index].hasPrefix(">") {
+                var line = lines[index].dropFirst()
+                if line.hasPrefix(" ") { line = line.dropFirst() }
+                block.append(String(line))
+                index += 1
+            }
+            quotes.append(ReplyQuote(text: block.joined(separator: "\n")))
+            // One blank line separates a block from the next; a blank line before the words stays for the trim below.
+            if index + 1 < lines.count, lines[index].isEmpty, lines[index + 1].hasPrefix(">") {
+                index += 1
+            }
+        }
+        guard !quotes.isEmpty else { return ([], text) }
+        var body = lines[index...].joined(separator: "\n")
+        while body.hasPrefix("\n") { body.removeFirst() }
+        if let command { body = body.isEmpty ? command : command + " " + body }
+        return (quotes, body)
+    }
+}
+
 /// The slash command or skill the message leads with, picked from the suggestions:
 /// a chip in the chat box, the first word of what goes out.
 struct DraftCommand: Equatable, Sendable {
