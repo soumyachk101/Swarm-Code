@@ -1758,12 +1758,16 @@ private struct WorkingIndicator: View {
                         HydraWorkingTitle(text: label, isRunning: true, alignment: .leading)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         HydraElapsedTime(startedAt: startedAt, finishedAt: nil, isRunning: true)
-                        Image(systemName: "chevron.right")
-                            .font(.chat(.caption2, weight: .semibold, zoom: zoom))
-                            .foregroundStyle(.tertiary)
-                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                            .opacity(canExpand ? 1 : 0)
-                            .accessibilityHidden(!canExpand)
+                        // The chevron only once there is something to open: an empty slot
+                        // held for it left the time short of the card's edge, as if misaligned.
+                        // The card's `canExpand` animation glides the time over when it comes.
+                        if canExpand {
+                            Image(systemName: "chevron.right")
+                                .font(.chat(.caption2, weight: .semibold, zoom: zoom))
+                                .foregroundStyle(.tertiary)
+                                .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                                .transition(.opacity)
+                        }
                     }
                     HydraProgressBar(runtime: runtime, startedAt: startedAt, finishedAt: nil, status: .running, tint: Chrome.accent, entries: turnEntries)
                 }
