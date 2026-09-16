@@ -57,7 +57,7 @@ final class WindowManager {
     }
 
     private func makeMainWindow() -> NSWindow {
-        let window = makeWindow(title: "Droppy Code", size: Size.main, resizable: true) { RootView() }
+        let window = makeWindow(title: AppInfo.name, size: Size.main, resizable: true) { RootView() }
         window.contentMinSize = Size.mainMinimum
         if !window.setFrameUsingName(Self.mainFrameName) {
             window.center()
@@ -69,7 +69,7 @@ final class WindowManager {
     /// The main window for the website captures: the same window, at a fixed size, with
     /// no frame autosave, so the run never reads or writes where the real window sits.
     func makeCaptureWindow(size: NSSize) -> NSWindow {
-        makeWindow(title: "Droppy Code", size: size, resizable: true) { RootView() }
+        makeWindow(title: AppInfo.name, size: size, resizable: true) { RootView() }
     }
 
     private func makeSettingsWindow() -> NSWindow {

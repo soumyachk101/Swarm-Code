@@ -1,13 +1,17 @@
 #!/bin/bash
 # Dev loop for Droppy Code: build Debug, install it as the single
-# /Applications copy, and relaunch it.
+# /Applications copy of the dev app, and relaunch it.
 #
 #   scripts/quick_run.sh
+#
+# A Debug build is "Droppy Code Dev" (bundle id iordv.droppycode.dev): it keeps
+# its library in ~/.droppy-code-dev and runs beside the released Droppy Code
+# without touching its threads, keychain items or update checks.
 #
 # Builds under build.noindex (never ~/Library/Developer/Xcode/DerivedData),
 # because the ".noindex" suffix keeps Spotlight and Launchpad from listing
 # the build folder as a second copy of the app. There must only ever be one
-# Droppy Code: /Applications/Droppy Code.app.
+# dev app: /Applications/Droppy Code Dev.app.
 #
 # Safe to run from an agent inside Droppy Code itself: quitting the app may
 # interrupt the calling session, but this script keeps going and the fresh
@@ -15,7 +19,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-APP_NAME="Droppy Code"
+APP_NAME="Droppy Code Dev"
 DERIVED="build.noindex/dev"
 PRODUCT="$DERIVED/Build/Products/Debug/$APP_NAME.app"
 TARGET="/Applications/$APP_NAME.app"
