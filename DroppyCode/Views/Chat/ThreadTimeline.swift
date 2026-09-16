@@ -314,6 +314,9 @@ struct ThreadTimeline: View, Equatable {
                         }
                     }
             }
+            // The rows open their steps against this: an expansion at the end of the
+            // conversation scrolls the timeline down to show what opened.
+            .environment(scrollState)
             // The same column as the composer, so messages line up with its edges.
             .frame(maxWidth: 820, alignment: .leading)
             .padding(.horizontal, 20)
@@ -1737,6 +1740,7 @@ private struct WorkingIndicator: View {
     let showsCard: Bool
     var workingDirectory: String?
     @Environment(\.chatZoom) private var zoom
+    @Environment(TimelineScrollState.self) private var scrollState: TimelineScrollState?
     @State private var now = Date.now
     @State private var isExpanded = false
 
@@ -1754,6 +1758,7 @@ private struct WorkingIndicator: View {
             Button {
                 guard canExpand else { return }
                 withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
+                if isExpanded { scrollState?.revealExpansion() }
             } label: {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1836,6 +1841,15 @@ final class TimelineScrollState {
 
     func jumpToLatest() {
         jumpRequest += 1
+    }
+
+    /// A row just opened and pushed content below the fold. With the end of the
+    /// conversation on screen, the timeline follows it down, smoothly, so what opened is
+    /// read without a scroll; a reader higher up is left where they are. A beat after the
+    /// tap, so the opened rows are laid out and the scroll runs to the new end.
+    func revealExpansion() {
+        guard !showsJumpButton else { return }
+        DispatchQueue.main.async { [self] in jumpToLatest() }
     }
 }
 
