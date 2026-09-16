@@ -21,20 +21,21 @@ static os_log_t DCWindowLog(void) {
     return log;
 }
 
-/// Runs `post`; when AppKit refuses it with an exception (the window is inside its own
-/// display cycle), runs it once more on the next run loop turn. A second refusal is logged
-/// and dropped: by then the cycle is over and the refusal is not the one this guards.
+/// Runs `post`; when AppKit raises because this cycle has had more such passes than the
+/// window has views, runs it once more on the next run loop turn, where the count starts
+/// over. A second raise is logged and dropped: a fresh cycle that overruns at once is a
+/// runaway this net cannot end.
 - (void)dc_post:(void (^)(void))post {
     @try {
         post();
     } @catch (NSException *exception) {
-        os_log_debug(DCWindowLog(), "Display cycle request refused mid-cycle, retrying next turn: %{public}@ %{public}@",
-                     exception.name, exception.reason ?: @"");
+        os_log(DCWindowLog(), "Display cycle pass limit hit, requesting again next turn: %{public}@ %{public}@",
+               exception.name, exception.reason ?: @"");
         dispatch_async(dispatch_get_main_queue(), ^{
             @try {
                 post();
             } @catch (NSException *again) {
-                os_log_error(DCWindowLog(), "Display cycle request refused twice: %{public}@ %{public}@",
+                os_log_error(DCWindowLog(), "Display cycle pass limit hit twice in a row: %{public}@ %{public}@",
                              again.name, again.reason ?: @"");
             }
         });
