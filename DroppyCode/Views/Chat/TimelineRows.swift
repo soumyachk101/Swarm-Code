@@ -413,7 +413,10 @@ struct HydraHeadsWorkingRow: View {
         // Heads already finished while the rest of their batch still works: one small
         // pill each below, with the report one tap away.
         let finished = Self.finishedHeads(in: team)
-        VStack(alignment: .trailing, spacing: 6) {
+        // Every pill starts at the same left edge, glyphs in one column, whatever its
+        // width: trailing alignment hung each narrower pill off the widest one's right
+        // edge, and a head coming or going moved them all.
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 HStack(spacing: -4) {
                     ForEach(Array(personas.enumerated()), id: \.offset) { _, persona in
@@ -1190,56 +1193,17 @@ struct AttachmentThumbnail: View {
 
 struct AssistantMessageRow: View {
     @Environment(\.chatZoom) private var zoom
-    @Environment(\.markdownPointSize) private var pointSize
     let entry: TimelineEntry
     /// The turn's summary, set only on the turn's last reply. Precomputed by the
     /// timeline, so rows never scan the thread.
     let summary: TurnSummary?
     let runtime: ThreadRuntime
     @State private var isHovering = false
-    /// Select-text mode: one AppKit view for the whole reply, since SwiftUI's
-    /// `.textSelection` stops at each paragraph and a drag cannot span them.
-    @State private var isSelecting = false
-    /// Where a drag on the reply began, in the reply's own space: the selectable view
-    /// takes the selection up from there, so a drag across paragraphs just works without
-    /// the menu's Select text first.
-    @State private var dragSelection: SelectableMessageText.DragOrigin?
-    /// The selectable view's height at the width it was given, once it has laid out.
-    @State private var selectableHeight: CGFloat?
 
     var body: some View {
         if case .assistant(let message) = entry.item.content {
             VStack(alignment: .leading, spacing: 2) {
-                ZStack(alignment: .topLeading) {
-                    if isSelecting {
-                        SelectableMessageText(text: message.text, pointSize: pointSize * zoom, dragOrigin: dragSelection, onResign: {
-                            // Clicking elsewhere ends the mode; the markdown blocks come back.
-                            isSelecting = false
-                            dragSelection = nil
-                        }, onHeightChange: { height in
-                            if selectableHeight != height { selectableHeight = height }
-                        })
-                        // Framed to the text's height at its real width (see `onHeightChange`).
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(height: selectableHeight)
-                        .clipped()
-                    } else {
-                        MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
-                            .environment(\.markdownBlockSelection, message.isStreaming)
-                            // A drag on a finished reply selects across the whole of it: the
-                            // blocks swap for the selectable view, which carries the drag on.
-                            .simultaneousGesture(
-                                DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.replySpace))
-                                    .onChanged { value in
-                                        guard !isSelecting, !message.isStreaming else { return }
-                                        dragSelection = SelectableMessageText.DragOrigin(start: value.startLocation, current: value.location)
-                                        isSelecting = true
-                                    },
-                                including: message.isStreaming ? .subviews : .all
-                            )
-                    }
-                }
-                .coordinateSpace(name: Self.replySpace)
+                MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
                 // One side for both kinds of message: the summary sits on the trailing
                 // edge, where the copy control used to be.
                 HStack(spacing: 8) {
@@ -1249,19 +1213,11 @@ struct AssistantMessageRow: View {
                             .foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 8)
-                    if isSelecting {
-                        Button("Done") {
-                            isSelecting = false
-                            dragSelection = nil
-                        }
-                        .buttonStyle(.glass)
-                        .controlSize(.small)
-                    }
                 }
                 // Pinned to the hover line's room, so the row keeps it (and the gap math
                 // below holds) with no copy button left to size it.
                 .frame(height: TimelineMetrics.hoverLineHeight)
-                .opacity(isSelecting ? 1 : (isHovering && !message.isStreaming ? 1 : 0))
+                .opacity(isHovering && !message.isStreaming ? 1 : 0)
             }
             .onHover { [hovering = $isHovering] isOver in
                 withAnimation(.easeOut(duration: 0.12)) { hovering.wrappedValue = isOver }
@@ -1272,18 +1228,8 @@ struct AssistantMessageRow: View {
             // the controls fill the gap below instead of adding to it. (2 = the
             // VStack's spacing above them.)
             .padding(.bottom, -(TimelineMetrics.hoverLineHeight + 2))
-            .onExitCommand {
-                if isSelecting {
-                    isSelecting = false
-                    dragSelection = nil
-                }
-            }
         }
     }
-
-    /// The reply's own coordinate space: a drag's points map straight onto the
-    /// selectable view, which sits at the same origin.
-    private static let replySpace = "assistantReply"
 
     /// The context menu's items, from value snapshots with weak captures: the AppKit menu
     /// outlives the right-click, so its callbacks must not retain the row.
@@ -1324,61 +1270,14 @@ extension View {
     }
 }
 
-/// The folded turn's answer, with the same select-text mode as a reply row: its own
-/// request box and flag, since the shared modifier cannot hold row state.
 private struct FoldedAnswerView: View {
-    @Environment(\.markdownPointSize) private var pointSize
-    @Environment(\.chatZoom) private var zoom
     let text: String
     let runtime: ThreadRuntime
-    @State private var isSelecting = false
-    @State private var dragSelection: SelectableMessageText.DragOrigin?
-    /// The selectable view's height at the width it was given, once it has laid out.
-    @State private var selectableHeight: CGFloat?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ZStack(alignment: .topLeading) {
-                if isSelecting {
-                    SelectableMessageText(text: text, pointSize: pointSize * zoom, dragOrigin: dragSelection, onResign: {
-                        isSelecting = false
-                        dragSelection = nil
-                    }, onHeightChange: { height in
-                        if selectableHeight != height { selectableHeight = height }
-                    })
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: selectableHeight)
-                    .clipped()
-                } else {
-                    MarkdownView(text: text).equatable()
-                        .environment(\.markdownBlockSelection, false)
-                        .simultaneousGesture(
-                            DragGesture(minimumDistance: 6, coordinateSpace: .named(Self.foldedSpace))
-                                .onChanged { value in
-                                    guard !isSelecting else { return }
-                                    dragSelection = SelectableMessageText.DragOrigin(start: value.startLocation, current: value.location)
-                                    isSelecting = true
-                                },
-                            including: .all
-                        )
-                }
-            }
-            .coordinateSpace(name: Self.foldedSpace)
-            if isSelecting {
-                HStack {
-                    Spacer(minLength: 8)
-                    Button("Done") { isSelecting = false; dragSelection = nil }
-                        .buttonStyle(.glass)
-                        .controlSize(.small)
-                }
-                .frame(height: TimelineMetrics.hoverLineHeight)
-            }
-        }
-        .messageMenu(text: text, runtime: runtime)
-        .onExitCommand { if isSelecting { isSelecting = false; dragSelection = nil } }
+        MarkdownView(text: text).equatable()
+            .messageMenu(text: text, runtime: runtime)
     }
-
-    private static let foldedSpace = "foldedAnswer"
 }
 
 /// Consecutive tool calls, rendered inline with no card: a summary header
