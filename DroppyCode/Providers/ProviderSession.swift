@@ -15,6 +15,7 @@ struct TurnInput: Sendable {
     /// A Hydra head past its budget answering for the last time: the turn is one reply
     /// with no tools, where the session can arrange that.
     var isFinalReport = false
+    var command: SlashCommand?
 }
 
 /// Everything a provider session needs to launch.

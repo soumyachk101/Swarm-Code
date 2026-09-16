@@ -32,7 +32,16 @@ struct ProviderStatus: Equatable, Sendable {
 final class ProviderRegistry {
     private(set) var statuses: [ProviderKind: ProviderStatus] = [:]
     private(set) var catalogs: [ProviderKind: [ModelOption]] = [:]
-    private(set) var commands: [ProviderKind: [SlashCommand]] = [:]
+    private(set) var commands: [String: [SlashCommand]] = [:]
+    private(set) var commandErrors: [String: String] = [:]
+    private(set) var recentCommands: [String: [String]] = [:]
+    @ObservationIgnored private var commandLoads: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var commandsFetchedAt: [String: Date] = [:]
+    /// How long a provider's command list is served without asking again. Listing means
+    /// launching the CLI once per (provider, directory), and the list only changes when
+    /// the user edits their commands or skills, so a thread switch every minute should
+    /// not cost a process launch every minute.
+    private static let commandFreshness: TimeInterval = 600
     private(set) var loadingCatalogs: Set<ProviderKind> = []
 
     @ObservationIgnored private let settings: AppSettings
@@ -99,6 +108,7 @@ final class ProviderRegistry {
 
     init(settings: AppSettings) {
         self.settings = settings
+        recentCommands = (WebsiteCaptures.defaults ?? .standard).dictionary(forKey: "recentSlashCommands") as? [String: [String]] ?? [:]
         if !WebsiteCaptures.isEnabled,
            let data = UserDefaults.standard.data(forKey: cacheKey),
            let cached = try? JSONDecoder().decode([String: [ModelOption]].self, from: data) {
@@ -483,9 +493,54 @@ final class ProviderRegistry {
         }
     }
 
+    static func commandKey(_ provider: ProviderKind, directory: String) -> String {
+        provider.rawValue + "\n" + directory
+    }
 
-    func updateCommands(_ list: [SlashCommand], for provider: ProviderKind) {
-        commands[provider] = list
+    func updateCommands(_ list: [SlashCommand], for provider: ProviderKind, directory: String) {
+        let key = Self.commandKey(provider, directory: directory)
+        if commands[key] == nil, commands.count >= 32,
+           let oldest = commandsFetchedAt.min(by: { $0.value < $1.value })?.key {
+            commands[oldest] = nil
+            commandsFetchedAt[oldest] = nil
+            commandErrors[oldest] = nil
+        }
+        commands[key] = list
+        commandsFetchedAt[key] = .now
+        commandErrors[key] = nil
+    }
+
+    func recordCommand(_ name: String, for provider: ProviderKind) {
+        var recent = recentCommands[provider.rawValue] ?? []
+        recent.removeAll { $0 == name }
+        recent.insert(name, at: 0)
+        recentCommands[provider.rawValue] = Array(recent.prefix(100))
+        (WebsiteCaptures.defaults ?? .standard).set(recentCommands, forKey: "recentSlashCommands")
+    }
+
+    /// `force` asks again whatever the list's age: the retry after a failed load.
+    func loadCommands(_ provider: ProviderKind, directory: String, force: Bool = false) async {
+        guard !WebsiteCaptures.isEnabled, provider == .codex || provider == .claude else { return }
+        let key = Self.commandKey(provider, directory: directory)
+        if let task = commandLoads[key] { await task.value; return }
+        if !force, let fetched = commandsFetchedAt[key], Date.now.timeIntervalSince(fetched) < Self.commandFreshness { return }
+        guard let executable = executable(for: provider) else { return }
+        let environment = environment(for: provider)
+        let task = Task {
+            do {
+                let directoryURL = URL(fileURLWithPath: directory)
+                let list = try await provider == .codex
+                    ? CodexSession.listCommands(executable: executable, directory: directoryURL, environment: environment)
+                    : ClaudeSession.handshake(executable: executable, directory: directoryURL, environment: environment).commands
+                updateCommands(list, for: provider, directory: directory)
+            } catch {
+                if commandErrors.count >= 32 { commandErrors.removeAll(keepingCapacity: true) }
+                commandErrors[key] = error.localizedDescription
+            }
+        }
+        commandLoads[key] = task
+        await task.value
+        commandLoads[key] = nil
     }
 
     // MARK: - Probes

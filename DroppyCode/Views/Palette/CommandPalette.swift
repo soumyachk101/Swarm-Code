@@ -7,7 +7,18 @@ struct CommandPalette: View {
 
     @State private var query = ""
     @State private var selection = 0
+    /// The rows for the query as the library stands: built when either changes, not on
+    /// every arrow key or selection change.
+    @State private var items: [Item] = []
     @FocusState private var isFocused: Bool
+
+    private struct ResultsKey: Equatable {
+        var query: String
+        var threads: [ChatThread]
+        var projects: [Project]
+        var selectedThreadID: UUID?
+        var finishActionTitle: String
+    }
 
     private struct Item: Identifiable {
         let id: String
@@ -19,7 +30,6 @@ struct CommandPalette: View {
     }
 
     var body: some View {
-        let items = results
         ZStack(alignment: .top) {
             // A dark window needs more of a wash than a light one to push the palette
             // forward; a single fixed value read as nothing at all in dark themes.
@@ -88,6 +98,12 @@ struct CommandPalette: View {
         }
         .onAppear { isFocused = true }
         .onChange(of: query) { selection = 0 }
+        .onChange(of: ResultsKey(
+            query: query, threads: model.threads, projects: model.projects,
+            selectedThreadID: model.selectedThreadID, finishActionTitle: model.finishActionTitle
+        ), initial: true) { _, _ in
+            items = results
+        }
     }
 
     private func row(_ item: Item, isSelected: Bool) -> some View {

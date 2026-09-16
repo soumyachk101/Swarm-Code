@@ -231,7 +231,7 @@ struct HydraReportsPopover: View {
         .task(id: text) {
             let parsed = HydraReportDigest.parse(text)
             digest = parsed
-            await MarkdownView.warm(parsed.heads.map(\.body))
+            try? await MarkdownView.warm(parsed.heads.map(\.body))
             guard !Task.isCancelled else { return }
             var warmed: [String: [MarkdownBlock]] = [:]
             for head in parsed.heads {

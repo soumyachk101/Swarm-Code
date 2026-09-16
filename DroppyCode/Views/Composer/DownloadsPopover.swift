@@ -38,8 +38,9 @@ final class RecentDownloads {
 
     func load() async {
         guard let directory else { return }
-        let urls = await Task.detached(priority: .userInitiated) {
+        let scan = Task.detached(priority: .userInitiated) {
             let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey, .isDirectoryKey, .isHiddenKey]
+            let keySet = Set(keys)
             let found = (try? FileManager.default.contentsOfDirectory(
                 at: directory,
                 includingPropertiesForKeys: keys,
@@ -47,16 +48,23 @@ final class RecentDownloads {
             )) ?? []
             return found
                 .compactMap { url -> (URL, Date, Int)? in
-                    guard let values = try? url.resourceValues(forKeys: Set(keys)),
+                    guard !Task.isCancelled,
+                          let values = try? url.resourceValues(forKeys: keySet),
                           values.isDirectory == false else { return nil }
                     return (url, values.contentModificationDate ?? .distantPast, values.fileSize ?? 0)
                 }
                 .sorted { $0.1 > $1.1 }
                 .prefix(RecentDownloads.limit)
                 .map { ($0.0, $0.2) }
-        }.value
+        }
+        let urls = await withTaskCancellationHandler {
+            await scan.value
+        } onCancel: {
+            scan.cancel()
+        }
+        guard !Task.isCancelled else { return }
         var items: [RecentDownload] = []
-        var thumbnails: [String: CGImage] = [:]
+        items.reserveCapacity(urls.count)
         await withTaskGroup(of: (String, CGImage)?.self) { group in
             for (url, size) in urls {
                 let isImage = Self.imageExtensions.contains(url.pathExtension.lowercased())
@@ -70,20 +78,21 @@ final class RecentDownloads {
                     group.addTask {
                         guard let thumbnail = await ThumbnailCache.shared.thumbnail(
                             for: url.path,
-                            pointSize: Self.previewPointSize
+                            pointSize: Self.previewPointSize,
+                            fillingSquare: true
                         ) else { return nil }
                         return (url.path, thumbnail.image)
                     }
                 }
             }
+            self.items = items
+            self.thumbnails = [:]
+            isLoaded = true
             for await result in group {
-                guard let (path, image) = result else { continue }
-                thumbnails[path] = image
+                guard !Task.isCancelled, let (path, image) = result else { continue }
+                self.thumbnails[path] = image
             }
         }
-        self.items = items
-        self.thumbnails = thumbnails
-        isLoaded = true
     }
 }
 

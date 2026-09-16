@@ -241,6 +241,7 @@ private struct ModelEffortPanel: View {
             if switchesProvider {
                 thread.provider = provider
                 thread.providerSessionID = nil
+                thread.providerResumeAt = nil
             }
             thread.model = option.id
             thread.effort = effort
@@ -1033,27 +1034,34 @@ struct TrackLook: Hashable {
 /// size, speed and shimmer, fading at the ends. Fast mode: speed streaks zipping toward the knob
 /// and a lightning bolt flashing now and then. Both together layer the two, over a fill that runs
 /// from purple into gold, with a glossy sheen sweeping across. 30fps, 60 when streaks move.
-private struct TrackEffect: View {
+///
+/// Each particle's and streak's traits are fixed by its index, so they are worked out once
+/// per fill width (`Traits`) and every frame is arithmetic and fills; six `sin` per element
+/// per frame was most of what a frame cost.
+struct TrackEffect: View {
     let look: TrackLook
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var startedAt = Date.now
+    @State private var traits = TraitCache()
 
     var body: some View {
         let kind = look.kind
         let spark = look.spark
         let pair = look.pair
-        TimelineView(.animation(minimumInterval: 1.0 / (kind == .supercharged && pair == nil ? 30 : 60), paused: reduceMotion)) { timeline in
+        let paused = reduceMotion || !FrontMonitor.shared.isVisible
+        TimelineView(.animation(minimumInterval: 1.0 / (kind == .supercharged && pair == nil ? 30 : 60), paused: paused)) { timeline in
             let time = timeline.date.timeIntervalSince(startedAt)
             Canvas { context, size in
                 guard size.width > 8 else { return }
                 if let pair {
                     Self.drawFusion(context, size: size, time: time, lead: look.brand.fillColor, heads: pair.colors)
                 }
+                let traits = traits.traits(width: Double(size.width))
                 if kind == .supercharged || kind == .fusion {
-                    Self.drawParticles(context, size: size, time: time, color: spark)
+                    Self.drawParticles(context, size: size, time: time, color: spark, particles: traits.particles)
                 }
                 if kind == .fast || kind == .fusion {
-                    Self.drawStreaks(context, size: size, time: time)
+                    Self.drawStreaks(context, size: size, time: time, streaks: traits.streaks)
                     Self.drawBolts(context, size: size, time: time)
                 }
                 if kind == .fusion {
@@ -1065,22 +1073,75 @@ private struct TrackEffect: View {
         .accessibilityHidden(true)
     }
 
-    private static func drawParticles(_ context: GraphicsContext, size: CGSize, time: TimeInterval, color: Color) {
-        let span = Double(size.width) + 8
-        let count = max(10, Int(size.width / 5))
-        for index in 0..<count {
-            let seed = Double(index)
-            let height = random(seed, 1)
-            let speed = 12 + 28 * random(seed, 2)
-            let radius = 0.7 + 1.1 * random(seed, 3)
-            let start = random(seed, 4) * span
-            let brightness = 0.22 + 0.5 * random(seed, 5)
+    struct Particle: Equatable {
+        var height: Double
+        var speed: Double
+        var radius: Double
+        /// Where along the span the particle starts, 0..<1.
+        var start: Double
+        var brightness: Double
+        var shimmerRate: Double
+    }
 
-            let x = (start + time * speed).truncatingRemainder(dividingBy: span) - 4
-            let y = Double(size.height) * (0.16 + 0.68 * height)
-            let shimmer = 0.6 + 0.4 * sin(time * (2 + 3 * random(seed, 6)) + seed)
-            let opacity = brightness * shimmer * edgeFade(x, width: Double(size.width))
+    struct Streak: Equatable {
+        var length: Double
+        var speed: Double
+        var thickness: Double
+        var start: Double
+        var height: Double
+        var brightness: Double
+    }
+
+    struct Traits: Equatable {
+        var particles: [Particle]
+        var streaks: [Streak]
+
+        /// The traits for a fill of this width: as many particles as one per five points and
+        /// streaks as one per fourteen, each element's traits the same at every width.
+        static func build(width: Double) -> Traits {
+            let particles = (0..<max(10, Int(width / 5))).map { index -> Particle in
+                let seed = Double(index)
+                return Particle(
+                    height: random(seed, 1), speed: 12 + 28 * random(seed, 2), radius: 0.7 + 1.1 * random(seed, 3),
+                    start: random(seed, 4), brightness: 0.22 + 0.5 * random(seed, 5), shimmerRate: 2 + 3 * random(seed, 6)
+                )
+            }
+            let streaks = (0..<max(5, Int(width / 14))).map { index -> Streak in
+                let seed = Double(index) + 100
+                return Streak(
+                    length: 10 + 20 * random(seed, 1), speed: 110 + 190 * random(seed, 2), thickness: 1.1 + 1.1 * random(seed, 3),
+                    start: random(seed, 4), height: 0.2 + 0.6 * random(seed, 5), brightness: 0.35 + 0.55 * random(seed, 6)
+                )
+            }
+            return Traits(particles: particles, streaks: streaks)
+        }
+    }
+
+    /// The traits of the width last drawn. A reference the canvas closure updates in
+    /// place: the width changes only while the knob is dragged, and a frame at the same
+    /// width reuses what the last one built.
+    final class TraitCache {
+        private var width = -1.0
+        private var built = Traits(particles: [], streaks: [])
+
+        func traits(width: Double) -> Traits {
+            if width != self.width {
+                self.width = width
+                built = Traits.build(width: width)
+            }
+            return built
+        }
+    }
+
+    private static func drawParticles(_ context: GraphicsContext, size: CGSize, time: TimeInterval, color: Color, particles: [Particle]) {
+        let span = Double(size.width) + 8
+        for (index, particle) in particles.enumerated() {
+            let x = (particle.start * span + time * particle.speed).truncatingRemainder(dividingBy: span) - 4
+            let y = Double(size.height) * (0.16 + 0.68 * particle.height)
+            let shimmer = 0.6 + 0.4 * sin(time * particle.shimmerRate + Double(index))
+            let opacity = particle.brightness * shimmer * edgeFade(x, width: Double(size.width))
             guard opacity > 0.01 else { continue }
+            let radius = particle.radius
             context.fill(
                 Path(ellipseIn: CGRect(x: x - radius, y: y - radius, width: radius * 2, height: radius * 2)),
                 with: .color(color.opacity(opacity))
@@ -1089,18 +1150,15 @@ private struct TrackEffect: View {
     }
 
     /// Thin streaks racing toward the knob, bright at the head and fading down the tail.
-    private static func drawStreaks(_ context: GraphicsContext, size: CGSize, time: TimeInterval) {
+    private static func drawStreaks(_ context: GraphicsContext, size: CGSize, time: TimeInterval, streaks: [Streak]) {
         let width = Double(size.width)
-        let count = max(5, Int(width / 14))
-        for index in 0..<count {
-            let seed = Double(index) + 100
-            let length = 10 + 20 * random(seed, 1)
-            let speed = 110 + 190 * random(seed, 2)
-            let thickness = 1.1 + 1.1 * random(seed, 3)
+        for streak in streaks {
+            let length = streak.length
+            let thickness = streak.thickness
             let span = width + length + 12
-            let x = (random(seed, 4) * span + time * speed).truncatingRemainder(dividingBy: span) - length - 6
-            let y = Double(size.height) * (0.2 + 0.6 * random(seed, 5))
-            let brightness = (0.35 + 0.55 * random(seed, 6)) * edgeFade(x + length, width: width)
+            let x = (streak.start * span + time * streak.speed).truncatingRemainder(dividingBy: span) - length - 6
+            let y = Double(size.height) * streak.height
+            let brightness = streak.brightness * edgeFade(x + length, width: width)
             guard brightness > 0.02 else { continue }
             let rect = CGRect(x: x, y: y - thickness / 2, width: length, height: thickness)
             context.fill(
@@ -1284,7 +1342,7 @@ private struct TrackEffect: View {
     }
 
     /// A stable pseudo-random value in 0..<1 for an element and one of its traits.
-    private static func random(_ index: Double, _ trait: Double) -> Double {
+    nonisolated static func random(_ index: Double, _ trait: Double) -> Double {
         let value = sin(index * 12.9898 + trait * 78.233) * 43758.5453
         return value - value.rounded(.down)
     }

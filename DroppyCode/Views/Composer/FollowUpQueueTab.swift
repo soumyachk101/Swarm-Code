@@ -130,8 +130,13 @@ struct FollowUpQueueTab: View {
         .glassEffect(.regular, in: shape)
         .contentShape(shape)
         .onChange(of: runtime.followUps.map(\.id)) { _, ids in
-            // A row that left mid-drag (deleted, or sent) ends the drag cleanly.
+            // A row that left mid-drag (deleted, or sent) ends the drag cleanly, and its
+            // measured height goes with it.
             if let id = drag.id, !ids.contains(id) { dragEnded() }
+            if rowHeights.count > ids.count {
+                let kept = Set(ids)
+                rowHeights = rowHeights.filter { kept.contains($0.key) }
+            }
         }
         .onChange(of: drag.id) { _, id in
             if id != nil {
@@ -291,7 +296,7 @@ private struct FollowUpRow: View {
     /// One preview panel for this row's thumbnails, so every photo opens.
     @State private var preview = AttachmentPreviewSlot()
     /// The editor popover for this row, anchored to its pencil button.
-    @State private var editor = FollowUpEditCoordinator()
+    @State private var editor = PromptEditorPopover<FollowUpEditor>()
 
     /// Whether the pointer is over the reorder grip, for the grab cursor.
     @State private var isHoveringGrip = false
@@ -307,6 +312,10 @@ private struct FollowUpRow: View {
     }()
 
     var body: some View {
+        // Which follow-up is open for editing is the thread's, so the editor survives the
+        // row: leaving the thread closes the popover only, and the row coming back reopens
+        // it on the edit as it was left.
+        let isEditing = runtime.followUpEdit?.id == prompt.id
         // One shared center line: the number, grip, thumbnails, text and
         // buttons all center on it, so single-line rows read as one line.
         HStack(alignment: .center, spacing: 8) {
@@ -420,9 +429,17 @@ private struct FollowUpRow: View {
                     runtime.sendFollowUpNow(prompt.id)
                 }
                 QueueIconButton(symbol: "pencil", help: "Edit follow-up") {
-                    editor.show(prompt: prompt, runtime: runtime)
+                    // The pencil toggles: a second tap while open closes the editor.
+                    runtime.followUpEdit = isEditing ? nil : PromptEdit(id: prompt.id, text: prompt.text, attachments: prompt.attachments)
                 }
-                .windowRectAnchor { editor.setAnchor(windowRect: $0) }
+                .background {
+                    AttachmentAnchorCapture { anchor in
+                        editor.setAnchor(anchor)
+                        // The anchor lands in its window after the row appears: the
+                        // moment a reopened thread can show the editor again.
+                        syncEditor(isEditing)
+                    }
+                }
                 QueueIconButton(symbol: "trash", help: "Delete follow-up") {
                     runtime.removeFollowUp(prompt.id)
                 }
@@ -461,9 +478,16 @@ private struct FollowUpRow: View {
         .onChange(of: prompt.attachments) {
             preview.retire(except: Set(prompt.attachments.map(\.id)))
         }
+        .onChange(of: isEditing) { _, editing in syncEditor(editing) }
         .onDisappear {
             preview.close()
             editor.close()
+        }
+    }
+
+    private func syncEditor(_ isEditing: Bool) {
+        editor.sync(isEditing ? runtime.followUpEdit : nil, dismiss: { runtime.followUpEdit = nil }) { edit in
+            FollowUpEditor(edit: edit, runtime: runtime)
         }
     }
 
@@ -497,267 +521,5 @@ private struct QueueIconButton: View {
         .disabled(!isEnabled)
         .help(help)
         .accessibilityLabel(Text(help))
-    }
-}
-
-/// The follow-up editor as an anchored popover instead of a modal sheet, so
-/// editing never takes over the window. Application-defined so AppKit never
-/// closes it on its own: it survives its nested panels (the file picker, the
-/// recent-downloads popover, an attachment preview), and closes on Save,
-/// Cancel, Escape, the pencil again, a click elsewhere in the chat window, or
-/// when its row goes away.
-@MainActor
-final class FollowUpEditCoordinator: NSObject {
-    private let popover = NSPopover()
-    /// The pencil's frame in its window (see `WindowRectAnchor`): the editor hangs from
-    /// that rect on the window's content view, since the queue tab mounts no view of
-    /// its own for it to hang from.
-    private var anchorRect: CGRect?
-    private var monitors: [Any] = []
-    /// The chat window and the pencil's rect in it as the editor opened, for the click
-    /// monitor: resolving the anchor per event (see `WindowRectAnchor.target`) would
-    /// name the editor's own window once a click lands there, and close it.
-    private weak var shownIn: NSWindow?
-    private var shownRect: NSRect = .zero
-
-    override init() {
-        super.init()
-        popover.behavior = .applicationDefined
-        popover.animates = true
-    }
-
-    /// The pencil button's frame in the window, as its geometry reports it.
-    func setAnchor(windowRect: CGRect) {
-        anchorRect = windowRect
-    }
-
-    /// The pencil's place: the window's content view and the rect in it.
-    private var anchorTarget: (view: NSView, rect: NSRect)? {
-        anchorRect.flatMap(WindowRectAnchor.target(for:))
-    }
-
-    func show(prompt: FollowUpPrompt, runtime: ThreadRuntime) {
-        guard let anchor = anchorTarget else { return }
-        // The pencil toggles: a second tap while open closes the editor.
-        if popover.isShown {
-            close()
-            return
-        }
-        let editor = FollowUpEditor(
-            prompt: prompt,
-            runtime: runtime,
-            onDone: { [weak self] in self?.close() }
-        )
-        // Measured once at its ideal size, then frozen (see setFixedContent):
-        // a panel that resizes while shown moves off the pencil, and the
-        // editor's text and strip must not move it while the user types.
-        var size = NSHostingView(rootView: editor).intrinsicContentSize
-        if size.width <= 0 || size.height <= 0 { size = NSSize(width: 520, height: 320) }
-        popover.setFixedContent(editor, size: size)
-        shownIn = anchor.view.window
-        shownRect = anchor.view.convert(anchor.rect, to: nil)
-        popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: anchor.view.isFlipped ? .maxY : .minY)
-        startMonitors()
-    }
-
-    func close() {
-        stopMonitors()
-        if popover.isShown { popover.performClose(nil) }
-    }
-
-    private func startMonitors() {
-        guard monitors.isEmpty else { return }
-        if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            // Escape in the editor or the chat window it hangs from; the file picker's and
-            // the downloads popover's Escape are theirs, and the editor survives them.
-            guard let self, event.keyCode == 53, // Escape
-                  event.window === shownIn || event.window === popover.contentViewController?.view.window
-            else { return event }
-            close()
-            return nil
-        }) {
-            monitors.append(monitor)
-        }
-        if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
-            self?.handleMouseDown(event) ?? event
-        }) {
-            monitors.append(monitor)
-        }
-    }
-
-    /// A click in the chat window dismisses the editor, and still reaches its
-    /// target. The editor, the file picker and the editor's nested popovers
-    /// are windows of their own, so clicks there pass, as does the pencil
-    /// (which toggles on its own).
-    private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
-        guard let window = event.window, let shownIn, window === shownIn else { return event }
-        if shownRect.contains(event.locationInWindow) { return event }
-        close()
-        return event
-    }
-
-    private func stopMonitors() {
-        for monitor in monitors { NSEvent.removeMonitor(monitor) }
-        monitors.removeAll()
-    }
-}
-
-/// Edits one queued follow-up, text and attachments included.
-private struct FollowUpEditor: View {
-    let prompt: FollowUpPrompt
-    let runtime: ThreadRuntime
-    let onDone: () -> Void
-
-    @State private var text: String
-    @State private var attachments: [Attachment]
-    @State private var preview = AttachmentPreviewSlot()
-    @State private var showingFiles = false
-    @FocusState private var editorFocused: Bool
-
-    init(prompt: FollowUpPrompt, runtime: ThreadRuntime, onDone: @escaping () -> Void) {
-        self.prompt = prompt
-        self.runtime = runtime
-        self.onDone = onDone
-        _text = State(initialValue: prompt.text)
-        _attachments = State(initialValue: prompt.attachments)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Edit follow-up")
-                .font(.system(size: 17, weight: .semibold))
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: $text)
-                    .font(.system(size: 13))
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .focused($editorFocused)
-                if text.isEmpty {
-                    Text("Steer the agent…")
-                        .foregroundStyle(Chrome.secondaryText)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 8)
-                        .allowsHitTesting(false)
-                }
-            }
-            .frame(minHeight: 110)
-            .background(Chrome.overlay(0.05), in: .rect(cornerRadius: 12, style: .continuous))
-            // The files and the buttons share one line, the buttons sitting on the
-            // files' bottom edge. Many files scroll sideways in their own strip; the
-            // buttons never move.
-            HStack(alignment: .bottom, spacing: 12) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    // The delete badge straddles the thumbnail's far top-right
-                    // corner. The cell's own top/trailing padding reserves that
-                    // overhang, so the badge sits inside its own cell — never in
-                    // the gap where a later sibling could cover it.
-                    HStack(spacing: 0) {
-                        ForEach(attachments) { attachment in
-                            AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
-                                .overlay(alignment: .topTrailing) {
-                                    Button {
-                                        attachments.removeAll { $0.id == attachment.id }
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .symbolRenderingMode(.palette)
-                                            .foregroundStyle(.white, .black.opacity(0.6))
-                                            .padding(4)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .focusable(false)
-                                    .offset(x: 6, y: -6)
-                                    .accessibilityLabel(Text("Remove \(attachment.name)"))
-                                }
-                                .padding(.top, 8)
-                                .padding(.trailing, 8)
-                        }
-                        // The add tile: a file chip with a plus that opens the same
-                        // recent-downloads popover as the composer's paperclip.
-                        Button {
-                            showingFiles.toggle()
-                        } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 16, weight: .medium))
-                                .foregroundStyle(Chrome.secondaryText)
-                                .frame(width: 48, height: 48)
-                                .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 12, style: .continuous))
-                                .contentShape(.rect(cornerRadius: 12, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                        .focusable(false)
-                        .help("Add files")
-                        .accessibilityLabel(Text("Add files"))
-                        .disabled(attachments.count >= 8)
-                        .opacity(attachments.count >= 8 ? 0.4 : 1)
-                        .padding(.top, 8)
-                        .padding(.trailing, 8)
-                        .popover(isPresented: $showingFiles, arrowEdge: .bottom) {
-                            DownloadsPopover(
-                                pick: { importURL($0) },
-                                chooseOther: { showingFiles = false; chooseFiles() }
-                            )
-                        }
-                    }
-                    .background {
-                        AttachmentAnchorCapture { preview.setAnchor($0) }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                HStack(spacing: 8) {
-                    Button("Cancel", role: .cancel) { onDone() }
-                        .buttonStyle(.glass)
-                    Button("Save") {
-                        runtime.updateFollowUp(prompt.id, text: text, attachments: attachments)
-                        onDone()
-                    }
-                    .buttonStyle(.glassProminent)
-                    .disabled(isEmpty)
-                }
-                .fixedSize()
-            }
-        }
-        .padding(20)
-        .frame(width: 520)
-        .onAppear { editorFocused = true }
-        .onChange(of: attachments) {
-            preview.retire(except: Set(attachments.map(\.id)))
-        }
-        .onDisappear { preview.close() }
-    }
-
-    private var isEmpty: Bool {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
-    }
-
-    private func chooseFiles() {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.prompt = "Attach"
-        guard panel.runModal() == .OK else { return }
-        for url in panel.urls {
-            guard attachments.count < 8 else { break }
-            importURL(url)
-        }
-    }
-
-    /// Imports one file URL as an attachment, shared by the open panel and the
-    /// recent-downloads popover. HEIC/HEIF converts to JPEG like the composer.
-    private func importURL(_ url: URL) {
-        guard attachments.count < 8 else { return }
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { return }
-        let fileExtension = url.pathExtension.lowercased()
-        if fileExtension == "heic" || fileExtension == "heif" {
-            guard let image = NSImage(contentsOf: url), let data = image.jpegData,
-                  let attachment = try? Storage.importAttachment(
-                    data: data,
-                    name: url.deletingPathExtension().lastPathComponent + ".jpg",
-                    fileExtension: "jpg"
-                  ) else { return }
-            attachments.append(attachment)
-        } else if let attachment = try? Storage.importAttachment(from: url) {
-            attachments.append(attachment)
-        }
     }
 }

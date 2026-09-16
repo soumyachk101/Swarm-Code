@@ -27,6 +27,9 @@ enum PreviewImages {
     /// resolve against the thread's working directory; only a file that exists counts.
     @MainActor
     static func resolveToolImagePath(for call: ToolCall, workingDirectory: String?) -> String? {
+        // Most rows name no image at all: no image extension anywhere means there is no
+        // candidate to split the text for, and nothing worth a cache entry.
+        guard mentionsImage(call.title) || call.detail.map(mentionsImage) == true else { return nil }
         // The status is part of the question: a command that makes a file has not made it
         // yet while it runs, so the answer it gets then must not outlive it.
         let key = "\(call.kind.rawValue)\u{1}\(call.status.rawValue)\u{1}\(call.title)\u{1}\(call.detail ?? "")\u{1}\(workingDirectory ?? "")"
@@ -34,6 +37,11 @@ enum PreviewImages {
         let resolved = search(for: call, workingDirectory: workingDirectory)
         resolvedPaths.insert(resolved, for: key)
         return resolved
+    }
+
+    private static func mentionsImage(_ text: String) -> Bool {
+        let lowered = text.lowercased()
+        return extensions.contains { lowered.contains("." + $0) }
     }
 
     /// The search itself: the string work first, and the disk only for a candidate that

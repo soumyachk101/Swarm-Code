@@ -139,6 +139,14 @@ private struct GenieFlightView: View {
         // An arrival is the same flight run backwards: all the way in at the start, and
         // out of the funnel into place by the end.
         let (start, end) = flight.isArrival ? (1.0, 0.0) : (0.0, 1.0)
+        // How far a destination pixel can reach for its source: the shader maps the
+        // funnel's pixels back into the row's frame, so the row's size plus its distance
+        // to the neck bounds it. The offscreen pass the effect rasterizes is padded by
+        // this on every side; the whole canvas padded it by the whole window.
+        let reach = CGSize(
+            width: abs(target.x - frame.midX) + frame.width,
+            height: abs(target.y - frame.midY) + frame.height
+        )
         Image(nsImage: flight.image)
             .resizable()
             .frame(width: frame.width, height: frame.height)
@@ -152,7 +160,7 @@ private struct GenieFlightView: View {
                             .float4(frame.minX, frame.minY, frame.width, frame.height),
                             .float2(target.x, target.y)
                         ),
-                        maxSampleOffset: canvas
+                        maxSampleOffset: reach
                     )
                     .opacity(progress > 0.9 ? max(0, (1 - progress) / 0.1) : 1)
             } keyframes: { _ in

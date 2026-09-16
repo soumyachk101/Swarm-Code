@@ -14,6 +14,11 @@ struct ProviderIcon: View {
 }
 
 enum RelativeTime {
+    /// Dates older than a week by their formatted day: every sidebar row past that age
+    /// asked ICU again on each evaluation of the list.
+    @MainActor private static var days = RecentCache<Date, String>(limit: 256)
+
+    @MainActor
     static func short(_ date: Date, now: Date = .now) -> String {
         let seconds = now.timeIntervalSince(date)
         switch seconds {
@@ -21,7 +26,11 @@ enum RelativeTime {
         case ..<3_600: return "\(Int(seconds / 60))m"
         case ..<86_400: return "\(Int(seconds / 3_600))h"
         case ..<604_800: return "\(Int(seconds / 86_400))d"
-        default: return date.formatted(.dateTime.month(.abbreviated).day())
+        default:
+            if let day = days.value(for: date) { return day }
+            let day = date.formatted(.dateTime.month(.abbreviated).day())
+            days.insert(day, for: date)
+            return day
         }
     }
 

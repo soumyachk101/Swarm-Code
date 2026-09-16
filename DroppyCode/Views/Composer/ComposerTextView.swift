@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum ComposerKey {
     case up
@@ -27,6 +28,11 @@ final class ComposerController {
 
     var cursorLocation: Int {
         textView?.selectedRange().location ?? 0
+    }
+
+    var hasFocus: Bool {
+        guard let textView else { return false }
+        return NSApp.isActive && textView.window?.isKeyWindow == true && textView.window?.firstResponder === textView
     }
 
     func focus() {
@@ -115,8 +121,7 @@ final class ComposerNSTextView: NSTextView {
     var placeholder = "" {
         didSet { needsDisplay = true }
     }
-    var onFiles: (([URL]) -> Void)?
-    var onImage: ((Data) -> Void)?
+    var onAttach: (([AttachmentSource]) -> Void)?
     var onWidthChange: (() -> Void)?
     var onResign: (() -> Void)?
 
@@ -132,13 +137,16 @@ final class ComposerNSTextView: NSTextView {
         return ok
     }
 
-    private static let imageTypes: [NSPasteboard.PasteboardType] = [.png, .tiff, NSPasteboard.PasteboardType("public.jpeg"), NSPasteboard.PasteboardType("public.heic")]
+    /// The image types a paste attaches, best first: a PNG is stored as it is, the rest
+    /// are re-encoded off the main thread.
+    private static let imageTypes: [UTType] = [.png, .tiff, .jpeg, .heic]
+    private static let imagePasteboardTypes = imageTypes.map { NSPasteboard.PasteboardType($0.identifier) }
 
     /// Files, or image data with no text beside it, which paste as attachments instead of text.
     private var pasteboardHoldsAttachment: Bool {
         let pasteboard = NSPasteboard.general
         if pasteboard.canReadObject(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) { return true }
-        return pasteboard.availableType(from: Self.imageTypes) != nil && pasteboard.string(forType: .string) == nil
+        return pasteboard.availableType(from: Self.imagePasteboardTypes) != nil && pasteboard.string(forType: .string) == nil
     }
 
     /// A plain-text view disables Paste when the clipboard has no text, so an image never reached `paste(_:)`.
@@ -160,13 +168,14 @@ final class ComposerNSTextView: NSTextView {
         let pasteboard = NSPasteboard.general
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            !urls.isEmpty {
-            onFiles?(urls)
+            onAttach?(urls.map(AttachmentSource.file))
             return
         }
         if pasteboard.string(forType: .string) == nil,
-           let image = NSImage(pasteboard: pasteboard),
-           let data = image.pngData {
-            onImage?(data)
+           let available = pasteboard.availableType(from: Self.imagePasteboardTypes),
+           let type = UTType(available.rawValue),
+           let data = pasteboard.data(forType: available) {
+            onAttach?([.image(data, type)])
             return
         }
         pasteAsPlainText(sender)
@@ -175,20 +184,25 @@ final class ComposerNSTextView: NSTextView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         if let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
            !urls.isEmpty {
-            onFiles?(urls)
+            onAttach?(urls.map(AttachmentSource.file))
             return true
         }
         return super.performDragOperation(sender)
     }
 
+    /// Whether the last draw showed the placeholder: the view is redrawn whole only when
+    /// the text becomes empty or stops being empty; other keystrokes redraw their lines.
+    private var placeholderShown = false
+
     override func didChangeText() {
         super.didChangeText()
-        needsDisplay = true
+        if string.isEmpty != placeholderShown { needsDisplay = true }
     }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        guard string.isEmpty, !placeholder.isEmpty else { return }
+        placeholderShown = string.isEmpty && !placeholder.isEmpty
+        guard placeholderShown else { return }
         let attributes: [NSAttributedString.Key: Any] = [
             .font: font ?? NSFont.systemFont(ofSize: 14),
             .foregroundColor: NSColor.placeholderTextColor,
@@ -201,26 +215,13 @@ final class ComposerNSTextView: NSTextView {
     }
 }
 
-extension NSImage {
-    var pngData: Data? {
-        guard let tiff = tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-        return bitmap.representation(using: .png, properties: [:])
-    }
-
-    var jpegData: Data? {
-        guard let tiff = tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.88])
-    }
-}
-
 struct ComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var height: CGFloat
     var placeholder: String
     let controller: ComposerController
     var onKey: (ComposerKey) -> Bool
-    var onFiles: ([URL]) -> Void
-    var onImage: (Data) -> Void
+    var onAttach: ([AttachmentSource]) -> Void
     var onCursorChange: (Int) -> Void
     var onBlur: () -> Void = {}
     /// Whether the text takes typing focus as it appears. The chat's own box does; a
@@ -271,8 +272,7 @@ struct ComposerTextView: NSViewRepresentable {
         textView.textContainer?.lineFragmentPadding = 0
         textView.placeholder = placeholder
         textView.string = text
-        textView.onFiles = onFiles
-        textView.onImage = onImage
+        textView.onAttach = onAttach
 
         scrollView.documentView = textView
         controller.textView = textView
@@ -297,11 +297,7 @@ struct ComposerTextView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = scrollView.documentView as? ComposerNSTextView else { return }
-        textView.onFiles = onFiles
-        textView.onImage = onImage
-        textView.onResign = { [weak coordinator = context.coordinator] in
-            Task { @MainActor in coordinator?.parent.onBlur() }
-        }
+        textView.onAttach = onAttach
         if textView.placeholder != placeholder { textView.placeholder = placeholder }
         // The caret follows the theme's accent; a theme change never rebuilds the view.
         let caret = Chrome.accentNSColor

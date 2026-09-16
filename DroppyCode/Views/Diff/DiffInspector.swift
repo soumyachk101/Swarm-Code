@@ -5,18 +5,15 @@ struct DiffInspector: View {
     let runtime: ThreadRuntime
 
     @State private var files: [DiffFile] = []
+    @State private var summary = FileChangeSummary(files: [])
     @State private var isLoading = false
     @State private var collapsed: Set<String> = []
-    @State private var isConfirmingRevert = false
+    @State private var changedTurns: [TurnRecord] = []
     /// The file to bring into view, set when a tapped tool row focused its edits.
     @State private var scrollTarget: String?
     /// Bumped with every focus load: state can survive a re-opened popover, so the
     /// scroll is driven by a counter that always changes, never by the target alone.
     @State private var scrollRequest = 0
-
-    private var changedTurns: [TurnRecord] {
-        runtime.turns.filter { $0.endCheckpoint != nil || $0.providerDiff != nil }
-    }
 
     private var loadKey: String {
         "\(runtime.diffRevision)-\(runtime.diffSelection?.uuidString ?? "all")-\(runtime.diffFocusRevision)"
@@ -47,33 +44,18 @@ struct DiffInspector: View {
                     }
                     Spacer(minLength: 8)
                     if !files.isEmpty {
-                        Text(files.count == 1 ? "1 file" : "\(files.count) files")
+                        Text(summary.files.count == 1 ? "1 file" : "\(summary.files.count) files")
                             .font(.system(size: 11))
                             .foregroundStyle(Chrome.secondaryText)
                         DiffStatLabel(
-                            additions: files.reduce(0) { $0 + $1.additions },
-                            deletions: files.reduce(0) { $0 + $1.deletions }
+                            additions: summary.additions,
+                            deletions: summary.deletions
                         )
                     }
                     ChromeCapsule {
                         ChromeMenuButton(symbol: "ellipsis", help: "More") {
                             PopoverItem("Expand all", symbol: "arrow.down.right.and.arrow.up.left") { collapsed.removeAll() }
                             PopoverItem("Collapse all", symbol: "arrow.up.left.and.arrow.down.right") { collapsed = Set(files.map(\.id)) }
-                            if runtime.diffSelection != nil {
-                                PopoverDivider()
-                                // Always there once a turn is picked, disabled with the
-                                // reason when it cannot be reverted right now: a row that
-                                // is simply absent reads as a turn with nothing to undo.
-                                PopoverItem(
-                                    "Revert this turn…",
-                                    symbol: "arrow.uturn.backward",
-                                    isEnabled: canRevertSelection,
-                                    isDestructive: true
-                                ) {
-                                    isConfirmingRevert = true
-                                }
-                                .help(revertHelp)
-                            }
                         }
                         ChromeDivider()
                         ChromeIconButton(symbol: "xmark", help: "Hide changes" + ShortcutStore.hint(for: .toggleChanges)) {
@@ -136,48 +118,25 @@ struct DiffInspector: View {
             }
             await load()
         }
-        .confirmationDialog("Revert this turn?", isPresented: $isConfirmingRevert) {
-            Button("Revert files and conversation", role: .destructive) {
-                guard let turnID = runtime.diffSelection else { return }
-                Task { _ = try? await runtime.revert(to: turnID, restoreFiles: true) }
-            }
-        } message: {
-            Text("Files go back to how they were before this turn, and the turn leaves the conversation.")
-        }
-    }
-
-    /// Why the revert row is off, and empty when it is on.
-    private var revertHelp: String {
-        if canRevertSelection { return "" }
-        if runtime.isRunning { return "Wait for the turn to finish" }
-        return "This provider cannot rewind a conversation"
-    }
-
-    private var canRevertSelection: Bool {
-        guard runtime.diffSelection != nil, !runtime.isRunning, let thread = runtime.thread else { return false }
-        return thread.provider.supportsRewind
     }
 
     private func load() async {
         let selection = runtime.diffSelection
-        let selectedTurns = selection.map { selection in runtime.turns.filter { $0.id == selection } } ?? runtime.turns
-        let touched = Set(selectedTurns.flatMap { $0.touchedPaths ?? [] })
-        // Turns recorded before edited files were tracked have none, and show everything as before.
-        let filtersToThread = selectedTurns.contains { $0.touchedPaths != nil }
+        changedTurns = runtime.turnsWithChanges()
         isLoading = true
         defer { isLoading = false }
         let parsed = await runtime.parsedDiff(selection: selection)
         guard !Task.isCancelled else { return }
-        let filtered = filtersToThread ? parsed.filter { TouchedPaths.matches($0, touched: touched) } : parsed
         // The tapped row's own patches carry any file the turn's diff cannot show:
         // a running turn has no end checkpoint yet, and work that was reverted or
         // moved into a worktree leaves its checkpoint diff empty.
         // Off the main thread: a tapped row's patches can run to thousands of lines,
         // and parsing them here held the popover's first frame.
         let focusEdits = runtime.diffFocusEdits
-        let missing = await Task.detached(priority: .userInitiated) { focusedFiles(focusEdits, missingFrom: filtered) }.value
+        let missing = await Task.detached(priority: .userInitiated) { focusedFiles(focusEdits, missingFrom: parsed) }.value
         guard !Task.isCancelled else { return }
-        files = Array((missing + filtered).prefix(120))
+        files = missing.isEmpty ? parsed : missing + parsed
+        summary = FileChangeSummary(files: files)
         // The files a tapped tool row asked to see open on arrival, and the view
         // scrolls to the first of them. Everything else keeps the "first file open,
         // the rest collapsed" rule, so opening with a hundred files stays cheap.
@@ -204,7 +163,9 @@ private func focusedFiles(_ edits: [FileEdit], missingFrom files: [DiffFile]) ->
     var missing: [DiffFile] = []
     for edit in edits {
         guard !edit.path.isEmpty, let patch = edit.diff, !patch.isEmpty else { continue }
-        guard !(files + missing).contains(where: { TouchedPaths.matches($0, touched: [edit.path]) }) else { continue }
+        let touched: Set<String> = [edit.path]
+        guard !files.contains(where: { TouchedPaths.matches($0, touched: touched) }),
+              !missing.contains(where: { TouchedPaths.matches($0, touched: touched) }) else { continue }
         let file = DiffParser.parseHunks(patch, path: edit.path)
         if !file.hunks.isEmpty { missing.append(file) }
     }
@@ -252,8 +213,8 @@ private struct DiffFileCard: View, Equatable {
             .buttonStyle(.plain)
 
             if !isCollapsed {
-                if file.isBinary {
-                    Text("Binary file")
+                if file.isBinary || file.hunks.isEmpty {
+                    Text(file.isBinary ? "Binary file" : "Diff details unavailable")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 12)
@@ -320,7 +281,7 @@ struct DiffLinesView: View, Equatable {
     /// Tinted runs merge across hunk boundaries (edits often arrive as many
     /// single-line hunks), so only the block's top and bottom lines get corners.
     /// A header that would land inside a merged run is redundant, so it is dropped.
-    private enum Section: Identifiable {
+    enum Section: Identifiable, Equatable {
         case header(String, Int)
         case tinted([DiffLine])
         case plain([DiffLine])
@@ -335,7 +296,7 @@ struct DiffLinesView: View, Equatable {
     }
 
     /// Builds the row groups once per state change instead of on every body pass.
-    private nonisolated static func makeSections(file: DiffFile, showsLineNumbers: Bool, limit: Int) -> [Section] {
+    nonisolated static func makeSections(file: DiffFile, showsLineNumbers: Bool, limit: Int) -> [Section] {
         var sections: [Section] = []
         var pending: [DiffLine] = []
         var remaining = limit
@@ -347,7 +308,9 @@ struct DiffLinesView: View, Equatable {
         }
         for (hunkIndex, hunk) in file.hunks.enumerated() {
             guard !hunk.lines.isEmpty, remaining > 0 else { continue }
-            let runs = lineBlocks(hunk.lines)
+            // Only the lines the budget can show are grouped: a huge hunk behind a
+            // collapsed card costs its first 200 lines, not all of them.
+            let runs = lineBlocks(hunk.lines.prefix(remaining))
             // Continuing means the previous hunk ended mid-run; anything else
             // flushes and starts fresh below a new header.
             let continues = (runs.first?.isTinted == true) && !pending.isEmpty
@@ -439,7 +402,7 @@ private struct DiffLineBlock: Identifiable {
     var id: Int { lines.first?.id ?? 0 }
 }
 
-private func lineBlocks(_ lines: [DiffLine]) -> [DiffLineBlock] {
+private func lineBlocks(_ lines: ArraySlice<DiffLine>) -> [DiffLineBlock] {
     var blocks: [DiffLineBlock] = []
     for line in lines {
         let tinted = line.kind == .addition || line.kind == .deletion
@@ -660,8 +623,10 @@ final class DiffPopoverCoordinator: NSObject, NSPopoverDelegate {
             guard let self else { return }
             self.stopMonitors()
             self.desiredVisible = false
-            // Only the close that posted this may clear the flag: a Review tap
-            // that already reopened (newer session) must survive.
+            // Only the close that posted this may clear the flag and drop the content:
+            // a Review tap that already reopened (newer session) must survive. Dropping
+            // the content releases the inspector's view tree, which otherwise stays
+            // alive, observing the runtime, until the next open replaces it.
             if self.session == self.pendingSession {
                 if let shown = self.shownRuntime, shown.isDiffVisible { shown.isDiffVisible = false }
                 // The content goes with the close: a hosting view left in the popover kept
