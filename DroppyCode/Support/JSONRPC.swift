@@ -73,9 +73,16 @@ final class JSONRPCConnection {
         }
         let id = RPCID.int(nextID)
         nextID += 1
-        return try await withCheckedThrowingContinuation { continuation in
-            pending[id] = continuation
-            write(["id": id.json, "method": .string(method), "params": params])
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                pending[id] = continuation
+                write(["id": id.json, "method": .string(method), "params": params])
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.pending.removeValue(forKey: id)?.resume(throwing: CancellationError())
+            }
         }
     }
 

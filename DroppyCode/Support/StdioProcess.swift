@@ -7,25 +7,19 @@ import Foundation
 /// delivered through `messages`, which finishes once stdout closes or the
 /// process exits.
 final class StdioProcess: @unchecked Sendable {
-    /// How messages are delimited on the pipes.
-    enum Framing: Sendable {
-        /// One JSON object per line: Codex, Claude, ACP agents and Antigravity.
-        case lines
-        /// LSP-style `Content-Length: N\r\n\r\n` headers before each body: the Copilot CLI.
-        case contentLength
-    }
+    typealias Framing = StdioFramer.Framing
 
     let messages: AsyncStream<JSONValue>
 
+    private let framing: Framing
     private let continuation: AsyncStream<JSONValue>.Continuation
     private let process = Process()
     private let stdin = Pipe()
     private let stdout = Pipe()
     private let stderr = Pipe()
-    private let framing: Framing
     private let writeQueue = DispatchQueue(label: "droppycode.stdio.write")
     private let lock = NSLock()
-    private var lineBuffer = Data()
+    private var framer: StdioFramer
     private var errorBuffer = Data()
     private var exitStatus: Int32?
     private var exitWaiters: [CheckedContinuation<Int32, Never>] = []
@@ -34,6 +28,7 @@ final class StdioProcess: @unchecked Sendable {
         let stream = AsyncStream.makeStream(of: JSONValue.self)
         messages = stream.stream
         continuation = stream.continuation
+        framer = StdioFramer(framing: framing)
         self.framing = framing
         process.executableURL = executable
         process.arguments = arguments
@@ -87,17 +82,17 @@ final class StdioProcess: @unchecked Sendable {
     }
 
     func send(_ message: JSONValue) {
-        let body = message.data()
-        let payload: Data
-        switch framing {
-        case .lines:
-            payload = body + Data([0x0A])
-        case .contentLength:
-            payload = Data("Content-Length: \(body.count)\r\n\r\n".utf8) + body
-        }
         let handle = stdin.fileHandleForWriting
+        let framing = framing
         writeQueue.async {
-            // A write to an exited process fails with EPIPE; the reader reports the exit.
+            let body = message.data()
+            let payload: Data
+            switch framing {
+            case .lines:
+                payload = body + Data([0x0A])
+            case .contentLength:
+                payload = Data("Content-Length: \(body.count)\r\n\r\n".utf8) + body
+            }
             try? handle.write(contentsOf: payload)
         }
     }
@@ -141,61 +136,8 @@ final class StdioProcess: @unchecked Sendable {
     }
 
     private func consume(_ data: Data) {
-        switch framing {
-        case .lines: consumeLines(data)
-        case .contentLength: consumeFrames(data)
-        }
-    }
-
-    private func consumeLines(_ data: Data) {
-        let lines: [Data] = lock.withLock {
-            lineBuffer.append(data)
-            var lines: [Data] = []
-            var start = lineBuffer.startIndex
-            while let newline = lineBuffer[start...].firstIndex(of: 0x0A) {
-                lines.append(Data(lineBuffer[start..<newline]))
-                start = lineBuffer.index(after: newline)
-            }
-            if start != lineBuffer.startIndex {
-                lineBuffer = Data(lineBuffer[start...])
-            }
-            return lines
-        }
-        for line in lines { deliver(line) }
-    }
-
-    /// Splits off every complete `Content-Length` frame. A header block without
-    /// the length it promises is dropped, so a stray log line on stdout cannot
-    /// wedge the stream.
-    private func consumeFrames(_ data: Data) {
-        let bodies: [Data] = lock.withLock {
-            lineBuffer.append(data)
-            var bodies: [Data] = []
-            let separator = Data("\r\n\r\n".utf8)
-            while let headerEnd = lineBuffer.range(of: separator) {
-                let header = String(decoding: lineBuffer[lineBuffer.startIndex..<headerEnd.lowerBound], as: UTF8.self)
-                guard let length = Self.contentLength(in: header) else {
-                    lineBuffer = Data(lineBuffer[headerEnd.upperBound...])
-                    continue
-                }
-                let bodyStart = headerEnd.upperBound
-                guard lineBuffer.distance(from: bodyStart, to: lineBuffer.endIndex) >= length else { break }
-                let bodyEnd = lineBuffer.index(bodyStart, offsetBy: length)
-                bodies.append(Data(lineBuffer[bodyStart..<bodyEnd]))
-                lineBuffer = Data(lineBuffer[bodyEnd...])
-            }
-            return bodies
-        }
-        for body in bodies { deliver(body) }
-    }
-
-    private static func contentLength(in header: String) -> Int? {
-        for line in header.split(whereSeparator: \.isNewline) {
-            let parts = line.split(separator: ":", maxSplits: 1)
-            guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces).lowercased() == "content-length" else { continue }
-            return Int(parts[1].trimmingCharacters(in: .whitespaces))
-        }
-        return nil
+        let messages = lock.withLock { framer.append(data) }
+        for message in messages { deliver(message) }
     }
 
     private func deliver(_ line: Data) {
@@ -206,13 +148,7 @@ final class StdioProcess: @unchecked Sendable {
     }
 
     private func finishOutput() {
-        let remainder = lock.withLock {
-            let remainder = lineBuffer
-            lineBuffer = Data()
-            return remainder
-        }
-        // A framed stream ends on a frame boundary; anything left is a torn header, not a message.
-        if !remainder.isEmpty, framing == .lines { deliver(remainder) }
+        if let remainder = lock.withLock({ framer.finish() }) { deliver(remainder) }
         continuation.finish()
     }
 

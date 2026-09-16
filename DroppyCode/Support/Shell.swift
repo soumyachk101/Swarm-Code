@@ -29,7 +29,9 @@ struct ShellError: LocalizedError, Sendable {
 }
 
 enum Shell {
-    /// Runs a process to completion off the main actor and collects its output.
+    /// Runs a process to completion off the main actor and collects its output. With an
+    /// `outputLimit`, only that many bytes of each stream's tail are kept (a command a model
+    /// runs can print without end for the whole timeout; the app's own commands keep it all).
     @concurrent
     static func run(
         _ executable: URL,
@@ -37,7 +39,8 @@ enum Shell {
         in directory: URL? = nil,
         environment: [String: String]? = nil,
         input: Data? = nil,
-        timeout: TimeInterval = 120
+        timeout: TimeInterval = 120,
+        outputLimit: Int? = nil
     ) async throws -> ShellResult {
         let process = Process()
         process.executableURL = executable
@@ -52,45 +55,66 @@ enum Shell {
         process.standardError = stderr
         process.standardInput = stdin ?? FileHandle.nullDevice
 
-        let collector = OutputCollector()
+        let collector = OutputCollector(limit: outputLimit)
         stdout.fileHandleForReading.readabilityHandler = collector.reader(for: .stdout)
         stderr.fileHandleForReading.readabilityHandler = collector.reader(for: .stderr)
 
-        let status: Int32 = try await withCheckedThrowingContinuation { continuation in
-            let once = OnceContinuation(continuation)
-            process.terminationHandler = { process in
-                once.resume(returning: process.terminationStatus)
-            }
-            do {
-                try process.run()
-            } catch {
-                stdout.fileHandleForReading.readabilityHandler = nil
-                stderr.fileHandleForReading.readabilityHandler = nil
-                once.resume(throwing: error)
-                return
-            }
-            if let input, let stdin {
-                DispatchQueue.global(qos: .userInitiated).async {
-                    try? stdin.fileHandleForWriting.write(contentsOf: input)
-                    try? stdin.fileHandleForWriting.close()
+        let cancelled = Mutex(false)
+        var deadline: Task<Void, Never>?
+        defer {
+            deadline?.cancel()
+            stdout.fileHandleForReading.readabilityHandler = nil
+            stderr.fileHandleForReading.readabilityHandler = nil
+        }
+        let status: Int32 = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                let once = OnceContinuation(continuation)
+                process.terminationHandler = { process in
+                    once.resume(returning: process.terminationStatus)
                 }
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                guard process.isRunning else { return }
-                process.terminate()
-                // A process that ignores the signal, or one whose children hold the pipes
-                // open, would otherwise leave the caller waiting for ever: it is killed a
-                // few seconds later, and the caller hears back either way.
-                DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
-                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                        once.resume(throwing: ShellError("The command did not finish within \(Int(timeout)) seconds."))
+                do {
+                    try cancelled.withLock { isCancelled in
+                        if isCancelled { throw CancellationError() }
+                        try process.run()
+                    }
+                    deadline = Task {
+                        do { try await Task.sleep(for: .seconds(timeout)) }
+                        catch { return }
+                        terminate(process)
+                    }
+                } catch {
+                    once.resume(throwing: error)
+                    return
+                }
+                if let input, let stdin {
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        try? stdin.fileHandleForWriting.write(contentsOf: input)
+                        try? stdin.fileHandleForWriting.close()
                     }
                 }
             }
+        } onCancel: {
+            cancelled.withLock { isCancelled in
+                isCancelled = true
+                terminate(process)
+            }
         }
+        deadline?.cancel()
+        try Task.checkCancellation()
         let output = await collector.finished(within: 3)
+        try Task.checkCancellation()
         return ShellResult(status: status, stdout: output.stdout, stderr: output.stderr)
+    }
+
+    private static func terminate(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) {
+            guard process.isRunning else { return }
+            let pid = process.processIdentifier
+            kill(getpgid(pid) == pid ? -pid : pid, SIGKILL)
+        }
     }
 
     /// Runs a named tool found on the login PATH.
@@ -228,6 +252,11 @@ private final class OutputCollector: @unchecked Sendable {
     private var stderr = Data()
     private var closed: Set<Stream> = []
     private var waiters: [OnceContinuation<Void>] = []
+    private let limit: Int?
+
+    init(limit: Int?) {
+        self.limit = limit
+    }
 
     func reader(for stream: Stream) -> @Sendable (FileHandle) -> Void {
         { [self] handle in
@@ -238,26 +267,44 @@ private final class OutputCollector: @unchecked Sendable {
             } else {
                 lock.withLock {
                     switch stream {
-                    case .stdout: stdout.append(data)
-                    case .stderr: stderr.append(data)
+                    case .stdout: append(data, to: &stdout)
+                    case .stderr: append(data, to: &stderr)
                     }
                 }
             }
         }
     }
 
+    /// Keeps the tail within the limit, trimming by whole chunks once the buffer holds twice
+    /// the limit, so a stream that never ends costs O(limit) memory and amortized O(1) per byte.
+    private func append(_ data: Data, to buffer: inout Data) {
+        buffer.append(data)
+        guard let limit, buffer.count > limit * 2 else { return }
+        buffer = Data(buffer.suffix(limit))
+    }
+
     func finished(within timeout: TimeInterval) async -> (stdout: Data, stderr: Data) {
-        try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let once = OnceContinuation(continuation)
-            let isDone = lock.withLock {
-                if closed.count == 2 { return true }
-                waiters.append(once)
-                return false
+        if let output = lock.withLock({ closed.count == 2 ? (stdout, stderr) : nil }) { return output }
+        let deadline = Task {
+            do { try await Task.sleep(for: .seconds(timeout)) }
+            catch { return }
+            close(.stdout)
+            close(.stderr)
+        }
+        defer { deadline.cancel() }
+        await withTaskCancellationHandler {
+            try? await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let once = OnceContinuation(continuation)
+                let isDone = lock.withLock {
+                    if closed.count == 2 { return true }
+                    waiters.append(once)
+                    return false
+                }
+                if isDone { once.resume(returning: ()) }
             }
-            if isDone { once.resume(returning: ()) }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                once.resume(returning: ())
-            }
+        } onCancel: {
+            close(.stdout)
+            close(.stderr)
         }
         return lock.withLock { (stdout, stderr) }
     }
@@ -277,6 +324,9 @@ private final class OutputCollector: @unchecked Sendable {
 /// minimal PATH that cannot find provider CLIs, so this is captured once at launch.
 enum LoginEnvironment {
     private static let cached = Mutex<[String: String]?>(nil)
+    /// The one read of the login shell. Launch starts it; anything that resolves a CLI before
+    /// it lands waits on the same task, so a codex under nvm is never reported missing.
+    private static let loading = Mutex<Task<Void, Never>?>(nil)
 
     private static let excludedKeys: Set<String> = [
         "_", "SHLVL", "PWD", "OLDPWD", "TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
@@ -285,8 +335,12 @@ enum LoginEnvironment {
     ]
 
     static var current: [String: String] {
-        cached.withLock { $0 } ?? fallback()
+        cached.withLock { $0 } ?? fallbackEnvironment
     }
+
+    /// The process's own environment, for the moments before the login shell has answered:
+    /// built once, since every reader in that window asked for a fresh copy.
+    private static let fallbackEnvironment = fallback()
 
     static var isLoaded: Bool {
         cached.withLock { $0 != nil }
@@ -296,11 +350,21 @@ enum LoginEnvironment {
         FileManager.default.homeDirectoryForCurrentUser.path
     }
 
-    @concurrent
     static func load() async {
+        let task = loading.withLock { current -> Task<Void, Never> in
+            if let current { return current }
+            let started = Task { await read() }
+            current = started
+            return started
+        }
+        await task.value
+    }
+
+    @concurrent
+    private static func read() async {
         let marker = "__DROPPY_CODE_ENVIRONMENT__"
         let script = "printf '\(marker)'; /usr/bin/env -0; printf '\(marker)'"
-        var environment = fallback()
+        var environment = fallbackEnvironment
         let shell = URL(fileURLWithPath: userShell())
         if let result = try? await Shell.run(shell, ["-l", "-i", "-c", script], environment: environment, timeout: 8) {
             let text = result.output
@@ -318,6 +382,30 @@ enum LoginEnvironment {
         environment["PATH"] = augmentedPath(environment["PATH"])
         let resolved = environment
         cached.withLock { $0 = resolved }
+        let git = await developerGit(environment: resolved)
+        resolvedGit.withLock { $0 = git }
+    }
+
+    /// The git binary every Git call runs, found once. PATH usually gives `/usr/bin/git`,
+    /// Apple's shim that looks up the active developer directory and execs the real binary
+    /// on every call: measured at 11.5 ms per call against 4.5 ms for the binary itself, on
+    /// the dozens of calls a turn makes. The shim's own target is used instead where it can
+    /// be found; without developer tools, the shim stays so its install prompt still shows.
+    static var git: URL {
+        resolvedGit.withLock { $0 } ?? which("git") ?? URL(fileURLWithPath: "/usr/bin/git")
+    }
+
+    private static let resolvedGit = Mutex<URL?>(nil)
+
+    private static func developerGit(environment: [String: String]) async -> URL {
+        let onPath = which("git", in: environment) ?? URL(fileURLWithPath: "/usr/bin/git")
+        guard onPath.path == "/usr/bin/git",
+              let result = try? await Shell.run(URL(fileURLWithPath: "/usr/bin/xcode-select"), ["-p"], environment: environment, timeout: 8),
+              result.succeeded else { return onPath }
+        let developer = result.trimmedOutput
+        let candidate = URL(fileURLWithPath: developer).appendingPathComponent("usr/bin/git")
+        guard !developer.isEmpty, FileManager.default.isExecutableFile(atPath: candidate.path) else { return onPath }
+        return candidate
     }
 
     static func which(_ name: String, in environment: [String: String]? = nil) -> URL? {
