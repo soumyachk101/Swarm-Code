@@ -8,6 +8,15 @@ import Foundation
 // commit is built from a snapshot of the working tree, so nothing running in the checkout
 // meanwhile is disturbed, and nothing uncommitted that is not the team's goes along.
 
+/// A head whose work a merge takes, for the note the merge popover reads.
+struct HydraMergeHead {
+    var name: String
+    var index: Int
+    var task: String
+    /// The head's files among the merge's, relative to the checkout.
+    var files: [String]
+}
+
 extension AppModel {
     /// Lands a lead's finished work, when the setting says so. Runs once per finished job;
     /// what happened lands in the lead's timeline as a note from Hydra.
@@ -128,6 +137,17 @@ extension AppModel {
             for headID in work.headIDs { updateHydraHead(headID) { $0.mergedAt = mergedAt } }
 
             var lines = ["\(url.absoluteString)", "", Self.filesLine(files) + " landed on `\(target)` from `\(branch)`."]
+            if !work.heads.isEmpty {
+                lines.append("")
+                lines.append("Heads")
+                for head in work.heads {
+                    if head.files.isEmpty {
+                        lines.append("- \(head.name) (\(head.index)): \(head.task) — no files")
+                    } else {
+                        lines.append("- \(head.name) (\(head.index)): \(head.task) — \(head.files.count == 1 ? "1 file" : "\(head.files.count) files"): \(head.files.joined(separator: ", "))")
+                    }
+                }
+            }
             if work.dropped > 0 {
                 lines.append("\(work.dropped == 1 ? "One file" : "\(work.dropped) files") the team wrote outside the checkout stayed where they are; only the project's own files can go out.")
             }
@@ -264,7 +284,7 @@ extension AppModel {
     /// Paths outside the checkout are dropped rather than passed on: a lead writes to its
     /// own memory files, and `git add -A -- <path>` on one of those fails outright and
     /// takes the whole merge with it.
-    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], headIDs: [UUID], dropped: Int, droppedBuildOutputs: Int, droppedIgnored: Int, droppedMissing: Int) {
+    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], headIDs: [UUID], dropped: Int, droppedBuildOutputs: Int, droppedIgnored: Int, droppedMissing: Int, heads: [HydraMergeHead]) {
         let turns = runtime.hydraUnmergedTurns
         var reported: [String] = turns.flatMap { $0.touchedPaths ?? [] }
         // A head counts until a merge has taken its work (see `HydraHeadInfo.mergedAt`).
@@ -273,10 +293,18 @@ extension AppModel {
         // rest have work in the checkout that no merge has taken yet.
         let lastMergedTurnStart = runtime.turns.last { $0.hydraMerged }?.startedAt
         var headIDs: [UUID] = []
+        var headPaths: [(name: String, index: Int, task: String, paths: [String])] = []
         for head in hydraTeam(of: leadID) {
             guard let info = head.hydra, info.mergedAt == nil else { continue }
             if let lastMergedTurnStart, let finished = info.finishedAt, finished < lastMergedTurnStart { continue }
             headIDs.append(head.id)
+            var own: [String] = []
+            var seen = Set<String>()
+            func collect(_ path: String) {
+                guard !path.isEmpty, let relative = TouchedPaths.relative(path, root: checkout), seen.insert(relative).inserted else { return }
+                own.append(relative)
+            }
+            for file in info.landing?.files ?? [] { collect(file.path) }
             reported += (info.landing?.files ?? []).map(\.path)
             // A head's timeline runs to megabytes. One still open is read as it is; one
             // that has gone cold is decoded off the main actor rather than brought back
@@ -292,7 +320,9 @@ extension AppModel {
             for item in items {
                 guard case .tool(let call) = item.content else { continue }
                 reported += call.edits.map(\.path)
+                for edit in call.edits { collect(edit.path) }
             }
+            headPaths.append((HydraRoster.persona(at: info.index).name, info.index, TextCleanup.singleLine(info.task, limit: 120), own))
         }
 
         var paths = Set<String>()
@@ -324,7 +354,10 @@ extension AppModel {
             !fileManager.fileExists(atPath: checkoutURL.appendingPathComponent(path).path) && !tracked.contains(path)
         })
         paths.subtract(missing)
-        return (paths.sorted(), turns.map(\.id), headIDs, outside.count, buildOutputs.count, ignored.count, missing.count)
+        let heads = headPaths.map { entry in
+            HydraMergeHead(name: entry.name, index: entry.index, task: entry.task, files: entry.paths.filter { paths.contains($0) })
+        }
+        return (paths.sorted(), turns.map(\.id), headIDs, outside.count, buildOutputs.count, ignored.count, missing.count, heads)
     }
 
     /// Brings the checkout's default branch up to the merge without touching the working

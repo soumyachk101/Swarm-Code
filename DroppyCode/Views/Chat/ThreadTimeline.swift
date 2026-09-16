@@ -252,7 +252,7 @@ struct ThreadTimeline: View, Equatable {
             // A new block at the end under a reader held there: the stack is told where
             // the viewport is, since the block may have landed below rows it built for
             // the viewport before, with the older rows still on screen above the fold.
-            if tracking.isPinnedToBottom { tracking.armViewportRefresh() }
+            if tracking.isPinnedToBottom, !tracking.isArriving { tracking.armViewportRefresh() }
         }
         // This evaluation's own state behind the rows' reveal (see `revealEnd`).
         revealBox.action = revealEnd
@@ -457,6 +457,13 @@ struct ThreadTimeline: View, Equatable {
                 historyLoadPending = false
                 let pinned = tracking.isPinnedToBottom || new.distanceFromBottom < 48
                 if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
+                // A thread whose first rows fit the pane had nothing to scroll, and the
+                // bottom anchor has no offset to hold when the history makes it tall:
+                // the viewport stayed at the top of the newly tall content, on the oldest
+                // rows. A reader at the end is put back on the end.
+                if tracking.isPinnedToBottom, new.distanceFromBottom > 1 {
+                    withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                }
             } else if scrolled {
                 // Only the reader's own scrolling decides whether the timeline follows new text.
                 // Guarded, so measuring the scroll position never touches anything a body reads.
@@ -699,7 +706,7 @@ struct ThreadTimeline: View, Equatable {
             DispatchQueue.main.async {
                 withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
             }
-        } else if pinned, tracking.endUnseen {
+        } else if pinned, tracking.endUnseen, !tracking.isArriving {
             // Nothing to scroll (the conversation is shorter than the pane) and the last
             // block has not shown itself: no point can move, so the stack is remade, the
             // one repair that reaches it.
