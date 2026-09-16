@@ -7,6 +7,7 @@ enum LegacyMigration {
     private static let formerSupportFolder = "Cody"
 
     static func run() {
+        guard !AppInfo.isDevelopment else { return }
         let defaults = UserDefaults.standard
         guard !defaults.bool(forKey: marker) else { return }
         if let former = defaults.persistentDomain(forName: formerBundleIdentifier) {

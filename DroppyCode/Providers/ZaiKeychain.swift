@@ -4,7 +4,7 @@ import Security
 /// Stores the Z.ai API key in the macOS Keychain so it never sits
 /// in plaintext. UserDefaults keeps a copy only where the Keychain refuses it.
 enum ZaiKeychain {
-    private static let service = "Droppy Code"
+    private static let service = AppInfo.name
     private static let account = "Z.ai API Key"
 
     static func apiKey(fallback: String) -> String {

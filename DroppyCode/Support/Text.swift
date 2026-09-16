@@ -1,6 +1,9 @@
 import Foundation
 
 enum AppInfo {
+    static let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Droppy Code"
+    static let isDevelopment = Bundle.main.bundleIdentifier == "iordv.droppycode.dev"
+    static let stateDirectoryName = isDevelopment ? ".droppy-code-dev" : ".droppy-code"
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
     static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
 }

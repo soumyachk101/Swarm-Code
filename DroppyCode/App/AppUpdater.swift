@@ -255,7 +255,7 @@ final class AppUpdater {
     }
 
     func install(_ update: AvailableUpdate) {
-        guard installTask == nil else { return }
+        guard installTask == nil, !AppInfo.isDevelopment else { return }
         installTask = Task { [self] in
             defer { installTask = nil }
             progress.begin()
