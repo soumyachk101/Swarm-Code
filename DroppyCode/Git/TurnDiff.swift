@@ -10,11 +10,21 @@ enum TurnDiff {
         }
         let touched = touched.map { Set($0.map(reportedPath)) }
         let reported = providerFiles ?? DiffParser.parse(providerPatch)
+        // The snapshot is the whole checkout between two checkpoints, so only files the chat's
+        // turns reported, the provider's own patch, or its tool edits name are taken from it.
+        var known = touched
+        if known != nil {
+            for file in reported {
+                known?.insert(reportedPath(file.path))
+                if let old = file.oldPath { known?.insert(reportedPath(old)) }
+            }
+            for edit in edits where !edit.path.isEmpty { known?.insert(reportedPath(edit.path)) }
+        }
         var files: [String: DiffFile] = [:]
         for var file in snapshot ?? reported {
             file.path = snapshot == nil ? reportedPath(file.path) : TouchedPaths.normalize(file.path, root: repositoryRoot)
             file.oldPath = file.oldPath.map { snapshot == nil ? reportedPath($0) : TouchedPaths.normalize($0, root: repositoryRoot) }
-            if let touched, !touched.contains(file.path), file.oldPath.map(touched.contains) != true { continue }
+            if let known, !known.contains(file.path), file.oldPath.map(known.contains) != true { continue }
             append(file, to: &files)
         }
         if snapshot != nil {

@@ -226,9 +226,11 @@ struct HydraProgressBar: View {
             switch entry.kind {
             case .tool:
                 guard case .tool(let call) = entry.item.content else { return nil }
+                // A command that wrote files (a heredoc, a script over the source) is an
+                // edit, the way its row already counts it, not one more command.
                 let kind: Stave.Kind = switch call.kind {
                 case .edit: .edit
-                case .command: .command
+                case .command: call.edits.isEmpty ? .command : .edit
                 default: call.edits.isEmpty ? .lookup : .edit
                 }
                 return Stave(kind: kind, arrivedAt: entry.item.date, steps: [ToolPresentation.label(for: call)])
