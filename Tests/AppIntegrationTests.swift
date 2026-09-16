@@ -8,6 +8,40 @@ import Testing
     #expect(AppShortcut.runScript.defaultChord == KeyChord(keyCode: 15, modifiers: .command))
 }
 
+@Test @MainActor func archiveAndSettleShortcutsHaveTheirChords() {
+    #expect(AppShortcut.archiveThread.defaultChord == KeyChord(keyCode: 13, modifiers: .command))
+    #expect(AppShortcut.settleThread.defaultChord == KeyChord(keyCode: 1, modifiers: .command))
+    // Command-W is the archive chord now, so it is no longer refused as reserved.
+    #expect(ShortcutStore.shared.refusal(for: KeyChord(keyCode: 13, modifiers: .command), replacing: .archiveThread) == nil)
+}
+
+@Test @MainActor func settleShortcutTogglesAndArchiveShortcutArchivesWithoutARow() async throws {
+    let app = AppModel()
+    let project = app.addProject(at: FileManager.default.temporaryDirectory)
+    let thread = try #require(app.newThread(in: project, workspace: .local))
+    #expect(app.selectedThreadID == thread.id)
+    func settled(_ expected: Bool) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(4)
+        while app.thread(thread.id)?.isSettled != expected, ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return app.thread(thread.id)?.isSettled == expected
+    }
+    // No sidebar row takes the request up here, so the model acts on it itself.
+    app.settleSelectedThread()
+    #expect(await settled(true))
+    app.settleSelectedThread()
+    #expect(await settled(false))
+    app.askToArchiveSelectedThread()
+    #expect(app.archiveRequest?.threadID == thread.id)
+    let deadline = ContinuousClock.now + .seconds(4)
+    while app.thread(thread.id)?.isArchived != true, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(app.thread(thread.id)?.isArchived == true)
+    #expect(app.archiveRequest == nil)
+}
+
 @Test @MainActor func controlTabCyclesWhileEditing() throws {
     NSApplication.shared.setActivationPolicy(.prohibited)
     let window = ThreadWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: .titled, backing: .buffered, defer: false)

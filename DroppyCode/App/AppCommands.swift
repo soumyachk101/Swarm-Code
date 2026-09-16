@@ -86,6 +86,12 @@ struct AppCommands: Commands {
             Button(model.finishActionTitle) { model.finishSelectedThread() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .finishThread))
                 .disabled(model.selectedThreadID == nil)
+            Button("Archive thread…") { model.askToArchiveSelectedThread() }
+                .keyboardShortcut(shortcuts.keyboardShortcut(for: .archiveThread))
+                .disabled(model.selectedThreadID == nil)
+            Button(model.selectedThread?.isSettled == true ? "Reopen thread" : "Settle thread") { model.settleSelectedThread() }
+                .keyboardShortcut(shortcuts.keyboardShortcut(for: .settleThread))
+                .disabled(model.selectedThread.map { $0.isHelper } ?? true)
         }
 
         CommandGroup(replacing: .help) {
