@@ -561,13 +561,18 @@ struct ThreadTimeline: View, Equatable {
             withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
         }
         .onChange(of: lastEntryID) {
-            // A message, tool row, turn or question badge landing at the end of the
-            // conversation always brings the view down to it, pinned or not. History
-            // loading itself above the viewport must not yank the reader down, and an
-            // active drag is never fought: the next entry, or the geometry branch, catches
-            // up once it lets go. Growth inside an existing row stays with the pinned
-            // machinery above; this is for new rows only.
+            // A message, tool row or turn landing at the end of the conversation brings
+            // a reader who was at the end down to it, whatever the stack made of the
+            // growth; a reader who scrolled up to read is left there, the jump button
+            // says something arrived. A question badge is the one row that fetches
+            // anyone: it waits on the reader. History loading itself above the viewport
+            // must not yank the reader down, and an active drag is never fought: the
+            // next entry, or the geometry branch, catches up once it lets go. Growth
+            // inside an existing row stays with the pinned machinery above; this is for
+            // new rows only.
             guard !historyLoadPending, !tracking.isUserScrolling else { return }
+            let isQuestion = lastEntryID?.hasPrefix("question-") == true
+            guard tracking.isPinnedToBottom || isQuestion else { return }
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
             scrollState.showsJumpButton = false

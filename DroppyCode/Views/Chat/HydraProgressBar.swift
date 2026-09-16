@@ -30,6 +30,9 @@ struct HydraProgressBar: View {
     @State private var isSettled = false
     /// The stave under the pointer, whose steps the card names.
     @State private var hoveredIndex: Int?
+    /// The last events, staves and counts, so an evaluation where nothing changed
+    /// redraws without walking every entry again.
+    @State private var cache = StaveCache()
     @Environment(\.isOnGlassPanel) private var isOnGlassPanel
     @Environment(\.colorScheme) private var colorScheme
 
@@ -48,11 +51,53 @@ struct HydraProgressBar: View {
     /// the card clears the strip of a compact panel, where the bar sits under the task.
     private static let cardLines = 4
 
+    /// The last events, staves and counts, keyed by entry identity plus each tool
+    /// row's status, since a status flip rewrites the step's verb. A hit skips the
+    /// walk over every entry, so the TimelineView ticks redraw without recomputing.
+    @MainActor
+    private final class StaveCache {
+        private struct Key: Hashable {
+            let id: ObjectIdentifier
+            let status: ToolCall.Status?
+            /// The title streams in for a row that has already arrived, and the step's
+            /// label reads it.
+            let title: String?
+        }
+
+        private var key: [Key] = []
+        private var capacity = 0
+        private var events: [Stave] = []
+        private var staves: [Stave] = []
+        private var counts = Counts(of: [])
+
+        func resolve(entries: [TimelineEntry], capacity: Int) -> (events: [Stave], staves: [Stave], counts: Counts) {
+            let key = entries.map { entry -> Key in
+                guard entry.kind == .tool, case .tool(let call) = entry.item.content else {
+                    return Key(id: ObjectIdentifier(entry), status: nil, title: nil)
+                }
+                return Key(id: ObjectIdentifier(entry), status: call.status, title: call.title)
+            }
+            if key == self.key, capacity == self.capacity {
+                return (events, staves, counts)
+            }
+            let events = HydraProgressBar.events(in: entries)
+            let staves = HydraProgressBar.staves(for: events, capacity: capacity)
+            let counts = Counts(of: events)
+            self.key = key
+            self.capacity = capacity
+            self.events = events
+            self.staves = staves
+            self.counts = counts
+            return (events, staves, counts)
+        }
+    }
+
     var body: some View {
-        let events = Self.events(in: entries ?? runtime.entries)
         let capacity = max(1, Int(((width + Self.gap) / Self.pitch).rounded(.down)))
-        let staves = Self.staves(for: events, capacity: capacity)
-        let counts = Counts(of: events)
+        let resolved = cache.resolve(entries: entries ?? runtime.entries, capacity: capacity)
+        let events = resolved.events
+        let staves = resolved.staves
+        let counts = resolved.counts
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let isRunning = status == .running
         let elapsed = RelativeTime.duration((isRunning ? Date.now : finishedAt ?? .now).timeIntervalSince(startedAt))
@@ -403,6 +448,9 @@ struct HydraWorkingTitle: View {
 
     var body: some View {
         let animates = isRunning && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        // The text itself never changes per frame, only the band over it, so it is
+        // built once and the closure below just restyles it.
+        let title = Text(verbatim: text).font(.system(size: 13, weight: .medium))
         // Twenty frames a second is plenty for a band this wide; it rests while the reader
         // scrolls anywhere (see `ScrollActivity`), so a fold's glide has the frames.
         TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !animates || ScrollActivity.shared.isScrolling)) { context in
@@ -414,8 +462,7 @@ struct HydraWorkingTitle: View {
             let centre = animates ? -Self.reach + phase * (1 + 2 * Self.reach) : 0.5
             let dip = animates ? 0.6 : 1.0
             let breath = animates ? 0.5 + 0.5 * sin(now / Self.breath * 2 * .pi) : 1.0
-            Text(verbatim: text)
-                .font(.system(size: 13, weight: .medium))
+            title
                 .foregroundStyle(
                     LinearGradient(
                         stops: [

@@ -510,6 +510,29 @@ final class ThreadRuntime {
         for index in turns.indices where turns[index].status == .running {
             turns[index].status = .interrupted
         }
+        // A turn the app quit under has no end marker, so it showed every step inline
+        // for good; one is written for it here from the turn record, and the block
+        // folds like any finished turn.
+        var marked = Set<UUID>()
+        for entry in entries where entry.kind == .turnEnd {
+            if let turnID = entry.turnID {
+                marked.insert(turnID)
+            }
+        }
+        for turn in document.turns.reversed() {
+            guard let index = turns.firstIndex(where: { $0.id == turn.id }),
+                  !marked.contains(turn.id),
+                  let lastIndex = entries.lastIndex(where: { $0.turnID == turn.id })
+            else { continue }
+            let endedAt = turns[index].completedAt ?? entries[lastIndex].item.date
+            if turns[index].completedAt == nil {
+                turns[index].completedAt = endedAt
+            }
+            let summary = TurnSummary(turnID: turn.id, status: turns[index].status, duration: max(0, endedAt.timeIntervalSince(turns[index].startedAt)), filesChanged: turns[index].touchedPaths?.count ?? 0, additions: 0, deletions: 0, changes: nil)
+            let entry = TimelineEntry(TimelineItem(turnID: turn.id, date: endedAt, content: .turnEnd(summary)))
+            entries.insert(entry, at: lastIndex + 1)
+            entryIndex[entry.id] = entry
+        }
         // The load above normalizes what it read (streaming flags cleared, running
         // tools failed), so memory may differ from disk. Read back as it was saved, the
         // document needs no write at quit; one just repaired is written once more.
