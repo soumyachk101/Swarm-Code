@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Drives `codex app-server` over JSON-RPC.
 ///
@@ -9,6 +10,7 @@ import Foundation
 /// its thread id and go out wrapped in `agentEvent`, and its `turn/completed` ends it.
 @MainActor
 final class CodexSession: ProviderSession {
+    private static let log = Logger(subsystem: "iordv.droppycode", category: "codex")
     var onEvent: ((ProviderEvent) -> Void)?
 
     /// Whose transcript a notification belongs to.
@@ -431,7 +433,15 @@ final class CodexSession: ProviderSession {
 
     /// A thread the server started: a head, when the lead's thread is its parent.
     private func headStarted(_ thread: JSONValue) {
-        guard let id = thread["id"]?.string, let threadID, thread["parentThreadId"]?.string == threadID, !headThreads.contains(id) else { return }
+        guard let id = thread["id"]?.string, let threadID, !headThreads.contains(id) else { return }
+        guard thread["parentThreadId"]?.string == threadID else {
+            // Another thread on the same server, or a child whose parent the server names
+            // differently: logged, so a team that never shows in the panel can be traced.
+            if let parent = thread["parentThreadId"]?.string {
+                Self.log.notice("thread/started \(id, privacy: .public) names parent \(parent, privacy: .public), not this lead \(threadID, privacy: .public)")
+            }
+            return
+        }
         headThreads.insert(id)
         let nickname = thread["agentNickname"]?.string
         let role = thread["agentRole"]?.string
@@ -497,7 +507,18 @@ final class CodexSession: ProviderSession {
                 onEvent?(.agentStarted(AgentSpawn(id: receiver, taskID: nil, toolUseID: item["id"]?.string, description: TextCleanup.singleLine(prompt, limit: 80), prompt: prompt, model: item["model"]?.string)))
             }
         case "subAgentActivity":
-            guard let agentThread = item["agentThreadId"]?.string, headThreads.contains(agentThread) else { return }
+            guard let agentThread = item["agentThreadId"]?.string else { return }
+            if !headThreads.contains(agentThread) {
+                // A head the app-server announced only through the lead's activity note:
+                // no `thread/started` naming the lead as parent and no receiver id on the
+                // spawn (older app-servers). It is registered from here, so it still gets
+                // its face in the panel and its report in the chat rather than passing as
+                // a bare "Head started" line; its own thread's events are heard from now on.
+                headThreads.insert(agentThread)
+                let nickname = item["agentPath"]?.string?.split(separator: "/").last.map(String.init) ?? "Head"
+                Self.log.notice("head \(agentThread, privacy: .public) registered from a subAgentActivity note (\(nickname, privacy: .public)); no thread/started or spawn receiver id preceded it")
+                onEvent?(.agentStarted(AgentSpawn(id: agentThread, taskID: nil, toolUseID: nil, description: nickname.replacingOccurrences(of: "_", with: " "), prompt: nil, model: nil)))
+            }
             switch item["kind"]?.string {
             case "completed":
                 headTurns[agentThread] = nil
