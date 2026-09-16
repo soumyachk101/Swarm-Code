@@ -37,16 +37,18 @@ struct HydraReportDigest {
         var id: String { path }
     }
 
-    /// The report off the lead's `reportMessage`: everything before the first `## `
-    /// is the intro, each header starts a head, and trailing `(...)` groups on the
-    /// header are the outcome or the effort rather than the task.
+    /// The report off the lead's `reportMessage`: everything before the first head
+    /// header is the intro, each head header starts a head, other `## ` headings
+    /// stay in the report, and trailing `(...)` groups on the header are the
+    /// outcome or the effort rather than the task.
     static func parse(_ text: String) -> HydraReportDigest {
         let lines = text.components(separatedBy: "\n")
         var introLines: [String] = []
         var sections: [(header: String, lines: [String])] = []
         for line in lines {
-            if line.trimmingCharacters(in: .whitespaces).hasPrefix("## ") {
-                sections.append((String(line.dropFirst(3)), []))
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("## "), Self.isHeadHeader(String(trimmed.dropFirst(3))) {
+                sections.append((String(trimmed.dropFirst(3)), []))
             } else if sections.isEmpty {
                 introLines.append(line)
             } else {
@@ -71,6 +73,14 @@ struct HydraReportDigest {
             heads.append(Head(id: name, name: name, task: task, outcome: outcome, effort: effort, landing: landing, body: body))
         }
         return HydraReportDigest(intro: intro.isEmpty ? nil : intro, heads: heads)
+    }
+
+    /// A `## ` line starts a head only when the text before its first colon is a
+    /// roster name; anything else (a head's own markdown headings) stays in the body.
+    private static func isHeadHeader(_ header: String) -> Bool {
+        guard let colon = header.firstIndex(of: ":") else { return false }
+        let name = String(header[..<colon]).trimmingCharacters(in: .whitespaces)
+        return HydraRoster.index(named: name) != nil
     }
 
     /// The name off the colon, then trailing `(...)` groups stripped from the task:
@@ -354,30 +364,35 @@ struct HydraReportsPopover: View {
         }
     }
 
-    /// The head's name and, beside it, its outcome and effort as one small caption.
+    /// The head's name and, beside it, its outcome as a seal or caption plus its effort.
     private func nameRow(_ head: HydraReportDigest.Head) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(head.name)
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Chrome.primaryText)
-            Text(Self.caption(for: head))
-                .font(.system(size: 11))
-                .foregroundStyle(head.outcome == .done ? Chrome.secondaryText : Chrome.warning)
-                .monospacedDigit()
-                .lineLimit(1)
+            switch head.outcome {
+            case .done:
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.success)
+                    .accessibilityLabel(Text("Done"))
+            case .failed:
+                Text("Failed")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.danger)
+            case .stopped:
+                Text("Stopped")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.warning)
+            }
+            if let effort = head.effort, !effort.isEmpty {
+                Text(effort)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
         }
-    }
-
-    /// "Done", "Failed", "Stopped", with the effort (the elapsed time and the model,
-    /// when the lead wrote them) after a dot.
-    private static func caption(for head: HydraReportDigest.Head) -> String {
-        let outcome = switch head.outcome {
-        case .done: "Done"
-        case .failed: "Failed"
-        case .stopped: "Stopped"
-        }
-        guard let effort = head.effort, !effort.isEmpty else { return outcome }
-        return "\(outcome) · \(effort)"
     }
 
     private func hasReport(_ head: HydraReportDigest.Head) -> Bool {
