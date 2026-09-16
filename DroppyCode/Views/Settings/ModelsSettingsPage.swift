@@ -45,8 +45,7 @@ struct ModelsSettingsPage: View {
                                 ForEach(visiblePins, id: \.self) { pin in
                                     let isDragged = drag.id == pin
                                     VStack(spacing: 0) {
-                                        // The lifted row carries no divider, so nothing draws on top of it.
-                                        if pin != visiblePins.first { ChromeRowDivider().opacity(isDragged ? 0 : 1) }
+                                        ChromeRowDivider().opacity(pin == visiblePins.first || isDragged ? 0 : 1)
                                         PinnedModelRow(
                                             pin: pin,
                                             isDragged: isDragged,
@@ -54,7 +53,7 @@ struct ModelsSettingsPage: View {
                                             onDragEnded: { dragEnded() }
                                         )
                                     }
-                                    .modifier(PinnedRowHeightReporter(pin: pin, isActive: drag.id != nil, heights: $rowHeights))
+                                    .modifier(PinnedRowHeightReporter(pin: pin, heights: $rowHeights))
                                     .offset(y: isDragged ? drag.visualOffset : 0)
                                     .zIndex(isDragged ? 1 : 0)
                                 }
@@ -115,8 +114,8 @@ struct ModelsSettingsPage: View {
         withTransaction(transaction) { drag.translation = translation }
 
         let order = visiblePins(query: query.trimmingCharacters(in: .whitespacesAndNewlines))
-        let moved = drag.settle(order: order, heights: rowHeights, fallbackHeight: 54) { neighbour, placeAfter in
-            withAnimation(Self.slide) {
+        let moved = withAnimation(Self.slide) {
+            drag.settle(order: order, heights: rowHeights, fallbackHeight: 54) { neighbour, placeAfter in
                 model.settings.moveModel(pin, to: neighbour, placeAfter: placeAfter)
             }
         }
@@ -131,19 +130,13 @@ struct ModelsSettingsPage: View {
         withAnimation(.spring(response: 0.32, dampingFraction: 0.8)) { drag = RowDrag() }
     }
 
-    /// Reports its row's height only while a drag is active: settling is the only reader.
     private struct PinnedRowHeightReporter: ViewModifier {
         let pin: ModelPin
-        let isActive: Bool
         @Binding var heights: [ModelPin: CGFloat]
 
         func body(content: Content) -> some View {
-            if isActive {
-                content.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
-                    if heights[pin] != height { heights[pin] = height }
-                }
-            } else {
-                content
+            content.onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                if heights[pin] != height { heights[pin] = height }
             }
         }
     }
