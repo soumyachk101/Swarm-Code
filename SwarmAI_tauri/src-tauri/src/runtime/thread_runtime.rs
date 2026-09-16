@@ -298,6 +298,7 @@ pub struct SessionSignature {
 #[derive(Debug, Clone)]
 pub enum ProviderEvent {
 	SessionReady { session_id: String },
+	SessionStarted { session_id: String },
 	TurnStarted { provider_turn_id: Option<String> },
 	MessageDelta { id: String, text: String },
 	MessageCompleted { id: String, text: String },
@@ -340,6 +341,18 @@ pub enum ProviderEvent {
 		status: TurnStatus,
 		summary: Option<String>,
 	},
+	// Convenience variants with snake_case names for call-site compatibility
+	models(list: Vec<crate::models::provider::ModelInfo>, provider: Option<&str>),
+	commands(list: Vec<crate::models::provider::SlashCommand>),
+	turn_started(provider_turn_id: Option<String>),
+	request_resolved(id: String),
+	mode_changed(mode: InteractionMode),
+	session_ended(status: crate::providers::session::SessionStatus, error: Option<String>),
+	message_chunk(text: String),
+	reasoning(text: String),
+	tool_call(id: String, name: String, input: serde_json::Value),
+	session_started(session_id: String),
+	notice(Notice),
 }
 
 #[derive(Debug, Clone)]

@@ -259,11 +259,11 @@ impl ProviderSession for ClaudeSession {
         match init_result {
             Ok(Ok(models)) => {
                 if !models.is_empty() {
-                    self.emit(ProviderEvent::models(models, self.config.model.as_deref()));
+                    self.emit(ProviderEvent::Models(models, self.config.model.as_deref()));
                 }
                 let commands = self.read_commands().await;
                 if !commands.is_empty() {
-                    self.emit(ProviderEvent::commands(commands));
+                    self.emit(ProviderEvent::Commands(commands));
                 }
                 Ok(id)
             }
@@ -334,7 +334,7 @@ impl ProviderSession for ClaudeSession {
         self.write_line(&message).await?;
         self.turn_active = true;
         self.interrupt_requested = false;
-        self.emit(ProviderEvent::turn_started(None));
+        self.emit(ProviderEvent::TurnStarted(None));
         Ok(())
     }
 
@@ -360,7 +360,7 @@ impl ProviderSession for ClaudeSession {
                     }
                 }
             })).await;
-            self.emit(ProviderEvent::request_resolved(request_id));
+            self.emit(ProviderEvent::RequestResolved(request_id));
         }
         self.pending_tools.clear();
 
@@ -426,12 +426,12 @@ impl ProviderSession for ClaudeSession {
         })).await;
 
         if pending.name == "ExitPlanMode" {
-            self.emit(ProviderEvent::mode_changed(crate::models::provider::InteractionMode::Build));
+            self.emit(ProviderEvent::ModeChanged(crate::models::provider::InteractionMode::Build));
             let mode = Self::mode_name(self.runtime_mode, crate::models::provider::InteractionMode::Build);
             self.permission_mode = mode;
         }
 
-        self.emit(ProviderEvent::request_resolved(request_id));
+        self.emit(ProviderEvent::RequestResolved(request_id));
     }
 
     async fn answer_question(
@@ -464,7 +464,7 @@ impl ProviderSession for ClaudeSession {
             }
         })).await;
 
-        self.emit(ProviderEvent::request_resolved(request_id));
+        self.emit(ProviderEvent::RequestResolved(request_id));
     }
 
     async fn stop(&mut self) {

@@ -285,8 +285,6 @@ mod tests {
     }
 }
 
-use std::sync::OnceLock;
-
 static AUDIO_ENGINE: OnceLock<Mutex<Option<AudioEngine>>> = OnceLock::new();
 
 fn audio_engine() -> &'static Mutex<Option<AudioEngine>> {

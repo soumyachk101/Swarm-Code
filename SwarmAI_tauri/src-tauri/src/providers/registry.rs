@@ -171,6 +171,7 @@ pub struct ProviderStatus {
     pub provider: ProviderKind,
     pub is_installed: bool,
     pub is_authenticated: bool,
+    pub api_key_configured: bool,
     pub version: Option<String>,
     pub last_checked: Option<DateTime<Utc>>,
     pub error: Option<String>,

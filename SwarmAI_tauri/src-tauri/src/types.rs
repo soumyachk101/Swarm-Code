@@ -79,6 +79,8 @@ pub struct ProviderTestResult {
  pub message: String,
  pub models: Vec<ModelInfo>,
  pub response_time_ms: Option<u64>,
+ pub kind: String,
+ pub tested_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
