@@ -576,7 +576,7 @@ private struct ComposerTextColumn: View {
             .frame(height: composerHeight, alignment: .top)
             .clipped()
             // While the window is being dragged the box's height follows the rewrap at once; a spring restarted per frame lagged it behind the window.
-            .animation(liveResize.isActive ? nil : .smooth(duration: 0.28), value: composerHeight)
+            .animation(liveResize.isReshaping ? nil : .smooth(duration: 0.28), value: composerHeight)
         }
     }
 }

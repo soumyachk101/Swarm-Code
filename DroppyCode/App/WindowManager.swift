@@ -113,6 +113,13 @@ final class WindowManager {
 @MainActor @Observable
 final class WindowLiveResize {
     private(set) var isActive = false
+    /// Whether the sidebar's edge or the terminal's divider is being dragged: the pane
+    /// changes width or height every frame the way a live resize does, so the timeline
+    /// steps its row width and holds its animations exactly as it does for one. Written
+    /// by the chat view, which is where both drags are observed.
+    var isPaneResizing = false
+    /// The window or a pane is being dragged to a new size right now.
+    var isReshaping: Bool { isActive || isPaneResizing }
 
     /// The window keeps this alive for as long as it exists, so the observations are
     /// never taken down: a window is not made twice.

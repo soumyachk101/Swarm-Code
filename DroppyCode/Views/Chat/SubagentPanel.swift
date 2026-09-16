@@ -115,7 +115,7 @@ struct SubagentPanelLayout: Equatable {
     static let composerMaxWidth: CGFloat = 820
     /// How far past the pane's middle a held panel's centre goes before it changes corner,
     /// so one held on the line does not flicker between the two.
-    static let cornerSlack: CGFloat = 24
+    static let cornerSlack: CGFloat = 56
 
     var pane: CGSize
     /// The chat box with its tabs and cards, so a panel above it clears them.
@@ -142,6 +142,12 @@ struct SubagentPanelLayout: Equatable {
     /// Whether the panel and the chat box fit side by side.
     var sitsBesideComposer: Bool {
         pane.width - 2 * Self.sideMargin - panelWidth - Self.gap >= Self.minComposerWidth
+    }
+
+    /// Whether a panel on each side of the chat box still leaves a box worth typing in.
+    /// Below this, panels dock on one side only (see `PanelScene.lockedSide`).
+    var fitsBothSides: Bool {
+        pane.width - 2 * Self.sideMargin - 2 * (panelWidth + Self.gap) >= Self.minComposerWidth
     }
 
     /// The room the docked panel takes from the chat box's row; the box centres in the rest.
@@ -496,7 +502,6 @@ final class PanelDragState {
 /// A window live resize holds the settle slide too: the dock follows the pane every
 /// frame, so a spring restarted per frame is what made panels lag and land elsewhere.
 struct PlacedPanel<Content: View>: View {
-    @Environment(WindowLiveResize.self) private var liveResize
     let drag: PanelDragState
     /// The panel's docked spot.
     let rest: CGPoint
@@ -509,17 +514,32 @@ struct PlacedPanel<Content: View>: View {
     var isResizing = false
 
     var body: some View {
-        let origin = drag.position ?? rest
-        // Read now, so the slide turning off and on is one settle from the current
-        // spot: an origin kept from before the resize would swing in from stale.
-        let resizing = liveResize.isActive
-        let settles = drag.position == nil && !isResizing && !resizing
         content
             .overlay {
                 if let resize {
                     PanelResizeGrips(resize: resize)
                 }
             }
+            .modifier(PanelPlacement(drag: drag, rest: rest, size: size, isResizing: isResizing))
+    }
+}
+
+/// Places the panel: at its docked spot, or under the pointer while held. Only this
+/// modifier observes the drag, and a modifier's content is a placeholder, so the
+/// panel's own body is never re-run for a pointer move.
+private struct PanelPlacement: ViewModifier {
+    @Environment(WindowLiveResize.self) private var liveResize
+    let drag: PanelDragState
+    let rest: CGPoint
+    let size: CGSize
+    let isResizing: Bool
+
+    func body(content: Content) -> some View {
+        let origin = drag.position ?? rest
+        // Read now, so the slide turning off and on is one settle from the current
+        // spot: an origin kept from before the resize would swing in from stale.
+        let settles = drag.position == nil && !isResizing && !liveResize.isActive
+        content
             .offset(x: origin.x, y: origin.y)
             .animation(settles ? Chrome.panelSlide : nil, value: origin)
             .animation(settles ? Chrome.panelSlide : nil, value: size)
@@ -550,6 +570,11 @@ struct PanelResize {
 @Observable @MainActor
 final class PanelResizeState {
     private(set) var start: CGSize?
+    /// The size under the pointer while a grip is held; the layout reads it in place of
+    /// the stored size, which is written once when the grip lets go.
+    var liveSize: CGSize?
+    /// The usage panel's own height under the pointer, likewise.
+    var liveUsageHeight: CGFloat?
 
     var isActive: Bool { start != nil }
 

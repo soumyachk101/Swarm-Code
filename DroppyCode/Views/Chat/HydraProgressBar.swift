@@ -61,7 +61,9 @@ struct HydraProgressBar: View {
             // enough for a sweep this soft; it keeps going while the reader scrolls, so a
             // head at work never looks stalled. With reduced motion, or once the head is
             // done and settled, the canvas is drawn only when the steps change.
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || isSettled)) { context in
+            // Held still while the reader scrolls anywhere (see `ScrollActivity`): a fold
+            // gliding the timeline gets its frames, the staves catch up when it lands.
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || isSettled || ScrollActivity.shared.isScrolling)) { context in
                 Canvas { graphics, size in
                     Self.draw(
                         staves,
@@ -399,8 +401,9 @@ struct HydraWorkingTitle: View {
 
     var body: some View {
         let animates = isRunning && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        // Twenty frames a second is plenty for a band this wide; it keeps going while the reader scrolls.
-        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !animates)) { context in
+        // Twenty frames a second is plenty for a band this wide; it rests while the reader
+        // scrolls anywhere (see `ScrollActivity`), so a fold's glide has the frames.
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: !animates || ScrollActivity.shared.isScrolling)) { context in
             let now = context.date.timeIntervalSinceReferenceDate
             // The band's centre travels from just left of the text to just right of it, so
             // it enters and leaves rather than snapping; then it rests off the right edge,

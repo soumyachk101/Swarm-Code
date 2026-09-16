@@ -18,6 +18,7 @@ It drives the coding agents you already have installed and signed in, on your ow
 | Command Code | `cmd` | headless print mode (NDJSON events), one run per turn, with a session mod for approvals |
 | Pi | `pi` | RPC mode (JSONL over stdio), one process per thread, with a gate extension for approvals |
 | DeepSeek | `DEEPSEEK_API_KEY` | native API (OpenAI-compatible) |
+| Z.ai | `ZAI_API_KEY` | native API (OpenAI-compatible, GLM Coding Plan) |
 | Meta | `MODEL_API_KEY` | native API at `api.meta.ai/v1` (Muse Spark) |
 
 ## What it does
@@ -34,7 +35,7 @@ It drives the coding agents you already have installed and signed in, on your ow
 - A command palette, keyboard shortcuts and notifications when work finishes.
 - Hydra: one chat, many heads. Switch it on and the agent leads a team of helper agents on big jobs: it writes the briefs, sends the heads out in parallel, each in its own copy of the project, and their work lands back in your checkout as one merge. Each head has a floating panel, and a pair sets the lead's model and the heads' model; a pair can cross providers, a strong lead on one and quick heads on another, with one effort slider fused for both.
 - A welcome tour on first launch, six pages of real captures; the Help menu opens it again.
-- Usage limits and credits: the ring beside the send button opens a popover with the context window, each plan's rolling limits and resets (Codex, Claude, Antigravity, Copilot and Command Code) and the credit left on DeepSeek and Command Code keys; a pair across two providers stacks the lead's over the heads'. A switch in General settings keeps the same in a floating panel beside the chat, and Settings › Providers shows every signed-in account at once.
+- Usage limits and credits: the ring beside the send button opens a popover with the context window, each plan's rolling limits and resets (Codex, Claude, Antigravity, Copilot, Command Code and Z.ai) and the credit left on DeepSeek and Command Code keys; a pair across two providers stacks the lead's over the heads'. A switch in General settings keeps the same in a floating panel beside the chat, and Settings › Providers shows every signed-in account at once.
 
 Remote access, mobile apps, cloud sync, telemetry and a web client are left out on purpose.
 

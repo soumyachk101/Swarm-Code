@@ -54,7 +54,7 @@ struct ThreadTimeline: View, Equatable {
     /// frame; the exact width lands when the drag ends.
     private static let resizeStep: CGFloat = 12
     private var layoutWidth: CGFloat? {
-        guard liveResize.isActive, paneWidth > 0 else { return nil }
+        guard liveResize.isReshaping, paneWidth > 0 else { return nil }
         return min(820 + 40, (paneWidth / Self.resizeStep).rounded(.down) * Self.resizeStep)
     }
     /// Which edge stays put when the content's height changes. At the conversation's end
@@ -72,6 +72,8 @@ struct ThreadTimeline: View, Equatable {
     /// Changes to rebuild the lazy stack from scratch: the second repair for a viewport
     /// the stack has built nothing for (see `repairLayout`).
     @State private var stackGeneration = 0
+    /// The rows' way to the reveal (see `revealEnd`), made once for the timeline's life.
+    @State private var revealBox = TimelineRevealBox()
     /// The blocks as last built. This body re-runs for plenty of reasons the conversation
     /// knows nothing about (the reader starting or ending a scroll, the column resizing, a
     /// setting elsewhere), and partitioning every entry into blocks again each time is work
@@ -147,7 +149,7 @@ struct ThreadTimeline: View, Equatable {
             }
             // The rail fades with the slide of the panel that takes its edge. Held mid-resize:
             // a fresh slide every frame lagged the whole chat behind the window.
-            .animation(liveResize.isActive ? nil : Chrome.panelSlide, value: showsMinimap)
+            .animation(liveResize.isReshaping ? nil : Chrome.panelSlide, value: showsMinimap)
         }
         .environment(\.hydraMentionPersonas, hydraMentionPersonas)
     }
@@ -247,7 +249,13 @@ struct ThreadTimeline: View, Equatable {
         // costs nothing and catches it whether or not any row says so.
         if tracking.setOutline(visible.map { ($0.id, $0.hasUserMessage) }) {
             tracking.armBlankWatch()
+            // A new block at the end under a reader held there: the stack is told where
+            // the viewport is, since the block may have landed below rows it built for
+            // the viewport before, with the older rows still on screen above the fold.
+            if tracking.isPinnedToBottom { tracking.armViewportRefresh() }
         }
+        // This evaluation's own state behind the rows' reveal (see `revealEnd`).
+        revealBox.action = revealEnd
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
@@ -315,8 +323,9 @@ struct ThreadTimeline: View, Equatable {
                     }
             }
             // The rows open their steps against this: an expansion at the end of the
-            // conversation scrolls the timeline down to show what opened.
-            .environment(scrollState)
+            // conversation scrolls the timeline down to show what opened, in the tap's own
+            // transaction, so the glide and the opening are one motion.
+            .environment(\.revealTimelineEnd, revealBox)
             // The same column as the composer, so messages line up with its edges.
             .frame(maxWidth: 820, alignment: .leading)
             .padding(.horizontal, 20)
@@ -349,8 +358,8 @@ struct ThreadTimeline: View, Equatable {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { paneWidth = $0 }
         // No animation inside the timeline while the window is being dragged; a spring
         // restarted every frame is what made rows lag behind the window and land somewhere else.
-        .transaction { transaction in if liveResize.isActive { transaction.animation = nil } }
-        .onChange(of: liveResize.isActive) { _, active in
+        .transaction { transaction in if liveResize.isReshaping { transaction.animation = nil } }
+        .onChange(of: liveResize.isReshaping) { _, active in
             guard !active else { return }
             settleAfterResize()
         }
@@ -365,6 +374,18 @@ struct ThreadTimeline: View, Equatable {
             } else {
                 liftScrollFreeze()
             }
+            // What was put off for the scroll runs now that it is over: a repair the blank
+            // watch asked for, a refresh the drift asked for.
+            if phase == .idle {
+                if tracking.repairSkippedWhileScrolling {
+                    tracking.repairSkippedWhileScrolling = false
+                    tracking.armBlankWatch()
+                }
+                if tracking.refreshSkippedWhileScrolling {
+                    tracking.refreshSkippedWhileScrolling = false
+                    tracking.armViewportRefresh()
+                }
+            }
         }
         .onScrollGeometryChange(for: ScrollMetrics.self, of: ScrollMetrics.init(geometry:)) { old, new in
             scrollChrome.update(travel: new.travel)
@@ -378,14 +399,22 @@ struct ThreadTimeline: View, Equatable {
             if !nudging, new.centerY != old.centerY, new.contentHeight == old.contentHeight, !tracking.isCoasting {
                 noteScrollMovement()
             }
-            // The offset moving while nothing else did is the reader scrolling: a drag, a flick,
-            // or wheel ticks, which report no phase at all. (A snap to the end below moves it
-            // too, and lands pinned, which is right.)
-            // Not while the thread is still arriving (see `holdEnd`): the offset moving
-            // then is the layout settling, and reading it as a scroll unpinned the end and
-            // left a thread opened at its bottom sitting some way up it.
+            // The offset moving by more than the anchor's own move is the reader scrolling: a
+            // drag, a flick, or wheel ticks, which report no phase at all. Content growing
+            // under a bottom-held reader moves the offset by exactly the growth, and under a
+            // top-held one not at all; anything beyond that is the reader. Wheel ticks used
+            // to count only in frames where the content stood still, and while a turn
+            // streamed rows (or a card ticked) hardly any frame did: the reader's scroll went
+            // unrecognised, the end stayed pinned, and the timeline snapped back to it under
+            // them. (A snap to the end below moves the offset too, and lands pinned, which
+            // is right.) Not while the thread is still arriving (see `holdEnd`): the offset
+            // moving then is the layout settling, and reading it as a scroll unpinned the
+            // end and left a thread opened at its bottom sitting some way up it.
+            let anchorMove = anchorsBottomOnGrowth ? new.contentHeight - old.contentHeight : 0
+            let readerMoved = abs((new.offset - old.offset) - anchorMove) > 1
+            if readerMoved { tracking.noteReaderMovement() }
             let scrolled = tracking.isUserScrolling
-                || (!nudging && !tracking.isArriving && new.offset != old.offset && new.contentHeight == old.contentHeight
+                || (!nudging && !tracking.isArriving && readerMoved
                     && new.containerHeight == old.containerHeight && !tracking.isCoasting)
             let atRest = !tracking.isUserScrolling && !tracking.isCoasting
             if atRest, !scrolled {
@@ -491,6 +520,9 @@ struct ThreadTimeline: View, Equatable {
                 Task { await warmMarkdown() }
                 return
             }
+            // Whatever phase the last scroll was left in (a coast whose end never came)
+            // is over: the turn's own scroll below must not be read as its continuation.
+            tracking.notePhase(.idle)
             let wasAtEnd = tracking.isPinnedToBottom
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
@@ -568,7 +600,11 @@ struct ThreadTimeline: View, Equatable {
     /// stays pinned there. Rows coming back on screen end the sequence wherever it is, and
     /// a fourth blank in a row is left alone.
     private func repairLayout() {
-        guard viewportHeight > 0, !tracking.isUserScrolling, !tracking.isCoasting else { return }
+        guard viewportHeight > 0 else { return }
+        guard !tracking.isUserScrolling, !tracking.isCoasting else {
+            tracking.repairSkippedWhileScrolling = true
+            return
+        }
         let distance = tracking.distanceFromBottom
         if distance < -1 || (tracking.isPinnedToBottom && abs(distance) > 1) {
             withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
@@ -596,6 +632,22 @@ struct ThreadTimeline: View, Equatable {
         // Blank, and something was just done about it: checked again a beat from now.
         tracking.blankRepairs += 1
         tracking.armBlankWatch()
+    }
+
+    /// A row is opening and pushing content below the fold, inside the tap's animation.
+    /// With the end of the conversation on screen, the end is held through the growth
+    /// (the bottom anchor follows the rows as they open) and the offset is sent to it in
+    /// the same transaction, so the timeline glides down with the opening and lands on
+    /// the new end, never short of it and never in a snap. A reader higher up is left
+    /// where they are.
+    private func revealEnd() {
+        guard !scrollState.showsJumpButton else { return }
+        tracking.isPinnedToBottom = true
+        anchorsBottomOnGrowth = true
+        position.scrollTo(edge: .bottom)
+        // The glide is a scroll like any other: the shimmers and the card's staves rest,
+        // and streamed rows are flushed at the scrolling pace, so its frames are its own.
+        noteScrollMovement()
     }
 
     /// Drift smaller than this leaves the viewport over rows the lazy stack already built:
@@ -627,7 +679,11 @@ struct ThreadTimeline: View, Equatable {
     /// is put back on the end after that, since the rows just built may have measured
     /// differently from what the stack had guessed.
     private func refreshViewport() {
-        guard viewportHeight > 0, !tracking.isUserScrolling, !tracking.isCoasting, !tracking.isNudging else { return }
+        guard viewportHeight > 0, !tracking.isNudging else { return }
+        guard !tracking.isUserScrolling, !tracking.isCoasting else {
+            tracking.refreshSkippedWhileScrolling = true
+            return
+        }
         let pinned = tracking.isPinnedToBottom && tracking.distanceFromBottom <= 1
         if tracking.beginNudge() {
             tracking.restoreNudge {
@@ -643,6 +699,11 @@ struct ThreadTimeline: View, Equatable {
             DispatchQueue.main.async {
                 withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
             }
+        } else if pinned, tracking.endUnseen {
+            // Nothing to scroll (the conversation is shorter than the pane) and the last
+            // block has not shown itself: no point can move, so the stack is remade, the
+            // one repair that reaches it.
+            stackGeneration += 1
         }
     }
 
@@ -658,7 +719,7 @@ struct ThreadTimeline: View, Equatable {
 /// timeline should check that it is showing anything at all.
 @MainActor
 @Observable
-final class TimelineScrollTracking {
+final class TimelineScrollTracking: ScrollActivityReporter {
     /// Whether new text keeps the timeline at the conversation's end. No view body reads
     /// it, only the scroll closures, so a pin flip must never be able to re-render the
     /// timeline.
@@ -696,7 +757,16 @@ final class TimelineScrollTracking {
     @ObservationIgnored private(set) var distanceFromBottom: CGFloat = 0
     @ObservationIgnored private(set) var travel: CGFloat = 0
     @ObservationIgnored private var lastOffsetChangeAt: CFTimeInterval = 0
+    /// When the offset last moved by more than the anchor's own move (see the timeline's
+    /// `readerMoved`): the reader's drag, flick or coast, never content growing under a
+    /// held end. What the phase watch below waits to stop.
+    @ObservationIgnored private var lastReaderMovementAt: CFTimeInterval = 0
+    /// When the phase being watched began, for the ceiling on it.
+    @ObservationIgnored private var phaseStartedAt: CFTimeInterval = 0
     @ObservationIgnored private var phaseWatch: Task<Void, Never>?
+    /// A repair or a viewport refresh that was skipped mid-scroll, to run once it ends.
+    @ObservationIgnored var repairSkippedWhileScrolling = false
+    @ObservationIgnored var refreshSkippedWhileScrolling = false
     @ObservationIgnored private var blankWatch: Task<Void, Never>?
     /// How many repairs the current blank has had, so they escalate and then stop. Any
     /// row coming on screen starts the count over.
@@ -727,6 +797,13 @@ final class TimelineScrollTracking {
     /// Rows to show, and none of them on screen.
     var showsNothing: Bool {
         !outlineIDs.isEmpty && visibleIDs.isDisjoint(with: outlineSet)
+    }
+
+    /// The last block has never reported itself on screen: the end of the conversation,
+    /// with older rows possibly still showing above it, has not been drawn.
+    var endUnseen: Bool {
+        guard let last = outlineIDs.last else { return false }
+        return !visibleIDs.contains(last)
     }
 
     /// Returns whether the outline changed.
@@ -775,6 +852,11 @@ final class TimelineScrollTracking {
         arrivingUntil = max(arrivingUntil, CACurrentMediaTime() + seconds)
     }
 
+    /// The reader moved the offset this frame (see the timeline's `readerMoved`).
+    func noteReaderMovement() {
+        lastReaderMovementAt = CACurrentMediaTime()
+    }
+
     func noteGeometry(offset: CGFloat, distanceFromBottom: CGFloat, travel: CGFloat) {
         if offset != self.offset { lastOffsetChangeAt = CACurrentMediaTime() }
         self.offset = offset
@@ -795,16 +877,22 @@ final class TimelineScrollTracking {
             ScrollActivity.shared.setScrolling(false, timeline: reported)
         }
         reportedTimeline = timeline
-        ScrollActivity.shared.setScrolling(isReaderScrolling || isCoasting, timeline: timeline)
+        ScrollActivity.shared.setScrolling(isScrollingNow, timeline: timeline, reporter: self)
     }
+
+    /// What this timeline reports (see `ScrollActivity`): the drag or wheel, and the coast.
+    var isScrollingNow: Bool { isReaderScrolling || isCoasting }
 
     /// The timeline is gone (a thread switch, a panel closed): whatever it reported is
     /// withdrawn, mid-drag or mid-coast alike, so the app never goes on hearing it scroll.
     func endActivity() {
         settleWatch?.cancel()
         settleWatch = nil
+        phaseWatch?.cancel()
+        phaseWatch = nil
         if isReaderScrolling { isReaderScrolling = false }
         isCoasting = false
+        isUserScrolling = false
         if let reported = reportedTimeline {
             ScrollActivity.shared.setScrolling(false, timeline: reported)
         }
@@ -813,23 +901,35 @@ final class TimelineScrollTracking {
     /// A phase's end is not always delivered: content growing under an animated scroll
     /// cuts it short, and the app going to the back mid-flick loses the last event. Left
     /// as reported, the timeline would count itself as moving for good and never snap or
-    /// repair again. Coasting with the offset at rest for 400ms is over, whatever was
-    /// said, and the layout gets checked once it is.
+    /// repair again. A coast whose reader has not moved the offset for 400ms is over,
+    /// whatever was said (content growing under a held end moves the offset too, and used
+    /// to keep a cut-short coast alive for as long as a turn streamed: no snap, no repair,
+    /// and a running turn the reader could not see until the thread was reopened); a drag
+    /// whose finger has not moved for 2s is taken as lost the same way. Three seconds is
+    /// the ceiling on any phase. The layout gets checked once it is over.
     func notePhase(_ phase: ScrollPhase) {
         isUserScrolling = phase == .interacting || phase == .decelerating
         isCoasting = phase == .decelerating || phase == .animating
         if isUserScrolling { drift = 0 }
         phaseWatch?.cancel()
         phaseWatch = nil
-        guard isCoasting else { return }
-        lastOffsetChangeAt = CACurrentMediaTime()
+        guard isCoasting || isUserScrolling else { return }
+        let now = CACurrentMediaTime()
+        lastOffsetChangeAt = now
+        lastReaderMovementAt = now
+        phaseStartedAt = now
+        let still: CFTimeInterval = phase == .interacting ? 2.0 : 0.4
         phaseWatch = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(200))
                 guard let self, !Task.isCancelled else { return }
-                guard CACurrentMediaTime() - lastOffsetChangeAt >= 0.4 else { continue }
+                let now = CACurrentMediaTime()
+                guard now - lastReaderMovementAt >= still || now - phaseStartedAt >= 3.0 else { continue }
                 isUserScrolling = false
                 isCoasting = false
+                if let reported = reportedTimeline, !isReaderScrolling {
+                    ScrollActivity.shared.setScrolling(false, timeline: reported)
+                }
                 checkRequest += 1
                 return
             }
@@ -1282,7 +1382,11 @@ enum DisplayBlock: Identifiable, Equatable {
                 let rows = entries[run.range].filter { $0.kind != .turnEnd && $0.kind != .reasoning }
                 let summary = meta.summaryByTurn[turnID]
                 let showsWorking = waiting && summary == nil && isLast
-                blocks.append(.turn(id: "turn-\(turnID.uuidString)", turnID: turnID, entries: rows, summary: summary, showsWorking: showsWorking))
+                // Named by the turn and the run's first row: a note filed under no turn
+                // landing mid-turn splits the turn into two runs, and two blocks under one
+                // id left the second, the running tail, undrawn.
+                let runID = entries[run.range.lowerBound].id
+                blocks.append(.turn(id: "turn-\(turnID.uuidString)-\(runID)", turnID: turnID, entries: rows, summary: summary, showsWorking: showsWorking))
             } else {
                 for group in TimelineGroup.build(Array(entries[run.range]), showReasoning: showReasoning) {
                     blocks.append(.group(group, summary: meta.summary(for: group), hasReply: meta.hasReply(for: group)))
@@ -1740,7 +1844,7 @@ private struct WorkingIndicator: View {
     let showsCard: Bool
     var workingDirectory: String?
     @Environment(\.chatZoom) private var zoom
-    @Environment(TimelineScrollState.self) private var scrollState: TimelineScrollState?
+    @Environment(\.revealTimelineEnd) private var revealBox
     @State private var now = Date.now
     @State private var isExpanded = false
 
@@ -1757,8 +1861,10 @@ private struct WorkingIndicator: View {
         VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             Button {
                 guard canExpand else { return }
-                withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
-                if isExpanded { scrollState?.revealExpansion() }
+                withAnimation(.snappy(duration: 0.24)) {
+                    isExpanded.toggle()
+                    if isExpanded { revealBox?.action() }
+                }
             } label: {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1842,14 +1948,30 @@ final class TimelineScrollState {
     func jumpToLatest() {
         jumpRequest += 1
     }
+}
 
-    /// A row just opened and pushed content below the fold. With the end of the
-    /// conversation on screen, the timeline follows it down, smoothly, so what opened is
-    /// read without a scroll; a reader higher up is left where they are. A beat after the
-    /// tap, so the opened rows are laid out and the scroll runs to the new end.
-    func revealExpansion() {
-        guard !showsJumpButton else { return }
-        DispatchQueue.main.async { [self] in jumpToLatest() }
+/// What a row calls as it opens, inside its own animation, so the timeline can follow the
+/// opening down to the end of the conversation (see `ThreadTimeline.revealEnd`). A box
+/// with an identity, like `PopoverCloseBox`: a bare closure in the environment would tell
+/// every row it is out of date on every update of the timeline; the box is made once and
+/// only its action is renewed. Outside a timeline it does nothing.
+@MainActor
+final class TimelineRevealBox: Equatable {
+    var action: () -> Void = {}
+
+    nonisolated static func == (lhs: TimelineRevealBox, rhs: TimelineRevealBox) -> Bool {
+        lhs === rhs
+    }
+}
+
+private struct RevealTimelineEndKey: EnvironmentKey {
+    static let defaultValue: TimelineRevealBox? = nil
+}
+
+extension EnvironmentValues {
+    var revealTimelineEnd: TimelineRevealBox? {
+        get { self[RevealTimelineEndKey.self] }
+        set { self[RevealTimelineEndKey.self] = newValue }
     }
 }
 
