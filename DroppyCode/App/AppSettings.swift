@@ -98,6 +98,7 @@ final class AppSettings {
         static let projectActivationOverrides = "projectActivationOverrides"
         static let deepseekAPIKey = "deepseekAPIKey"
         static let metaAPIKey = "metaAPIKey"
+        static let zaiAPIKey = "zaiAPIKey"
         static let commandcodeAPIKey = "commandcodeAPIKey"
         static let hydraEnabled = "hydraEnabled"
         static let panelSize = "floatingPanelSize"
@@ -304,6 +305,17 @@ final class AppSettings {
             guard metaAPIKeyInput != oldValue else { return }
             let kept = MetaKeychain.setAPIKey(metaAPIKeyInput)
             storeAPIKeyFallback(kept ? "" : metaAPIKeyInput, forKey: Key.metaAPIKey)
+        }
+    }
+
+    /// Z.ai's GLM Coding Plan talks to https://api.z.ai/api/coding/paas/v4 directly,
+    /// so it needs a ZAI_API_KEY instead of a CLI login.
+    /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
+    var zaiAPIKeyInput: String {
+        didSet {
+            guard zaiAPIKeyInput != oldValue else { return }
+            let kept = ZaiKeychain.setAPIKey(zaiAPIKeyInput)
+            storeAPIKeyFallback(kept ? "" : zaiAPIKeyInput, forKey: Key.zaiAPIKey)
         }
     }
 
@@ -540,11 +552,13 @@ final class AppSettings {
         projectActivationOverrides = Self.load([String: Bool].self, forKey: Key.projectActivationOverrides) ?? [:]
         deepseekAPIKeyInput = DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "")
         metaAPIKeyInput = MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "")
+        zaiAPIKeyInput = ZaiKeychain.apiKey(fallback: defaults.string(forKey: Key.zaiAPIKey) ?? "")
         commandcodeAPIKeyInput = CommandCodeKeychain.apiKey(fallback: defaults.string(forKey: Key.commandcodeAPIKey) ?? "")
         // Earlier builds kept a plaintext copy of every key in the defaults; one the
         // Keychain holds needs none.
         if !DeepSeekKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.deepseekAPIKey) }
         if !MetaKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.metaAPIKey) }
+        if !ZaiKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.zaiAPIKey) }
         if !CommandCodeKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.commandcodeAPIKey) }
         binaryPaths = defaults.dictionary(forKey: Key.binaryPaths) as? [String: String] ?? [:]
         disabledProviders = defaults.stringArray(forKey: Key.disabledProviders) ?? []
@@ -707,6 +721,7 @@ final class AppSettings {
         let stored: String = switch provider {
         case .deepseek: deepseekAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         case .meta: metaAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .zai: zaiAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         case .commandcode: commandcodeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         default: ""
         }
@@ -724,6 +739,7 @@ final class AppSettings {
         switch provider {
         case .deepseek: deepseekAPIKeyInput
         case .meta: metaAPIKeyInput
+        case .zai: zaiAPIKeyInput
         case .commandcode: commandcodeAPIKeyInput
         default: ""
         }
@@ -734,6 +750,7 @@ final class AppSettings {
         case .commandcode: commandcodeAPIKeyInput = value
         case .deepseek: deepseekAPIKeyInput = value
         case .meta: metaAPIKeyInput = value
+        case .zai: zaiAPIKeyInput = value
         default: break
         }
     }

@@ -60,7 +60,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "panel", "limits", "credits", "text", "size", "font", "zoom", "heatmap", "daily", "weekly", "cumulative", "settle", "settled", "finish", "finished", "done", "sound", "chime"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .hydra: ["hydra", "heads", "subagents", "sub-agents", "agents", "team", "orchestrator", "worker", "pair", "pairs", "parallel", "delegate", "queue"]
-        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "devin", "cognition", "antigravity", "agy", "google", "gemini", "copilot", "github", "command code", "commandcode", "cmd", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
+        case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "zai", "z.ai", "glm", "coding plan", "devin", "cognition", "antigravity", "agy", "google", "gemini", "copilot", "github", "command code", "commandcode", "cmd", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
         case .shortcuts: ["keyboard", "keys"]
         case .archive: ["archived", "restore"]

@@ -30,7 +30,7 @@ struct SessionConfiguration: Sendable {
     var fastMode = false
     var runtimeMode: RuntimeMode
     var interactionMode: InteractionMode
-    /// Native API providers (DeepSeek, Meta) authenticate with this instead of a CLI.
+    /// Native API providers (DeepSeek, Meta, Z.ai) authenticate with this instead of a CLI.
     var apiKey: String?
     /// Set while Hydra is on for the thread: providers that run heads of their own define
     /// them at launch, on the pair's model and effort, and steer the lead towards them.

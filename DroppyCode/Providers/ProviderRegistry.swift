@@ -11,7 +11,7 @@ struct ProviderStatus: Equatable, Sendable {
     var version: String?
     var auth: Auth = .unknown
     var isChecking = false
-    /// Native API providers (DeepSeek, Meta) have no CLI; they are installed once an API key exists.
+    /// Native API providers (DeepSeek, Meta, Z.ai) have no CLI; they are installed once an API key exists.
     var apiKeyConfigured = false
 
     var isInstalled: Bool { executable != nil || apiKeyConfigured }
@@ -68,6 +68,7 @@ final class ProviderRegistry {
     static let deepseekSeed = ["deepseek-v4-pro", "deepseek-flash"].compactMap(DeepSeekAPI.option(for:))
     static let metaSeed = ["muse-spark-1.3", "muse-spark-1.3-contributor", "muse-spark-1.2", "muse-spark-1.2-contributor", "muse-spark-1.1"]
         .compactMap(MetaAPI.option(for:))
+    static let zaiSeed = ["glm-5.3", "glm-5.3-flash"].compactMap(ZaiAPI.option(for:))
 
     /// From `agy models`: base models with their supported effort levels.
     /// Effort is adjusted via the effort slider, not separate duplicate rows.
@@ -115,6 +116,7 @@ final class ProviderRegistry {
         if Self.isStaleClaudeSeed(catalogs[.claude] ?? []) { catalogs[.claude] = Self.claudeSeed }
         if catalogs[.deepseek]?.isEmpty ?? true { catalogs[.deepseek] = Self.deepseekSeed }
         if catalogs[.meta]?.isEmpty ?? true { catalogs[.meta] = Self.metaSeed }
+        if catalogs[.zai]?.isEmpty ?? true { catalogs[.zai] = Self.zaiSeed }
         if catalogs[.antigravity]?.isEmpty ?? true || catalogs[.antigravity]?.contains(where: { $0.id.hasSuffix("-high") || $0.id.hasSuffix("-medium") || $0.id.hasSuffix("-low") }) == true {
             catalogs[.antigravity] = Self.antigravitySeed
         }
@@ -208,7 +210,7 @@ final class ProviderRegistry {
             refreshPlanLimits(provider, force: true)
         }
         await withTaskGroup(of: Void.self) { group in
-            for provider in [ProviderKind.codex, .antigravity, .copilot, .commandcode, .pi, .deepseek, .meta] where status(provider).isInstalled {
+            for provider in [ProviderKind.codex, .antigravity, .copilot, .commandcode, .pi, .deepseek, .meta, .zai] where status(provider).isInstalled {
                 group.addTask { await self.loadCatalog(provider, force: true) }
             }
         }
@@ -287,6 +289,19 @@ final class ProviderRegistry {
                 auth: valid ? .signedIn(nil) : .signedOut,
                 apiKeyConfigured: true
             )
+        } else if provider == .zai {
+            let valid = await ZaiAPI.validate(apiKey: apiKey)
+            statuses[provider] = ProviderStatus(
+                version: "API",
+                auth: valid ? .signedIn(nil) : .signedOut,
+                apiKeyConfigured: true
+            )
+            if valid {
+                refreshPlanLimits(.zai, force: true)
+            } else {
+                planLimits[.zai] = nil
+                limitsFetchedAt[.zai] = nil
+            }
         } else {
             statuses[provider] = ProviderStatus(auth: .signedIn(nil), apiKeyConfigured: true)
         }
@@ -341,7 +356,7 @@ final class ProviderRegistry {
         case .commandcode: try? await CommandCodeAPI.listModels(executable: executable, environment: environment)
         case .pi: try? await PiCLI.listModels(executable: executable, environment: environment)
         case .cursor, .opencode, .grok, .devin: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
-        case .claude, .deepseek, .meta: nil
+        case .claude, .deepseek, .meta, .zai: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
     }
@@ -351,6 +366,7 @@ final class ProviderRegistry {
         let seed: [ModelOption]? = switch provider {
         case .deepseek: Self.deepseekSeed
         case .meta: Self.metaSeed
+        case .zai: Self.zaiSeed
         default: nil
         }
         guard let seed else { return }
@@ -363,6 +379,7 @@ final class ProviderRegistry {
         let list: [ModelOption]? = switch provider {
         case .deepseek: try? await DeepSeekAPI.listModels(apiKey: apiKey)
         case .meta: try? await MetaAPI.listModels(apiKey: apiKey)
+        case .zai: try? await ZaiAPI.listModels(apiKey: apiKey)
         default: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
@@ -371,9 +388,25 @@ final class ProviderRegistry {
     /// Reads the provider's plan limits, at most once a minute after a successful read unless forced.
     /// The read runs on its own task, so closing the popover that asked for it cannot cancel it.
     func refreshPlanLimits(_ provider: ProviderKind, force: Bool = false) {
-        guard PlanLimitsReader.exposesLimits(provider), !loadingLimits.contains(provider),
-              let executable = executable(for: provider) else { return }
+        guard PlanLimitsReader.exposesLimits(provider), !loadingLimits.contains(provider) else { return }
         if !force, let fetched = limitsFetchedAt[provider], Date.now.timeIntervalSince(fetched) < 60 { return }
+        if provider.isAPIKeyBased {
+            let apiKey = settings.apiKey(for: provider)
+            guard !apiKey.isEmpty else {
+                planLimits[provider] = nil
+                return
+            }
+            loadingLimits.insert(provider)
+            Task {
+                let limits = await PlanLimitsReader.read(provider, apiKey: apiKey)
+                loadingLimits.remove(provider)
+                guard let limits else { return }
+                planLimits[provider] = limits
+                limitsFetchedAt[provider] = .now
+            }
+            return
+        }
+        guard let executable = executable(for: provider) else { return }
         loadingLimits.insert(provider)
         let environment = environment(for: provider)
         Task {
@@ -414,6 +447,14 @@ final class ProviderRegistry {
     func invalidateCredits(_ provider: ProviderKind) {
         guard CreditsReader.exposesCredits(provider) else { return }
         creditsFetchedAt[provider] = nil
+    }
+
+    /// A turn just spent credits, so the cached plan windows are older than the spend.
+    /// The next look reads the API again instead of handing back the numbers from
+    /// before the turn.
+    func invalidatePlanLimits(_ provider: ProviderKind) {
+        guard provider.isAPIKeyBased, PlanLimitsReader.exposesLimits(provider) else { return }
+        limitsFetchedAt[provider] = nil
     }
 
     func updateCatalog(_ list: [ModelOption], for provider: ProviderKind) {
@@ -477,7 +518,7 @@ final class ProviderRegistry {
             return await CommandCodeAPI.authStatus(executable: executable, environment: environment)
         case .pi:
             return await PiCLI.authStatus(executable: executable, environment: environment)
-        case .opencode, .grok, .deepseek, .meta:
+        case .opencode, .grok, .deepseek, .meta, .zai:
             return .unknown
         }
     }

@@ -259,8 +259,8 @@ struct HydraReportRow: View {
             guard !details.isEmpty else { return }
             await MarkdownView.warm([body])
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 96)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, 96)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(title))
     }
@@ -385,8 +385,8 @@ struct HydraHeadsWorkingRow: View {
             }
         }
         .animation(.smooth(duration: 0.3), value: finished.map(\.index))
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 96)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.trailing, 96)
     }
 
     /// The finished heads whose report has not reached the lead yet: a finished head whose
@@ -583,21 +583,26 @@ struct HydraBriefRow: View {
 /// opening costs the blocks on screen rather than the whole report.
 private struct HydraReportPopover: View {
     let text: String
-    var width: CGFloat = 440
+    var width: CGFloat = 460
 
     @State private var blocks: [MarkdownBlock]?
 
     var body: some View {
         ScrollView {
             if let blocks {
-                LazyVStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                         MarkdownBlockView(block: block)
                             .equatable()
                     }
                 }
+                // The note reads at the popover's own compact size, not the chat's.
+                .font(.system(size: 12))
+                .environment(\.markdownPointSize, 12)
+                .environment(\.markdownDimmed, false)
+                .environment(\.chatZoom, 1)
                 .textSelection(.enabled)
-                .padding(16)
+                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 ProgressView()
@@ -794,8 +799,8 @@ struct HydraMergeRow: View {
             .padding(.trailing, 14)
             .padding(.vertical, 8)
             .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.leading, 96)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 96)
             .accessibilityElement(children: .contain)
             .accessibilityLabel(Text(outcome?.title ?? "Merging the team's work: \(stage)"))
         }

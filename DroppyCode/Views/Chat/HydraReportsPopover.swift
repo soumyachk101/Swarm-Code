@@ -186,9 +186,10 @@ struct HydraReportDigest {
     }
 }
 
-/// The digest of a heads' report batch in the popover its pill opens: one flat card
-/// per head with its outcome, its files and its collapsible report. The blocks parse
-/// off the main thread as the popover opens, so opening costs the blocks on screen.
+/// The digest of a heads' report batch in the popover its pill opens, laid out like a
+/// native popover: a header that stays put, then one plain card per head with its
+/// outcome, its files and its report, scrolling under it. The blocks parse off the
+/// main thread as the popover opens, so opening costs the blocks on screen.
 struct HydraReportsPopover: View {
     let title: String
     let text: String
@@ -199,21 +200,34 @@ struct HydraReportsPopover: View {
     @State private var blocks: [String: [MarkdownBlock]] = [:]
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                header
-                if let digest {
-                    ForEach(Array(digest.heads.enumerated()), id: \.element.id) { index, head in
-                        headCard(head, index: index)
+        VStack(spacing: 0) {
+            header
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if let digest {
+                        ForEach(Array(digest.heads.enumerated()), id: \.element.id) { index, head in
+                            if index > 0 {
+                                Divider().opacity(0.5)
+                            }
+                            headCard(head, index: index, collapsible: digest.heads.count > 1)
+                        }
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
                     }
                 }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(idealHeight: 360, maxHeight: 520)
         }
-        .scrollBounceBehavior(.basedOnSize)
-        .frame(width: 480)
-        .frame(idealHeight: 380, maxHeight: 560)
+        .frame(width: 460)
+        // The popover reads at its own size, not the conversation's zoom.
+        .environment(\.chatZoom, 1)
         .task(id: text) {
             let parsed = HydraReportDigest.parse(text)
             digest = parsed
@@ -229,25 +243,56 @@ struct HydraReportsPopover: View {
         }
     }
 
+    // MARK: Header
+
     /// Who reported, and the one sentence saying who is still at work, if anyone is.
     private var header: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: -8) {
+        HStack(alignment: .center, spacing: 10) {
+            HStack(spacing: -6) {
                 ForEach(personas, id: \.self) { persona in
-                    HydraGlyph(persona: persona, size: 28)
+                    HydraGlyph(persona: persona, size: 22)
                 }
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                Text(Self.cleanedTitle(title, names: personas.map(\.name)))
+                    .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)
+                    .lineLimit(2)
                 if let intro = digest?.intro, let sentence = Self.stillAtWorkSentence(in: intro) {
                     Text(sentence)
                         .font(.system(size: 11))
                         .foregroundStyle(Chrome.secondaryText)
+                        .lineLimit(2)
                 }
             }
+            .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+
+    /// The title with a head's name said once: a lead that writes "Juno: Juno: streaming
+    /// path" has the repeated `Name: ` (or `Name `) prefix dropped until one name is left.
+    static func cleanedTitle(_ title: String, names: [String]) -> String {
+        var cleaned = title
+        for name in names where !name.isEmpty {
+            let prefixes = ["\(name): ", "\(name) "]
+            func namePrefix(of string: String) -> String? {
+                prefixes.first { string.hasPrefix($0) }
+            }
+            while let prefix = namePrefix(of: cleaned), namePrefix(of: String(cleaned.dropFirst(prefix.count))) != nil {
+                cleaned = String(cleaned.dropFirst(prefix.count))
+            }
+        }
+        return cleaned
+    }
+
+    /// The string without one leading `Name: `, for a line that sits under the name already.
+    private static func withoutNamePrefix(_ string: String, name: String) -> String {
+        let prefix = "\(name): "
+        guard !name.isEmpty, string.hasPrefix(prefix) else { return string }
+        return String(string.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
     }
 
     /// The sentence holding 'still at work', from its start to the intro's end.
@@ -263,75 +308,95 @@ struct HydraReportsPopover: View {
         return sentence.isEmpty ? nil : sentence
     }
 
-    private func headCard(_ head: HydraReportDigest.Head, index: Int) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                HydraGlyph(persona: personas.first(where: { $0.name == head.name }) ?? HydraRoster.persona(at: index), size: 30)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(head.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Chrome.primaryText)
-                    Text(head.task)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Chrome.secondaryText)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 4) {
-                    outcomeChip(head.outcome)
-                    if let effort = head.effort {
-                        Text(effort)
-                            .font(.system(size: 10))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .monospacedDigit()
+    // MARK: Cards
+
+    /// One head: its name over its outcome, its task, its files, then its report. With
+    /// several heads the name row is the toggle that opens and closes the report.
+    private func headCard(_ head: HydraReportDigest.Head, index: Int, collapsible: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if collapsible, hasReport(head) {
+                Button {
+                    withAnimation(Chrome.panelSlide) {
+                        if expanded.contains(head.name) {
+                            expanded.remove(head.name)
+                        } else {
+                            expanded.insert(head.name)
+                        }
                     }
+                } label: {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        nameRow(head)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .rotationEffect(.degrees(expanded.contains(head.name) ? 90 : 0))
+                    }
+                    .contentShape(.rect)
                 }
+                .buttonStyle(.plain)
+            } else {
+                nameRow(head)
             }
-            landingRow(head.landing)
-            reportBody(head)
+            // The name is on the row above, so the task drops any lead of its own.
+            let task = Self.withoutNamePrefix(Self.cleanedTitle(head.task, names: [head.name]), name: head.name)
+            if !task.isEmpty {
+                Text(task)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            landingRows(head.landing)
+            if !collapsible || expanded.contains(head.name) {
+                reportBody(head)
+            }
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Chrome.overlay(0.06)))
     }
 
-    /// The outcome as a tinted capsule: green done, red failed, amber stopped.
-    private func outcomeChip(_ outcome: HydraReportDigest.Outcome) -> some View {
-        let (label, color): (String, Color) = switch outcome {
-        case .done: ("Done", Chrome.success)
-        case .failed: ("Failed", Chrome.danger)
-        case .stopped: ("Stopped", Chrome.warning)
+    /// The head's name and, beside it, its outcome and effort as one small caption.
+    private func nameRow(_ head: HydraReportDigest.Head) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(head.name)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Chrome.primaryText)
+            Text(Self.caption(for: head))
+                .font(.system(size: 11))
+                .foregroundStyle(head.outcome == .done ? Chrome.secondaryText : Chrome.warning)
+                .monospacedDigit()
+                .lineLimit(1)
         }
-        return Text(label)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.16)))
     }
 
-    /// Where the head's work went: its files as chips, or one line saying otherwise.
+    /// "Done", "Failed", "Stopped", with the effort (the elapsed time and the model,
+    /// when the lead wrote them) after a dot.
+    private static func caption(for head: HydraReportDigest.Head) -> String {
+        let outcome = switch head.outcome {
+        case .done: "Done"
+        case .failed: "Failed"
+        case .stopped: "Stopped"
+        }
+        guard let effort = head.effort, !effort.isEmpty else { return outcome }
+        return "\(outcome) · \(effort)"
+    }
+
+    private func hasReport(_ head: HydraReportDigest.Head) -> Bool {
+        !(head.body.isEmpty || head.body == "No report.")
+    }
+
+    /// Where the head's work went: its files as monospaced rows, or one line saying otherwise.
     @ViewBuilder
-    private func landingRow(_ landing: HydraReportDigest.Landing) -> some View {
+    private func landingRows(_ landing: HydraReportDigest.Landing) -> some View {
         switch landing {
         case .landed(let files):
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Landed")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Chrome.secondaryText)
-                fileChips(files)
-            }
+            fileRows(files)
         case .notLanded(let files, let error):
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Did not land")
-                    .font(.system(size: 10, weight: .medium))
+            VStack(alignment: .leading, spacing: 4) {
+                Text(error.map { "Did not land: \($0)" } ?? "Did not land")
+                    .font(.system(size: 11))
                     .foregroundStyle(Chrome.warning)
-                if let error, !error.isEmpty {
-                    Text(error)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.secondaryText)
-                }
-                fileChips(files)
+                    .fixedSize(horizontal: false, vertical: true)
+                fileRows(files)
             }
         case .nothing:
             Text("Changed nothing.")
@@ -340,11 +405,11 @@ struct HydraReportsPopover: View {
         case .unfinished(let copyPath):
             VStack(alignment: .leading, spacing: 2) {
                 Text("Nothing landed")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11))
                     .foregroundStyle(Chrome.warning)
                 if let copyPath {
                     Text(copyPath)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(Chrome.secondaryText)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -355,71 +420,54 @@ struct HydraReportsPopover: View {
         }
     }
 
-    /// Each file as a capsule: its name, its additions and deletions, amber when
-    /// it still carries conflict markers. The full path waits in the tooltip.
-    private func fileChips(_ files: [HydraReportDigest.LandedFile]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
+    /// Each file on a row of its own: the path, trimmed in the middle when long, and
+    /// its additions and deletions at the end. A file still carrying conflict markers
+    /// says so in amber.
+    @ViewBuilder
+    private func fileRows(_ files: [HydraReportDigest.LandedFile]) -> some View {
+        if !files.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
                 ForEach(files) { file in
-                    HStack(spacing: 5) {
-                        Text(String(file.path.split(separator: "/").last ?? Substring(file.path)))
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                        Text("+\(file.additions)")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(Chrome.success)
-                        Text("−\(file.deletions)")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(Chrome.danger)
+                    HStack(spacing: 8) {
+                        Text(file.path)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(file.hasConflicts ? Chrome.warning : Chrome.secondaryText)
+                        Spacer(minLength: 8)
+                        Text("+\(file.additions) −\(file.deletions)")
+                            .foregroundStyle(Chrome.secondaryText)
+                            .lineLimit(1)
+                            .layoutPriority(1)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(file.hasConflicts ? Chrome.warning.opacity(0.14) : Chrome.overlay(0.1)))
-                    .help(file.path)
+                    .font(.system(size: 11, design: .monospaced))
+                    .help(file.hasConflicts ? "\(file.path) (with conflicts)" : file.path)
                 }
             }
         }
     }
 
-    /// The head's own report, collapsed behind a toggle; a missing report says so
-    /// with no toggle to open.
+    /// The head's own report at the popover's reading size; a missing report says so.
     @ViewBuilder
     private func reportBody(_ head: HydraReportDigest.Head) -> some View {
-        if head.body.isEmpty || head.body == "No report." {
+        if !hasReport(head) {
             Text("No report.")
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.secondaryText)
-        } else {
-            VStack(alignment: .leading, spacing: 8) {
-                Button {
-                    withAnimation(Chrome.panelSlide) {
-                        if expanded.contains(head.name) {
-                            expanded.remove(head.name)
-                        } else {
-                            expanded.insert(head.name)
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .rotationEffect(.degrees(expanded.contains(head.name) ? 90 : 0))
-                        Text("Report")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(Chrome.secondaryText)
-                }
-                .buttonStyle(.plain)
-                if expanded.contains(head.name) {
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array((blocks[head.name] ?? []).enumerated()), id: \.offset) { _, block in
-                            MarkdownBlockView(block: block)
-                                .equatable()
-                        }
-                    }
-                    .textSelection(.enabled)
+        } else if let headBlocks = blocks[head.name] {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(headBlocks.enumerated()), id: \.offset) { _, block in
+                    MarkdownBlockView(block: block)
+                        .equatable()
                 }
             }
+            .font(.system(size: 12))
+            .environment(\.markdownPointSize, 12)
+            .environment(\.markdownDimmed, false)
+            .textSelection(.enabled)
+        } else {
+            ProgressView()
+                .controlSize(.small)
+                .padding(.vertical, 8)
         }
     }
 }

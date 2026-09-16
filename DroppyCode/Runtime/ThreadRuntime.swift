@@ -867,7 +867,7 @@ final class ThreadRuntime {
         case "/plan":
             app?.updateThread(threadID) { $0.interactionMode = $0.interactionMode == .plan ? .build : .plan }
             return true
-        case "/compact" where thread?.provider == .codex || thread?.provider == .copilot || thread?.provider == .deepseek || thread?.provider == .meta || thread?.provider == .pi:
+        case "/compact" where thread?.provider == .codex || thread?.provider == .copilot || thread?.provider == .deepseek || thread?.provider == .meta || thread?.provider == .zai || thread?.provider == .pi:
             compact()
             return true
         default:
@@ -1078,6 +1078,7 @@ final class ThreadRuntime {
                 let created: any ProviderSession = switch thread.provider {
                 case .deepseek: DeepSeekSession(configuration: configuration)
                 case .meta: MetaSession(configuration: configuration)
+                case .zai: ZaiSession(configuration: configuration)
                 default: DeepSeekSession(configuration: configuration)
                 }
                 // Only the session the runtime still holds is listened to.
@@ -1136,6 +1137,7 @@ final class ThreadRuntime {
             case .cursor, .opencode, .grok, .devin: ACPSession(configuration: configuration)
             case .deepseek: DeepSeekSession(configuration: configuration)
             case .meta: MetaSession(configuration: configuration)
+            case .zai: ZaiSession(configuration: configuration)
             }
             // Only the session the runtime still holds is listened to.
             let epoch = sessionEpoch
@@ -1510,7 +1512,10 @@ final class ThreadRuntime {
             self.usage = usage
             saveRevision += 1
             // The turn just spent from the account, so the balance read before it is stale.
-            if let provider = thread?.provider { app?.providers.invalidateCredits(provider) }
+            if let provider = thread?.provider {
+                app?.providers.invalidateCredits(provider)
+                app?.providers.invalidatePlanLimits(provider)
+            }
         case .diff(let diff):
             if let currentTurnID { updateTurn(currentTurnID) { $0.providerDiff = diff } }
         case .notice(let notice):
