@@ -1380,7 +1380,17 @@ struct WorkSteps: View {
             .buttonStyle(.plain)
         }
         ForEach(entries.suffix(entries.count - hidden)) { entry in
-            ToolRow(entry: entry, runtime: runtime, workingDirectory: workingDirectory)
+            if case .assistant(let message) = entry.item.content {
+                // What the agent said between two steps, read as a step of the work: small
+                // and dimmed like its thinking, in line with the tool rows.
+                MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
+                    .foregroundStyle(.secondary)
+                    .environment(\.markdownPointSize, 12)
+                    .environment(\.markdownDimmed, true)
+                    .padding(.leading, TimelineMetrics.iconWidth + TimelineMetrics.iconSpacing)
+            } else {
+                ToolRow(entry: entry, runtime: runtime, workingDirectory: workingDirectory)
+            }
         }
     }
 }
