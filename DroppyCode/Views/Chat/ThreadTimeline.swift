@@ -1962,14 +1962,17 @@ private struct WorkingIndicator: View {
                         HydraProgressBar(runtime: runtime, startedAt: startedAt, finishedAt: nil, status: .running, tint: Chrome.accent, entries: turnEntries)
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, showsCard ? 11 : 8)
+                // The badge is a pill like the others in the column; the card keeps an even
+                // 14 on both sides so its bar sits centred.
+                .padding(.leading, showsCard ? 14 : TimelineMetrics.pillLeading)
+                .padding(.trailing, showsCard ? 14 : TimelineMetrics.pillTrailing)
+                .padding(.vertical, showsCard ? 11 : TimelineMetrics.pillVertical)
                 .frame(width: showsCard ? Self.cardWidth : nil)
                 .background {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous)
                         .fill(.quaternary.opacity(0.32))
                 }
-                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
                 .geometryGroup()
             }
             .buttonStyle(.plain)

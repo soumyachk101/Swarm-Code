@@ -44,10 +44,10 @@ struct ChatBadge<Glyph: View, Detail: View>: View {
                 }
             }
             // The whole pill takes the click, padding included, as the Hydra pills do.
-            .padding(.leading, 12)
-            .padding(.trailing, 14)
-            .padding(.vertical, 8)
-            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(.leading, TimelineMetrics.pillLeading)
+            .padding(.trailing, TimelineMetrics.pillTrailing)
+            .padding(.vertical, TimelineMetrics.pillVertical)
+            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
@@ -63,7 +63,7 @@ struct ChatBadge<Glyph: View, Detail: View>: View {
                 .accessibilityHidden(true)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
         .windowRectAnchor { coordinator.setAnchor(windowRect: $0) }
         .onChange(of: isPresented) { _, shown in
             if shown {
