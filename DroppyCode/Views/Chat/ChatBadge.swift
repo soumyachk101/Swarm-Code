@@ -108,6 +108,11 @@ final class BadgePopoverCoordinator: NSObject, NSPopoverDelegate {
 
     func show<Content: View>(_ content: Content) {
         guard let anchor = anchorRect.flatMap(WindowRectAnchor.target(for:)) else { return }
+        // Opened again while the last one is still fading out: that one goes at once.
+        if popover.isShown { popover.close() }
+        // The content closes the popover itself through the environment (a sheet that
+        // answers, a card whose button acts), the way rows in an AppKit popover do.
+        let content = content.environment(\.closePopover, { [weak self] in self?.close() })
         var size = NSHostingView(rootView: content).fittingSize
         if size.width <= 0 || size.height <= 0 { size = NSSize(width: 460, height: 320) }
         popover.setFixedContent(content, size: size)
@@ -117,11 +122,12 @@ final class BadgePopoverCoordinator: NSObject, NSPopoverDelegate {
         startMonitors()
     }
 
+    /// Closes on the popover's own animation; `onClose` follows once it has closed (see
+    /// `popoverDidClose`), once, whichever way it went.
     func close() {
         guard popover.isShown else { return }
         stopMonitors()
         popover.performClose(nil)
-        onClose?()
     }
 
     nonisolated func popoverDidClose(_ notification: Notification) {
@@ -134,8 +140,12 @@ final class BadgePopoverCoordinator: NSObject, NSPopoverDelegate {
     private func startMonitors() {
         guard monitors.isEmpty else { return }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            guard event.keyCode == 53 else { return event } // Escape
-            self?.close()
+            // Escape in the popover or the chat window it hangs from; another window's
+            // Escape (Settings, a file picker) is that window's own.
+            guard let self, event.keyCode == 53, // Escape
+                  event.window === shownIn || event.window === popover.contentViewController?.view.window
+            else { return event }
+            close()
             return nil
         }) {
             monitors.append(monitor)

@@ -15,13 +15,63 @@ final class ScrollActivity {
 
     private(set) var isScrolling = false
     @ObservationIgnored private var scrolling: Set<UUID> = []
+    /// Who reported each timeline, held weakly: a reporter that went away without
+    /// withdrawing (a window closed mid-flick, a subtree dropped without its disappearance)
+    /// would otherwise keep the app "scrolling" for good. The watch below asks each
+    /// reporter while any is on record and drops the ones gone or resting.
+    @ObservationIgnored private var reporters: [UUID: WeakReporter] = [:]
+    @ObservationIgnored private var watch: Task<Void, Never>?
+
+    private struct WeakReporter {
+        weak var object: (any ScrollActivityReporter)?
+    }
 
     /// Called by a timeline when its reader starts or stops scrolling it.
-    func setScrolling(_ active: Bool, timeline: UUID) {
-        if active { scrolling.insert(timeline) } else { scrolling.remove(timeline) }
+    func setScrolling(_ active: Bool, timeline: UUID, reporter: (any ScrollActivityReporter)? = nil) {
+        if active {
+            scrolling.insert(timeline)
+            reporters[timeline] = WeakReporter(object: reporter)
+        } else {
+            scrolling.remove(timeline)
+            reporters[timeline] = nil
+        }
+        update()
+    }
+
+    private func update() {
         let now = !scrolling.isEmpty
         if now != isScrolling { isScrolling = now }
+        if now, watch == nil {
+            watch = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(2))
+                    guard let self, !Task.isCancelled else { return }
+                    for id in Array(scrolling) {
+                        guard let reporter = reporters[id]?.object, reporter.isScrollingNow else {
+                            scrolling.remove(id)
+                            reporters[id] = nil
+                            continue
+                        }
+                    }
+                    let still = !scrolling.isEmpty
+                    if still != isScrolling { isScrolling = still }
+                    if !still {
+                        watch = nil
+                        return
+                    }
+                }
+            }
+        } else if !now {
+            watch?.cancel()
+            watch = nil
+        }
     }
+}
+
+/// A timeline's scroll tracking, asked by `ScrollActivity` whether its reader still scrolls.
+@MainActor
+protocol ScrollActivityReporter: AnyObject {
+    var isScrollingNow: Bool { get }
 }
 
 // MARK: - Glass budget

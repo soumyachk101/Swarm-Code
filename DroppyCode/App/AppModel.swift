@@ -704,6 +704,11 @@ final class AppModel {
         // A helper still in its panel goes with the thread it belongs to.
         for helper in threads where helper.parentThreadID == id { delete(helper.id) }
         if selectedThreadID == id { selectNeighbor(of: id) }
+        // A head deleted mid-job reports to its lead as stopped, so the batch it was in
+        // settles and the lead's waiting heads and merge go on rather than waiting for it.
+        if thread.isHydraHead, thread.hydra?.isFinished == false {
+            finishHydraHead(id, status: .interrupted, summary: nil)
+        }
         discardThreadState(thread)
         threads.removeAll { $0.id == id }
         if let project = project(thread.projectID) {

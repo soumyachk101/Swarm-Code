@@ -1329,7 +1329,7 @@ struct WorkGroup: View {
     var workingDirectory: String?
     var startsCollapsed = false
     @State private var isCollapsed: Bool
-    @Environment(TimelineScrollState.self) private var scrollState: TimelineScrollState?
+    @Environment(\.revealTimelineEnd) private var revealBox
 
     init(entries: [TimelineEntry], runtime: ThreadRuntime, workingDirectory: String? = nil, startsCollapsed: Bool = false) {
         self.entries = entries
@@ -1345,8 +1345,10 @@ struct WorkGroup: View {
         } else {
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 Button {
-                    withAnimation(.snappy(duration: 0.2)) { isCollapsed.toggle() }
-                    if !isCollapsed { scrollState?.revealExpansion() }
+                    withAnimation(.snappy(duration: 0.24)) {
+                        isCollapsed.toggle()
+                        if !isCollapsed { revealBox?.action() }
+                    }
                 } label: {
                     HStack(spacing: TimelineMetrics.iconSpacing) {
                         Image(systemName: WorkGroupSummary.symbol(for: entries))
@@ -1389,14 +1391,16 @@ struct WorkSteps: View {
     let runtime: ThreadRuntime
     var workingDirectory: String?
     @State private var showsAll = false
-    @Environment(TimelineScrollState.self) private var scrollState: TimelineScrollState?
+    @Environment(\.revealTimelineEnd) private var revealBox
 
     var body: some View {
         let hidden = showsAll ? 0 : max(0, entries.count - 2)
         if hidden > 0 {
             Button {
-                withAnimation(.snappy) { showsAll = true }
-                scrollState?.revealExpansion()
+                withAnimation(.snappy(duration: 0.24)) {
+                    showsAll = true
+                    revealBox?.action()
+                }
             } label: {
                 HStack(spacing: TimelineMetrics.iconSpacing) {
                     Image(systemName: "ellipsis")
@@ -1513,7 +1517,7 @@ struct ToolRow: View {
     @State private var needsAnchor = false
     /// Whether the steps popover of the head this row sent out is open.
     @State private var isShowingHead = false
-    @Environment(TimelineScrollState.self) private var scrollState: TimelineScrollState?
+    @Environment(\.revealTimelineEnd) private var revealBox
 
     var body: some View {
         if case .tool(let call) = entry.item.content {
@@ -1545,7 +1549,7 @@ struct ToolRow: View {
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 if isTappable {
                     Button {
-                        [weak slot, weak rt, weak scrollState, presented = $isShowingHead, expanded = $isExpanded] in
+                        [weak slot, weak rt, revealBox, presented = $isShowingHead, expanded = $isExpanded] in
                         if opensHead {
                             presented.wrappedValue.toggle()
                         } else if opensDiff {
@@ -1554,8 +1558,10 @@ struct ToolRow: View {
                         } else if opensImage, let imagePath {
                             slot?.panel.toggle(PreviewImages.attachment(for: imagePath), over: slot?.anchor.value, edge: .minY)
                         } else {
-                            withAnimation(.snappy(duration: 0.2)) { expanded.wrappedValue.toggle() }
-                            if expanded.wrappedValue { scrollState?.revealExpansion() }
+                            withAnimation(.snappy(duration: 0.24)) {
+                                expanded.wrappedValue.toggle()
+                                if expanded.wrappedValue { revealBox?.action() }
+                            }
                         }
                     } label: {
                         line(call: call, imagePath: imagePath, opensPopover: opensPopover, opensHead: opensHead, showsOutput: showsOutput)
@@ -2276,7 +2282,7 @@ struct TurnFinishedBlock: View {
     let canUndo: Bool
 
     @State private var isExpanded = false
-    @Environment(TimelineScrollState.self) private var scrollState: TimelineScrollState?
+    @Environment(\.revealTimelineEnd) private var revealBox
     /// What the body last derived from the turn, keyed on its entries' identities and the
     /// fold: an evaluation with the same key reads it back instead of walking the turn
     /// again. Written after the body (see the `onChange` below), never in it.
@@ -2379,8 +2385,10 @@ struct TurnFinishedBlock: View {
                     .padding(.bottom, TimelineMetrics.rowSpacing)
             }
             Button {
-                withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
-                if isExpanded { scrollState?.revealExpansion() }
+                withAnimation(.snappy(duration: 0.24)) {
+                    isExpanded.toggle()
+                    if isExpanded { revealBox?.action() }
+                }
             } label: {
                 HStack(spacing: 6) {
                     Text(TurnEndRow.label(for: summary))

@@ -300,6 +300,14 @@ final class ThreadRuntime {
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var historyLoad: Task<Void, Never>?
     @ObservationIgnored private var currentTurnID: UUID?
+    /// The turn being closed (see `finishTurn`): its id is taken out of `currentTurnID`
+    /// first, and its diffs are then waited for. An event landing in that wait (a late
+    /// tool result, a notice, a Hydra note) still belongs to the turn; filed under no turn
+    /// it split the turn's rows into two blocks with one id, and the second, the running
+    /// tail, stopped drawing.
+    @ObservationIgnored private var closingTurnID: UUID?
+    /// The turn a new row is filed under.
+    private var turnIDForNewRows: UUID? { currentTurnID ?? closingTurnID }
     @ObservationIgnored private var resumeAnchor: String?
     @ObservationIgnored private var interruptWatchdog: Task<Void, Never>?
     /// Working-tree snapshots taken as command tools start, by tool id, and
@@ -1435,9 +1443,12 @@ final class ThreadRuntime {
     func stopSession() {
         releaseSession(stop: true)
         stopNativeHeads()
-        // A turn cut off here has events its save timer has not written yet, and the timer
-        // may not outlive the runtime.
-        if phase != .idle { saveNow() }
+        // The session's own end is dropped with it (see `releaseSession`), so a turn cut
+        // off here is closed by hand: left running, the thread showed the working line
+        // for good once reopened, Return queued instead of sending, a head's lead heard
+        // nothing until the budget fired. `finishTurn` saves what the turn had.
+        guard phase != .idle else { return }
+        Task { await finishTurn(status: .interrupted) }
     }
 
     // MARK: - Events
@@ -1568,8 +1579,22 @@ final class ThreadRuntime {
         // commands settle with them: their files are part of this turn's work.
         for id in Array(commandTrees.keys) { settleCommand(id) }
         for key in Array(hydraCommandTrees.keys) { settleHydraCommand(key) }
-        for task in commandSettles.values { await task.value }
+        // A finished turn waits for its diffs; a stopped or failed one gives them three
+        // seconds and lets the rest land on their own, so Stop never hangs on git.
+        closingTurnID = turnID
+        defer { closingTurnID = nil }
+        let settles = Array(commandSettles.values)
         commandSettles.removeAll()
+        if status == .completed {
+            for task in settles { await task.value }
+        } else {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { for task in settles { await task.value } }
+                group.addTask { try? await Task.sleep(for: .seconds(3)) }
+                await group.next()
+                group.cancelAll()
+            }
+        }
         currentTurnID = nil
         flushDeltas()
         approvals.removeAll()
@@ -2109,14 +2134,14 @@ final class ThreadRuntime {
         if entryIndex[id] == nil {
             switch kind {
             case .message:
-                append(TimelineItem(id: id, turnID: currentTurnID, content: .assistant(AssistantMessage(text: "", isStreaming: true))))
+                append(TimelineItem(id: id, turnID: turnIDForNewRows, content: .assistant(AssistantMessage(text: "", isStreaming: true))))
             case .reasoning:
                 // Not until there is something to read: a redacted thinking block
                 // only ever sends empty deltas and would leave a blank entry behind.
                 guard !text.isEmpty else { return }
-                append(TimelineItem(id: id, turnID: currentTurnID, content: .reasoning(ReasoningBlock(text: "", isStreaming: true))))
+                append(TimelineItem(id: id, turnID: turnIDForNewRows, content: .reasoning(ReasoningBlock(text: "", isStreaming: true))))
             case .plan:
-                append(TimelineItem(id: id, turnID: currentTurnID, content: .plan(ProposedPlan(markdown: "", state: .drafting))))
+                append(TimelineItem(id: id, turnID: turnIDForNewRows, content: .plan(ProposedPlan(markdown: "", state: .drafting))))
             case .toolOutput:
                 return
             }
@@ -2219,7 +2244,7 @@ final class ThreadRuntime {
         let text = TextCleanup.withoutEmDashes(text)
         guard let entry = entryIndex[id] else {
             guard !text.isEmpty else { return }
-            append(TimelineItem(id: id, turnID: currentTurnID, content: .assistant(AssistantMessage(text: text))))
+            append(TimelineItem(id: id, turnID: turnIDForNewRows, content: .assistant(AssistantMessage(text: text))))
             return
         }
         guard case .assistant(var message) = entry.item.content else { return }
@@ -2238,7 +2263,7 @@ final class ThreadRuntime {
         let text = TextCleanup.withoutEmDashes(text)
         guard let entry = entryIndex[id], case .reasoning(var block) = entry.item.content else {
             guard !text.isEmpty else { return }
-            append(TimelineItem(id: id, turnID: currentTurnID, content: .reasoning(ReasoningBlock(text: text))))
+            append(TimelineItem(id: id, turnID: turnIDForNewRows, content: .reasoning(ReasoningBlock(text: text))))
             return
         }
         if !text.isEmpty { block.text = text }
@@ -2260,7 +2285,7 @@ final class ThreadRuntime {
             entry.item.content = .plan(plan)
             saveRevision += 1
         } else if !markdown.isEmpty {
-            append(TimelineItem(id: id, turnID: currentTurnID, content: .plan(ProposedPlan(markdown: markdown, state: .proposed))))
+            append(TimelineItem(id: id, turnID: turnIDForNewRows, content: .plan(ProposedPlan(markdown: markdown, state: .proposed))))
         }
         scheduleSave()
     }
@@ -2270,7 +2295,7 @@ final class ThreadRuntime {
         var call = call
         call.edits = Self.capped(call.edits)
         guard let entry = entryIndex[id], case .tool(var existing) = entry.item.content else {
-            append(TimelineItem(id: id, turnID: currentTurnID, content: .tool(call)))
+            append(TimelineItem(id: id, turnID: turnIDForNewRows, content: .tool(call)))
             noteHydraHeadEvent(edits: call.edits.count, tool: true)
             return
         }
@@ -2310,7 +2335,7 @@ final class ThreadRuntime {
     private func applyToolUpdate(_ id: String, _ update: ToolUpdate) {
         noteToolMayWrite(update.kind)
         if entryIndex[id] == nil {
-            append(TimelineItem(id: id, turnID: currentTurnID, content: .tool(ToolCall(kind: update.kind ?? .other, title: update.title ?? "Tool"))))
+            append(TimelineItem(id: id, turnID: turnIDForNewRows, content: .tool(ToolCall(kind: update.kind ?? .other, title: update.title ?? "Tool"))))
         }
         guard let entry = entryIndex[id], case .tool(var call) = entry.item.content else { return }
         if let title = update.title, !title.isEmpty { call.title = title }
@@ -2487,7 +2512,7 @@ final class ThreadRuntime {
             entry.item.content = .todos(steps)
             saveRevision += 1
         } else if !steps.isEmpty {
-            let item = TimelineItem(turnID: currentTurnID, content: .todos(steps))
+            let item = TimelineItem(turnID: turnIDForNewRows, content: .todos(steps))
             todosEntryID = item.id
             append(item)
         }
@@ -2495,7 +2520,7 @@ final class ThreadRuntime {
     }
 
     private func appendNotice(_ level: Notice.Level, _ message: String) {
-        append(TimelineItem(turnID: currentTurnID, content: .notice(Notice(level: level, message: message))))
+        append(TimelineItem(turnID: turnIDForNewRows, content: .notice(Notice(level: level, message: message))))
         scheduleSave()
     }
 

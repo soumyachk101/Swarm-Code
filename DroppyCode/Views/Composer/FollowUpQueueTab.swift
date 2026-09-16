@@ -568,8 +568,12 @@ final class FollowUpEditCoordinator: NSObject {
     private func startMonitors() {
         guard monitors.isEmpty else { return }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
-            guard event.keyCode == 53 else { return event } // Escape
-            self?.close()
+            // Escape in the editor or the chat window it hangs from; the file picker's and
+            // the downloads popover's Escape are theirs, and the editor survives them.
+            guard let self, event.keyCode == 53, // Escape
+                  event.window === shownIn || event.window === popover.contentViewController?.view.window
+            else { return event }
+            close()
             return nil
         }) {
             monitors.append(monitor)

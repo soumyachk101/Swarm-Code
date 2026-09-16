@@ -65,7 +65,7 @@ struct ChatView: View {
         // Split, so a resize frame recomputes docks and reserves only, never the
         // thread lists.
         let members = PanelMembers(runtime: runtime, model: model)
-        let scene = PanelScene(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight, holdsHydra: hydraLingers)
+        let scene = PanelScene(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight, holdsHydra: hydraLingers, preferredSize: livePreferredSize, usageHeightOverride: panelResize.liveUsageHeight)
         // The team's panel as the model has it, before the linger below: what decides
         // whether the panel is held on a beat after its heads leave.
         let hydraPresent = !members.heads.isEmpty && scene.isMeasured
@@ -201,15 +201,18 @@ struct ChatView: View {
             // animation; when the resize ends they land docked exactly (see below).
             .onChange(of: paneSize) {
                 guard liveResize.isActive else { return }
-                let layout = PanelScene.geometry(
-                    members: members, runtime: runtime, model: model,
-                    paneSize: paneSize, composerAreaHeight: composerAreaHeight,
-                    usageContentHeight: usageContentHeight, holdsHydra: hydraLingers).layout
+                // The scene above was worked out for this pane size already.
+                let layout = scene.layout
                 subagentDrag.reclamp(in: layout)
                 hydraDrag.reclamp(in: layout)
                 poppedDrag.reclamp(in: layout)
                 usageDrag.reclamp(in: layout)
                 for drag in autoDrags.values { drag.reclamp(in: layout) }
+            }
+            // A sidebar or terminal-divider drag reshapes the pane per frame the way a
+            // live resize does; the timeline and composer read one signal for both.
+            .onChange(of: model.sidebar.isDragging || runtime.isTerminalResizing, initial: true) { _, dragging in
+                liveResize.isPaneResizing = dragging
             }
             // The pane's final size: docked panels land on their new docked spot, and
             // a free spot left outside is pulled back inside.
@@ -283,12 +286,12 @@ struct ChatView: View {
             projectName: project?.name,
             onDrag: { translation in
                 let position = subagentDrag.move(by: translation, from: rest, in: scene.layout)
-                dock(\.subagentPanelDock, nearest: position, scene: scene)
+                dock(.subagent, \.subagentPanelDock, nearest: position, scene: scene)
                 reorder(.subagent, at: position, corner: runtime.subagentPanelDock, scene: scene)
             },
             onDragEnd: {
                 if let heading = subagentDrag.release() {
-                    dock(\.subagentPanelDock, nearest: heading, scene: scene)
+                    dock(.subagent, \.subagentPanelDock, nearest: heading, scene: scene)
                     reorder(.subagent, at: heading, corner: runtime.subagentPanelDock, scene: scene)
                 }
             },
@@ -317,12 +320,12 @@ struct ChatView: View {
             projectName: project?.name,
             onDrag: { translation in
                 let position = hydraDrag.move(by: translation, from: rest, in: scene.layout)
-                dock(\.hydraPanelDock, nearest: position, scene: scene)
+                dock(.hydra, \.hydraPanelDock, nearest: position, scene: scene)
                 reorder(.hydra, at: position, corner: runtime.hydraPanelDock, scene: scene)
             },
             onDragEnd: {
                 if let heading = hydraDrag.release() {
-                    dock(\.hydraPanelDock, nearest: heading, scene: scene)
+                    dock(.hydra, \.hydraPanelDock, nearest: heading, scene: scene)
                     reorder(.hydra, at: heading, corner: runtime.hydraPanelDock, scene: scene)
                 }
             },
@@ -341,14 +344,28 @@ struct ChatView: View {
                 }
             }
         )
-        // Where the panel sits, for the tour's captures only: the Hydra page zooms on it.
-        // Skipped while the window is resized: the frame moves every frame and the
-        // capture map is never read mid-drag.
-        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-            guard !liveResize.isActive else { return }
-            if WebsiteCaptures.isEnabled { WebsiteCaptures.hydraPanelFrames[runtime.threadID] = frame }
-        }
+        .modifier(HydraCaptureFrame(threadID: runtime.threadID, liveResize: liveResize))
         .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelsHeld)
+    }
+
+    /// Where the team's panel sits, for the tour's captures only: the Hydra page zooms on
+    /// it. Attached only when captures are on, so the everyday panel carries no geometry
+    /// reader. Skipped while the window is resized: the frame moves every frame and the
+    /// capture map is never read mid-drag.
+    private struct HydraCaptureFrame: ViewModifier {
+        let threadID: UUID
+        let liveResize: WindowLiveResize
+
+        func body(content: Content) -> some View {
+            if WebsiteCaptures.isEnabled {
+                content.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                    guard !liveResize.isActive else { return }
+                    WebsiteCaptures.hydraPanelFrames[threadID] = frame
+                }
+            } else {
+                content
+            }
+        }
     }
 
     /// The popped-out head's panel: beyond whichever panels are in the same corner.
@@ -365,12 +382,12 @@ struct ChatView: View {
             isPoppedOut: true,
             onDrag: { translation in
                 let position = poppedDrag.move(by: translation, from: rest, in: scene.layout)
-                dock(\.hydraPoppedPanelDock, nearest: position, scene: scene)
+                dock(.popped, \.hydraPoppedPanelDock, nearest: position, scene: scene)
                 reorder(.popped, at: position, corner: runtime.hydraPoppedPanelDock, scene: scene)
             },
             onDragEnd: {
                 if let heading = poppedDrag.release() {
-                    dock(\.hydraPoppedPanelDock, nearest: heading, scene: scene)
+                    dock(.popped, \.hydraPoppedPanelDock, nearest: heading, scene: scene)
                     reorder(.popped, at: heading, corner: runtime.hydraPoppedPanelDock, scene: scene)
                 }
             },
@@ -477,9 +494,9 @@ struct ChatView: View {
                 var next = start
                 if axes.contains(.width) { next.width += translation.width * acrossSign }
                 if axes.contains(.height) { next.height += translation.height * downSign }
-                model.settings.panelSize = scene.layout.fitted(next)
+                panelResize.liveSize = scene.layout.fitted(next)
             },
-            onResizeEnd: { panelResize.end() },
+            onResizeEnd: commitPanelResize,
             onReset: {
                 withAnimation(Chrome.panelSlide) { model.settings.panelSize = nil }
             }
@@ -500,17 +517,36 @@ struct ChatView: View {
                 if axes.contains(.width) {
                     var next = scene.layout.panelSize
                     next.width = start.width + translation.width * acrossSign
-                    model.settings.panelSize = scene.layout.fitted(next)
+                    panelResize.liveSize = scene.layout.fitted(next)
                 }
                 if axes.contains(.height) {
-                    model.settings.usagePanelHeight = max(minimum, start.height + translation.height * downSign)
+                    panelResize.liveUsageHeight = max(minimum, start.height + translation.height * downSign)
                 }
             },
-            onResizeEnd: { panelResize.end() },
+            onResizeEnd: commitPanelResize,
             onReset: {
                 withAnimation(Chrome.panelSlide) { model.settings.usagePanelHeight = nil }
             }
         )
+    }
+
+    /// The grip let go: the size it was pulled to is written to Settings once, exact.
+    /// While the grip was held only `panelResize` changed, so the pointer moved the
+    /// panel and the room it takes, not every chat's stored size.
+    private func commitPanelResize() {
+        if let size = panelResize.liveSize { model.settings.panelSize = size }
+        if let height = panelResize.liveUsageHeight { model.settings.usagePanelHeight = height }
+        panelResize.liveSize = nil
+        panelResize.liveUsageHeight = nil
+        panelResize.end()
+    }
+
+    /// The size the layout prefers while a grip is held, else nil for the stored one. The
+    /// width is stepped to 12pt while held, so the timeline re-wraps a few times over a
+    /// drag rather than every frame; the committed size keeps the exact value.
+    private var livePreferredSize: CGSize? {
+        guard panelResize.isActive, let live = panelResize.liveSize else { return nil }
+        return CGSize(width: (live.width / 12).rounded() * 12, height: live.height)
     }
 
     /// A panel grows in and fades out in place.
@@ -524,22 +560,28 @@ struct ChatView: View {
     /// Docks a panel in the corner nearest to `position`. Called as the panel is held as
     /// well as when it is let go, so the chat makes room on the new side while the panel
     /// is still under the pointer, and the panel has its spot the moment it is dropped.
-    private func dock(_ corner: ReferenceWritableKeyPath<ThreadRuntime, PanelDockCorner>, nearest position: CGPoint, scene: PanelScene) {
-        let next = scene.layout.dockCorner(nearest: position, keeping: runtime[keyPath: corner], docks: scene.docks)
+    private func dock(_ id: FloatingPanelID, _ corner: ReferenceWritableKeyPath<ThreadRuntime, PanelDockCorner>, nearest position: CGPoint, scene: PanelScene) {
+        let wanted = scene.layout.dockCorner(nearest: position, keeping: runtime[keyPath: corner], docks: scene.docks)
+        let locked = scene.lockedSide(excluding: id)
+        let next = locked.map { PanelDockCorner.make(side: $0, isTop: wanted.isTop) } ?? wanted
         guard next != runtime[keyPath: corner] else { return }
         runtime[keyPath: corner] = next
     }
 
     /// The usage panel's corner is one for every chat (see `AppSettings.usagePanelDock`).
     private func dockUsage(nearest position: CGPoint, scene: PanelScene) {
-        let next = scene.layout.dockCorner(nearest: position, keeping: model.settings.usagePanelDock, docks: scene.docks)
+        let wanted = scene.layout.dockCorner(nearest: position, keeping: model.settings.usagePanelDock, docks: scene.docks)
+        let locked = scene.lockedSide(excluding: .usage)
+        let next = locked.map { PanelDockCorner.make(side: $0, isTop: wanted.isTop) } ?? wanted
         guard next != model.settings.usagePanelDock else { return }
         model.settings.usagePanelDock = next
     }
 
     private func dockAuto(_ id: UUID, nearest position: CGPoint, scene: PanelScene) {
         let current = runtime.hydraAutoPanelDocks[id] ?? scene.slots[.auto(id)]?.corner ?? runtime.hydraPanelDock.acrossTheColumn
-        let next = scene.layout.dockCorner(nearest: position, keeping: current, docks: scene.docks)
+        let wanted = scene.layout.dockCorner(nearest: position, keeping: current, docks: scene.docks)
+        let locked = scene.lockedSide(excluding: .auto(id))
+        let next = locked.map { PanelDockCorner.make(side: $0, isTop: wanted.isTop) } ?? wanted
         if runtime.hydraAutoPanelDocks[id] != next { runtime.hydraAutoPanelDocks[id] = next }
     }
 
@@ -733,6 +775,20 @@ private struct PanelScene {
     let autoPopped: [ChatThread]
     let slots: [FloatingPanelID: PanelSlot]
     let slotsOnSide: [PanelDockSide: Int]
+
+    /// The one side every panel must take when the pane cannot hold both (see
+    /// `SubagentPanelLayout.fitsBothSides`): the side the other docked panels are on,
+    /// the team panel's own when it is among them. Nil when both sides fit or no other
+    /// panel is docked, so the panel being placed is free.
+    func lockedSide(excluding id: FloatingPanelID) -> PanelDockSide? {
+        guard !layout.fitsBothSides else { return nil }
+        let others = slots.filter { $0.key != id }
+        guard !others.isEmpty else { return nil }
+        if let hydra = others[.hydra] { return hydra.corner.side }
+        let leading = others.values.count { $0.corner.side == .leading }
+        let trailing = others.count - leading
+        return leading >= trailing ? .leading : .trailing
+    }
     /// The usage panel's own height: what it was dragged to, else its rows, capped at the
     /// room left in its corner under the panels stacked below it (never the heads' compact
     /// height); nil without a usage panel.
@@ -752,8 +808,10 @@ private struct PanelScene {
 
     var hasHeads: Bool { !heads.isEmpty }
 
-    init(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?, holdsHydra: Bool = false) {
-        let geometry = Self.geometry(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight, holdsHydra: holdsHydra)
+    /// `preferredSize` and `usageHeightOverride` stand in for the stored sizes while a
+    /// grip is held (see `PanelResizeState.liveSize`); nil reads Settings.
+    init(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?, holdsHydra: Bool = false, preferredSize: CGSize? = nil, usageHeightOverride: CGFloat? = nil) {
+        let geometry = Self.geometry(members: members, runtime: runtime, model: model, paneSize: paneSize, composerAreaHeight: composerAreaHeight, usageContentHeight: usageContentHeight, holdsHydra: holdsHydra, preferredSize: preferredSize, usageHeightOverride: usageHeightOverride)
         subagent = members.subagent
         isDocked = members.isDocked
         autoPopped = geometry.autoPopped
@@ -798,8 +856,9 @@ private struct PanelScene {
     /// `holdsHydra` keeps the team's panel in the scene after its heads have gone (see
     /// `ChatView.hydraLingers`), so the conversation keeps its room and the panel fades
     /// out over it rather than the column sliding out from under a panel still showing.
-    static func geometry(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?, holdsHydra: Bool = false) -> Geometry {
+    static func geometry(members: PanelMembers, runtime: ThreadRuntime, model: AppModel, paneSize: CGSize, composerAreaHeight: CGFloat, usageContentHeight: CGFloat?, holdsHydra: Bool = false, preferredSize: CGSize? = nil, usageHeightOverride: CGFloat? = nil) -> Geometry {
         let isMeasured = paneSize != .zero
+        let preferred = preferredSize ?? model.settings.panelSize
         let showsHydra = (!members.heads.isEmpty || holdsHydra) && isMeasured
         let showsPopped = members.popped != nil && showsHydra
         let showsUsage = members.usage != nil && isMeasured
@@ -808,7 +867,7 @@ private struct PanelScene {
         let compact = !model.settings.hydraShowsHeadDetails && helperShowsProgress && (showsHydra || members.subagent != nil)
         // One panel at its natural height is a slot; the usage panel is measured against
         // it, since it has a height of its own and may take more than one.
-        let single = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: 1, preferred: model.settings.panelSize, compact: compact)
+        let single = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: 1, preferred: preferred, compact: compact)
         let slotHeight = single.panelHeight
         let gap = SubagentPanelLayout.gap
         var placed: [(id: FloatingPanelID, corner: PanelDockCorner)] = []
@@ -821,13 +880,14 @@ private struct PanelScene {
         if showsUsage {
             let under = Self.order(placed, by: runtime.panelStackOrder)[.usage]?.below ?? 0
             let room = single.verticalRoom - CGFloat(under) * (slotHeight + gap)
-            let wanted = model.settings.usagePanelHeight ?? usageContentHeight ?? slotHeight
+            let wanted = usageHeightOverride ?? model.settings.usagePanelHeight ?? usageContentHeight ?? slotHeight
             usageHeight = min(max(Self.usageMinimumHeight, room), max(Self.usageMinimumHeight, wanted))
         }
         // The room the usage panel takes past its slot, which a panel stacked beyond it
         // steps over.
         let usageLift = max(0, (usageHeight ?? 0) - slotHeight)
         var autoPopped: [ChatThread] = []
+        let layoutFitsBothSides = single.fitsBothSides
         // How many panels a side can hold at the smallest they shrink to, three at most:
         // the slots a panel can be dropped in. Counted at the ideal height a tall pane
         // gave one slot a side, and a second panel could only ever take the other corner.
@@ -843,7 +903,8 @@ private struct PanelScene {
             candidates.removeAll { runtime.hydraAutoPanelDocks[$0.id] != nil }
             // Slots the usage panel takes beyond its own: a tall one is worth more than one.
             let usageExtra = usageLift > 0 ? Int(ceil(usageLift / (slotHeight + gap))) : 0
-            for corner in [runtime.hydraPanelDock.acrossTheColumn, runtime.hydraPanelDock] {
+            // A pane too narrow for panels on both sides keeps the heads on the team's side.
+            for corner in (layoutFitsBothSides ? [runtime.hydraPanelDock.acrossTheColumn, runtime.hydraPanelDock] : [runtime.hydraPanelDock]) {
                 let other = Self.flippedVertically(corner)
                 let usageOnSide = showsUsage && (usageCorner == corner || usageCorner == other)
                 let used = placed.count { $0.corner == corner } + placed.count { $0.corner == other } + (usageOnSide ? usageExtra : 0)
@@ -853,6 +914,16 @@ private struct PanelScene {
                     placed.append((.auto(head.id), corner))
                     autoPopped.append(head)
                 }
+            }
+        }
+        // Too narrow for both sides: every panel goes to the side the team panel is on,
+        // else the fuller side, each keeping its top or bottom.
+        if !layoutFitsBothSides {
+            let sides = Set(placed.map(\.corner.side))
+            if sides.count > 1 {
+                let home: PanelDockSide = placed.first { $0.id == .hydra }?.corner.side
+                    ?? (placed.count { $0.corner.side == .leading } >= placed.count { $0.corner.side == .trailing } ? .leading : .trailing)
+                placed = placed.map { ($0.id, PanelDockCorner.make(side: home, isTop: $0.corner.isTop)) }
             }
         }
         var slotsByID: [FloatingPanelID: PanelSlot] = [:]
@@ -891,7 +962,7 @@ private struct PanelScene {
             let depth = Int((Double(n - 1) / Double(max(1, closest))).rounded(.up)) + 1
             stackDepth = max(stackDepth, depth)
         }
-        let layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth, preferred: model.settings.panelSize, compact: compact)
+        let layout = SubagentPanelLayout(pane: paneSize, composerAreaHeight: composerAreaHeight, stackDepth: stackDepth, preferred: preferred, compact: compact)
         let reserve = PanelReserve(
             leading: sides.contains(.leading) ? layout.composerReserve : 0,
             trailing: sides.contains(.trailing) ? layout.composerReserve : 0

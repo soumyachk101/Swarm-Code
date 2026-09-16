@@ -40,6 +40,10 @@ struct QuestionSheet: View {
 
     @State private var selections: [String: [String]] = [:]
     @State private var written: [String: String] = [:]
+    /// The popover's own close (see `BadgePopoverCoordinator`): the sheet closes it before
+    /// it answers, so the popover leaves on its own animation from the badge, rather than
+    /// hanging over the badge's departure and being torn down after it.
+    @Environment(\.closePopover) private var closePopover
 
     init(request: QuestionRequest, runtime: ThreadRuntime) {
         self.request = request
@@ -58,7 +62,7 @@ struct QuestionSheet: View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView(.vertical) {
                 QuestionList(request: request, selections: $selections, written: $written) {
-                    if isComplete { runtime.answer(request, answers: answers) }
+                    if isComplete { send(answers) }
                 }
             }
             .scrollBounceBehavior(.basedOnSize)
@@ -74,10 +78,10 @@ struct QuestionSheet: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                Button("Skip") { runtime.answer(request, answers: [:]) }
+                Button("Skip") { send([:]) }
                     .buttonStyle(.bordered)
                     .help("Sends no answers and lets the agent carry on")
-                Button("Send") { runtime.answer(request, answers: answers) }
+                Button("Send") { send(answers) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                     .disabled(!isComplete)
@@ -90,6 +94,13 @@ struct QuestionSheet: View {
             .padding(.vertical, 10)
         }
         .frame(width: Self.width)
+    }
+
+    /// The popover goes first, on its own animation; the answer follows, and the badge
+    /// leaves with it.
+    private func send(_ answers: [String: [String]]) {
+        closePopover?()
+        runtime.answer(request, answers: answers)
     }
 }
 
