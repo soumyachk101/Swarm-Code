@@ -111,6 +111,17 @@ extension AppModel {
         for thread in threads where thread.hydraPairID == id {
             updateThread(thread.id) { $0.hydraPairID = nil }
         }
+        // A project rule that names the removed pair is gone too. The project's new chats
+        // start on the remembered pair again.
+        for project in projects where project.hydraPairID == id {
+            updateProject(project.id) { $0.hydraPairID = nil }
+        }
+    }
+
+    /// Sets the pair that each new chat in a project starts on. Nil removes the rule.
+    /// Open chats do not change: the rule applies to new chats only.
+    func setHydraPair(_ pairID: UUID?, forProject projectID: UUID) {
+        updateProject(projectID) { $0.hydraPairID = pairID }
     }
 
     /// Takes a chat out of the pair it leads with, when a model is chosen from the picker's

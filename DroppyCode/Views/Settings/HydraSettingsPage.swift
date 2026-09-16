@@ -122,7 +122,7 @@ struct HydraSettingsPage: View {
                         }
                     }
                 }
-                Text("Pairs sit at the top of the model picker: a tap puts the chat in one.")
+                Text("Pairs sit at the top of the model picker: a tap puts the chat in one. Right-click a project in the sidebar to start each of its new chats on one pair.")
                     .font(.system(size: 11))
                     .foregroundStyle(Chrome.secondaryText)
                     .padding(.horizontal, 4)

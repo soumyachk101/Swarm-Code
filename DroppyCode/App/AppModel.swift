@@ -553,9 +553,13 @@ final class AppModel {
         }
         let current = selectedThread
         let installed = ProviderKind.allCases.filter { providers.status($0).isInstalled && settings.isEnabled($0) }
-        var provider = current?.provider ?? settings.defaultProvider
+        // The project's own pair, when it has one, sets the provider before anything else.
+        let projectPair = HydraPair.projectPair(project.hydraPairID, hydraOn: settings.hydraEnabled, in: hydraPickerPairs)
+        var provider = projectPair?.provider ?? current?.provider ?? settings.defaultProvider
         if !installed.isEmpty, !installed.contains(provider) { provider = installed[0] }
-        let carriesModel = current?.provider == provider
+        // A chat that starts on the project's pair takes that pair's lead model. A pair with
+        // no lead model keeps the current chat's model, as the picker does.
+        let carriesModel = projectPair?.orchestratorModel == nil && current?.provider == provider
         let model = carriesModel ? current?.model : providers.defaultModel(for: provider)?.id
         let preference = settings.preference(for: provider, model: model)
         let effort = carriesModel ? current?.effort : (preference.effort ?? settings.lastEffort(for: provider))
@@ -574,9 +578,18 @@ final class AppModel {
         // Hydra is on and the pair is still there for this provider. Before any pair
         // has been entered since this was remembered, the pair of the chat last worked
         // in stands in, so an existing pair chat carries over the first relaunch too.
+        // The project's pair wins over all of that: the user set it as the rule for this
+        // project, so every new chat here starts on it.
         let lastPairID = settings.lastHydraPairID
             ?? threads.filter { $0.hydraPairID != nil && !$0.isHelper }.max { $0.updatedAt < $1.updatedAt }?.hydraPairID
-        if carriesModel {
+        if let pair = projectPair {
+            let lead = hydraLead(of: pair, for: thread)
+            thread.model = lead.model
+            thread.effort = lead.effort
+            thread.fastMode = lead.fastMode
+            thread.hydraPairID = pair.id
+            thread.hydraEnabled = true
+        } else if carriesModel {
             thread.hydraPairID = current?.hydraPairID
         } else if settings.hydraEnabled, let pairID = lastPairID,
                   let pair = hydraPickerPairs.first(where: { $0.id == pairID }), pair.provider == provider {
