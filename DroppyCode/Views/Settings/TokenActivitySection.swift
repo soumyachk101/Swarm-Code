@@ -42,18 +42,22 @@ final class TokenLedger {
     private(set) var dailyTotals: [String: Int] = [:]
 
     private static let liveDefaultsKey = "droppycode.tokenActivity.liveDaily"
+    /// A capture run keeps to its own suite, like the rest of the app's settings.
+    private static let defaults: UserDefaults = WebsiteCaptures.defaults ?? .standard
 
     /// Live-recorded spend, kept apart from history so a rescan never drops
     /// usage that arrived after the scan.
     private var liveDaily: [String: Int] = [:]
     private var historyDaily: [String: Int] = [:]
     private var didStartLoad = false
+    /// The pending write of the live spend, if one is due.
+    @ObservationIgnored private var liveSave: Task<Void, Never>?
     /// Live recording owns every session from this moment, so the history
     /// scan only takes files last written before it.
     private let launchDate = Date()
 
     private init() {
-        if let cached = UserDefaults.standard.dictionary(forKey: Self.liveDefaultsKey) as? [String: Int] {
+        if let cached = Self.defaults.dictionary(forKey: Self.liveDefaultsKey) as? [String: Int] {
             liveDaily = cached
         }
         dailyTotals = liveDaily
@@ -66,7 +70,23 @@ final class TokenLedger {
         let day = Self.dayKey(for: date)
         liveDaily[day, default: 0] += spend
         dailyTotals[day, default: 0] += spend
-        UserDefaults.standard.set(liveDaily, forKey: Self.liveDefaultsKey)
+        // Usage arrives many times a turn from every running session: the defaults
+        // write, a plist and a hop to cfprefsd, waits for a lull and lands whole.
+        guard liveSave == nil else { return }
+        liveSave = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled else { return }
+            liveSave = nil
+            Self.defaults.set(liveDaily, forKey: Self.liveDefaultsKey)
+        }
+    }
+
+    /// Writes the live spend now, for the app quitting with a write still due.
+    func flushLiveSpend() {
+        guard let liveSave else { return }
+        liveSave.cancel()
+        self.liveSave = nil
+        Self.defaults.set(liveDaily, forKey: Self.liveDefaultsKey)
     }
 
     /// Runs the Codex history scan once per process. Later calls are no-ops;
@@ -441,6 +461,14 @@ struct TokenActivitySection: View {
     /// mode switch blends every cell from its old colour to its new one.
     @State private var previousGrid: TokenActivityGrid?
     @State private var switchCount = 0
+    /// Built once per (totals, mode): a year of calendar arithmetic that every usage
+    /// event of every running session would otherwise redo while General is open.
+    @State private var grid = TokenActivityGrid.build(daily: [:], mode: .daily)
+
+    private struct GridKey: Equatable {
+        var daily: [String: Int]
+        var mode: TokenActivityMode
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -457,7 +485,7 @@ struct TokenActivitySection: View {
                         // The old mode's grid is the blend's starting point and stays until
                         // the blend has settled; the canvas shows it as-is for the first frame
                         // and the new grid as-is for the last.
-                        previousGrid = TokenActivityGrid.build(daily: ledger.dailyTotals, mode: mode)
+                        previousGrid = grid
                         let switchIndex = switchCount + 1
                         withAnimation(.smooth(duration: 0.45)) {
                             mode = option
@@ -479,10 +507,12 @@ struct TokenActivitySection: View {
             }
             .animation(.smooth(duration: 0.25), value: mode)
 
-            let grid = TokenActivityGrid.build(daily: ledger.dailyTotals, mode: mode)
             heatmap(grid: grid)
             monthStrip(grid: grid)
             legend(total: ledger.dailyTotals.values.reduce(0, +))
+        }
+        .onChange(of: GridKey(daily: ledger.dailyTotals, mode: mode), initial: true) { _, key in
+            grid = TokenActivityGrid.build(daily: key.daily, mode: key.mode)
         }
         .task {
             await ledger.refreshIfNeeded()

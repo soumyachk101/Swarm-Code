@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 
     func applicationWillTerminate(_ notification: Notification) {
         model?.saveBeforeQuit()
+        TokenLedger.shared.flushLiveSpend()
     }
 
     nonisolated func userNotificationCenter(

@@ -101,12 +101,7 @@ struct RootView: View {
         for folder in folders { lastProject = model.addProject(at: folder) }
         if let lastProject { model.newThread(in: lastProject) }
         if !files.isEmpty, let threadID = model.selectedThreadID {
-            let runtime = model.runtime(for: threadID)
-            for file in files where runtime.draft.attachments.count < 8 {
-                if let attachment = try? Storage.importAttachment(from: file) {
-                    runtime.draft.attachments.append(attachment)
-                }
-            }
+            Storage.attach(files.map(AttachmentSource.file), to: Bindable(model.runtime(for: threadID)).draft.attachments)
         }
         return !folders.isEmpty || !files.isEmpty
     }

@@ -1,5 +1,8 @@
-import Foundation
+import AppKit
+import ImageIO
 import Synchronization
+import SwiftUI
+import UniformTypeIdentifiers
 
 /// Where the app keeps its library, thread histories and attachments.
 enum Storage {
@@ -11,11 +14,13 @@ enum Storage {
         return url
     }()
 
-    static var libraryURL: URL { root.appendingPathComponent("library.json") }
+    static let libraryURL: URL = root.appendingPathComponent("library.json")
 
-    static var threadsDirectory: URL { directory("threads") }
+    // Each directory is created on first use and its URL kept: the thread URL is taken on
+    // every save, prefetch and delete, and a stat plus mkdir per call was pure waste.
+    static let threadsDirectory: URL = directory("threads")
 
-    static var attachmentsDirectory: URL { directory("attachments") }
+    static let attachmentsDirectory: URL = directory("attachments")
 
     static let worktreesDirectory: URL = stateDirectory("worktrees")
 
@@ -52,19 +57,33 @@ enum Storage {
 
     /// Reads and decodes a thread file. Safe from any thread: the decoder is made here.
     nonisolated static func decodeDocument(_ id: UUID) -> ThreadDocument? {
+        readDocument(id)?.document
+    }
+
+    /// The document as the runtime wants it: a save queued for it has landed first, blank
+    /// thinking blocks are gone and model prose is clean of em dashes, so the prefetch
+    /// worker does that work rather than the click that opens the thread.
+    nonisolated static func readDocument(_ id: UUID) -> (document: ThreadDocument, cost: Int)? {
+        DiskWriter.shared.waitForQueuedWrites()
         guard let data = try? Data(contentsOf: threadURL(id)) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try? decoder.decode(ThreadDocument.self, from: data)
+        guard var document = try? decoder.decode(ThreadDocument.self, from: data) else { return nil }
+        document.items = document.items.filter { !$0.isEmptyReasoning }.map(\.cleanedOfEmDashes)
+        return (document, data.count)
     }
 
     static func deleteDocument(_ id: UUID) {
-        DocumentPrefetch.shared.forget(id)
-        let url = threadURL(id)
-        // A save of this thread may still be on its way to the writer. The file is marked
-        // gone first, so that save is dropped rather than writing the thread back.
-        DiskWriter.discard(url)
-        try? FileManager.default.removeItem(at: url)
+        deleteDocuments([id])
+    }
+
+    /// Deletes several threads' files in one hop to the writer, so a bulk delete waits for
+    /// the queued saves once rather than once per thread. A save of a thread may still be
+    /// on its way to the writer; the removal takes its place, so the thread never comes back.
+    static func deleteDocuments(_ ids: [UUID]) {
+        guard !ids.isEmpty else { return }
+        for id in ids { DocumentPrefetch.shared.forget(id) }
+        DiskWriter.shared.removeSynchronously(ids.map(threadURL))
     }
 
     /// Copies a file into app storage so a message keeps its attachment after the original moves.
@@ -114,6 +133,82 @@ enum Storage {
             }
         }.value
     }
+
+    /// How many files a message carries.
+    static let attachmentLimit = 8
+
+    /// Imports what a drop, paste, picker or downloads pick handed over and appends the
+    /// results, in that order, to the attachments. The free slots are counted here, so the
+    /// call returns before any byte is copied, and counted again when the copies land,
+    /// since more may have been attached meanwhile: anything past the limit by then is
+    /// removed again. The copies and transcodes run off the main actor; a dropped video
+    /// or a pasted screenshot never stalls the composer.
+    @MainActor @discardableResult
+    static func attach(_ sources: [AttachmentSource], to attachments: Binding<[Attachment]>) -> Task<Void, Never>? {
+        let batch = Array(sources.prefix(max(0, attachmentLimit - attachments.wrappedValue.count)))
+        guard !batch.isEmpty else { return nil }
+        return Task.detached(priority: .userInitiated) {
+            let imported = batch.compactMap(importSource)
+            let kept = await MainActor.run {
+                let room = max(0, attachmentLimit - attachments.wrappedValue.count)
+                attachments.wrappedValue.append(contentsOf: imported.prefix(room))
+                return room
+            }
+            for orphan in imported.dropFirst(kept) { try? FileManager.default.removeItem(at: orphan.url) }
+        }
+    }
+
+    /// A file the user picked, dropped or pasted, copied into app storage: folders are
+    /// skipped, HEIC photos become JPEGs, which every provider can read, and pasted
+    /// images are stored as PNGs. Runs off the main actor; ImageIO does the transcodes.
+    static func importSource(_ source: AttachmentSource) -> Attachment? {
+        switch source {
+        case .file(let url):
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue else { return nil }
+            let fileExtension = url.pathExtension.lowercased()
+            guard fileExtension == "heic" || fileExtension == "heif" else { return try? importAttachment(from: url) }
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let data = transcode(source, to: .jpeg) else { return nil }
+            return try? importAttachment(data: data, name: url.deletingPathExtension().lastPathComponent + ".jpg", fileExtension: "jpg")
+        case .image(let data, let type):
+            let png: Data?
+            if type == .png {
+                png = data
+            } else {
+                png = CGImageSourceCreateWithData(data as CFData, nil).flatMap { transcode($0, to: .png) }
+            }
+            guard let png else { return nil }
+            return try? importAttachment(data: png, name: "Pasted image.png", fileExtension: "png")
+        }
+    }
+
+    /// The first image of the source re-encoded at full size with its orientation
+    /// applied, the way the photo looked where it came from.
+    private static func transcode(_ source: CGImageSource, to type: UTType) -> Data? {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(width, height),
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil) else { return nil }
+        let encoding: [CFString: Any] = type == .jpeg ? [kCGImageDestinationLossyCompressionQuality: 0.88] : [:]
+        CGImageDestinationAddImage(destination, image, encoding as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        return data as Data
+    }
+}
+
+/// A file or image handed to a composer, imported by `Storage.attach`.
+enum AttachmentSource: Sendable {
+    case file(URL)
+    /// Image bytes off the pasteboard, in the type they came as.
+    case image(Data, UTType)
 }
 
 enum MimeType {
@@ -132,98 +227,144 @@ enum MimeType {
     }
 }
 
-/// Thread histories decoded ahead of time, off the main thread. A thread's file can run to a
-/// megabyte, and decoding that inside the click that opens it is a visible hitch. Launch
-/// warms the threads most likely to be opened next and the sidebar warms a row the pointer
-/// rests on; a runtime takes its document from here when it is ready and decodes on the
-/// spot when it is not. A document is handed out once: the runtime that took it owns the
-/// history from then on, and a decode that lands after that is dropped.
-final class DocumentPrefetch: @unchecked Sendable {
+final class DocumentPrefetch: Sendable {
     static let shared = DocumentPrefetch()
 
-    private let lock = NSLock()
-    private var ready: [UUID: ThreadDocument] = [:]
-    private var pending: Set<UUID> = []
-    private var claimed: Set<UUID> = []
+    private struct Request {
+        let id: UUID
+        let token = UUID()
+    }
 
-    func warm(_ ids: [UUID]) {
-        let fresh: [UUID] = lock.withLock {
-            let fresh = ids.filter { ready[$0] == nil && !pending.contains($0) && !claimed.contains($0) }
-            pending.formUnion(fresh)
-            return fresh
-        }
-        guard !fresh.isEmpty else { return }
-        Task.detached(priority: .utility) { [self] in
-            for id in fresh {
-                let document = Storage.decodeDocument(id)
-                lock.withLock {
-                    pending.remove(id)
-                    if let document, !claimed.contains(id) { ready[id] = document }
+    private struct State {
+        var ready: RecentCache<UUID, ThreadDocument>
+        var pending: [UUID: UUID] = [:]
+        var queue: [Request] = []
+        var worker: Task<Void, Never>?
+    }
+
+    private let state: Mutex<State>
+    private let pendingLimit: Int
+    private let load: @Sendable (UUID) -> (document: ThreadDocument, cost: Int)?
+
+    init(
+        limit: Int = 12,
+        costLimit: Int = 16 * 1_024 * 1_024,
+        pendingLimit: Int = 24,
+        load: @escaping @Sendable (UUID) -> (document: ThreadDocument, cost: Int)? = Storage.readDocument
+    ) {
+        state = Mutex(State(ready: RecentCache(limit: limit, costLimit: costLimit)))
+        self.pendingLimit = max(1, pendingLimit)
+        self.load = load
+    }
+
+    /// Queues documents to decode. `urgent` ones go to the front, ahead of what launch
+    /// queued: they are the rows beside the selection and under the pointer, which the next
+    /// click is likely to open, while launch's dozen can wait their turn.
+    @discardableResult
+    func warm(_ ids: [UUID], urgent: Bool = false) -> Task<Void, Never>? {
+        state.withLock { state -> Task<Void, Never>? in
+            for id in ids.reversed() where urgent {
+                guard !state.ready.contains(id), let index = state.queue.firstIndex(where: { $0.id == id }) else { continue }
+                state.queue.insert(state.queue.remove(at: index), at: 0)
+            }
+            for id in ids {
+                guard !state.ready.contains(id), state.pending[id] == nil else { continue }
+                guard state.queue.count < pendingLimit else { break }
+                let request = Request(id: id)
+                if urgent { state.queue.insert(request, at: 0) } else { state.queue.append(request) }
+                state.pending[id] = request.token
+            }
+            guard state.worker == nil, !state.queue.isEmpty else { return state.worker }
+            let task = Task.detached(priority: .utility) { [self] in
+                while let request = next() {
+                    let result = load(request.id)
+                    self.state.withLock { state in
+                        guard state.pending[request.id] == request.token else { return }
+                        state.pending[request.id] = nil
+                        if let result, !Task.isCancelled {
+                            state.ready.insert(result.document, for: request.id, cost: result.cost)
+                        }
+                    }
                 }
             }
+            state.worker = task
+            return task
+        }
+    }
+
+    private func next() -> Request? {
+        state.withLock { state in
+            if Task.isCancelled {
+                state.queue.removeAll(keepingCapacity: true)
+                state.pending.removeAll(keepingCapacity: true)
+            }
+            guard !state.queue.isEmpty else {
+                state.worker = nil
+                return nil
+            }
+            return state.queue.removeFirst()
         }
     }
 
     func take(_ id: UUID) -> ThreadDocument? {
-        lock.withLock {
-            claimed.insert(id)
-            return ready.removeValue(forKey: id)
+        state.withLock { state in
+            state.pending[id] = nil
+            state.queue.removeAll { $0.id == id }
+            return state.ready.removeValue(for: id)
         }
     }
 
     func forget(_ id: UUID) {
-        lock.withLock {
-            ready[id] = nil
-            claimed.remove(id)
-        }
+        _ = take(id)
     }
 }
 
-/// Serializes disk writes off the main actor, dropping superseded snapshots.
-actor DiskWriter {
+final class DiskWriter: Sendable {
     static let shared = DiskWriter()
+    private let queue = DispatchQueue(label: "droppycode.storage.write", qos: .utility)
+    /// The newest snapshot waiting per file. A save queued behind a slow write is replaced
+    /// by the next one for the same file, so a backlog never encodes and writes documents
+    /// that are already stale when their turn comes.
+    private let pending = Mutex<[URL: any Encodable & Sendable]>([:])
 
-    /// The newest revision already written for each file. Two saves of the same file are
-    /// handed over as separate tasks and can reach the actor in either order, so a
-    /// snapshot a newer one has already passed is dropped rather than put back on disk.
-    private var written: [URL: UInt64] = [:]
-
-    /// The order two snapshots of the same file were taken in, counted where the caller
-    /// takes them rather than where they are written, and the files that have since been
-    /// deleted and must not come back.
-    private static let revisions = Mutex<[URL: UInt64]>([:])
-    private static let discarded = Mutex<Set<URL>>([])
-
-    static func nextRevision(for url: URL) -> UInt64 {
-        revisions.withLock { counters in
-            let next = (counters[url] ?? 0) + 1
-            counters[url] = next
-            return next
+    func encodeAndWrite<Value: Encodable & Sendable>(_ value: Value, to url: URL) {
+        let queued = pending.withLock { pending in
+            let queued = pending[url] != nil
+            pending[url] = value
+            return queued
+        }
+        guard !queued else { return }
+        queue.async { [self] in
+            guard let value = pending.withLock({ $0.removeValue(forKey: url) }) else { return }
+            Self.write(value, to: url)
         }
     }
 
-    /// The file is gone for good: writes still on their way to it are dropped.
-    static func discard(_ url: URL) {
-        discarded.withLock { _ = $0.insert(url) }
+    func writeSynchronously<Value: Encodable & Sendable>(_ value: Value, to url: URL) {
+        pending.withLock { $0[url] = nil }
+        queue.sync { Self.write(value, to: url) }
     }
 
-    /// Encodes off the main actor, so saving a long thread never stalls the interface.
-    /// A `revision` from `nextRevision(for:)` keeps two writes of the same file in the
-    /// order they were taken; revision 0 means the caller does not care.
-    func encodeAndWrite<Value: Encodable & Sendable>(_ value: Value, to url: URL, revision: UInt64 = 0) {
-        guard !Self.discarded.withLock({ $0.contains(url) }) else { return }
-        if revision > 0 {
-            guard revision > written[url, default: 0] else { return }
-            written[url] = revision
+    func removeSynchronously(_ url: URL) {
+        removeSynchronously([url])
+    }
+
+    func removeSynchronously(_ urls: [URL]) {
+        pending.withLock { pending in
+            for url in urls { pending[url] = nil }
         }
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys]
-        guard let data = try? encoder.encode(value) else { return }
-        write(data, to: url)
+        queue.sync {
+            for url in urls { try? FileManager.default.removeItem(at: url) }
+        }
     }
 
-    func write(_ data: Data, to url: URL) {
+    /// Returns once every write queued so far has landed, so a read that follows sees them.
+    func waitForQueuedWrites() {
+        queue.sync {}
+    }
+
+    private static func write(_ value: any Encodable, to url: URL) {
+        guard let data = try? JSONEncoder.storage.encode(value) else { return }
         do {
             try data.write(to: url, options: .atomic)
         } catch {

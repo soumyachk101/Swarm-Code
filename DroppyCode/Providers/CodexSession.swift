@@ -150,13 +150,110 @@ final class CodexSession: ProviderSession {
         _ = try await connection.request("thread/compact/start", ["threadId": .string(threadID)])
     }
 
-    /// Drops the most recent turns from Codex's own history.
-    func rollback(turns: Int) async throws {
-        guard let connection, let threadID, turns > 0 else { return }
-        _ = try await connection.request("thread/rollback", [
-            "threadId": .string(threadID),
-            "numTurns": .int(turns),
-        ])
+    func rollback(from targetID: String) async throws -> String? {
+        guard let connection, let threadID else { throw ProviderError.notRunning }
+        let watchdog = Task {
+            try? await Task.sleep(for: .seconds(30))
+            if !Task.isCancelled { connection.close() }
+        }
+        defer { watchdog.cancel() }
+        var cursor: String?
+        var count = 0
+        var found = false
+        var previousID: String?
+        repeat {
+            let page = try await connection.request("thread/turns/list", [
+                "threadId": .string(threadID), "cursor": .optional(cursor),
+                "limit": 100, "sortDirection": "desc", "itemsView": "notLoaded",
+            ])
+            guard let turns = page["data"]?.array else {
+                throw ProviderError.failed("Codex did not return its conversation history.")
+            }
+            for turn in turns {
+                guard let id = turn["id"]?.string else { throw ProviderError.failed("Codex returned a turn without an ID.") }
+                if found { previousID = id; break }
+                count += 1
+                if id == targetID { found = true }
+            }
+            let next = page["nextCursor"]?.string
+            guard next == nil || next != cursor else { throw ProviderError.failed("Codex could not page its conversation history.") }
+            cursor = next
+        } while cursor != nil && previousID == nil
+        guard found else { throw ProviderError.failed("Codex could not find the selected turn. The conversation was kept.") }
+        let result: JSONValue
+        do {
+            result = try await connection.request("thread/rollback", [
+                "threadId": .string(threadID),
+                "numTurns": .int(count),
+            ])
+        } catch let error as RPCError where error.message.contains("paginated threads do not support thread/rollback") {
+            return try await forkHistory(before: targetID, keeping: previousID, connection: connection, originalID: threadID)
+        }
+        guard result["thread"]?["id"]?.string == threadID,
+              let remaining = result["thread"]?["turns"]?.array,
+              !remaining.contains(where: { $0["id"]?.string == targetID }),
+              remaining.last?["id"]?.string == previousID else {
+            throw ProviderError.failed("Codex did not confirm the requested conversation rollback.")
+        }
+        turnID = nil
+        return threadID
+    }
+
+    private var threadParameters: [String: JSONValue] {
+        let policy = policySettings(configuration.runtimeMode)
+        var params: [String: JSONValue] = [
+            "cwd": .string(workingDirectory),
+            "approvalPolicy": policy.approvalPolicy,
+            "sandbox": policy.sandbox,
+            "approvalsReviewer": policy.reviewer,
+        ]
+        if let model = configuration.model { params["model"] = .string(model) }
+        if let hydra = configuration.hydra {
+            if hydra.runsNatively {
+                params["config"] = .object(HydraPrompts.codexConfig(hydra))
+                params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))
+            } else {
+                // Heads on another provider are Droppy-run: the lead asks for them with the
+                // delegation block, and Codex's own agents stay off.
+                params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
+            }
+        }
+        return params
+    }
+
+    private func forkHistory(before targetID: String, keeping previousID: String?, connection: JSONRPCConnection, originalID: String) async throws -> String? {
+        guard let previousID else {
+            _ = try await connection.request("thread/archive", ["threadId": .string(originalID)])
+            threadID = nil
+            turnID = nil
+            return nil
+        }
+        var params = threadParameters
+        params["threadId"] = .string(originalID)
+        params["lastTurnId"] = .string(previousID)
+        params["excludeTurns"] = true
+        let result = try await connection.request("thread/fork", .object(params))
+        guard let id = result["thread"]?["id"]?.string, id != originalID else {
+            throw ProviderError.failed("Codex did not create a conversation at the revert point.")
+        }
+        do {
+            let page = try await connection.request("thread/turns/list", [
+                "threadId": .string(id), "limit": 1, "sortDirection": "desc", "itemsView": "notLoaded",
+            ])
+            guard let turns = page["data"]?.array,
+                  turns.first?["id"]?.string == previousID,
+                  turns.first?["id"]?.string != targetID else {
+                throw ProviderError.failed("Codex did not confirm the reverted conversation history.")
+            }
+            _ = try await connection.request("thread/archive", ["threadId": .string(originalID)])
+        } catch {
+            _ = try? await connection.request("thread/archive", ["threadId": .string(id)])
+            throw error
+        }
+        threadID = id
+        turnID = nil
+        activeModel = result["model"]?.string ?? activeModel
+        return id
     }
 
     private var threadParameters: [String: JSONValue] {

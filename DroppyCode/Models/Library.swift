@@ -72,6 +72,7 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     var worktreePath: String?
     var branch: String?
     var providerSessionID: String?
+    var providerResumeAt: String?
     var isPinned: Bool
     var isArchived: Bool
     /// Finished, as far as the sidebar is concerned: the thread sits at the bottom of its
@@ -175,6 +176,7 @@ struct ChatThread: Codable, Identifiable, Hashable, Sendable {
         worktreePath = container.value(.worktreePath, default: nil)
         branch = container.value(.branch, default: nil)
         providerSessionID = container.value(.providerSessionID, default: nil)
+        providerResumeAt = container.value(.providerResumeAt, default: nil)
         isPinned = container.value(.isPinned, default: false)
         isArchived = container.value(.isArchived, default: false)
         isSettled = container.value(.isSettled, default: false)
