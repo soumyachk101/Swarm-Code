@@ -148,9 +148,9 @@ extension AppModel {
                     }
                 }
             }
-            if work.dropped > 0 {
-                lines.append("\(work.dropped == 1 ? "One file" : "\(work.dropped) files") the team wrote outside the checkout stayed where they are; only the project's own files can go out.")
-            }
+            // Files the team wrote outside the checkout (a lead's own memory, say) are
+            // dropped without a word: they were never the project's to merge, and the
+            // note about them read as if something had gone wrong.
             if work.droppedBuildOutputs > 0 {
                 lines.append("\(work.droppedBuildOutputs) build-output paths a head's build left behind were left out.")
             }

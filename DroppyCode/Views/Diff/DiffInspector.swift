@@ -424,34 +424,35 @@ private struct DiffLineRow: View {
     )
 
     var body: some View {
-        // One Text per row instead of five views: fewer views to diff and lay out.
-        var row = Text("")
-        if showsLineNumbers {
-            row = row
-                + Text(padded(line.oldNumber.map(String.init) ?? ""))
+        // Fixed-width columns instead of one concatenated Text: numbers share
+        // a right edge across all row kinds, and wrapped code stays in its own
+        // column instead of flowing back under the number gutters.
+        HStack(alignment: .top, spacing: 0) {
+            if showsLineNumbers {
+                Text(line.oldNumber.map(String.init) ?? "")
+                    .frame(width: Self.numberColumnWidth, alignment: .trailing)
                     .foregroundStyle(Color.secondary.opacity(0.6))
-                + Text(" ")
-                + Text(padded(line.newNumber.map(String.init) ?? ""))
+                Text(line.newNumber.map(String.init) ?? "")
+                    .frame(width: Self.numberColumnWidth, alignment: .trailing)
                     .foregroundStyle(Color.secondary.opacity(0.6))
-        }
-        row = row
-            + Text(" \(marker) ")
+            }
+            Text(marker)
+                .frame(width: Self.markerColumnWidth, alignment: .center)
                 .foregroundStyle(markerColor)
-            + Text(line.text.isEmpty ? " " : line.text)
+            Text(line.text.isEmpty ? " " : line.text)
                 .foregroundStyle(line.kind == .note ? .secondary : .primary)
-        return row
-            .padding(.vertical, 1)
-            .padding(.leading, 6)
-            .padding(.trailing, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(background, in: rounding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 1)
+        .padding(.leading, 6)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(background, in: rounding)
     }
 
-    /// Right-aligns a line number in a 4-character column so the monospaced
-    /// columns line up without per-column Text views.
-    private func padded(_ number: String) -> String {
-        String(repeating: " ", count: max(0, 4 - number.count)) + number
-    }
+    /// Room for a four-digit line number in the monospaced font, and for the +/- mark.
+    private static let numberColumnWidth: CGFloat = 30
+    private static let markerColumnWidth: CGFloat = 14
 
     /// Positional corners for a row inside its tinted block: only the block's
     /// top and bottom rows get corners, everything between is straight.

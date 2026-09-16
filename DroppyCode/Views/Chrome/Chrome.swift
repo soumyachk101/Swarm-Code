@@ -805,18 +805,20 @@ struct ChromeSearchField: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12.5))
                 .foregroundStyle(Chrome.primaryText)
-                .lineLimit(1)
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Chrome.secondaryText.opacity(0.8))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text("Clear search"))
+            Button {
+                query = ""
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.secondaryText.opacity(0.8))
             }
+            .buttonStyle(.plain)
+            // Always laid out, so the field's text never shifts when the button comes;
+            // invisible and out of the accessibility tree while there is nothing to clear.
+            .opacity(query.isEmpty ? 0 : 1)
+            .disabled(query.isEmpty)
+            .accessibilityHidden(query.isEmpty)
+            .accessibilityLabel(Text("Clear search"))
         }
         .padding(.horizontal, 10)
         .frame(width: Self.width, height: Chrome.capsuleContentHeight)

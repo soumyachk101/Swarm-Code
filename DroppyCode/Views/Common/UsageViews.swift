@@ -27,6 +27,10 @@ struct PlanLimitsView: View {
                     LimitRow(window: window)
                         .padding(.top, 14)
                 }
+                if !limits.windows.isEmpty {
+                    Divider()
+                        .padding(.top, 14)
+                }
                 if let credits = limits.resetCredits {
                     BankedResetsView(provider: provider, credits: credits)
                         .padding(.top, 14)
@@ -160,7 +164,10 @@ fileprivate struct BankedResetRowModel: Identifiable {
     var credit: PlanLimits.ResetCredit?
 }
 
-/// A provider's banked resets (Codex's reset credits, Z.ai's reset cards): a header with how many the account holds, then a row per reset with a button to spend it. Spending goes through the registry so the bars refresh in the same pass; the header line carries the outcome for a few seconds before it reads the count again.
+/// A provider's banked resets (Codex's reset credits, Z.ai's reset cards): a one-line header
+/// with how many the account holds, then a row per reset with a button to spend it. Spending
+/// goes through the registry so the bars refresh in the same pass; a line under the header
+/// carries the outcome for a few seconds before it reads the count again.
 private struct BankedResetsView: View {
     @Environment(AppModel.self) private var model
     let provider: ProviderKind
@@ -185,12 +192,18 @@ private struct BankedResetsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
                 Text(verbatim: "Banked resets")
                     .font(.system(size: 13))
                     .foregroundStyle(Chrome.primaryText)
-                statusLine
+                Text(verbatim: "· \(countText)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .contentTransition(.numericText())
             }
+            // One line to a screen reader too, "Banked resets, 2 available".
+            .accessibilityElement(children: .combine)
+            statusLine
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 BankedResetRow(
                     row: row,
@@ -210,7 +223,7 @@ private struct BankedResetsView: View {
         .onDisappear { settle?.cancel() }
     }
 
-    /// The count while idle, the outcome once a reset was spent, the error when it failed.
+    /// The outcome once a reset was spent, the error when it failed; nothing while idle.
     @ViewBuilder private var statusLine: some View {
         switch phase {
         case .done(let outcome):
@@ -223,26 +236,24 @@ private struct BankedResetsView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(outcome == .reset ? Chrome.success : Chrome.secondaryText)
             }
+            .padding(.top, 4)
             .transition(.blurReplace)
         case .failed(let message):
             Text(verbatim: message)
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.danger)
+                .padding(.top, 4)
                 .transition(.blurReplace)
         default:
-            Text(verbatim: countText)
-                .font(.system(size: 11))
-                .foregroundStyle(Chrome.secondaryText)
-                .contentTransition(.numericText())
-                .transition(.blurReplace)
+            EmptyView()
         }
     }
 
     private var countText: String {
         switch credits.availableCount {
-        case 0: "None available. \(provider.displayName) grants them now and then."
-        case 1: "1 available. Spending it puts the limit back to zero."
-        default: "\(credits.availableCount) available. Spending one puts the limit back to zero."
+        case 0: "None available yet"
+        case 1: "1 available"
+        default: "\(credits.availableCount) available"
         }
     }
 
