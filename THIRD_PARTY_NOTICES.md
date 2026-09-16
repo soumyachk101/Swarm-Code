@@ -97,6 +97,37 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+## MonoCode
+
+Spending a Codex account's banked rate-limit resets from the usage popover (`DroppyCode/Providers/CodexSession.swift`,
+`DroppyCode/Views/Common/UsageViews.swift`) follows MonoCode by hardbeat920, https://github.com/hardbeat920/monocode,
+`src/lib/rateLimitsFetch.ts` and `src/chrome/UsageProviderChip.tsx`: the app-server's `account/rateLimitResetCredit/consume`
+call sent with an idempotency key, the reset credits read beside the rate limits, the confirm step before a reset is spent,
+and the four outcomes it can answer with. No MonoCode code is in this repository; its license is reproduced here in
+acknowledgement.
+
+MIT License
+
+Copyright (c) 2026 Nick
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## Zeron
 
 Droppy Code's working indicators (`DroppyCode/Views/Common/WorkingIndicators.swift`) are ported from Zeron,
