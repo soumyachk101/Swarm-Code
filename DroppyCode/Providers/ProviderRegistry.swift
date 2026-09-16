@@ -68,6 +68,26 @@ final class ProviderRegistry {
     /// provider's live catalog arrived, not a list the CLI reported: a live list always names `opus[1m]`
     /// and the Fable row. Re-seeding it gives launches that cached the old seed the Fable row, while a
     /// live list without Fable stays as it is, since that account cannot use it.
+    /// The seed with a live Claude list laid over it: a live row for a seed id lends its
+    /// effort levels, description and fast tier; a row the seed lacks is appended; no seed
+    /// row is ever dropped, since threads keep naming those ids.
+    private static func mergedClaudeCatalog(_ live: [ModelOption]) -> [ModelOption] {
+        var merged = claudeSeed
+        for option in live {
+            if let index = merged.firstIndex(where: { $0.id == option.id }) {
+                var kept = merged[index]
+                if !option.efforts.isEmpty { kept.efforts = option.efforts }
+                if let detail = option.detail, !detail.isEmpty { kept.detail = detail }
+                if option.fastTier != nil { kept.fastTier = option.fastTier }
+                if option.defaultEffort != nil { kept.defaultEffort = option.defaultEffort }
+                merged[index] = kept
+            } else {
+                merged.append(option)
+            }
+        }
+        return merged
+    }
+
     private static func isStaleClaudeSeed(_ list: [ModelOption]) -> Bool {
         let earlierSeedIDs: Set<String> = ["default", "opus", "sonnet", "haiku"]
         return list.isEmpty || list.allSatisfy { earlierSeedIDs.contains($0.id) }
@@ -484,6 +504,10 @@ final class ProviderRegistry {
     }
 
     func updateCatalog(_ list: [ModelOption], for provider: ProviderKind) {
+        // Claude's live list refines the seed rather than replacing it: threads, pairs and
+        // the chip name the seed's ids (`opus`, the Fable row), and a handshake that lists
+        // the models another way left them as raw ids with one reasoning level.
+        let list = provider == .claude ? Self.mergedClaudeCatalog(list) : list
         guard !list.isEmpty, list != catalogs[provider] else { return }
         catalogs[provider] = list
         guard !WebsiteCaptures.isEnabled else { return }

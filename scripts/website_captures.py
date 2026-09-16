@@ -134,7 +134,8 @@ def wait_for_run(marker, budget):
     """Waits for a capture run to quit on its own, killing it at its budget so a stall
     can never leave a recording running. The app takes a moment to appear through
     LaunchServices, so the run is first waited into existence."""
-    for _ in range(20):
+    # A fresh bundle's first launch can take a minute to clear LaunchServices.
+    for _ in range(60):
         time.sleep(2)
         if subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.strip():
             break
