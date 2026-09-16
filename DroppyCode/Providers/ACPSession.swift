@@ -174,9 +174,8 @@ final class ACPSession: ProviderSession {
             interaction: input.interactionMode
         )
         var prompt: [JSONValue] = [["type": "text", "text": .string(input.text)]]
-        for image in input.images where image.isImage {
-            guard let data = try? Data(contentsOf: image.url) else { continue }
-            prompt.append(["type": "image", "mimeType": .string(image.mimeType), "data": .string(data.base64EncodedString())])
+        for (image, base64) in await Attachment.base64Images(input.images) {
+            prompt.append(["type": "image", "mimeType": .string(image.mimeType), "data": .string(base64)])
         }
         messageID = nil
         thoughtID = nil
@@ -593,6 +592,7 @@ final class ACPSession: ProviderSession {
     private func finishPrompt(_ stopReason: String?, error: Error?) {
         guard promptActive else { return }
         promptActive = false
+        todoToolCallIDs.removeAll()
         for (key, id) in pendingPermissions {
             connection?.respond(to: id, result: ["outcome": ["outcome": "cancelled"]])
             onEvent?(.requestResolved(id: key))
@@ -771,26 +771,31 @@ final class ACPSession: ProviderSession {
     /// "Browsed https://…" rather than "Browsed Fetched https://…". Verbs are
     /// only dropped when something remains; a bare tool name ("read", "glob")
     /// becomes empty so a path or pattern takes its place.
+    /// Longest phrases first, so "searched the web for" wins over "searched for". Each
+    /// carries its trailing space, matched as is against the lowercased title.
+    private static let subjectPhrases = [
+        "searched web for ", "search web for ", "searching web for ", "searched the web for ", "search the web for ",
+        "searched for ", "searching for ", "search for ", "reading file ", "read file ", "listed directory ",
+        "listing directory ", "list directory ", "listed files in ", "list files in ", "listing files in ",
+    ]
+    private static let subjectVerbs: Set<String> = [
+        "read", "reading", "viewed", "viewing", "view", "fetched", "fetching", "fetch", "browsed", "browsing",
+        "searched", "searching", "search", "grep", "glob", "listed", "listing", "list", "wrote", "writing",
+        "write", "edited", "editing", "edit", "modified", "modifying", "modify", "updated", "updating", "update",
+        "created", "creating", "create", "deleted", "deleting", "delete", "ran", "running", "run", "executed",
+        "executing", "execute", "called", "calling", "call", "opened", "opening", "open",
+    ]
+
     private static func subject(from title: String?, kind: ToolCall.Kind) -> String {
         var text = cleanTitle(title)
         guard !text.isEmpty else { return "" }
         if isBareToolName(text) { return "" }
-        let phrases = [
-            "searched web for", "search web for", "searching web for", "searched the web for", "search the web for",
-            "searched for", "searching for", "search for", "reading file", "read file", "listed directory",
-            "listing directory", "list directory", "listed files in", "list files in", "listing files in",
-        ]
-        let verbs = [
-            "read", "reading", "viewed", "viewing", "view", "fetched", "fetching", "fetch", "browsed", "browsing",
-            "searched", "searching", "search", "grep", "glob", "listed", "listing", "list", "wrote", "writing",
-            "write", "edited", "editing", "edit", "modified", "modifying", "modify", "updated", "updating", "update",
-            "created", "creating", "create", "deleted", "deleting", "delete", "ran", "running", "run", "executed",
-            "executing", "execute", "called", "calling", "call", "opened", "opening", "open",
-        ]
+        let phrases = subjectPhrases
+        let verbs = subjectVerbs
         let lowered = text.lowercased()
         var stripped = false
-        for phrase in phrases where [.read, .edit, .search, .web].contains(kind) && lowered.hasPrefix(phrase + " ") {
-            text = String(text.dropFirst(phrase.count + 1))
+        for phrase in phrases where [.read, .edit, .search, .web].contains(kind) && lowered.hasPrefix(phrase) {
+            text = String(text.dropFirst(phrase.count))
             stripped = true
             break
         }
