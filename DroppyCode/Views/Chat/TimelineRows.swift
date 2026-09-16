@@ -82,8 +82,34 @@ struct UserMessageRow: View {
                 if !message.attachments.isEmpty {
                     AttachmentStrip(attachments: message.attachments)
                 }
-                if !message.text.isEmpty {
-                    Text(message.text)
+                let parts = ReplyQuote.peel(message.text)
+                if !parts.quotes.isEmpty {
+                    // The quotes the message led with, as the chips the chat box showed them in,
+                    // so a reply reads as a reply and the bubble keeps only the typed words.
+                    VStack(alignment: .trailing, spacing: 4) {
+                        ForEach(parts.quotes) { quote in
+                            HStack(spacing: 5) {
+                                Image(systemName: "text.quote")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Chrome.secondaryText)
+                                Text(verbatim: quote.excerpt)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .frame(maxWidth: 260, alignment: .leading)
+                            }
+                            .fixedSize()
+                            .modifier(ChipChrome())
+                            .help(quote.text)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(Text(verbatim: "Quote: \(quote.excerpt)"))
+                        }
+                    }
+                    .padding(.trailing, UserBubble.tail)
+                }
+                if !parts.body.isEmpty {
+                    Text(parts.body)
                         .textSelection(.enabled)
                         .padding(.leading, 14)
                         // The tail hangs past the body; the text keeps its inset from the body.
