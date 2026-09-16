@@ -12,9 +12,10 @@ import SwiftUI
 /// content and re-shows at the new anchor, so the panel follows the tap
 /// instead of staying stranded at the previous photo.
 ///
-/// The panel is semitransient: taps elsewhere in the window still reach their
-/// target, and a tap outside the strip dismisses it, as does Escape, tapping
-/// the same thumbnail again, or the strip going away.
+/// The panel is application-defined: taps elsewhere in the window still reach
+/// their target, and the panel closes on its own monitors instead — a tap
+/// outside the strip dismisses it, as does Escape, the window losing key or
+/// moving, tapping the same thumbnail again, or the strip going away.
 @MainActor
 final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
@@ -23,11 +24,15 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     /// (see `WindowRectAnchor`).
     private var anchorRect: CGRect?
     private var currentID: Attachment.ID?
-    private var monitors: [Any] = []
+    private enum Monitor {
+        case event(Any)
+        case observer(NSObjectProtocol)
+    }
+    private var monitors: [Monitor] = []
 
     override init() {
         super.init()
-        popover.behavior = .semitransient
+        popover.behavior = .applicationDefined
         popover.animates = true
         popover.delegate = self
     }
@@ -91,8 +96,16 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         // above the tapped photo, and the content swap is the backstop so the
         // new photo shows even if a reposition were ever ignored.
         popover.setFixedContent(content, size: size)
-        if !popover.isShown { startMonitors() }
-        popover.show(relativeTo: rect, of: anchor, preferredEdge: edge)
+        if popover.isShown {
+            popover.show(relativeTo: rect, of: anchor, preferredEdge: edge)
+        } else if popover.contentViewController?.view.window != nil {
+            popover.animates = false
+            popover.show(relativeTo: rect, of: anchor, preferredEdge: edge)
+            popover.animates = true
+        } else {
+            popover.show(relativeTo: rect, of: anchor, preferredEdge: edge)
+        }
+        startMonitors()
     }
 
     /// The view and rect to anchor the panel to, best proof first. A stored
@@ -136,9 +149,11 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     // MARK: - Dismissal
 
     nonisolated func popoverDidClose(_ notification: Notification) {
-        Task { @MainActor [weak self] in
-            self?.stopMonitors()
-            self?.currentID = nil
+        MainActor.assumeIsolated { [weak self] in
+            guard let self else { return }
+            if self.popover.isShown { return }
+            self.stopMonitors()
+            self.currentID = nil
         }
     }
 
@@ -147,12 +162,27 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] event in
             self?.handleMouseDown(event) ?? event
         }) {
-            monitors.append(monitor)
+            monitors.append(.event(monitor))
         }
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             self?.handleKeyDown(event) ?? event
         }) {
-            monitors.append(monitor)
+            monitors.append(.event(monitor))
+        }
+        let anchorWindow = anchor?.value?.window ?? popover.contentViewController?.view.window?.parent
+        if let anchorWindow {
+            let resign = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: anchorWindow, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.close() }
+            }
+            monitors.append(.observer(resign))
+            let willMove = NotificationCenter.default.addObserver(forName: NSWindow.willMoveNotification, object: anchorWindow, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.close() }
+            }
+            monitors.append(.observer(willMove))
+            let didMove = NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: anchorWindow, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.close() }
+            }
+            monitors.append(.observer(didMove))
         }
     }
 
@@ -177,7 +207,12 @@ final class AttachmentPreviewCoordinator: NSObject, NSPopoverDelegate {
     }
 
     private func stopMonitors() {
-        for monitor in monitors { NSEvent.removeMonitor(monitor) }
+        for monitor in monitors {
+            switch monitor {
+            case .event(let token): NSEvent.removeMonitor(token)
+            case .observer(let token): NotificationCenter.default.removeObserver(token)
+            }
+        }
         monitors.removeAll()
     }
 

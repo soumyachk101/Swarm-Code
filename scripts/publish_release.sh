@@ -11,6 +11,7 @@
 # three sections into its cards. The tag goes on HEAD, or on RELEASE_REF when
 # the version bump has landed on main from elsewhere. Needs glab signed in as
 # a maintainer.
+# The site's changelog is rebuilt from ReleaseNotes and deployed here too.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -61,5 +62,8 @@ glab api -X PUT "projects/$ENCODED_PROJECT/releases/$TAG/assets/links/$LINK_ID" 
 
 step "Checking the permalink"
 curl -sIL "https://gitlab.com/$PROJECT/-/releases/permalink/latest/downloads${ASSET_PATH}" | grep -i "content-disposition"
+
+step "Rebuilding the changelog and deploying the site"
+scripts/deploy_site.sh
 
 printf '\nPublished: https://gitlab.com/%s/-/releases/%s\n' "$PROJECT" "$TAG"

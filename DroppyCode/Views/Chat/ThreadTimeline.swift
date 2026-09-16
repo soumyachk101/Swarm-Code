@@ -544,6 +544,14 @@ struct ThreadTimeline: View, Equatable {
         .onChange(of: tracking.refreshRequest) {
             refreshViewport()
         }
+        .onChange(of: runtime.questions.count) { old, new in
+            // The badge leaving shrinks the content under a held offset without
+            // touching the blocks, so nothing arms the viewport refresh the rows
+            // below need: tell the stack where the viewport is now, while the rows
+            // above still cover it and no blank watch would fire.
+            guard old != 0, new == 0 else { return }
+            tracking.armViewportRefresh()
+        }
         .onChange(of: scrollState.jumpRequest) {
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
