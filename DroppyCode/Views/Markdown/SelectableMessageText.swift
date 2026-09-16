@@ -18,21 +18,32 @@ struct SelectableMessageText: NSViewRepresentable {
     var dragOrigin: DragOrigin? = nil
     /// The view stopped being first responder (a click elsewhere): select mode is over.
     var onResign: (() -> Void)? = nil
+    /// The text's height at the width the view was actually given, whenever it changes.
+    /// The row frames the view to it (see `AssistantMessageRow`): a text view sized by
+    /// SwiftUI's proposal alone could be measured at one width and placed at another, and
+    /// the text then ran past the row over the messages below it.
+    var onHeightChange: ((CGFloat) -> Void)? = nil
 
     func makeNSView(context: Context) -> SelectableMessageTextView {
-        SelectableMessageTextView()
+        let view = SelectableMessageTextView()
+        view.onHeightChange = onHeightChange
+        return view
     }
 
     func updateNSView(_ view: SelectableMessageTextView, context: Context) {
         view.render(Self.attributed(text, pointSize: pointSize))
         view.onResign = onResign
+        view.onHeightChange = onHeightChange
         if let dragOrigin {
             view.continueDrag(dragOrigin)
         }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: SelectableMessageTextView, context: Context) -> CGSize? {
-        guard let width = proposal.width else { return nil }
+        // Measured at the proposed width, or at the width it has when the proposal names
+        // none (a probe): never at the container's stale width.
+        let width = proposal.width ?? (nsView.bounds.width > 0 ? nsView.bounds.width : nil)
+        guard let width else { return nil }
         return CGSize(width: width, height: nsView.height(forWidth: width))
     }
 
@@ -254,6 +265,7 @@ final class SelectableMessageTextView: NSTextView {
     private var dragAnchor: Int?
     private var takenDrag: SelectableMessageText.DragOrigin?
     var onResign: (() -> Void)?
+    var onHeightChange: ((CGFloat) -> Void)?
 
     init() {
         let layoutManager = NSLayoutManager()
@@ -273,7 +285,9 @@ final class SelectableMessageTextView: NSTextView {
         usesFindBar = false
         focusRingType = .none
         textContainerInset = .zero
-        isVerticallyResizable = true
+        // The frame is SwiftUI's to set, from the height reported below; a view that
+        // grew itself to its text drew past the row it was given, over the rows after it.
+        isVerticallyResizable = false
         isHorizontallyResizable = false
         autoresizingMask = [.width]
         textContainer?.widthTracksTextView = true
@@ -408,6 +422,9 @@ final class SelectableMessageTextView: NSTextView {
         guard abs(height - lastMeasuredHeight) > 0.5 else { return }
         lastMeasuredHeight = height
         invalidateIntrinsicContentSize()
+        // After this pass, not inside it: the row sets its frame from this.
+        let report = onHeightChange
+        DispatchQueue.main.async { report?(height) }
     }
 }
 
