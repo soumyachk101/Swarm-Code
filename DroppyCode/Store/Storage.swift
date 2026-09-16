@@ -6,7 +6,7 @@ enum Storage {
     static let root: URL = {
         if let captures = WebsiteCaptures.storageRoot { return captures }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let url = base.appendingPathComponent("Droppy Code", isDirectory: true)
+        let url = base.appendingPathComponent(AppInfo.name, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }()
@@ -17,17 +17,14 @@ enum Storage {
 
     static var attachmentsDirectory: URL { directory("attachments") }
 
-    static var worktreesDirectory: URL {
-        let url = URL(fileURLWithPath: LoginEnvironment.homeDirectory)
-            .appendingPathComponent(".droppy-code/worktrees", isDirectory: true)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
+    static let worktreesDirectory: URL = stateDirectory("worktrees")
 
     /// Where a head's work is kept as a patch when it would not land in the checkout.
-    static var patchesDirectory: URL {
+    static let patchesDirectory: URL = stateDirectory("patches")
+
+    private static func stateDirectory(_ name: String) -> URL {
         let url = URL(fileURLWithPath: LoginEnvironment.homeDirectory)
-            .appendingPathComponent(".droppy-code/patches", isDirectory: true)
+            .appendingPathComponent(AppInfo.stateDirectoryName + "/" + name, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }

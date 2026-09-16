@@ -6,7 +6,7 @@ import Security
 /// is for a Mac where the user would rather paste a key than sign in through the browser.
 /// UserDefaults keeps a copy only where the Keychain refuses it.
 enum CommandCodeKeychain {
-    private static let service = "Droppy Code"
+    private static let service = AppInfo.name
     private static let account = "Command Code API Key"
 
     static func apiKey(fallback: String) -> String {

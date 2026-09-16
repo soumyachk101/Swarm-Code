@@ -132,7 +132,7 @@ final class UpdateChecker {
     /// The launch check, the six-hourly one after it, and a catch-up when the app comes to
     /// the front after a long sleep.
     func startBackgroundChecks() {
-        guard backgroundTask == nil, !WebsiteCaptures.isEnabled else { return }
+        guard backgroundTask == nil, !WebsiteCaptures.isEnabled, !AppInfo.isDevelopment else { return }
         backgroundTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Self.launchDelay))
             while !Task.isCancelled {
@@ -157,6 +157,7 @@ final class UpdateChecker {
     /// afterwards. A background check also posts the one notification a new version gets.
     @discardableResult
     func check(background: Bool = false) async -> Bool {
+        guard !AppInfo.isDevelopment else { return false }
         guard !isChecking else { return updateAvailable }
         isChecking = true
         defer { isChecking = false }

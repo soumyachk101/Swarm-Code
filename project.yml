@@ -49,6 +49,10 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEAD_CODE_STRIPPING: YES
       configs:
+        Debug:
+          PRODUCT_NAME: "Droppy Code Dev"
+          PRODUCT_BUNDLE_IDENTIFIER: iordv.droppycode.dev
+          INFOPLIST_KEY_CFBundleDisplayName: "Droppy Code Dev"
         Release:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: Developer ID Application

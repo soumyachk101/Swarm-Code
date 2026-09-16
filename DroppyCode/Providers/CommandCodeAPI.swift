@@ -407,7 +407,7 @@ enum CommandCodeAPI {
     static var supportDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: LoginEnvironment.homeDirectory).appendingPathComponent("Library/Application Support")
-        return base.appendingPathComponent("Droppy Code/CommandCode", isDirectory: true)
+        return base.appendingPathComponent("\(AppInfo.name)/CommandCode", isDirectory: true)
     }
 
     /// Writes the mod where the CLI can load it and returns its path. Rewritten only when
