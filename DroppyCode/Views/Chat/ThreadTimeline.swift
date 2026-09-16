@@ -1721,11 +1721,9 @@ struct TimelineGroupView: View {
     }
 }
 
-/// The one line a running turn shows: a capsule badge like the finished turn's card,
-/// with the composer's dot field running through it under what the agent is doing
-/// right now (the live tool run's summary, or a word that changes every few seconds
-/// before any tool starts) and the elapsed time. Collapsed by default; the chevron
-/// opens the thinking (when shown) and the run's steps beneath it.
+/// The one line a running turn shows: the head panel's progress card, with the task
+/// breathing, the stave bar filling with the turn's steps, the time in its pill and the
+/// chevron opening the thinking and the run's steps beneath it.
 private struct WorkingIndicator: View {
     let runtime: ThreadRuntime
     let startedAt: Date
@@ -1734,6 +1732,7 @@ private struct WorkingIndicator: View {
     let thinkingSteps: [ThinkingStep]
     /// The tool run in progress, folded into this line while it runs.
     let liveWork: [TimelineEntry]
+    let turnEntries: [TimelineEntry]
     var workingDirectory: String?
     @Environment(\.chatZoom) private var zoom
     @State private var now = Date.now
@@ -1741,57 +1740,42 @@ private struct WorkingIndicator: View {
 
     /// The one motion for whatever changes on the line: the words, the chevron.
     private static let change = Animation.smooth(duration: 0.3)
+    /// The panel's card needs room for the bar; a badge hugging its words would leave the bar no width.
+    private static let cardWidth: CGFloat = 380
 
     var body: some View {
         let elapsed = now.timeIntervalSince(startedAt)
         let word = WorkingWords.word(seed: seed, elapsedSeconds: Int64(max(0, elapsed)))
         let label = liveWork.isEmpty ? "\(word)…" : WorkGroupSummary.text(for: liveWork)
-        let time = RelativeTime.duration(elapsed)
         let canExpand = !thinkingSteps.isEmpty || !liveWork.isEmpty
         VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             Button {
                 guard canExpand else { return }
                 withAnimation(.snappy(duration: 0.24)) { isExpanded.toggle() }
             } label: {
-                // One piece: the badge, the words, the time and the chevron are laid out
-                // together and change together. The words cross-fade in place and the chevron
-                // fades in its own slot, on one animation, so no part of the line ever appears
-                // or moves on a beat of its own; the line itself arrives as one row, with the
-                // transition every block gets.
-                HStack(spacing: 8) {
-                    Text(verbatim: label)
-                        .font(.chat(.callout, weight: .medium, zoom: zoom))
-                        .foregroundStyle(Chrome.primaryText.opacity(0.9))
-                        .contentTransition(.opacity)
-                    // The digits roll over, and the badge glides when they gain or lose one
-                    // ("9s" to "10s"): a plain swap snapped its edge every ten seconds.
-                    Text(verbatim: time)
-                        .monospacedDigit()
-                        .foregroundStyle(Chrome.secondaryText)
-                        .contentTransition(.numericText())
-                        .animation(Self.change, value: time)
-                    Image(systemName: "chevron.right")
-                        .font(.chat(.caption2, weight: .semibold, zoom: zoom))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
-                        .opacity(canExpand ? 1 : 0)
-                        .accessibilityHidden(!canExpand)
-                }
-                .padding(.leading, 12)
-                .padding(.trailing, 10)
-                .padding(.vertical, 6)
-                // The finished turn's card, with the composer's dot field running through it:
-                // the wave crosses the whole badge under the words, the time and the chevron.
-                .background {
-                    let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    ZStack {
-                        shape.fill(.quaternary.opacity(0.32))
-                        DotFieldFill()
-                            .opacity(0.55)
-                            .clipShape(shape)
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HydraWorkingTitle(text: label, isRunning: true, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        HydraElapsedTime(startedAt: startedAt, finishedAt: nil, isRunning: true)
+                        Image(systemName: "chevron.right")
+                            .font(.chat(.caption2, weight: .semibold, zoom: zoom))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                            .opacity(canExpand ? 1 : 0)
+                            .accessibilityHidden(!canExpand)
                     }
+                    HydraProgressBar(runtime: runtime, startedAt: startedAt, finishedAt: nil, status: .running, tint: Chrome.accent, entries: turnEntries)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .frame(width: Self.cardWidth)
+                .background {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(.quaternary.opacity(0.32))
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .geometryGroup()
             }
             .buttonStyle(.plain)
             .help(canExpand ? (isExpanded ? "Hide these steps" : "Show these steps") : "")
@@ -1858,14 +1842,29 @@ private struct WorkingBlockView: View {
     let workingDirectory: String?
 
     var body: some View {
+        let turnEntries = Self.turnEntries(of: runtime)
         WorkingIndicator(
             runtime: runtime,
             startedAt: runtime.turnStartedAt ?? .now,
             seed: WorkingWords.seed(runtime.threadID.uuidString),
             thinkingSteps: model.settings.showReasoning ? thinking : [],
             liveWork: liveWork,
+            turnEntries: turnEntries,
             workingDirectory: workingDirectory
         )
+    }
+
+    /// The running turn's rows, in order: the tool calls and replies since the turn's
+    /// prompt, for the card's bar. Walks back from the end and stops at the previous turn.
+    private static func turnEntries(of runtime: ThreadRuntime) -> [TimelineEntry] {
+        guard let turnID = runtime.entries.last.flatMap(\.turnID) else { return [] }
+        var rows: [TimelineEntry] = []
+        for entry in runtime.entries.reversed() {
+            guard let entryTurn = entry.turnID else { continue }
+            guard entryTurn == turnID else { break }
+            rows.append(entry)
+        }
+        return rows.reversed()
     }
 
     /// The running turn's thinking. Kind and turn are fixed at creation, so they are checked before

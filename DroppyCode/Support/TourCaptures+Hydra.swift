@@ -185,7 +185,7 @@ extension TourCaptures {
         WebsiteCaptures.log("scene heroScene")
         stage.setBackdrop(TourCaptures.backdropView(.welcome))
         stage.resize(to: NSSize(width: 1280, height: 800))
-        if !model.sidebar.isVisible { model.sidebar.toggle() }
+        if model.sidebar.isVisible { model.sidebar.toggle() }
         model.settings.theme = .dark
         let leadID = HydraID.lead
         model.selectedThreadID = leadID

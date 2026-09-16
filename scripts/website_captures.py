@@ -9,7 +9,7 @@ The app runs once in its tour capture mode (see DroppyCode/Support/TourCaptures.
 it opens the real window over gradient backdrops with mock data, photographs the tour
 scenes (tour-*.png) and the site's composer scenes (web-*.png), and quits. This script
 then encodes every still as WebP at the site's sizes into build.noindex/website-tour
-(which mirrors the R2 tour/v2 prefix one to one) and uploads the set with immutable cache
+(which mirrors the R2 tour/v4 prefix one to one) and uploads the set with immutable cache
 headers, verifying each key afterwards. The site loads these stills straight from R2,
 so nothing under website/ is touched.
 
@@ -41,11 +41,11 @@ SITE_ORIGIN = "https://droppy-releases.jordylegrand.workers.dev"
 
 # The tour run's output: stills photographed over gradient backdrops, already 16:10,
 # at the display's scale (2x). Encoded one to one into TOUR_OUT, which mirrors the R2
-# tour/v2 prefix, so the site serves them straight from R2 and nothing under website/ is
+# tour/v4 prefix, so the site serves them straight from R2 and nothing under website/ is
 # touched.
 TOUR_CAPTURES = ROOT / "build.noindex" / "tour-captures"
 TOUR_OUT = ROOT / "build.noindex" / "website-tour"
-R2_TOUR_PREFIX = "site-assets/droppy-code/tour/v2"
+R2_TOUR_PREFIX = "site-assets/droppy-code/tour/v4"
 TOUR_STILLS = {
     # name: (source still from the tour run, output width)
     "hero": ("web-hero", 2400),
@@ -54,12 +54,15 @@ TOUR_STILLS = {
     "pairs": ("tour-pairs", 2080),
     "slider": ("tour-slider", 2080),
     "panels": ("tour-panels", 2080),
+    "threads": ("tour-threads", 2080),
+    "recipes": ("tour-recipes", 2080),
     "window": ("tour-window", 2080),
     "diff": ("web-diff", 2080),
     "palette": ("web-palette", 2080),
     "plans": ("web-plans", 2080),
     "question": ("web-question", 2080),
     "queue": ("web-queue", 2080),
+    "intro": ("web-intro", 2080),
 }
 # The four themes whose quadrants tile into one seamless themes still, in tile order:
 # top-left, top-right, bottom-left, bottom-right (see TourCaptures.run).
@@ -206,6 +209,27 @@ def encode_tour():
             sys.exit(f"No {path.name} from the last tour run; rerun without --encode")
         size = tour_still(name, path, width)
         print(f"  {name}.webp {size[0]}x{size[1]}  {(TOUR_OUT / f'{name}.webp').stat().st_size // 1024} KB")
+    (TOUR_OUT / "themes").mkdir(parents=True, exist_ok=True)
+    for path in sorted(TOUR_CAPTURES.glob("web-theme-*.png")):
+        theme_id = path.stem.removeprefix("web-theme-")
+        size = tour_still(f"themes/{theme_id}", path, 2080, quality=86)
+        print(f"  themes/{theme_id}.webp {size[0]}x{size[1]}  {(TOUR_OUT / 'themes' / f'{theme_id}.webp').stat().st_size // 1024} KB")
+    # The sidebar tile: the floating list itself, cut from the threads still around its
+    # popover (the sidecar's focus: the popover with the button it hangs from, in still
+    # points, top-left origin; the still is 2x).
+    threads_path = TOUR_CAPTURES / "tour-threads.png"
+    sidecar_path = TOUR_CAPTURES / "tour-threads.json"
+    if not threads_path.exists() or not sidecar_path.exists():
+        sys.exit(f"No tour-threads still and sidecar from the last tour run; rerun without --encode")
+    from PIL import Image
+    threads = Image.open(threads_path).convert("RGB")
+    frames = json.loads(sidecar_path.read_text())
+    scale = threads.width / frames["rect"][2]
+    fx, fy, fw, fh = frames["focus"]
+    box = tuple(round(scale * v) for v in (fx, fy, fx + fw, fy + fh))
+    sidebar = threads.crop(box)
+    sidebar.save(TOUR_OUT / "sidebar.webp", "WEBP", quality=86, method=6)
+    print(f"  sidebar.webp {sidebar.width}x{sidebar.height}  {(TOUR_OUT / 'sidebar.webp').stat().st_size // 1024} KB")
     for name in TOUR_THEME_QUADRANTS:
         path = TOUR_CAPTURES / f"tour-theme-{name}.png"
         if not path.exists():
@@ -230,20 +254,19 @@ def verify_key(key, local):
 
 def upload_tour():
     step(f"Uploading to R2 ({R2_BUCKET}/{R2_TOUR_PREFIX})")
-    names = [*TOUR_STILLS, "themes"]
-    for name in names:
-        local = TOUR_OUT / f"{name}.webp"
-        if not local.exists():
-            sys.exit(f"No {local.name}; encode first")
-        key = f"{R2_TOUR_PREFIX}/{name}.webp"
+    paths = sorted(TOUR_OUT.rglob("*.webp"))
+    if not paths:
+        sys.exit(f"No .webp under {TOUR_OUT}; encode first")
+    for local in paths:
+        key = f"{R2_TOUR_PREFIX}/{local.relative_to(TOUR_OUT).as_posix()}"
         subprocess.run([
             "wrangler", "r2", "object", "put", f"{R2_BUCKET}/{key}", "--file", str(local),
             "--content-type", "image/webp", "--cache-control", "public, max-age=31536000, immutable", "--remote",
         ], check=True, capture_output=True)
         print(f"  {key}")
     step("Verifying every key serves")
-    for name in names:
-        verify_key(f"{R2_TOUR_PREFIX}/{name}.webp", TOUR_OUT / f"{name}.webp")
+    for local in paths:
+        verify_key(f"{R2_TOUR_PREFIX}/{local.relative_to(TOUR_OUT).as_posix()}", local)
 
 
 def probe(path):

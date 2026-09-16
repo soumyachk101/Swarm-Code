@@ -2141,8 +2141,12 @@ struct TodoListRow: View {
                 }
             }
             .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.3), in: .rect(cornerRadius: 14, style: .continuous))
+            // The card hugs its longest step, like the badges: the row takes the
+            // width (less the badges' trailing room) only to lead-align the card and
+            // give long steps a line to wrap at.
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.trailing, 96)
             // One checklist per turn: updates rewrite these steps in place, so
             // checking an item off animates the same list instead of adding a row.
             .animation(.snappy(duration: 0.2), value: steps)

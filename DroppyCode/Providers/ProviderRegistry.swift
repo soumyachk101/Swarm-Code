@@ -102,7 +102,14 @@ final class ProviderRegistry {
            let data = UserDefaults.standard.data(forKey: cacheKey),
            let cached = try? JSONDecoder().decode([String: [ModelOption]].self, from: data) {
             for (key, list) in cached {
-                if let provider = ProviderKind(rawValue: key) { catalogs[provider] = list }
+                guard let provider = ProviderKind(rawValue: key) else { continue }
+                // A list cached before the scales were ordered may still run high to low
+                // (Grok's did); the slider reads them low to high, so they are put right here.
+                catalogs[provider] = list.map { option in
+                    var option = option
+                    option.efforts = ACPSession.orderedEfforts(option.efforts)
+                    return option
+                }
             }
         }
         if Self.isStaleClaudeSeed(catalogs[.claude] ?? []) { catalogs[.claude] = Self.claudeSeed }

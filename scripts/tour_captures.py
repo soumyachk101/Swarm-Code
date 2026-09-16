@@ -9,10 +9,10 @@ imagesets (welcome comes from the web hero, themes from a seamless 2x2 collage).
 
 A still's sidecar may name a `focus`, the part of the scene the page is about (the
 open popover with its chip, the team's panel); the page is then cut around that focus
-instead of the whole window, so the slider and Hydra pages zoom on their subject.
+instead of the whole window, so the slider, recipes and Hydra pages zoom on their subject.
 
 The website's set is NOT cut here: scripts/website_captures.py encodes the same
-tour run whole into build.noindex/website-tour and uploads it to the R2 tour/v2
+tour run whole into build.noindex/website-tour and uploads it to the R2 tour/v4
 prefix with per-key verification, so only one uploader writes those keys. With
 --website/--export-only/--upload this script delegates to that pipeline. Needs
 Pillow (pip).
@@ -38,14 +38,14 @@ ASSETS = ROOT / "DroppyCode" / "Resources" / "Assets.xcassets"
 
 WIDTH = 1320
 HEIGHT = 824
-SCENES = ["welcome", "hydra", "pairs", "slider", "panels"]
+SCENES = ["welcome", "hydra", "pairs", "slider", "threads", "recipes", "panels"]
 CONTENTS = {"info": {"author": "xcode", "version": 1}}
 
 # App window size in points for each still, matching the stage sizes in
 # DroppyCode/Support/TourCaptures.swift (and TourCaptures+Hydra.swift). Every
 # still is a 16:10 rect around the window: the frame grown by 72 pt on every
 # side, then widened/heightened to 1.6. The popover scenes (tour-pairs,
-# tour-slider, web-hero) photograph the window unioned with the open popover
+# tour-slider, tour-recipes, web-hero) photograph the window unioned with the open popover
 # (see Stage.tourCaptureRect(including:)), so their PNGs are larger than the
 # window-only rect below; the website pipeline serves those whole, uncropped.
 WINDOW_SIZES = {
@@ -54,6 +54,8 @@ WINDOW_SIZES = {
     "tour-hydra": (960, 600),
     "tour-pairs": (960, 600),
     "tour-slider": (960, 600),
+    "tour-threads": (960, 600),
+    "tour-recipes": (960, 600),
     "tour-panels": (1280, 800),
     "tour-window": (660, 600),
     "web-diff": (1200, 660),
@@ -61,6 +63,7 @@ WINDOW_SIZES = {
     "web-plans": (1200, 660),
     "web-question": (1200, 660),
     "web-queue": (1200, 660),
+    "web-intro": (1200, 660),
     "tour-theme-tokyoNight": (960, 600),
     "tour-theme-gruvbox": (960, 600),
     "tour-theme-catppuccinLatte": (960, 600),
@@ -112,7 +115,7 @@ def capture():
     # the run is force-killed at its budget, so a stall can never leave it running.
     marker = "tour-captures " + str(CAPTURES)
     subprocess.run(["open", "-n", str(APP), "--args", "--tour-captures", str(CAPTURES)], check=True)
-    deadline = time.time() + 330
+    deadline = time.time() + 630
     while time.time() < deadline:
         time.sleep(2)
         alive = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.strip()
@@ -224,6 +227,11 @@ def frame(name, inset=8):
     inner = (x + inset, y + inset, x + w - inset, y + h - inset)
     focus = frames.get("focus")
     box = focus_box(inner, focus)
+    if focus and box == inner:
+        # A focus the window cannot hold (the cookbook's popover is taller than the
+        # window it hangs from): cut around it within the whole still instead, so the
+        # page shows the popover entire beside the window rather than clipped at its edge.
+        box = focus_box((0, 0, rect_w, rect_h), focus)
     print(f"  {name}: {'focus' if focus and box != inner else 'whole window'} {tuple(round(v) for v in box)}")
     return image.crop(tuple(round(scale * v) for v in box))
 
@@ -247,7 +255,7 @@ def encode():
     # The welcome page is its own scene: the whole window with the sidebar open, no
     # popover, so the first page is the overview and not the hero's close-up.
     for name, source in [("tour-welcome", "tour-welcome"), ("tour-hydra", "tour-hydra"), ("tour-pairs", "tour-pairs"),
-                         ("tour-slider", "tour-slider"), ("tour-panels", "tour-panels")]:
+                         ("tour-slider", "tour-slider"), ("tour-threads", "tour-threads"), ("tour-recipes", "tour-recipes"), ("tour-panels", "tour-panels")]:
         if not (CAPTURES / f"{source}.png").exists():
             sys.exit(f"The capture run wrote no {source}.png; see {CAPTURES / 'run.log'}")
         write_imageset(name, fit(frame(source), WIDTH, HEIGHT))
@@ -255,7 +263,7 @@ def encode():
 
 
 # The website's set used to be cut and uploaded from here: cropped-on-the-action
-# WebP files into website/assets/app/tour/, pushed to the same R2 tour/v2 prefix
+# WebP files into website/assets/app/tour/, pushed to the same R2 tour/v4 prefix
 # website_captures.py writes. That path is superseded and removed, so only one
 # uploader writes those keys: --website/--export-only/--upload delegate to
 # website_captures.py, which encodes every still whole (popovers uncropped) into

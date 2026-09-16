@@ -148,6 +148,13 @@ struct ChatView: View {
                         hydraLingers = false
                         return
                     }
+                    // Hidden by the reader (the Hydra button, within a beat of the panel
+                    // showing): nothing to hold. The members leave the hidden panel's heads
+                    // out, so a held panel here was an empty one with a zero on it.
+                    guard !runtime.isHydraPanelHidden else {
+                        hydraLingers = false
+                        return
+                    }
                     let shown = hydraShownSince.map { Date.now.timeIntervalSince($0) } ?? .infinity
                     let remaining = Self.hydraMinimumPresence - shown
                     guard remaining > 0 else { return }
@@ -157,6 +164,12 @@ struct ChatView: View {
                         guard !Task.isCancelled else { return }
                         withAnimation(Chrome.panelSlide) { hydraLingers = false }
                     }
+                }
+                // The same tap while a held panel is still fading: it goes with the tap.
+                .onChange(of: runtime.isHydraPanelHidden) { _, hidden in
+                    guard hidden, hydraLingers else { return }
+                    hydraLingerTask?.cancel()
+                    withAnimation(Chrome.panelSlide) { hydraLingers = false }
                 }
             }
             .overlay(alignment: .topLeading) {
@@ -1106,6 +1119,10 @@ private struct ThreadsButton: View {
             SidebarView(inPopover: true, dismiss: { isPresented = false })
                 .frame(width: model.sidebar.width, height: 560)
                 .presentedChrome()
+        }
+        // The capture run hangs the list's still from the button, where the app shows it.
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            if WebsiteCaptures.isEnabled { WebsiteCaptures.threadsButtonFrame = frame }
         }
     }
 }
