@@ -1,40 +1,57 @@
 import Foundation
 
-/// A bounded cache that keeps what was used recently and lets the rest go a generation at
-/// a time. Entries live in the current generation; once it fills, it becomes the previous
-/// one and a fresh generation starts. A hit in the previous generation moves the entry
-/// forward. So filling the cache never drops everything at once: a run of fresh keys (a
-/// streaming reply parsing on every flush) pushes out the oldest entries first and the
-/// ones still in use stay, and no operation costs more than two dictionary lookups.
 struct RecentCache<Key: Hashable, Value> {
-    private var current: [Key: Value] = [:]
-    private var previous: [Key: Value] = [:]
-    private let limit: Int
+    private struct Entry {
+        var value: Value
+        var cost: Int
+    }
 
-    /// - Parameter limit: entries per generation; the cache holds at most twice this many.
-    init(limit: Int) {
+    private var current: [Key: Entry] = [:]
+    private var previous: [Key: Entry] = [:]
+    private var currentCost = 0
+    private var previousCost = 0
+    private let limit: Int
+    private let costLimit: Int
+
+    init(limit: Int, costLimit: Int = .max) {
         self.limit = max(1, limit)
+        self.costLimit = max(0, costLimit)
         current.reserveCapacity(self.limit)
     }
 
     mutating func value(for key: Key) -> Value? {
-        if let hit = current[key] { return hit }
+        if let hit = current[key] { return hit.value }
         guard let hit = previous.removeValue(forKey: key) else { return nil }
-        insert(hit, for: key)
-        return hit
+        previousCost -= hit.cost
+        insert(hit.value, for: key, cost: hit.cost)
+        return hit.value
     }
 
-    /// Whether the key is held, without promoting it.
     func contains(_ key: Key) -> Bool {
         current[key] != nil || previous[key] != nil
     }
 
-    mutating func insert(_ value: Value, for key: Key) {
-        if current.count >= limit, current[key] == nil {
+    @discardableResult
+    mutating func removeValue(for key: Key) -> Value? {
+        let currentEntry = current.removeValue(forKey: key)
+        let previousEntry = previous.removeValue(forKey: key)
+        currentCost -= currentEntry?.cost ?? 0
+        previousCost -= previousEntry?.cost ?? 0
+        return currentEntry?.value ?? previousEntry?.value
+    }
+
+    mutating func insert(_ value: Value, for key: Key, cost: Int = 1) {
+        removeValue(for: key)
+        let cost = max(0, cost)
+        guard cost <= costLimit else { return }
+        if current.count >= limit || currentCost > costLimit - cost {
             previous = current
+            previousCost = currentCost
             current = [:]
             current.reserveCapacity(limit)
+            currentCost = 0
         }
-        current[key] = value
+        current[key] = Entry(value: value, cost: cost)
+        currentCost += cost
     }
 }

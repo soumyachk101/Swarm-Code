@@ -24,11 +24,9 @@ enum TextCleanup {
     }
 
     static func singleLine(_ text: String, limit: Int = 120) -> String {
-        let line = text
-            .split(whereSeparator: \.isNewline)
-            .first
-            .map(String.init)?
-            .trimmingCharacters(in: .whitespaces) ?? ""
+        let remaining = text.drop(while: \.isNewline)
+        let end = remaining.firstIndex(where: \.isNewline) ?? remaining.endIndex
+        let line = remaining[..<end].trimmingCharacters(in: .whitespaces)
         return line.count > limit ? String(line.prefix(limit - 1)) + "…" : line
     }
 
@@ -41,8 +39,29 @@ enum TextCleanup {
     ///
     /// The en dash stays: it is the correct mark in a range, as in "lines 10–20".
     static func withoutEmDashes(_ text: String) -> String {
-        guard text.contains(where: { isEmDash($0) }) else { return text }
+        guard mayContainEmDash(text), text.contains(where: { isEmDash($0) }) else { return text }
         return String(text.map { isEmDash($0) ? "-" : $0 })
+    }
+
+    /// Whether any dash scalar is in the bytes, checked without walking graphemes: every
+    /// streamed delta and every stored message passes through here, and model prose is
+    /// full of other E2-led scalars (curly quotes, ellipses, en dashes) that made the
+    /// lead-byte test alone let most of it through to the slow path.
+    private static func mayContainEmDash(_ text: String) -> Bool {
+        var utf8 = text.utf8.makeIterator()
+        while let byte = utf8.next() {
+            guard byte == 0xE2, let second = utf8.next() else { continue }
+            if second == 0x80 {
+                // U+2014 and U+2015: E2 80 94, E2 80 95.
+                guard let third = utf8.next() else { return false }
+                if third == 0x94 || third == 0x95 { return true }
+            } else if second == 0xB8 {
+                // U+2E3A and U+2E3B: E2 B8 BA, E2 B8 BB.
+                guard let third = utf8.next() else { return false }
+                if third == 0xBA || third == 0xBB { return true }
+            }
+        }
+        return false
     }
 
     /// The em dash and its longer relatives: the horizontal bar, and the two- and
@@ -56,6 +75,11 @@ enum TextCleanup {
 }
 
 enum SimpleDiff {
+    /// Past this much text a reported edit keeps its line counts and drops the hunk: the diff
+    /// of a whole generated file would otherwise sit in the thread document forever and be
+    /// encoded with every save. The same cap bounds command diffs (`ThreadRuntime.fileEdits`).
+    static let diffLimit = 200_000
+
     /// A compact unified hunk between two texts, trimming the unchanged head and tail.
     static func unified(old: String, new: String) -> FileEdit.Stats {
         let oldLines = old.isEmpty ? [] : old.components(separatedBy: "\n")
@@ -74,6 +98,9 @@ enum SimpleDiff {
         let leading = oldLines[max(0, prefix - 3)..<prefix]
         let trailingEnd = min(oldLines.count, oldLines.count - suffix + 3)
         let trailing = oldLines[(oldLines.count - suffix)..<trailingEnd]
+        guard old.utf8.count + new.utf8.count <= diffLimit else {
+            return FileEdit.Stats(diff: nil, additions: added.count, deletions: removed.count)
+        }
         let oldStart = prefix - leading.count + 1
         var lines = ["@@ -\(oldStart),\(leading.count + removed.count + trailing.count) +\(oldStart),\(leading.count + added.count + trailing.count) @@"]
         lines += leading.map { " " + $0 }
@@ -86,7 +113,7 @@ enum SimpleDiff {
 
 extension FileEdit {
     struct Stats {
-        var diff: String
+        var diff: String?
         var additions: Int
         var deletions: Int
     }

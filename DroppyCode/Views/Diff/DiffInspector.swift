@@ -139,7 +139,7 @@ struct DiffInspector: View {
         .confirmationDialog("Revert this turn?", isPresented: $isConfirmingRevert) {
             Button("Revert files and conversation", role: .destructive) {
                 guard let turnID = runtime.diffSelection else { return }
-                Task { await runtime.revert(to: turnID, restoreFiles: true) }
+                Task { _ = try? await runtime.revert(to: turnID, restoreFiles: true) }
             }
         } message: {
             Text("Files go back to how they were before this turn, and the turn leaves the conversation.")

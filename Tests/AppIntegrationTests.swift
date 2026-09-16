@@ -1,0 +1,53 @@
+import AppKit
+import Testing
+@testable import DroppyCode
+
+@Test func revertTouchesOnlyTheThreadsOwnFiles() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("droppy-revert-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let git = Git(directory.path)
+    try Git.check(await git.run(["init", "-q"]))
+    func write(_ name: String, _ text: String) throws {
+        try text.write(to: directory.appendingPathComponent(name), atomically: true, encoding: .utf8)
+    }
+    try write("mine.txt", "original\n")
+    try write("theirs.txt", "theirs\n")
+    try write("shared.txt", "shared\n")
+    try Git.check(await git.run(["add", "."]))
+    try Git.check(await git.run(["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "Initial"]))
+    try await git.captureCheckpoint("refs/test/base")
+    // The thread's turn: edits mine.txt and shared.txt, creates created.txt.
+    try write("mine.txt", "replacement\nextra\n")
+    try write("shared.txt", "shared by the thread\n")
+    try write("created.txt", "new\n")
+    try await git.captureCheckpoint("refs/test/end")
+    // Afterwards: another thread edits theirs.txt, and someone edits shared.txt again.
+    try write("theirs.txt", "changed elsewhere\n")
+    try write("shared.txt", "shared, then changed again\n")
+    let before = try await git.output(["status", "--porcelain=v1", "-z"])
+
+    let preview = try await git.previewRestore(base: "refs/test/base", end: "refs/test/end", paths: ["mine.txt", "shared.txt", "created.txt"])
+    #expect(preview.files.map(\.path) == ["created.txt", "mine.txt", "shared.txt"])
+    #expect(!preview.files.contains { $0.path == "theirs.txt" })
+    #expect(preview.files.first { $0.path == "shared.txt" }?.isKept == true)
+    #expect(preview.restorable.map(\.path) == ["created.txt", "mine.txt"])
+    #expect(preview.additions == 3 && preview.deletions == 1)
+    // Only the preview ran: the index is as it was.
+    #expect(try await git.output(["status", "--porcelain=v1", "-z"]) == before)
+
+    try await git.restore(preview.restorable.map(\.path), from: "refs/test/base")
+    #expect(try String(contentsOf: directory.appendingPathComponent("mine.txt"), encoding: .utf8) == "original\n")
+    #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("created.txt").path))
+    #expect(try String(contentsOf: directory.appendingPathComponent("theirs.txt"), encoding: .utf8) == "changed elsewhere\n")
+    #expect(try String(contentsOf: directory.appendingPathComponent("shared.txt"), encoding: .utf8) == "shared, then changed again\n")
+}
+
+@main struct AppIntegrationTests {
+    static func main() async {
+        // Finished turns ask the app whether it is active; no window is ever shown.
+        await MainActor.run { _ = NSApplication.shared.setActivationPolicy(.prohibited) }
+        let result: CInt = await Testing.__swiftPMEntryPoint()
+        exit(result)
+    }
+}

@@ -82,7 +82,7 @@ struct FollowUpPrompt: Codable, Hashable, Identifiable, Sendable {
     var bundleID: UUID? = nil
 
     var isEmpty: Bool {
-        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+        attachments.isEmpty && !text.contains { !$0.isWhitespace }
     }
 }
 
@@ -223,6 +223,7 @@ struct TurnSummary: Codable, Hashable, Sendable {
     var filesChanged: Int
     var additions: Int
     var deletions: Int
+    var changes: FileChangeSummary?
 }
 
 struct TurnRecord: Codable, Identifiable, Hashable, Sendable {
@@ -278,7 +279,7 @@ struct ContextUsage: Codable, Hashable, Sendable {
     }
 }
 
-struct ThreadDocument: Codable, Sendable {
+struct ThreadDocument: Codable, Equatable, Sendable {
     var threadID: UUID
     var items: [TimelineItem] = []
     var turns: [TurnRecord] = []

@@ -143,7 +143,7 @@ struct UserMessageRow: View {
 
     private func revert(restoreFiles: Bool) {
         guard let turnID = entry.turnID else { return }
-        Task { await runtime.revert(to: turnID, restoreFiles: restoreFiles) }
+        Task { _ = try? await runtime.revert(to: turnID, restoreFiles: restoreFiles) }
     }
 
     /// The context menu's items, from value snapshots with weak captures: the AppKit menu
@@ -2533,7 +2533,7 @@ struct TurnFinishedBlock: View {
                     summary: summary,
                     files: derived.fileStats,
                     canUndo: canUndo,
-                    onRevert: { Task { await runtime.revert(to: turnID, restoreFiles: true) } },
+                    onRevert: { Task { _ = try? await runtime.revert(to: turnID, restoreFiles: true) } },
                     // On the button itself, so the changes open where the reader
                     // clicked, whatever is above the chat box.
                     onReview: { [weak reviewRuntime] button in reviewRuntime?.showDiff(on: button, turn: turnID) }

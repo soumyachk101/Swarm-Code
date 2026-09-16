@@ -1088,7 +1088,7 @@ private struct ChatChromeRow: View {
                         OpenInMenu(directory: directory)
                         if let project {
                             ChromeDivider()
-                            ScriptsMenu(project: project, runtime: runtime, directory: directory)
+                            ScriptsMenu(project: project, runtime: runtime)
                         }
                         if git.isRepository {
                             ChromeDivider()
@@ -1369,7 +1369,6 @@ private struct ScriptsMenu: View {
     @Environment(AppModel.self) private var model
     let project: Project
     let runtime: ThreadRuntime
-    let directory: String
 
     @State private var isEditing = false
 
@@ -1379,8 +1378,7 @@ private struct ScriptsMenu: View {
                 PopoverSectionHeader("Scripts")
                 ForEach(project.scripts) { script in
                     PopoverItem(script.name, symbol: script.symbol) {
-                        model.terminals.run(script, threadID: runtime.threadID, directory: directory)
-                        runtime.isTerminalVisible = true
+                        model.runScript(script, threadID: runtime.threadID)
                     }
                 }
                 PopoverDivider()

@@ -296,11 +296,11 @@ extension AppModel {
         }
     }
 
-    /// The heads a lead still shows in its panel, in the order they were sent out.
+    /// The heads a lead still shows in its panel, in the order they were sent out. Read
+    /// through the parent index and the heads' own cells, so the chat showing them is left
+    /// alone when any other thread changes.
     func hydraHeads(of parentID: UUID) -> [ChatThread] {
-        threads
-            .filter { $0.parentThreadID == parentID && $0.isInPanel && !$0.isArchived && $0.isHydraHead }
-            .sorted { ($0.hydra?.index ?? 0) < ($1.hydra?.index ?? 0) }
+        panelHeads(of: parentID)
     }
 
     /// How many of a lead's Droppy-run heads are still at work.
@@ -317,8 +317,8 @@ extension AppModel {
 
     /// Every head a lead has sent out, in the panel or not, in the order they went.
     func hydraTeam(of parentID: UUID) -> [ChatThread] {
-        threads
-            .filter { $0.parentThreadID == parentID && !$0.isArchived && $0.isHydraHead }
+        children(of: parentID)
+            .filter { !$0.isArchived && $0.isHydraHead }
             .sorted { ($0.hydra?.index ?? 0) < ($1.hydra?.index ?? 0) }
     }
 
@@ -952,10 +952,12 @@ extension AppModel {
     /// on disk that no chat names any more (the app quit with a head half-way made, or
     /// removing it failed) is swept away.
     func sweepHydraCopies() {
-        // Copies deleted from disk still hold their names in the registry until pruned.
+        // Copies deleted from disk still hold their names in the registry until pruned:
+        // only the projects that ever had a copy, one git process at a time.
         let projects = self.projects
+        let projectsWithCopies = Set(threads.filter { $0.hydra?.hasOwnCopy == true }.map(\.projectID))
         Task {
-            for project in projects { await Git(project.path).pruneWorktrees() }
+            for project in projects where projectsWithCopies.contains(project.id) { await Git(project.path).pruneWorktrees() }
             await sweepOrphanHydraCopies(of: projects)
         }
         for head in threads where head.hydra?.hasOwnCopy == true {
@@ -1019,9 +1021,10 @@ extension AppModel {
         }
         let currentTurn = leadRuntime.turns.last?.id
         var touched: [String] = []
+        var seen: Set<String> = []
         for entry in leadRuntime.entries where entry.kind == .tool && entry.item.turnID == currentTurn {
             guard case .tool(let call) = entry.item.content else { continue }
-            for edit in call.edits where !edit.path.isEmpty && !touched.contains(edit.path) {
+            for edit in call.edits where !edit.path.isEmpty && seen.insert(edit.path).inserted {
                 touched.append(edit.path)
             }
         }

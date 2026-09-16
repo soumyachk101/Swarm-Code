@@ -6,7 +6,7 @@ import SwiftUI
 struct ThreadChangesTab: View {
     static let overlap: CGFloat = 14
 
-    let stats: ThreadRuntime.ChangeStats
+    let stats: FileChangeSummary
     /// Receives the tab's own view, so the popover can anchor to it.
     let anchor: (NSView) -> Void
     let action: () -> Void
@@ -18,7 +18,7 @@ struct ThreadChangesTab: View {
                 Image(systemName: "plusminus")
                     .font(Chrome.inlineIconFont)
                     .foregroundStyle(Chrome.secondaryText)
-                Text(verbatim: stats.files == 1 ? "1 file" : "\(stats.files) files")
+                Text(verbatim: stats.files.count == 1 ? "1 file" : "\(stats.files.count) files")
                     .foregroundStyle(Chrome.primaryText.opacity(0.9))
                 // The same hues as every other +/− in the app (see DiffStatLabel), so a
                 // theme recolours the tab with the diffs it stands for.
@@ -41,6 +41,6 @@ struct ThreadChangesTab: View {
         }
         .fixedSize()
         .help("Show this thread's changes\(ShortcutStore.hint(for: .toggleChanges))")
-        .accessibilityLabel(Text(verbatim: "\(stats.files) files changed, \(stats.additions) added, \(stats.deletions) removed"))
+        .accessibilityLabel(Text(verbatim: "\(stats.files.count) files changed, \(stats.additions) added, \(stats.deletions) removed"))
     }
 }

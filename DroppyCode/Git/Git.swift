@@ -614,11 +614,6 @@ struct Git: Sendable {
         return Dictionary(uniqueKeysWithValues: zip(existing, hashes.map(String.init)))
     }
 
-    func restoreCheckpoint(_ ref: String) async throws {
-        try Self.check(await run(["restore", "--source", ref, "--worktree", "--staged", "--", "."]))
-        _ = try? await run(["clean", "-fd", "--", "."])
-    }
-
     func deleteCheckpoints(thread: UUID) async {
         let prefix = "refs/droppy-code/checkpoints/\(thread.uuidString.lowercased())/"
         guard let refs = try? await output(["for-each-ref", "--format=%(refname)", prefix]) else { return }

@@ -42,8 +42,31 @@ final class AppModel {
     }
     private(set) var threads: [ChatThread] = [] {
         didSet {
+            // The positions stand while every thread kept its place and its project; a
+            // metadata change to a thread rebuilds nothing.
+            let changedMembership = threads.count != threadIndex.positions.count || threads.enumerated().contains { index, thread in
+                guard threadIndex.positions[thread.id] == index, let previous = threadCells[thread.id]?.value else { return true }
+                return previous.projectID != thread.projectID
+            }
             Self.write(Self.sync(&threadCells, with: threads))
             syncChildCells()
+            if changedMembership { threadIndex = ThreadIndex(threads) }
+        }
+    }
+    private var threadIndex = ThreadIndex([])
+
+    /// Where each thread sits in `threads`, and each project's threads by position, so a
+    /// lookup or an update never scans the list.
+    private struct ThreadIndex {
+        var positions: [UUID: Int] = [:]
+        var projects: [UUID: [Int]] = [:]
+
+        init(_ threads: [ChatThread]) {
+            positions.reserveCapacity(threads.count)
+            for (index, thread) in threads.enumerated() {
+                if positions[thread.id] == nil { positions[thread.id] = index }
+                projects[thread.projectID, default: []].append(index)
+            }
         }
     }
     @ObservationIgnored private var projectCells: [UUID: ObservedValue<Project?>] = [:]
@@ -88,6 +111,7 @@ final class AppModel {
     @ObservationIgnored private var runtimes: [UUID: ThreadRuntime] = [:]
     @ObservationIgnored private var idleSessionStops: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var persistenceEnabled = true
     @ObservationIgnored private var didRequestNotifications = false
 
     init() {
@@ -110,6 +134,7 @@ final class AppModel {
         Self.write(Self.sync(&projectCells, with: projects))
         Self.write(Self.sync(&threadCells, with: threads))
         syncChildCells()
+        threadIndex = ThreadIndex(threads)
         autoContinue = AutoContinue(app: self)
         if let lastID = settings.lastProjectID, project(lastID) == nil {
             settings.lastProjectID = nil
@@ -203,7 +228,7 @@ final class AppModel {
 
     /// The threads under a thread, each read through its own cell: the caller depends on
     /// which children this thread has and on those children alone.
-    private func children(of parentID: UUID) -> [ChatThread] {
+    func children(of parentID: UUID) -> [ChatThread] {
         childIDs(of: parentID).compactMap(thread)
     }
 
@@ -212,17 +237,18 @@ final class AppModel {
         // so the first click into a conversation never parses its history on the main thread.
         let recent = threads.filter { !$0.isArchived && !$0.isInPanel }.sorted { $0.updatedAt > $1.updatedAt }.prefix(12).map(\.id)
         warmDocuments(recent)
-        sweepHydraCopies()
+        await settings.loadKeychainInBackground()
         await LoginEnvironment.load()
+        // After the login environment, so git runs with the user's PATH.
+        sweepHydraCopies()
         await providers.refreshAll()
-        if providers.status(.codex).isInstalled {
-            await providers.loadCatalog(.codex)
-        }
-        if providers.status(.deepseek).isInstalled {
-            await providers.loadCatalog(.deepseek)
-        }
-        if providers.status(.meta).isInstalled {
-            await providers.loadCatalog(.meta)
+        // The catalogs a fresh install starts without, or with only a seed of: one CLI and
+        // two HTTPS calls, overlapped. Claude's brings its slash commands too, so the picker
+        // and the composer are complete before any turn.
+        await withTaskGroup(of: Void.self) { group in
+            for provider in [ProviderKind.claude, .codex, .deepseek, .meta] where providers.status(provider).isInstalled {
+                group.addTask { await self.providers.loadCatalog(provider) }
+            }
         }
         if providers.status(.zai).isInstalled {
             await providers.loadCatalog(.zai)
@@ -268,7 +294,8 @@ final class AppModel {
     /// settled first. A helper whose parent is among them sits under that parent instead
     /// (see `helpers(of:)`); one whose parent is gone or archived stands on its own.
     func threads(in project: Project) -> [ChatThread] {
-        let shown = threads.filter { $0.projectID == project.id && !$0.isArchived && !$0.isInPanel }
+        let shown = (threadIndex.projects[project.id] ?? []).map { threads[$0] }
+            .filter { !$0.isArchived && !$0.isInPanel }
         let shownIDs = Set(shown.map(\.id))
         return shown
             .filter { $0.parentThreadID.map { !shownIDs.contains($0) } ?? true }
@@ -300,11 +327,9 @@ final class AppModel {
         guard let index = order.firstIndex(of: targetID) else { return false }
         order.insert(id, at: placeAfter ? index + 1 : index)
         guard order != before else { return false }
-        if moving.isPinned != target.isPinned {
-            updateThread(id) { $0.isPinned = target.isPinned }
-        }
-        for (position, threadID) in order.enumerated() {
-            updateThread(threadID) { $0.sortOrder = Double(position) }
+        updateThreads(order) { position, thread in
+            if thread.id == id { thread.isPinned = target.isPinned }
+            thread.sortOrder = Double(position)
         }
         return true
     }
@@ -320,11 +345,9 @@ final class AppModel {
         order.insert(id, at: placeAfter ? index + 1 : index)
         guard order != peers else { return false }
         let calendar = Calendar.current
-        for (position, threadID) in order.enumerated() {
-            updateThread(threadID) {
-                $0.activityOrder = Double(position)
-                $0.activityOrderDay = calendar.startOfDay(for: $0.updatedAt)
-            }
+        updateThreads(order) { position, thread in
+            thread.activityOrder = Double(position)
+            thread.activityOrderDay = calendar.startOfDay(for: thread.updatedAt)
         }
         return true
     }
@@ -408,8 +431,11 @@ final class AppModel {
         warmDocuments(neighbors)
     }
 
-    /// A thread left alone for ten minutes gives its agent process back. Its history stays in memory
-    /// and the provider session id stays on the thread, so opening it again resumes the conversation.
+    /// A thread left alone for ten minutes gives its agent process back, and its history
+    /// with it when nothing but the saved document would be lost: the runtime goes, and
+    /// opening the thread again reads it back from disk, with the provider session id on
+    /// the thread resuming the conversation. A thread with a draft, an edit under way, work
+    /// still owed to it or a terminal keeps its runtime, session stopped.
     private func scheduleIdleSessionStop(leaving id: UUID?) {
         if let selectedThreadID {
             idleSessionStops.removeValue(forKey: selectedThreadID)?.cancel()
@@ -424,9 +450,28 @@ final class AppModel {
                 guard !runtime.isRunning else { continue }
                 runtime.stopSession()
                 self.idleSessionStops[id] = nil
+                self.releaseIdleRuntime(id)
                 return
             }
         }
+    }
+
+    /// Drops an idle thread's runtime once its document is on its way to disk. Returns
+    /// whether it did; a runtime holding anything the document does not stays.
+    @discardableResult
+    func releaseIdleRuntime(_ id: UUID) -> Bool {
+        guard let runtime = runtimes[id], selectedThreadID != id, let thread = thread(id),
+              // A thread shown beside the selection, in its panel, is on screen.
+              thread.parentThreadID == nil || thread.parentThreadID != selectedThreadID,
+              runtime.holdsOnlyPersistedState, !sessionsToRelease.contains(id),
+              autoContinue.resumesAt[id] == nil, terminals.sessions(for: id).isEmpty,
+              runningDroppyHeads(of: id) == 0 else { return false }
+        // The save is queued before the runtime goes; a read that follows waits for it
+        // (see `Storage.readDocument`), so the thread can never come back older than it left.
+        runtime.saveNow()
+        runtime.cancelPersistence()
+        runtimes[id] = nil
+        return true
     }
 
     var workingDirectory: String? {
@@ -554,11 +599,25 @@ final class AppModel {
     }
 
     func updateThread(_ id: UUID, _ change: (inout ChatThread) -> Void) {
-        guard let index = threads.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = threadIndex.positions[id] else { return }
         var thread = threads[index]
         change(&thread)
         guard thread != threads[index] else { return }
         threads[index] = thread
+        scheduleSave()
+    }
+
+    private func updateThreads(_ ids: [UUID], _ change: (Int, inout ChatThread) -> Void) {
+        var updated = threads
+        var changed = false
+        for (position, id) in ids.enumerated() {
+            guard let index = threadIndex.positions[id] else { continue }
+            let previous = updated[index]
+            change(position, &updated[index])
+            changed = changed || previous != updated[index]
+        }
+        guard changed else { return }
+        threads = updated
         scheduleSave()
     }
 
@@ -635,11 +694,9 @@ final class AppModel {
             $0.activityOrder = nil
             $0.activityOrderDay = nil
         }
-        for helper in threads where helper.parentThreadID == id && helper.isSettled {
-            updateThread(helper.id) {
-                $0.isSettled = false
-                $0.settledAt = nil
-            }
+        updateThreads(children(of: id).filter(\.isSettled).map(\.id)) { _, helper in
+            helper.isSettled = false
+            helper.settledAt = nil
         }
         saveLibrary()
     }
@@ -705,7 +762,7 @@ final class AppModel {
     func delete(_ id: UUID, removeWorktree: Bool = false) {
         guard let thread = thread(id) else { return }
         // A helper still in its panel goes with the thread it belongs to.
-        for helper in threads where helper.parentThreadID == id { delete(helper.id) }
+        for helper in children(of: id) { delete(helper.id) }
         if selectedThreadID == id { selectNeighbor(of: id) }
         // A head deleted mid-job reports to its lead as stopped, so the batch it was in
         // settles and the lead's waiting heads and merge go on rather than waiting for it.
@@ -741,14 +798,20 @@ final class AppModel {
         if let selectedThreadID, removed.contains(where: { $0.id == selectedThreadID }) {
             self.selectedThreadID = nil
         }
+        var cleanup: [(directory: String, threadID: UUID, copy: String?)] = []
+        cleanup.reserveCapacity(removed.count)
         for thread in removed {
-            discardThreadState(thread)
+            discardThreadState(thread, deletingDocument: false)
             if let project = project(thread.projectID) {
-                let copy = thread.hydra?.hasOwnCopy == true ? thread.worktreePath : nil
-                Task {
-                    await Git(project.path).deleteCheckpoints(thread: thread.id)
-                    if let copy { try? await Git(project.path).removeWorktree(at: copy) }
-                }
+                cleanup.append((project.path, thread.id, thread.hydra?.hasOwnCopy == true ? thread.worktreePath : nil))
+            }
+        }
+        Storage.deleteDocuments(removed.map(\.id))
+        Task {
+            for item in cleanup {
+                let git = Git(item.directory)
+                await git.deleteCheckpoints(thread: item.threadID)
+                if let copy = item.copy { try? await git.removeWorktree(at: copy) }
             }
         }
         let removedIDs = Set(removed.map(\.id))
@@ -832,11 +895,13 @@ final class AppModel {
         updateThread(id) { $0.isInPanel = false }
     }
 
-    private func discardThreadState(_ thread: ChatThread) {
+    private func discardThreadState(_ thread: ChatThread, deletingDocument: Bool = true) {
+        idleSessionStops.removeValue(forKey: thread.id)?.cancel()
+        runtimes[thread.id]?.cancelPersistence()
         runtimes[thread.id]?.stopSession()
         runtimes[thread.id] = nil
         terminals.closeAll(for: thread.id)
-        Storage.deleteDocument(thread.id)
+        if deletingDocument { Storage.deleteDocument(thread.id) }
     }
 
     private func selectNeighbor(of id: UUID) {
@@ -847,6 +912,17 @@ final class AppModel {
         }
         let neighbor = order.indices.contains(index + 1) ? order[index + 1] : (index > 0 ? order[index - 1] : nil)
         selectedThreadID = neighbor?.id
+    }
+
+    var topScript: ProjectScript? {
+        guard let selectedThreadID, let thread = thread(selectedThreadID) else { return nil }
+        return project(thread.projectID)?.scripts.first
+    }
+
+    func runScript(_ script: ProjectScript, threadID: UUID) {
+        guard let thread = thread(threadID), let project = project(thread.projectID) else { return }
+        terminals.run(script, threadID: threadID, directory: thread.worktreePath ?? project.path)
+        runtime(for: threadID).isTerminalVisible = true
     }
 
     func selectThread(offset: Int) {
@@ -1039,6 +1115,7 @@ final class AppModel {
     // MARK: - Persistence
 
     func scheduleSave() {
+        guard persistenceEnabled else { return }
         saveTask?.cancel()
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(400))
@@ -1048,34 +1125,32 @@ final class AppModel {
     }
 
     private func saveLibrary() {
+        guard persistenceEnabled else { return }
         var library = Library()
         library.projects = projects
         library.threads = threads
         let url = Storage.libraryURL
-        Task { await DiskWriter.shared.encodeAndWrite(library, to: url) }
+        DiskWriter.shared.encodeAndWrite(library, to: url)
     }
 
     /// Writes everything synchronously, for use while the app terminates.
     func saveBeforeQuit() {
+        guard persistenceEnabled else { return }
+        persistenceEnabled = false
+        saveTask?.cancel()
+        saveTask = nil
         var library = Library()
         library.projects = projects
         library.threads = threads
-        if let data = try? JSONEncoder.storage.encode(library) {
-            try? data.write(to: Storage.libraryURL, options: .atomic)
-        }
+        DiskWriter.shared.writeSynchronously(library, to: Storage.libraryURL)
         for runtime in runtimes.values {
+            runtime.cancelPersistence()
             runtime.stopSession()
-            var document = ThreadDocument(threadID: runtime.threadID)
-            document.items = runtime.entries.map(\.item)
-            document.turns = runtime.turns
-            document.usage = runtime.usage
-            // The queue goes with the rest, the way `saveNow` writes it: quitting with
-            // messages waiting behind a turn used to throw them away.
-            document.followUps = runtime.followUps
-            if let data = try? JSONEncoder.storage.encode(document) {
-                try? data.write(to: Storage.threadURL(runtime.threadID), options: .atomic)
-            }
+            // A thread only read since its last save is already on disk as it is.
+            guard let snapshot = runtime.unsavedSnapshot() else { continue }
+            DiskWriter.shared.writeSynchronously(snapshot, to: Storage.threadURL(runtime.threadID))
         }
+        DiskWriter.shared.waitForQueuedWrites()
         terminals.terminateAll()
     }
 }

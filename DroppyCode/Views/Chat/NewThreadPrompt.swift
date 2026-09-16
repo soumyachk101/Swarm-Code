@@ -78,6 +78,7 @@ struct NewThreadPrompt: View {
             thread.worktreePath = nil
             thread.branch = nil
             thread.providerSessionID = nil
+            thread.providerResumeAt = nil
         }
         model.updateProject(project.id) { $0.isExpanded = true }
     }
