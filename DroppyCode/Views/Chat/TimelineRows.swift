@@ -723,7 +723,6 @@ struct HydraMergeRow: View {
     let runtime: ThreadRuntime
     let phase: HydraMergePhase
 
-    @State private var now = Date.now
     @State private var isShowingReport = false
 
     /// The one motion for anything in the pill changing: the stage's words, the time's
@@ -735,72 +734,70 @@ struct HydraMergeRow: View {
         let isMerging = outcome == nil
         // The same stage words the sidebar shows beside its own spinner.
         let stage = (runtime.hydraMergeStage ?? "Merging") + "…"
-        let elapsed = RelativeTime.duration(now.timeIntervalSince(runtime.hydraMergeStartedAt ?? now))
-        HStack(spacing: 8) {
-            // The mark stays put through the change; it opens the report like the title does.
-            HydraMarkImage()
-                .foregroundStyle(Chrome.secondaryText)
-                .frame(width: 18, height: 18)
-                .contentShape(.rect)
-                .onTapGesture {
-                    guard let outcome, !outcome.details.isEmpty else { return }
-                    isShowingReport.toggle()
-                }
-                .accessibilityHidden(true)
-            // Only the contents of the current state take part in layout: a still copy of
-            // them sizes the slot, and it changes over at once (an identity transition), so
-            // the pill glides straight from the one width to the other. The contents on
-            // show are drawn over that slot at their own size and clipped to it, the old
-            // ones fading out as the new ones fade in; laid out side by side instead, the
-            // two would hold the pill wide for the length of the fade.
-            ZStack(alignment: .leading) {
-                if let outcome {
-                    outcomeLabel(outcome)
-                        .transition(.identity)
-                } else {
-                    mergingLabel(stage: stage, elapsed: elapsed)
-                        .transition(.identity)
-                }
-            }
-            .hidden()
-            .overlay(alignment: .leading) {
+        // The clock is the display's: a schedule ticks the time once a second while the
+        // merge runs and stops with it, so a merge minutes in never reads "0s".
+        TimelineView(.animation(minimumInterval: 1, paused: !isMerging)) { context in
+            let startedAt = runtime.hydraMergeStartedAt ?? context.date
+            let elapsed = RelativeTime.duration(context.date.timeIntervalSince(startedAt))
+            HStack(spacing: 8) {
+                // The mark stays put through the change; it opens the report like the title does.
+                HydraMarkImage()
+                    .foregroundStyle(Chrome.secondaryText)
+                    .frame(width: 18, height: 18)
+                    .contentShape(.rect)
+                    .onTapGesture {
+                        guard let outcome, !outcome.details.isEmpty else { return }
+                        isShowingReport.toggle()
+                    }
+                    .accessibilityHidden(true)
+                // Only the contents of the current state take part in layout: a still copy of
+                // them sizes the slot, and it changes over at once (an identity transition), so
+                // the pill glides straight from the one width to the other. The contents on
+                // show are drawn over that slot at their own size and clipped to it, the old
+                // ones fading out as the new ones fade in; laid out side by side instead, the
+                // two would hold the pill wide for the length of the fade.
                 ZStack(alignment: .leading) {
                     if let outcome {
-                        outcomeControls(outcome)
-                            .fixedSize()
-                            .transition(.opacity)
+                        outcomeLabel(outcome)
+                            .transition(.identity)
                     } else {
-                        mergingContent(stage: stage, elapsed: elapsed)
-                            .fixedSize()
-                            .transition(.opacity)
+                        mergingLabel(stage: stage, elapsed: elapsed)
+                            .transition(.identity)
                     }
                 }
+                .hidden()
+                .overlay(alignment: .leading) {
+                    ZStack(alignment: .leading) {
+                        if let outcome {
+                            outcomeControls(outcome)
+                                .fixedSize()
+                                .transition(.opacity)
+                        } else {
+                            mergingContent(stage: stage, elapsed: elapsed)
+                                .fixedSize()
+                                .transition(.opacity)
+                        }
+                    }
+                }
+                // Room above and below for the stage words' lift, and a hair either side for
+                // the controls' own edges, given back after the clip.
+                .padding(.vertical, 6)
+                .padding(.horizontal, 2)
+                .clipped()
+                .padding(.horizontal, -2)
+                .padding(.vertical, -6)
+                // Scoped to the slot, so the shimmer's own frames beside it are never caught in
+                // the transaction; the pill around it follows the slot's animated width.
+                .animation(Self.change, value: isMerging)
             }
-            // Room above and below for the stage words' lift, and a hair either side for
-            // the controls' own edges, given back after the clip.
-            .padding(.vertical, 6)
-            .padding(.horizontal, 2)
-            .clipped()
-            .padding(.horizontal, -2)
-            .padding(.vertical, -6)
-            // Scoped to the slot, so the shimmer's own frames beside it are never caught in
-            // the transaction; the pill around it follows the slot's animated width.
-            .animation(Self.change, value: isMerging)
-        }
-        .padding(.leading, 12)
-        .padding(.trailing, 14)
-        .padding(.vertical, 8)
-        .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .frame(maxWidth: .infinity, alignment: .trailing)
-        .padding(.leading, 96)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(Text(outcome?.title ?? "Merging the team's work: \(stage)"))
-        .task(id: isMerging) {
-            guard isMerging else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                now = .now
-            }
+            .padding(.leading, 12)
+            .padding(.trailing, 14)
+            .padding(.vertical, 8)
+            .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .padding(.leading, 96)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text(outcome?.title ?? "Merging the team's work: \(stage)"))
         }
         // The report parses off the main thread as the pill appears, so the tap that
         // opens it finds the blocks ready rather than parsing the whole batch first.
