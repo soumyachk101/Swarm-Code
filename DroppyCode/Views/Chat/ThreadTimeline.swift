@@ -1423,7 +1423,9 @@ enum DisplayBlock: Identifiable, Equatable {
         }
         // While a turn runs and no reply has started, the working line ends its block. The
         // moment the reply it is waiting on arrives, the line goes and the reply takes its
-        // place; it comes back below when the agent moves on to another step.
+        // place. A turn that has taken a step keeps its line for as long as it runs, above
+        // whatever streams after the last step: the line is where the turn's steps live
+        // (see `TurnRunningBlock`), and the steps do not leave the box because words follow.
         let waiting = isRunning && entries.last?.kind != .assistant
         var blocks = Array(kept)
         blocks.reserveCapacity(kept.count + runs.count + 3)
@@ -1435,7 +1437,9 @@ enum DisplayBlock: Identifiable, Equatable {
                 // Thinking lives behind the working line's chevron, never as a row of its own.
                 let rows = entries[run.range].filter { $0.kind != .turnEnd && $0.kind != .reasoning }
                 let summary = meta.summaryByTurn[turnID]
-                let showsWorking = waiting && summary == nil && isLast
+                let hasSteps = isRunning && isLast && summary == nil
+                    && entries[run.range].contains { $0.kind == .tool && !TimelineGroup.isHead($0) }
+                let showsWorking = isLast && summary == nil && (waiting || hasSteps)
                 // Named by the turn and the run's first row: a note filed under no turn
                 // landing mid-turn splits the turn into two runs, and two blocks under one
                 // id left the second, the running tail, undrawn.
@@ -1766,11 +1770,15 @@ private struct DisplayBlockView: View, Equatable {
 }
 
 /// A turn while it runs (or one that ended without its marker, the app having quit under
-/// it): its prompt, its steps and replies, and anything sent to steer it, as rows of their
-/// own in order, each arriving like a row of the stack, and the working line at the end
-/// while the agent is between replies. The turn's trailing tool run is not a row of its own
-/// meanwhile: the working line carries it (its summary beside the spinner, its steps behind
-/// the chevron) until a reply follows, when it comes back as a collapsed group above the answer.
+/// it): its prompt and anything sent to steer it as rows of their own in order, each
+/// arriving like a row of the stack, then the working line, then whatever the agent has
+/// said since its last step. The working line carries the turn's work so far, every tool
+/// run and the prose between runs (its summary beside the spinner, the steps behind the
+/// chevron), the same way the folded turn keeps them behind its chevron once it is over
+/// (see `TurnFinishedBlock.Derived`): what follows the last tool call is the answer taking
+/// shape and stays out as rows; what came before it is work, and never sits above the
+/// box made for it. Words that turn out to be narration (a tool call follows them) move
+/// into the line, so the timeline reads the same running and folded.
 private struct TurnRunningBlock: View {
     let runtime: ThreadRuntime
     let entries: [TimelineEntry]
@@ -1789,9 +1797,22 @@ private struct TurnRunningBlock: View {
             heads = groups.removeLast()
         }
         var liveWork: [TimelineEntry] = []
-        if showsWorking, case .work(_, let entries, false)? = groups.last {
-            liveWork = entries
-            groups.removeLast()
+        if showsWorking, let lastWork = groups.lastIndex(where: { if case .work = $0 { return true } else { return false } }) {
+            // Everything up to the last tool run is the turn's work: the runs themselves and
+            // the replies between them. The prompt, a steer, a notice or a plan stay rows.
+            var rows: [TimelineGroup] = []
+            rows.reserveCapacity(groups.count)
+            for (index, group) in groups.enumerated() {
+                switch group {
+                case .work(_, let entries, _) where index <= lastWork:
+                    liveWork.append(contentsOf: entries)
+                case .single(let entry) where index < lastWork && entry.kind == .assistant:
+                    liveWork.append(entry)
+                default:
+                    rows.append(group)
+                }
+            }
+            groups = rows
         }
         // A plain stack: a lazy stack inside a lazy row resolved its own visibility on every
         // scrolled frame for nothing, the row is on screen whole or not at all.
