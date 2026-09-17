@@ -366,6 +366,20 @@ enum CommandCodeAPI {
     const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
     export default function (cmd: any) {
+      const bridgePath = process.env.DROPPY_CODE_MCP_BRIDGE
+      if (bridgePath) {
+        import(bridgePath).then(async (bridge: any) => {
+          for (const tool of await bridge.loadMCPTools()) {
+            cmd.addTool({
+              schema: { name: 'mcp__' + tool.server + '__' + tool.name, description: tool.description, input_schema: tool.inputSchema },
+              run: async ({input}: any) => {
+                const text = await tool.call(input || {})
+                return { ok: true, content: [{ type: 'text', text }] }
+              },
+            })
+          }
+        }).catch((error: any) => console.error('droppy mcp', error))
+      }
       const dir = process.env.DROPPY_CODE_APPROVALS
       if (!dir) return
       cmd.hooks({

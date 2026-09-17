@@ -619,7 +619,9 @@ private struct HydraReportPopover: View {
 
     var body: some View {
         PopoverScroll(maxHeight: 460, width: width) {
-            LazyVStack(alignment: .leading, spacing: 8) {
+            // Every block at once: the body is laid out whole to size the panel before it
+            // opens, and a lazy stack measured differently once shown (see `PopoverScroll`).
+            VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                     MarkdownBlockView(block: block)
                         .equatable()
@@ -631,7 +633,8 @@ private struct HydraReportPopover: View {
             .environment(\.markdownDimmed, false)
             .environment(\.chatZoom, 1)
             .textSelection(.enabled)
-            .padding(12)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(width: width)
@@ -907,7 +910,11 @@ private struct HydraMergeTrackBody: View, Animatable {
                 .scaleEffect(pop)
                 .offset(x: x, y: y)
         }
-        .frame(width: trackWidth + (Self.restingSize - trackWidth) * rest, height: Self.height)
+        // Pinned to the leading edge: the dots keep their full width under the head even
+        // once they have faded, so the stack stays as wide as the track while the frame
+        // has shrunk to the resting head. Centred in it, the stack overhung the frame on
+        // both sides and the settled head sat half outside the pill, a gap before the words.
+        .frame(width: trackWidth + (Self.restingSize - trackWidth) * rest, height: Self.height, alignment: .topLeading)
     }
 }
 

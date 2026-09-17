@@ -102,6 +102,12 @@ final class PiSession: ProviderSession {
         var environment = configuration.environment
         environment["DROPPY_CODE_PI_GATE"] = gateURL.path
         environment["PI_SKIP_VERSION_CHECK"] = "1"
+        if let bridge = try? MCPBridge.installBridge() {
+            environment["DROPPY_CODE_MCP_BRIDGE"] = bridge.path
+        }
+        if FileManager.default.fileExists(atPath: MCPPaths.claudeConfigURL.path) {
+            environment["DROPPY_CODE_MCP_CONFIG"] = MCPPaths.claudeConfigURL.path
+        }
 
         let process = StdioProcess(
             executable: executable,
@@ -401,6 +407,7 @@ final class PiSession: ProviderSession {
         case "read": .read
         case "edit", "write": .edit
         case "grep", "find", "ls": .search
+        case _ where name.hasPrefix("mcp__"): .mcp
         default: .other
         }
         let title: String
@@ -418,6 +425,12 @@ final class PiSession: ProviderSession {
         case "ls":
             title = args["path"]?.string ?? "."
             detail = nil
+        case _ where name.hasPrefix("mcp__"):
+            let parts = name.split(separator: "__", omittingEmptySubsequences: true)
+            let server = parts.count > 1 ? String(parts[1]) : "MCP"
+            let tool = parts.count > 2 ? parts[2...].joined(separator: "__") : name
+            title = "\(server) · \(tool)"
+            detail = args.isNull || args.compactString == "{}" ? nil : args.prettyString
         default:
             title = name
             detail = args.isNull || args.compactString == "{}" ? nil : args.prettyString

@@ -1,113 +1,52 @@
 import Foundation
 
+/// One-time cleanup: the connected servers reach the CLIs at launch now
+/// (Claude, Codex, Copilot, OpenCode), never through their config files;
+/// this only takes back what an earlier build put there.
 enum MCPExternalSync {
     static func sync(_ servers: [MCPResolvedServer]) {
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: managedURL.path) else { return }
+        let managed = readManaged()
         let home = URL(fileURLWithPath: LoginEnvironment.homeDirectory, isDirectory: true)
-        let byID = Dictionary(uniqueKeysWithValues: servers.map { ($0.id, $0) })
-        var managed = readManaged()
-
-        if merge(
+        remove(
+            ids: managed["cursor"] ?? [],
             at: home.appendingPathComponent(".cursor/mcp.json"),
-            rootKey: "mcpServers",
-            previous: managed["cursor"] ?? [],
-            servers: byID,
-            entry: cursorEntry
-        ) {
-            managed["cursor"] = byID.keys.sorted()
-        }
-
-        if merge(
+            rootKey: "mcpServers"
+        )
+        remove(
+            ids: managed["opencode"] ?? [],
             at: home.appendingPathComponent(".config/opencode/opencode.json"),
-            rootKey: "mcp",
-            previous: managed["opencode"] ?? [],
-            servers: byID,
-            entry: opencodeEntry,
-            ensureSchema: "https://opencode.ai/config.json"
-        ) {
-            managed["opencode"] = byID.keys.sorted()
-        }
-
-        if merge(
+            rootKey: "mcp"
+        )
+        remove(
+            ids: managed["gemini"] ?? [],
             at: home.appendingPathComponent(".gemini/settings.json"),
-            rootKey: "mcpServers",
-            previous: managed["gemini"] ?? [],
-            servers: byID,
-            entry: geminiEntry
-        ) {
-            managed["gemini"] = byID.keys.sorted()
-        }
-
-        writeManaged(managed)
+            rootKey: "mcpServers"
+        )
+        try? manager.removeItem(at: managedURL)
     }
 
-    private static func cursorEntry(for server: MCPResolvedServer) -> [String: Any] {
-        if server.isRemote {
-            return ["url": server.url ?? "", "headers": server.headers]
-        }
-        return ["command": server.command ?? "", "args": server.args, "env": server.env]
-    }
-
-    private static func opencodeEntry(for server: MCPResolvedServer) -> [String: Any] {
-        if server.isRemote {
-            return ["type": "remote", "url": server.url ?? "", "headers": server.headers, "enabled": true]
-        }
-        return [
-            "type": "local",
-            "command": [server.command ?? ""] + server.args,
-            "environment": server.env,
-            "enabled": true,
-        ]
-    }
-
-    private static func geminiEntry(for server: MCPResolvedServer) -> [String: Any] {
-        if server.isRemote {
-            return ["httpUrl": server.url ?? "", "headers": server.headers]
-        }
-        return ["command": server.command ?? "", "args": server.args, "env": server.env]
-    }
-
-    /// Merges `servers` into the file's `rootKey` object, removing only ids this
-    /// sync previously owned. Returns false when the file is invalid and skipped.
-    @discardableResult
-    private static func merge(
-        at url: URL,
-        rootKey: String,
-        previous: [String],
-        servers: [String: MCPResolvedServer],
-        entry: (MCPResolvedServer) -> [String: Any],
-        ensureSchema: String? = nil
-    ) -> Bool {
-        var root: [String: Any]
-        if FileManager.default.fileExists(atPath: url.path) {
-            guard let data = try? Data(contentsOf: url),
-                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { return false }
-            if let existing = parsed[rootKey], !(existing is [String: Any]) { return false }
-            root = parsed
-        } else {
-            root = [:]
-        }
-        var entries = (root[rootKey] as? [String: Any]) ?? [:]
-        for id in previous where servers[id] == nil {
+    /// Removes exactly `ids` from the file's `rootKey` object, leaving every
+    /// other key alone. A missing or invalid-JSON file is skipped, and the
+    /// file is rewritten only when something was removed.
+    private static func remove(ids: [String], at url: URL, rootKey: String) {
+        guard !ids.isEmpty else { return }
+        guard let data = try? Data(contentsOf: url),
+              var root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              var entries = root[rootKey] as? [String: Any]
+        else { return }
+        var removed = false
+        for id in ids where entries[id] != nil {
             entries.removeValue(forKey: id)
+            removed = true
         }
-        for server in servers.values.sorted(by: { $0.id < $1.id }) {
-            entries[server.id] = entry(server)
-        }
+        guard removed else { return }
         root[rootKey] = entries
-        if let schema = ensureSchema, root["$schema"] == nil {
-            root["$schema"] = schema
+        guard let out = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys]) else {
+            return
         }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard let data = try? JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys]) else {
-            return false
-        }
-        do {
-            try data.write(to: url, options: .atomic)
-        } catch {
-            return false
-        }
-        return true
+        try? out.write(to: url, options: .atomic)
     }
 
     private static let managedURL = MCPPaths.directory.appendingPathComponent("managed.json")
@@ -121,17 +60,5 @@ enum MCPExternalSync {
             out[key] = parsed[key] as? [String] ?? []
         }
         return out
-    }
-
-    private static func writeManaged(_ managed: [String: [String]]) {
-        let full: [String: Any] = [
-            "cursor": managed["cursor"] ?? [],
-            "opencode": managed["opencode"] ?? [],
-            "gemini": managed["gemini"] ?? [],
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: full, options: [.prettyPrinted, .sortedKeys]) else {
-            return
-        }
-        try? data.write(to: managedURL, options: .atomic)
     }
 }

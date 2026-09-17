@@ -159,7 +159,8 @@ final class CommandCodeSession: ProviderSession {
             // below is what asks the user.
             arguments += ["--yolo"]
         }
-        if let modURL, runtimeMode != .fullAccess || interactionMode == .plan {
+        if let modURL, runtimeMode != .fullAccess || interactionMode == .plan
+            || FileManager.default.fileExists(atPath: MCPPaths.claudeConfigURL.path) {
             arguments += ["--mod", modURL.path]
         }
         if let sessionID, !sessionID.isEmpty { arguments += ["--resume", sessionID] }
@@ -169,6 +170,12 @@ final class CommandCodeSession: ProviderSession {
             environment["DROPPY_CODE_APPROVALS"] = approvalDirectory.path
         } else {
             environment["DROPPY_CODE_APPROVALS"] = nil
+        }
+        if let bridge = try? MCPBridge.installBridge() {
+            environment["DROPPY_CODE_MCP_BRIDGE"] = bridge.path
+        }
+        if FileManager.default.fileExists(atPath: MCPPaths.claudeConfigURL.path) {
+            environment["DROPPY_CODE_MCP_CONFIG"] = MCPPaths.claudeConfigURL.path
         }
 
         let process = StdioProcess(

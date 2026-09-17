@@ -353,23 +353,29 @@ private struct HydraPairEditor: View {
             // provider they run its default model, so its efforts are the ones on offer.
             let workerEfforts = workerOption?.efforts ?? (pair.sendsHeadsElsewhere ? (registry.defaultModel(for: pair.headsProvider)?.efforts ?? Self.allEfforts(headsOptions)) : leadEfforts)
             VStack(alignment: .leading, spacing: 0) {
-                Text("Pair")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Chrome.primaryText)
-                    .padding(.horizontal, 14)
-                    .padding(.top, 14)
-                    .padding(.bottom, 6)
-                editorRow("Name", detail: "Stands in for the models in the picker and the composer") {
+                // The name is the header: the pair's own word for itself, over what it
+                // stands for in the picker when it has none.
+                VStack(alignment: .leading, spacing: 4) {
                     TextField("", text: Binding(
                         get: { pair.name ?? "" },
                         set: { text in model.updateHydraPair(pairID) { $0.name = text.isEmpty ? nil : text } }
                     ), prompt: Text(HydraPairSummary.modelsTitle(pair, registry: registry)))
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-                    .frame(width: 150)
+                    .textFieldStyle(.plain)
+                    .focusEffectDisabled()
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Chrome.primaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Chrome.overlay(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    Text("Shown in the picker and the composer")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .padding(.horizontal, 2)
                 }
-                Divider().padding(.horizontal, 14).padding(.vertical, 6)
-                editorRow("Lead provider") {
+                .padding(.horizontal, 14)
+                .padding(.top, 14)
+                sectionLabel("Lead")
+                editorRow("Provider") {
                     GlassPickerButton(
                         options: providers.map { ($0, $0.displayName) },
                         selection: Binding(
@@ -397,8 +403,7 @@ private struct HydraPairEditor: View {
                         asset: { $0.iconName }
                     )
                 }
-                Divider().padding(.horizontal, 14).padding(.vertical, 6)
-                editorRow("Lead model", detail: "The chat's model while it leads") {
+                editorRow("Model") {
                     GlassPickerButton(
                         options: [(String?.none, "Any model")] + options.map { (Optional($0.id), $0.shortName) },
                         selection: Binding(
@@ -416,7 +421,7 @@ private struct HydraPairEditor: View {
                     )
                 }
                 if !leadEfforts.isEmpty {
-                    editorRow("Lead effort") {
+                    editorRow("Effort") {
                         effortPicker(
                             efforts: leadEfforts,
                             inherit: "Chat's effort",
@@ -427,8 +432,8 @@ private struct HydraPairEditor: View {
                         )
                     }
                 }
-                Divider().padding(.horizontal, 14).padding(.vertical, 6)
-                editorRow("Heads' provider", detail: "Another provider puts quick heads under a strong lead") {
+                sectionLabel("Heads")
+                editorRow("Provider") {
                     GlassPickerButton(
                         options: [(ProviderKind?.none, "Same as the lead")] + headsProviders.filter { $0 != pair.provider }.map { (Optional($0), $0.displayName) },
                         selection: Binding(
@@ -448,7 +453,7 @@ private struct HydraPairEditor: View {
                         asset: { ($0 ?? pair.provider).iconName }
                     )
                 }
-                editorRow("Heads' model", detail: pair.sendsHeadsElsewhere ? "What the heads run on, from \(pair.headsProvider.displayName)'s models" : "What the heads run on") {
+                editorRow("Model") {
                     GlassPickerButton(
                         options: [(String?.none, pair.sendsHeadsElsewhere ? "\(pair.headsProvider.displayName)'s default" : "Same as the chat")] + headsOptions.map { (Optional($0.id), $0.shortName) },
                         selection: Binding(
@@ -466,7 +471,7 @@ private struct HydraPairEditor: View {
                     )
                 }
                 if !workerEfforts.isEmpty {
-                    editorRow("Heads' effort", detail: "Lower effort keeps heads quick and cheap") {
+                    editorRow("Effort") {
                         effortPicker(
                             efforts: workerEfforts,
                             inherit: pair.sendsHeadsElsewhere ? "\(pair.headsProvider.displayName)'s default" : "Same as the chat",
@@ -477,17 +482,15 @@ private struct HydraPairEditor: View {
                         )
                     }
                 }
-                Divider().padding(.horizontal, 14).padding(.vertical, 6)
-                editorRow("Heads at once", detail: "How many work in parallel; with no cap, as many as the work takes") {
+                editorRow("At once") {
                     GlassPickerButton(
-                        options: [(Int?.none, "No cap")] + HydraPair.maxHeadsRange.map { (Optional($0), String($0)) },
+                        options: [(Int?.none, "As many as it takes")] + HydraPair.maxHeadsRange.map { (Optional($0), String($0)) },
                         selection: Binding(
                             get: { pair.maxHeads },
                             set: { count in model.updateHydraPair(pairID) { $0.maxHeads = count } }
                         )
                     )
                 }
-                Divider().padding(.horizontal, 14).padding(.vertical, 6)
                 headProfilesSection(pair: pair, registry: registry)
                 ForEach(Self.catalogProviders(pair), id: \.self) { provider in
                     if registry.models(for: provider).isEmpty {
@@ -528,7 +531,23 @@ private struct HydraPairEditor: View {
                 .layoutPriority(1)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
+    }
+
+    /// A section's word, small and quiet, with a hairline above: the rows under it need
+    /// no sentence each once the section says what they are about.
+    private func sectionLabel(_ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider()
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
+            Text(verbatim: title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Chrome.secondaryText)
+                .padding(.horizontal, 14)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+        }
     }
 
     private func effortPicker(efforts: [String], inherit: String, selection: Binding<String?>) -> some View {
@@ -563,23 +582,13 @@ private struct HydraPairEditor: View {
     /// always did, so the section reads as optional rather than as a missing step.
     private func headProfilesSection(pair: HydraPair, registry: ProviderRegistry) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Head profiles")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Chrome.primaryText)
-                .padding(.horizontal, 14)
-            Text("Advanced: the lead can send a head out for a purpose by name; that head runs on the profile's own provider, model and effort, inheriting the pair's where a field is unset.")
-                .font(.system(size: 11))
-                .foregroundStyle(Chrome.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 14)
-                .padding(.top, 1)
-                .padding(.bottom, 2)
-            ForEach(Array(pair.headProfiles.enumerated()), id: \.element.id) { index, profile in
-                if index > 0 { Divider().padding(.horizontal, 14).padding(.vertical, 6) }
-                headProfileRow(profile, pair: pair, registry: registry)
-            }
-            editorRow(pair.headProfiles.isEmpty ? "No profiles yet" : "Another profile",
-                      detail: pair.headProfiles.isEmpty ? "Every head runs on the pair's choices above." : nil) {
+            sectionLabel("Profiles")
+            HStack(alignment: .center, spacing: 12) {
+                Text("Named setups the lead can send a head out on, like quick or deep.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Button {
                     let profile = HydraHeadProfile(name: Self.suggestedProfileName(in: pair))
                     withAnimation(Chrome.panelSlide) {
@@ -588,9 +597,17 @@ private struct HydraPairEditor: View {
                         expandedProfiles.insert(profile.id)
                     }
                 } label: {
-                    Label("Add profile", systemImage: "plus")
+                    Label("Add", systemImage: "plus")
                 }
                 .buttonStyle(.glass)
+                .controlSize(.small)
+                .help("Add a profile")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 5)
+            ForEach(Array(pair.headProfiles.enumerated()), id: \.element.id) { index, profile in
+                if index > 0 { Divider().padding(.horizontal, 14).padding(.vertical, 4) }
+                headProfileRow(profile, pair: pair, registry: registry)
             }
         }
     }
@@ -661,16 +678,20 @@ private struct HydraPairEditor: View {
     private func headProfileEditor(_ profile: HydraHeadProfile, provider: ProviderKind, options: [ModelOption], efforts: [String], registry: ProviderRegistry) -> some View {
         let providers = ProviderKind.allCases.filter { model.settings.isEnabled($0) && (registry.status($0).isInstalled || $0 == profile.provider) }
         return VStack(spacing: 0) {
-            editorRow("Name", detail: "The word the lead routes to this profile") {
+            editorRow("Name") {
                 TextField("", text: Binding(
                     get: { profile.name },
                     set: { name in updateProfile(profile.id) { $0.name = name } }
                 ), prompt: Text("quick"))
-                    .textFieldStyle(.roundedBorder)
+                    .textFieldStyle(.plain)
+                    .focusEffectDisabled()
                     .font(.system(size: 12))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Chrome.overlay(0.06), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .frame(width: 150)
             }
-            editorRow("Provider", detail: "Runs this profile's heads on another provider") {
+            editorRow("Provider") {
                 GlassPickerButton(
                     options: [(ProviderKind?.none, "Same as the pair")] + providers.map { (Optional($0), $0.displayName) },
                     selection: Binding(

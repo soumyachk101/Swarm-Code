@@ -26,6 +26,13 @@ final class DeepSeekSession: ProviderSession {
     /// directly instead of waiting for the next chunk to reach the consumer.
     private var sseDrain: Task<Void, Never>?
     private var pendingApprovals: [String: CheckedContinuation<Bool, Never>] = [:]
+    private var mcpTools: [MCPHub.Tool] = []
+    private var didLoadMCPTools = false
+    private var mcpToolDefinitions: [JSONValue] {
+        mcpTools.map { tool in
+            ["type": "function", "function": ["name": .string(tool.callName), "description": .string(tool.description), "parameters": tool.inputSchema]]
+        }
+    }
 
     /// Runaway guard only. A turn used to stop after 12 rounds and report
     /// itself as completed, so any real task ended mid-edit with no reply and
@@ -379,6 +386,7 @@ final class DeepSeekSession: ProviderSession {
         // History trims slice blindly and interrupted turns leave calls
         // unanswered; either poisons every later request, so repair first.
         sanitizeHistory()
+        if withTools, !didLoadMCPTools { mcpTools = await MCPHub.shared.tools(); didLoadMCPTools = true }
         let payload = requestPayload(model: model, effort: effort, withTools: withTools)
         return try await performStream(payload: payload)
     }
@@ -391,7 +399,7 @@ final class DeepSeekSession: ProviderSession {
             "stream_options": ["include_usage": true],
         ]
         if withTools {
-            payload["tools"] = .array(Self.toolDefinitions)
+            payload["tools"] = .array(Self.toolDefinitions + mcpToolDefinitions)
             payload["tool_choice"] = "auto"
         }
         payload["thinking"] = ["type": "enabled"]
@@ -648,6 +656,25 @@ final class DeepSeekSession: ProviderSession {
     private func executeTool(_ tool: PendingToolCall) async -> String {
         let args = JSONValue.parse(tool.arguments) ?? .object([:])
         let callID = tool.id
+        if let (server, name) = MCPHub.parse(callName: tool.name) {
+            onEvent?(.toolStarted(id: callID, call: ToolCall(kind: .mcp, title: "\(server) · \(name)", detail: args.isNull ? nil : args.prettyString)))
+            guard await approveIfNeeded(kind: .mcp, title: "Call \(server) \(name)", detail: args.compactString, toolItemID: nil) else {
+                return declined(callID)
+            }
+            do {
+                let result = try await MCPHub.shared.call(tool.name, arguments: args)
+                guard !Task.isCancelled, !interrupted else { return "Stopped." }
+                if result.isError {
+                    onEvent?(.toolUpdated(id: callID, update: ToolUpdate(output: result.text, status: .failed)))
+                    return result.text.isEmpty ? "Error: the MCP tool reported failure with no output." : result.text
+                }
+                onEvent?(.toolUpdated(id: callID, update: ToolUpdate(output: summary(result.text, limit: 12_000), status: .completed)))
+                return result.text.isEmpty ? "(no output)" : result.text
+            } catch {
+                onEvent?(.toolUpdated(id: callID, update: ToolUpdate(output: error.localizedDescription, status: .failed)))
+                return "Error: \(error.localizedDescription)"
+            }
+        }
         switch tool.name {
         case "read_file":
             let path = args["path"]?.string ?? ""

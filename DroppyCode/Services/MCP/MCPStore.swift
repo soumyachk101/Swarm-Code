@@ -139,11 +139,13 @@ final class MCPStore {
         try? data.write(to: MCPPaths.connectionsURL, options: .atomic)
     }
 
-    /// Rewrites every provider's config from `enabledServers`.
+    /// Rewrites every provider's config from `enabledServers` and runs the one-time external-CLI cleanup.
     private func exportAll() {
         let servers = enabledServers
         MCPProviderConfig.writeAll(servers)
         MCPExternalSync.sync(servers)
+        // The in-app clients (API providers) pick the new list up on their next use.
+        Task { await MCPHub.shared.reload() }
     }
 
     /// Non-secret values from the connection, overlaid with the Keychain's secrets.

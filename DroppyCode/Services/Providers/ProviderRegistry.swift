@@ -242,6 +242,11 @@ final class ProviderRegistry {
             let key = settings.apiKey(for: .commandcode)
             if !key.isEmpty { environment["COMMAND_CODE_API_KEY"] = key }
         }
+        // OpenCode takes its MCP servers as config content in the environment,
+        // so the connected servers reach it without a line written into its config files.
+        if provider == .opencode { environment.merge(MCPSessionOverrides.opencodeEnvironment()) { _, new in new } }
+        // The CLI reads system settings from that path, so the connected servers reach it without a line in `~/.gemini/settings.json`.
+        if provider == .antigravity, let path = MCPProviderConfig.geminiSettingsPath() { environment["GEMINI_CLI_SYSTEM_SETTINGS_PATH"] = path }
         return environment
     }
 

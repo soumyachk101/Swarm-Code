@@ -124,6 +124,14 @@ extension View {
         modifier(ChromeGlassSurface(shape: .capsule))
     }
 
+    /// The capsule for a field rather than a button: the same glass, without the press
+    /// response. A field is clicked to place the caret, and interactive glass answered
+    /// the click with its press bounce at the same moment the field took focus, so the
+    /// capsule flickered on every tap.
+    func chromeGlassFieldCapsule() -> some View {
+        modifier(ChromeGlassSurface(shape: .capsule, isInteractive: false))
+    }
+
     func chromeGlassCircle() -> some View {
         modifier(ChromeGlassSurface(shape: .circle))
     }
@@ -139,6 +147,8 @@ extension View {
 private struct ChromeGlassSurface: ViewModifier {
     enum Kind { case capsule, circle }
     let shape: Kind
+    /// Whether the glass answers a press; off for a field that takes the caret instead.
+    var isInteractive = true
     @Environment(\.isOnGlassPanel) private var isOnGlassPanel
     @Environment(\.colorScheme) private var colorScheme
     @State private var isHovered = false
@@ -160,8 +170,10 @@ private struct ChromeGlassSurface: ViewModifier {
                 .contentShape(shape)
                 .onHover { isHovered = $0 }
                 .animation(Chrome.hover, value: isHovered)
-        } else {
+        } else if isInteractive {
             content.glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)).interactive(), in: shape)
+        } else {
+            content.glassEffect(.regular.tint(Chrome.glassTint.opacity(0.3)), in: shape)
         }
     }
 }
@@ -763,6 +775,9 @@ struct ChromeSearchField: View {
                 .accessibilityHidden(true)
             TextField(prompt, text: $query)
                 .textFieldStyle(.plain)
+                // The capsule is the field's edge; the focus ring flashed around the text
+                // alone as the caret landed.
+                .focusEffectDisabled()
                 .font(.system(size: 12.5))
                 .foregroundStyle(Chrome.primaryText)
             Button {
@@ -783,7 +798,7 @@ struct ChromeSearchField: View {
         .padding(.horizontal, 10)
         .frame(width: Self.width, height: Chrome.capsuleContentHeight)
         .padding(.vertical, Chrome.capsuleVerticalPadding)
-        .chromeGlassCapsule()
+        .chromeGlassFieldCapsule()
         .fixedSize()
         .onExitCommand { query = "" }
         .background { NoWindowDragArea() }

@@ -27,8 +27,11 @@ extension NSPopover {
     /// Settings, not the stock rounded rectangle.
     @MainActor
     func setFixedContent<Content: View>(_ content: Content, size: NSSize) {
+        // Top-aligned: content that turns out taller than measured loses its tail behind
+        // the panel's edge, never its header.
         let root = content
-            .frame(width: size.width, height: size.height)
+            .frame(width: size.width, height: size.height, alignment: .top)
+            .clipped()
             .presentedChrome()
         let host = NSHostingController(rootView: root)
         host.sizingOptions = []
@@ -54,12 +57,18 @@ struct PopoverScroll<Content: View>: View {
     var minHeight: CGFloat = 80
     let content: () -> Content
     @State private var contentHeight: CGFloat
+    /// Whether the height was settled before the popover opened. A pre-measured body
+    /// keeps that height: the panel around it was sized to it once and never resizes
+    /// (see `NSPopover.setFixedContent`), so a later, taller reading only pushed the
+    /// body past the panel and cut the header off; the scroll takes any difference.
+    private let isPremeasured: Bool
 
     @MainActor
     init(maxHeight: CGFloat = 460, minHeight: CGFloat = 80, width: CGFloat? = nil, @ViewBuilder content: @escaping () -> Content) {
         self.maxHeight = maxHeight
         self.minHeight = minHeight
         self.content = content
+        isPremeasured = width != nil
         _contentHeight = State(initialValue: width.map { Self.measuredHeight(of: content(), width: $0) } ?? 0)
     }
 
@@ -73,7 +82,9 @@ struct PopoverScroll<Content: View>: View {
     var body: some View {
         ScrollView {
             content()
-                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                    if !isPremeasured { contentHeight = height }
+                }
         }
         .scrollBounceBehavior(.basedOnSize)
         .frame(height: min(max(contentHeight, minHeight), maxHeight))
