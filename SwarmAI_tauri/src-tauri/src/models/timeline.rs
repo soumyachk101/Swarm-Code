@@ -283,6 +283,12 @@ pub struct Notice {
  pub message: String,
 }
 
+impl Notice {
+ pub fn new(level: NoticeLevel, message: impl Into<String>) -> Self {
+  Self { level, message: message.into() }
+ }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnStatus {

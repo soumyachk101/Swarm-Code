@@ -103,6 +103,16 @@ pub struct ProviderCredits {
  pub is_unlimited: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderStatus {
+ pub provider: String,
+ pub is_installed: bool,
+ pub is_authenticated: bool,
+ pub version: Option<String>,
+ pub last_checked: Option<String>,
+ pub error: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Hydra types
 // ---------------------------------------------------------------------------
@@ -130,6 +140,7 @@ pub struct HydraRun {
  pub status: HydraRunStatus,
  pub started_at: DateTime<Utc>,
  pub completed_at: Option<DateTime<Utc>>,
+ pub max_heads: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

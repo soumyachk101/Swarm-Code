@@ -1,23 +1,59 @@
 <script lang="ts">
-	import { invoke } from '@tauri-apps/api/core';
+	import { onMount } from 'svelte';
+	import ProviderSettings from '$lib/components/settings/ProviderSettings.svelte';
+	import HydraSettings from '$lib/components/settings/HydraSettings.svelte';
+	import ShortcutsSettingsPage from '$lib/components/settings/ShortcutsSettingsPage.svelte';
+	import AboutView from '$lib/components/settings/AboutView.svelte';
 	import { getSettings, updateSettings, resetSettings } from '$lib/api/commands';
-	import type { AppSettings, ThemeMode, ColorPalette } from '$lib/types';
+	import type { AppSettings, RuntimeMode } from '$lib/types';
+	import { AppTheme, RUNTIME_MODE_TITLES } from '$lib/types';
 
+	// ---------------------------------------------------------------------------
+	// Tab definitions
+	// ---------------------------------------------------------------------------
+
+	type TabId = 'general' | 'providers' | 'hydra' | 'shortcuts' | 'about';
+
+	interface TabDef {
+		id: TabId;
+		label: string;
+	}
+
+	const tabs: TabDef[] = [
+		{ id: 'general', label: 'General' },
+		{ id: 'providers', label: 'Providers' },
+		{ id: 'hydra', label: 'Hydra' },
+		{ id: 'shortcuts', label: 'Shortcuts' },
+		{ id: 'about', label: 'About' },
+	];
+
+	// ---------------------------------------------------------------------------
+	// State
+	// ---------------------------------------------------------------------------
+
+	let activeTab = $state<TabId>('general');
 	let settings = $state<AppSettings | null>(null);
 	let isLoading = $state(true);
+	let isSaving = $state(false);
 	let showConfirmReset = $state(false);
 
 	// Local form state
-	let themeMode = $state<ThemeMode>('system');
-	let accentPalette = $state<ColorPalette>('blue');
-	let fontSize = $state(14);
-	let enableAnimations = $state(true);
-	let enableSounds = $state(false);
-	let sendOnEnter = $state(true);
-	let showTimestamps = $state(true);
-	let showWorkingIndicators = $state(true);
-	let maxThreads = $state(100);
-	let autoArchive = $state(true);
+	let theme = $state(AppTheme.System);
+	let font_size = $state(13);
+	let auto_scroll = $state(true);
+	let streaming = $state(true);
+	let sound_enabled = $state(false);
+	let notification_enabled = $state(true);
+	let show_timeline = $state(true);
+	let show_usage = $state(true);
+	let default_provider = $state<string | null>(null);
+	let default_runtime_mode = $state(RuntimeMode.Supervised);
+	let terminal_shell = $state('/bin/zsh');
+	let sidebar_width = $state(260);
+
+	// ---------------------------------------------------------------------------
+	// Load
+	// ---------------------------------------------------------------------------
 
 	$effect(() => {
 		loadSettings();
@@ -27,16 +63,18 @@
 		try {
 			settings = await getSettings();
 			if (settings) {
-				themeMode = settings.theme ?? 'system';
-				accentPalette = settings.accentPalette ?? 'blue';
-				fontSize = settings.fontSize ?? 14;
-				enableAnimations = settings.enableAnimations ?? true;
-				enableSounds = settings.enableSounds ?? false;
-				sendOnEnter = settings.sendOnEnter ?? true;
-				showTimestamps = settings.showTimestamps ?? true;
-				showWorkingIndicators = settings.showWorkingIndicators ?? true;
-				maxThreads = settings.maxThreads ?? 100;
-				autoArchive = settings.autoArchive ?? true;
+				theme = settings.theme ?? AppTheme.System;
+				font_size = settings.font_size ?? 13;
+				auto_scroll = settings.auto_scroll ?? true;
+				streaming = settings.streaming ?? true;
+				sound_enabled = settings.sound_enabled ?? false;
+				notification_enabled = settings.notification_enabled ?? true;
+				show_timeline = settings.show_timeline ?? true;
+				show_usage = settings.show_usage ?? true;
+				default_provider = settings.default_provider ?? null;
+				default_runtime_mode = settings.default_runtime_mode ?? RuntimeMode.Supervised;
+				terminal_shell = settings.terminal_shell ?? '/bin/zsh';
+				sidebar_width = settings.sidebar_width ?? 260;
 			}
 		} catch (e) {
 			console.error('Failed to load settings:', e);
@@ -45,410 +83,450 @@
 		}
 	}
 
+	// ---------------------------------------------------------------------------
+	// Save / Reset
+	// ---------------------------------------------------------------------------
+
 	async function handleSave() {
+		isSaving = true;
 		try {
+			const safeShell = isValidShell(terminal_shell) ? terminal_shell : '/bin/bash';
+			if (safeShell !== terminal_shell) {
+				terminal_shell = safeShell;
+			}
 			await updateSettings({
-				theme: themeMode,
-				accentPalette,
-				fontSize,
-				enableAnimations,
-				enableSounds,
-				sendOnEnter,
-				showTimestamps,
-				showWorkingIndicators,
-				maxThreads,
-				autoArchive,
+				theme,
+				font_size,
+				auto_scroll,
+				streaming,
+				sound_enabled,
+				notification_enabled,
+				show_timeline,
+				show_usage,
+				default_provider: default_provider as any,
+				default_runtime_mode,
+				terminal_shell,
+				sidebar_width,
 			});
-			applyTheme();
 		} catch (e) {
 			console.error('Failed to save settings:', e);
+		} finally {
+			isSaving = false;
 		}
 	}
 
 	async function handleReset() {
 		try {
-			await resetSettings();
-			await loadSettings();
-			applyTheme();
+			settings = await resetSettings();
+			if (settings) {
+				theme = settings.theme;
+				font_size = settings.font_size;
+				auto_scroll = settings.auto_scroll;
+				streaming = settings.streaming;
+				sound_enabled = settings.sound_enabled;
+				notification_enabled = settings.notification_enabled;
+				show_timeline = settings.show_timeline;
+				show_usage = settings.show_usage;
+				default_provider = settings.default_provider;
+				default_runtime_mode = settings.default_runtime_mode;
+				terminal_shell = settings.terminal_shell;
+				sidebar_width = settings.sidebar_width;
+			}
 			showConfirmReset = false;
 		} catch (e) {
 			console.error('Failed to reset settings:', e);
 		}
 	}
 
-	function applyTheme() {
-		const root = document.documentElement;
-		root.setAttribute('data-theme', themeMode === 'system'
-			? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-			: themeMode
-		);
-		root.setAttribute('data-palette', accentPalette);
-		root.style.setProperty('--font-size-base', fontSize + 'px');
-		if (!enableAnimations) {
-			root.style.setProperty('--transition-fast', '0s');
-			root.style.setProperty('--transition-base', '0s');
-		} else {
-			root.style.setProperty('--transition-fast', '0.15s');
-			root.style.setProperty('--transition-base', '0.25s');
-		}
-	}
-
 	$effect(() => {
-		applyTheme();
-		const media = window.matchMedia('(prefers-color-scheme: dark)');
-		const handler = () => {
-			if (themeMode === 'system') applyTheme();
-		};
-		media.addEventListener('change', handler);
-		return () => media.removeEventListener('change', handler);
+		const root = document.documentElement;
+		root.setAttribute('data-theme', theme);
 	});
 
-	let themeOptions: { value: ThemeMode; label: string }[] = [
-		{ value: 'light', label: 'Light' },
-		{ value: 'dark', label: 'Dark' },
-		{ value: 'system', label: 'System' },
-	];
+	// ---------------------------------------------------------------------------
+	// Navigation
+	// ---------------------------------------------------------------------------
 
-	let paletteOptions: { value: ColorPalette; label: string; color: string }[] = [
-		{ value: 'blue', label: 'Blue', color: '#007aff' },
-		{ value: 'purple', label: 'Purple', color: '#af52de' },
-		{ value: 'green', label: 'Green', color: '#30d158' },
-		{ value: 'orange', label: 'Orange', color: '#ff9500' },
-		{ value: 'red', label: 'Red', color: '#ff3b30' },
-		{ value: 'teal', label: 'Teal', color: '#64d2ff' },
-	];
+	function selectTab(tab: TabId) {
+		activeTab = tab;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Helpers
+	// ---------------------------------------------------------------------------
+
+	const ALLOWED_SHELLS = ['/bin/bash', '/bin/zsh', '/bin/sh', '/usr/bin/fish', '/usr/bin/xonsh'] as const;
+
+	function isValidShell(path: string): boolean {
+		return ALLOWED_SHELLS.includes(path);
+	}
+
+	function runtimeModeOptions(): { value: RuntimeMode; label: string }[] {
+		return Object.values(RuntimeMode).map((val) => ({
+			value: val,
+			label: RUNTIME_MODE_TITLES[val] ?? val,
+		}));
+	}
 </script>
 
-{#if isLoading}
-	<div class="loading-state">
-		<div class="spinner"></div>
-		<p>Loading settings…</p>
-	</div>
-{:else}
-	<div class="settings-view">
-		<div class="settings-header">
-			<h2 class="settings-title">Settings</h2>
-			<div class="settings-actions">
-				<button class="btn-primary" onclick={handleSave}>Save Changes</button>
-			</div>
+<div class="settings-container">
+	<!-- Sidebar Navigation -->
+	<nav class="settings-nav">
+		<div class="settings-nav-header">
+			<h2 class="settings-nav-title">Settings</h2>
 		</div>
 
-		<div class="settings-content">
-			<!-- Appearance -->
-			<section class="settings-section">
-				<h3 class="section-heading">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<circle cx="12" cy="12" r="5"/>
-						<path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72 1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
-					</svg>
-					Appearance
-				</h3>
+		<div class="settings-nav-list">
+			{#each tabs as tab (tab.id)}
+				<button
+					class="settings-nav-item"
+					class:active={activeTab === tab.id}
+					onclick={() => selectTab(tab.id)}
+				>
+					{tab.label}
+				</button>
+			{/each}
+		</div>
+	</nav>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Theme</span>
-						<span class="setting-desc">Choose the application color scheme</span>
-					</div>
-					<div class="theme-options">
-						{#each themeOptions as opt (opt.value)}
-							<button
-								class="theme-btn"
-								class:active={themeMode === opt.value}
-								onclick={() => themeMode = opt.value}
+	<!-- Content Area -->
+	<div class="settings-content">
+		{#if isLoading}
+			<div class="loading-state">
+				<div class="spinner"></div>
+				<p>Loading settings…</p>
+			</div>
+		{:else if activeTab === 'general'}
+			<div class="settings-page">
+				<div class="settings-page-header">
+					<h2 class="settings-page-title">General</h2>
+					<p class="settings-page-desc">Configure your app appearance and behavior</p>
+				</div>
+
+				<!-- Appearance -->
+				<section class="settings-section">
+					<h3 class="settings-section-title">Appearance</h3>
+
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Theme</span>
+							<span class="settings-field-desc">Choose the application color scheme</span>
+						</div>
+						<div class="settings-field-control">
+							<select
+								class="settings-select"
+								value={theme}
+								onchange={(e) => { theme = e.currentTarget.value as AppTheme; }}
 							>
-								{opt.label}
-							</button>
-						{/each}
+								<option value={AppTheme.Light}>Light</option>
+								<option value={AppTheme.Dark}>Dark</option>
+								<option value={AppTheme.System}>System</option>
+							</select>
+						</div>
 					</div>
-				</div>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Accent Color</span>
-						<span class="setting-desc">Choose your accent color palette</span>
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Font Size</span>
+							<span class="settings-field-desc">Base text size in pixels</span>
+						</div>
+						<div class="settings-field-control">
+							<div class="number-control">
+								<button class="size-btn" onclick={() => font_size = Math.max(11, font_size - 1)} disabled={font_size <= 11}>−</button>
+								<span class="size-value">{font_size}px</span>
+								<button class="size-btn" onclick={() => font_size = Math.min(20, font_size + 1)} disabled={font_size >= 20}>+</button>
+							</div>
+						</div>
 					</div>
-					<div class="palette-options">
-						{#each paletteOptions as opt (opt.value)}
-							<button
-								class="palette-btn"
-								class:active={accentPalette === opt.value}
-								onclick={() => accentPalette = opt.value}
-								title={opt.label}
+
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Sidebar Width</span>
+							<span class="settings-field-desc">Width of the sidebar panel</span>
+						</div>
+						<div class="settings-field-control">
+							<div class="number-control">
+								<button class="size-btn" onclick={() => sidebar_width = Math.max(200, sidebar_width - 10)} disabled={sidebar_width <= 200}>−</button>
+								<span class="size-value">{sidebar_width}px</span>
+								<button class="size-btn" onclick={() => sidebar_width = Math.min(400, sidebar_width + 10)} disabled={sidebar_width >= 400}>+</button>
+							</div>
+						</div>
+					</div>
+				</section>
+
+				<!-- Chat -->
+				<section class="settings-section">
+					<h3 class="settings-section-title">Chat</h3>
+
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Streaming Responses</span>
+							<span class="settings-field-desc">Show responses as they are generated</span>
+						</div>
+						<label class="toggle-switch">
+							<input type="checkbox" bind:checked={streaming} />
+							<span class="toggle-track"></span>
+							<span class="toggle-thumb"></span>
+						</label>
+					</div>
+
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Auto-scroll</span>
+							<span class="settings-field-desc">Automatically scroll to new messages</span>
+						</div>
+						<label class="toggle-switch">
+							<input type="checkbox" bind:checked={auto_scroll} />
+							<span class="toggle-track"></span>
+							<span class="toggle-thumb"></span>
+						</label>
+					</div>
+
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Default Runtime Mode</span>
+							<span class="settings-field-desc">How freely the agent can act</span>
+						</div>
+						<div class="settings-field-control">
+							<select
+								class="settings-select"
+								value={default_runtime_mode}
+								onchange={(e) => { default_runtime_mode = e.currentTarget.value as RuntimeMode; }}
 							>
-								<span class="palette-swatch" style="background: {opt.color}"></span>
-							</button>
-						{/each}
+								{#each runtimeModeOptions() as opt}
+									<option value={opt.value}>{opt.label}</option>
+								{/each}
+							</select>
+						</div>
 					</div>
-				</div>
+				</section>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Font Size</span>
-						<span class="setting-desc">Base text size in pixels</span>
-					</div>
-					<div class="font-size-control">
-						<button
-							class="size-btn"
-							onclick={() => fontSize = Math.max(11, fontSize - 1)}
-							disabled={fontSize <= 11}
-						>−</button>
-						<span class="size-value">{fontSize}px</span>
-						<button
-							class="size-btn"
-							onclick={() => fontSize = Math.min(20, fontSize + 1)}
-							disabled={fontSize >= 20}
-						>+</button>
-					</div>
-				</div>
+				<!-- Display -->
+				<section class="settings-section">
+					<h3 class="settings-section-title">Display</h3>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Animations</span>
-						<span class="setting-desc">Enable interface animations</span>
-					</div>
-					<button
-						class="toggle"
-						class:on={enableAnimations}
-						onclick={() => enableAnimations = !enableAnimations}
-						role="switch"
-						aria-checked={enableAnimations}
-					>
-						<span class="toggle-track">
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Show Timeline</span>
+							<span class="settings-field-desc">Display the thread timeline panel</span>
+						</div>
+						<label class="toggle-switch">
+							<input type="checkbox" bind:checked={show_timeline} />
+							<span class="toggle-track"></span>
 							<span class="toggle-thumb"></span>
-						</span>
-					</button>
-				</div>
-			</section>
-
-			<!-- Chat Behavior -->
-			<section class="settings-section">
-				<h3 class="section-heading">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-					</svg>
-					Chat
-				</h3>
-
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Send on Enter</span>
-						<span class="setting-desc">Send messages with Enter instead of ⌘+Enter</span>
+						</label>
 					</div>
-					<button
-						class="toggle"
-						class:on={sendOnEnter}
-						onclick={() => sendOnEnter = !sendOnEnter}
-						role="switch"
-						aria-checked={sendOnEnter}
-					>
-						<span class="toggle-track">
+
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Show Token Usage</span>
+							<span class="settings-field-desc">Display context usage in chat</span>
+						</div>
+						<label class="toggle-switch">
+							<input type="checkbox" bind:checked={show_usage} />
+							<span class="toggle-track"></span>
 							<span class="toggle-thumb"></span>
-						</span>
-					</button>
-				</div>
-
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Show Timestamps</span>
-						<span class="setting-desc">Display timestamps on messages</span>
+						</label>
 					</div>
-					<button
-						class="toggle"
-						class:on={showTimestamps}
-						onclick={() => showTimestamps = !showTimestamps}
-						role="switch"
-						aria-checked={showTimestamps}
-					>
-						<span class="toggle-track">
+				</section>
+
+				<!-- Notifications -->
+				<section class="settings-section">
+					<h3 class="settings-section-title">Notifications</h3>
+
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Sound Effects</span>
+							<span class="settings-field-desc">Play sounds on message events</span>
+						</div>
+						<label class="toggle-switch">
+							<input type="checkbox" bind:checked={sound_enabled} />
+							<span class="toggle-track"></span>
 							<span class="toggle-thumb"></span>
-						</span>
-					</button>
-				</div>
-
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Working Indicators</span>
-						<span class="setting-desc">Show real-time progress in chat</span>
+						</label>
 					</div>
-					<button
-						class="toggle"
-						class:on={showWorkingIndicators}
-						onclick={() => showWorkingIndicators = !showWorkingIndicators}
-						role="switch"
-						aria-checked={showWorkingIndicators}
-					>
-						<span class="toggle-track">
+
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Notifications</span>
+							<span class="settings-field-desc">Show system notifications</span>
+						</div>
+						<label class="toggle-switch">
+							<input type="checkbox" bind:checked={notification_enabled} />
+							<span class="toggle-track"></span>
 							<span class="toggle-thumb"></span>
-						</span>
-					</button>
-				</div>
-
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Sound Effects</span>
-						<span class="setting-desc">Play sounds on message events</span>
+						</label>
 					</div>
-					<button
-						class="toggle"
-						class:on={enableSounds}
-						onclick={() => enableSounds = !enableSounds}
-						role="switch"
-						aria-checked={enableSounds}
-					>
-						<span class="toggle-track">
-							<span class="toggle-thumb"></span>
-						</span>
-					</button>
-				</div>
-			</section>
+				</section>
 
-			<!-- Threads & Data -->
-			<section class="settings-section">
-				<h3 class="section-heading">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-					</svg>
-					Threads & Data
-				</h3>
+				<!-- Advanced -->
+				<section class="settings-section">
+					<h3 class="settings-section-title">Advanced</h3>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Auto-archive</span>
-						<span class="setting-desc">Archives threads when creating new ones</span>
+					<div class="settings-field">
+						<div class="settings-field-info">
+							<span class="settings-field-label">Terminal Shell</span>
+							<span class="settings-field-desc">Default shell for terminal sessions</span>
+						</div>
+						<div class="settings-field-control">
+							<input
+								type="text"
+								class="settings-input mono"
+								list="allowed-shells"
+								value={terminal_shell}
+								oninput={(e) => { terminal_shell = e.currentTarget.value; }}
+							/>
+							<datalist id="allowed-shells">
+								{#each ALLOWED_SHELLS as shell}
+									<option value={shell}></option>
+								{/each}
+							</datalist>
+							{#if !isValidShell(terminal_shell)}
+								<small class="settings-hint error">Must be one of: {ALLOWED_SHELLS.join(', ')}</small>
+							{/if}
+						</div>
 					</div>
-					<button
-						class="toggle"
-						class:on={autoArchive}
-						onclick={() => autoArchive = !autoArchive}
-						role="switch"
-						aria-checked={autoArchive}
-					>
-						<span class="toggle-track">
-							<span class="toggle-thumb"></span>
-						</span>
-					</button>
-				</div>
+				</section>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Max Threads</span>
-						<span class="setting-desc">Maximum threads per project before archiving</span>
-					</div>
-					<div class="number-control">
-						<button
-							class="size-btn"
-							onclick={() => maxThreads = Math.max(10, maxThreads - 10)}
-						>−</button>
-						<span class="size-value">{maxThreads}</span>
-						<button
-							class="size-btn"
-							onclick={() => maxThreads = Math.min(500, maxThreads + 10)}
-						>+</button>
-					</div>
-				</div>
-			</section>
-
-			<!-- Danger Zone -->
-			<section class="settings-section danger-zone">
-				<h3 class="section-heading">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-						<line x1="12" y1="9" x2="12" y2="13"/>
-						<line x1="12" y1="17" x2="12.01" y2="17"/>
-					</svg>
-					Danger Zone
-				</h3>
-
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Reset All Settings</span>
-						<span class="setting-desc">Restore all settings to their default values</span>
-					</div>
+				<!-- Actions -->
+				<div class="settings-actions-bar">
 					{#if showConfirmReset}
 						<div class="confirm-reset">
-							<button class="btn-danger small" onclick={handleReset}>Confirm Reset</button>
-							<button class="btn-secondary small" onclick={() => showConfirmReset = false}>Cancel</button>
+							<button class="btn btn-danger" onclick={handleReset}>Confirm Reset</button>
+							<button class="btn btn-secondary" onclick={() => showConfirmReset = false}>Cancel</button>
 						</div>
 					{:else}
-						<button class="btn-danger" onclick={() => showConfirmReset = true}>
-							Reset All
-						</button>
+						<div class="settings-actions-group">
+							<button class="btn btn-primary" onclick={handleSave} disabled={isSaving}>
+								{isSaving ? 'Saving…' : 'Save Changes'}
+							</button>
+							<button class="btn btn-secondary" onclick={() => showConfirmReset = true}>Reset All</button>
+						</div>
 					{/if}
 				</div>
-			</section>
-		</div>
+			</div>
+		{:else if activeTab === 'providers'}
+			<ProviderSettings />
+		{:else if activeTab === 'hydra'}
+			<HydraSettings />
+		{:else if activeTab === 'shortcuts'}
+			<ShortcutsSettingsPage />
+		{:else if activeTab === 'about'}
+			<AboutView />
+		{/if}
 	</div>
-{/if}
+</div>
 
 <style>
-	.loading-state {
+	.settings-container {
+		flex: 1;
+		display: flex;
+		overflow: hidden;
+		background: var(--surface-1);
+	}
+
+	/* ── Sidebar ── */
+
+	.settings-nav {
+		width: 200px;
+		flex-shrink: 0;
+		border-right: var(--border-1) var(--border-color-1);
+		padding: var(--space-4) var(--space-2);
+		overflow-y: auto;
+		background: var(--surface-2);
+	}
+
+	.settings-nav-header {
+		padding: var(--space-2) var(--space-3);
+		margin-bottom: var(--space-3);
+	}
+
+	.settings-nav-title {
+		font-size: var(--font-size-lg);
+		font-weight: 700;
+		color: var(--text-primary);
+	}
+
+	.settings-nav-list {
 		display: flex;
 		flex-direction: column;
+		gap: 1px;
+	}
+
+	.settings-nav-item {
+		display: flex;
 		align-items: center;
-		justify-content: center;
-		height: 100%;
-		gap: var(--space-4);
-		color: var(--text-tertiary);
+		padding: 8px var(--space-3);
+		border-radius: var(--radius-md);
+		font-size: var(--font-size-sm);
+		font-weight: 400;
+		color: var(--text-secondary);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		border: none;
+		background: transparent;
+		width: 100%;
+		text-align: left;
+		font-family: var(--font-system);
 	}
 
-	.spinner {
-		width: 28px;
-		height: 28px;
-		border: 2px solid var(--surface-3);
-		border-top-color: var(--accent-1);
-		border-radius: 50%;
-		animation: spin 0.7s linear infinite;
+	.settings-nav-item:hover {
+		background: var(--surface-3);
+		color: var(--text-primary);
 	}
 
-	@keyframes spin {
-		to { transform: rotate(360deg); }
+	.settings-nav-item.active {
+		background: var(--accent-3);
+		color: var(--accent-1);
+		font-weight: 500;
 	}
 
-	.settings-view {
-		height: 100%;
+	/* ── Content ── */
+
+	.settings-content {
+		flex: 1;
 		overflow-y: auto;
 		padding: var(--space-6) var(--space-8);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-6);
 		max-width: 680px;
 	}
 
-	.settings-header {
+	.settings-page {
 		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding-bottom: var(--space-4);
-		border-bottom: var(--border-1) var(--border-color-1);
+		flex-direction: column;
+		gap: var(--space-6);
 	}
 
-	.settings-title {
+	.settings-page-header {
+		margin-bottom: var(--space-2);
+	}
+
+	.settings-page-title {
 		font-size: var(--font-size-xl);
 		font-weight: 700;
 		color: var(--text-primary);
 	}
 
-	.settings-actions {
-		display: flex;
-		gap: var(--space-2);
+	.settings-page-desc {
+		font-size: var(--font-size-sm);
+		color: var(--text-tertiary);
+		margin-top: var(--space-1);
 	}
 
-	.settings-content {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-6);
-	}
+	/* ── Sections ── */
 
 	.settings-section {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
+		padding-bottom: var(--space-4);
+		border-bottom: var(--border-1) var(--border-color-2);
 	}
 
-	.section-heading {
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
+	.settings-section:last-of-type {
+		border-bottom: none;
+	}
+
+	.settings-section-title {
 		font-size: var(--font-size-sm);
 		font-weight: 600;
 		color: var(--text-secondary);
@@ -458,52 +536,62 @@
 		border-bottom: var(--border-1) var(--border-color-2);
 	}
 
-	.setting-row {
+	.settings-field {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: var(--space-3) 0;
 		gap: var(--space-4);
+		padding: var(--space-3) 0;
 	}
 
-	.setting-info {
+	.settings-field-info {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
 		flex: 1;
+		min-width: 0;
 	}
 
-	.setting-name {
+	.settings-field-label {
 		font-size: var(--font-size-sm);
-		font-weight: 500;
 		color: var(--text-primary);
+		font-weight: 400;
 	}
 
-	.setting-desc {
-		font-size: var(--font-size-xs);
+	.settings-field-desc {
+		font-size: 11px;
 		color: var(--text-tertiary);
+		margin-top: 1px;
 	}
 
-	/* Toggle Switch */
-	.toggle {
-		display: flex;
-		align-items: center;
-		background: none;
-		border: none;
+	.settings-field-control {
+		flex-shrink: 0;
+	}
+
+	/* ── Toggle ── */
+
+	.toggle-switch {
+		position: relative;
+		width: 42px;
+		height: 24px;
 		cursor: pointer;
-		padding: 2px;
+	}
+
+	.toggle-switch input {
+		opacity: 0;
+		width: 0;
+		height: 0;
 	}
 
 	.toggle-track {
-		width: 40px;
-		height: 22px;
-		border-radius: 11px;
+		position: absolute;
+		inset: 0;
 		background: var(--surface-4);
-		position: relative;
+		border-radius: 12px;
 		transition: background var(--transition-fast);
 	}
 
-	.toggle.on .toggle-track {
+	.toggle-switch input:checked + .toggle-track {
 		background: var(--accent-1);
 	}
 
@@ -511,85 +599,70 @@
 		position: absolute;
 		top: 2px;
 		left: 2px;
-		width: 18px;
-		height: 18px;
-		border-radius: 50%;
+		width: 20px;
+		height: 20px;
 		background: white;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+		border-radius: 50%;
+		box-shadow: var(--shadow-sm);
 		transition: transform var(--transition-fast);
+		pointer-events: none;
 	}
 
-	.toggle.on .toggle-thumb {
+	.toggle-switch input:checked ~ .toggle-thumb {
 		transform: translateX(18px);
 	}
 
-	/* Theme Options */
-	.theme-options {
-		display: flex;
-		gap: 2px;
-		padding: 2px;
-		background: var(--surface-3);
-		border-radius: var(--radius-md);
-	}
+	/* ── Select ── */
 
-	.theme-btn {
-		padding: 5px 12px;
-		border: none;
-		background: transparent;
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-xs);
-		color: var(--text-secondary);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-		font-weight: 500;
-	}
-
-	.theme-btn.active {
+	.settings-select {
+		padding: 6px 28px 6px 10px;
+		border: var(--border-1) var(--border-color-1);
 		background: var(--surface-1);
+		border-radius: var(--radius-sm);
+		font-size: var(--font-size-sm);
 		color: var(--text-primary);
-		box-shadow: var(--shadow-sm);
-	}
-
-	.theme-btn:hover:not(.active) {
-		color: var(--text-primary);
-	}
-
-	/* Palette Options */
-	.palette-options {
-		display: flex;
-		gap: 6px;
-	}
-
-	.palette-btn {
-		width: 28px;
-		height: 28px;
-		border: 2px solid transparent;
-		background: transparent;
-		border-radius: var(--radius-full);
+		font-family: var(--font-system);
 		cursor: pointer;
-		transition: all var(--transition-fast);
-		display: flex;
-		align-items: center;
-		justify-content: center;
+		outline: none;
+		appearance: none;
+		-webkit-appearance: none;
+		background-image: url("data:image/svg+xml,%3Csvg width='8' height='5' viewBox='0 0 8 5' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l3 3 3-3' stroke='%2398989d' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+		background-repeat: no-repeat;
+		background-position: right 8px center;
+		min-width: 180px;
 	}
 
-	.palette-btn:hover {
-		background: var(--surface-3);
+	.settings-select:focus {
+		border-color: var(--accent-1);
 	}
 
-	.palette-btn.active {
-		border-color: var(--text-primary);
-		background: var(--surface-3);
+	/* ── Input ── */
+
+	.settings-input {
+		padding: 6px 10px;
+		border: var(--border-1) var(--border-color-1);
+		background: var(--surface-1);
+		border-radius: var(--radius-sm);
+		font-size: var(--font-size-sm);
+		color: var(--text-primary);
+		font-family: var(--font-system);
+		outline: none;
+		transition: border-color var(--transition-fast);
 	}
 
-	.palette-swatch {
-		width: 16px;
-		height: 16px;
-		border-radius: 50%;
+	.settings-input.mono {
+		font-family: var(--font-mono);
+		font-size: 11px;
+		width: 200px;
 	}
 
-	/* Font Size */
-	.font-size-control {
+	.settings-input:focus {
+		border-color: var(--accent-1);
+	}
+
+	/* ── Number Control ── */
+
+	.number-control {
 		display: flex;
 		align-items: center;
 		gap: 2px;
@@ -632,80 +705,55 @@
 		font-family: var(--font-mono);
 	}
 
-	/* Number control (same pattern) */
-	.number-control {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		background: var(--surface-3);
-		border-radius: var(--radius-md);
-		padding: 2px;
-	}
+	/* ── Buttons ── */
 
-	/* Buttons */
-	.btn-primary {
+	.btn {
 		padding: 6px 16px;
 		border: none;
-		background: var(--accent-1);
-		color: var(--text-inverse);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-md);
 		font-size: var(--font-size-sm);
 		font-weight: 500;
 		cursor: pointer;
-		transition: background var(--transition-fast);
+		transition: all var(--transition-fast);
+		font-family: var(--font-system);
 	}
 
-	.btn-primary:hover {
+	.btn-primary {
+		background: var(--accent-1);
+		color: white;
+	}
+
+	.btn-primary:hover:not(:disabled) {
 		background: var(--accent-2);
 	}
 
+	.btn-primary:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
 	.btn-secondary {
-		padding: 5px 12px;
-		border: var(--border-1) var(--border-color-1);
-		background: transparent;
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-xs);
-		color: var(--text-secondary);
-		cursor: pointer;
+		background: var(--surface-3);
+		color: var(--text-primary);
 	}
 
 	.btn-secondary:hover {
-		background: var(--surface-3);
-	}
-
-	.btn-secondary.small {
-		padding: 4px 10px;
-		font-size: 11px;
+		background: var(--surface-4);
 	}
 
 	.btn-danger {
-		padding: 5px 12px;
-		border: var(--border-1) rgba(255, 59, 48, 0.2);
-		background: rgba(255, 59, 48, 0.08);
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-xs);
-		font-weight: 500;
+		background: rgba(255, 59, 48, 0.1);
 		color: var(--danger);
-		cursor: pointer;
-		transition: all var(--transition-fast);
 	}
 
 	.btn-danger:hover {
-		background: rgba(255, 59, 48, 0.15);
+		background: rgba(255, 59, 48, 0.2);
 	}
 
-	.btn-danger.small {
-		padding: 3px 8px;
-		font-size: 11px;
-	}
-
-	.danger-zone {
+	.settings-actions-bar {
+		margin-top: var(--space-4);
 		padding-top: var(--space-4);
 		border-top: var(--border-1) var(--border-color-1);
-	}
-
-	.danger-zone .section-heading {
-		color: var(--danger);
 	}
 
 	.confirm-reset {
@@ -713,17 +761,55 @@
 		gap: var(--space-2);
 	}
 
-	/* Scrollbar */
-	.settings-view::-webkit-scrollbar {
-		width: 6px;
+	.settings-actions-group {
+		display: flex;
+		gap: var(--space-2);
 	}
 
-	.settings-view::-webkit-scrollbar-track {
+	/* ── Loading ── */
+
+	.loading-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		height: 100%;
+		gap: var(--space-4);
+		color: var(--text-tertiary);
+	}
+
+	.spinner {
+		width: 28px;
+		height: 28px;
+		border: 2px solid var(--surface-3);
+		border-top-color: var(--accent-1);
+		border-radius: 50%;
+		animation: spin 0.7s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	/* ── Scrollbar ── */
+
+	.settings-nav::-webkit-scrollbar,
+	.settings-content::-webkit-scrollbar {
+		width: var(--scrollbar-width);
+	}
+
+	.settings-nav::-webkit-scrollbar-track,
+	.settings-content::-webkit-scrollbar-track {
 		background: transparent;
 	}
 
-	.settings-view::-webkit-scrollbar-thumb {
+	.settings-nav::-webkit-scrollbar-thumb,
+	.settings-content::-webkit-scrollbar-thumb {
 		background: var(--surface-4);
 		border-radius: var(--radius-full);
+	}
+
+	.settings-content::-webkit-scrollbar-thumb:hover {
+		background: var(--surface-5);
 	}
 </style>

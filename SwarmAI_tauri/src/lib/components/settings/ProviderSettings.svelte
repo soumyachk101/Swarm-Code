@@ -1,31 +1,75 @@
 <script lang="ts">
-	import { getProviders, testProvider, addProvider, removeProvider, updateProviderCredits } from '$lib/api/commands';
-	import type { Provider, ProviderKind } from '$lib/types';
+	import { onMount } from 'svelte';
+	import {
+		getProviders,
+		getModelsForProvider,
+		testProvider,
+		saveProvider,
+		deleteProvider,
+		getProviderCredits,
+		refreshProviderStatus,
+	} from '$lib/api/commands';
+	import { providerIcon, providerShortName } from '$lib/icons';
+	import type {
+		Provider,
+		ProviderKind,
+		ProviderType,
+		ModelInfo,
+		ProviderTestResult,
+		ProviderCredits,
+		ProviderStatus,
+	} from '$lib/types';
+	import { ProviderKind as PK, PROVIDER_LABELS } from '$lib/types';
 
-	interface Props {
-		projectId: string | null;
-	}
+	// ---------------------------------------------------------------------------
+	// All supported provider kinds
+	// ---------------------------------------------------------------------------
 
-	let { projectId = null }: Props = $props();
+	const ALL_PROVIDER_KINDS: { kind: ProviderKind; label: string; hasApiKey: boolean }[] = [
+		{ kind: PK.Codex, label: 'Codex', hasApiKey: false },
+		{ kind: PK.Claude, label: 'Claude', hasApiKey: false },
+		{ kind: PK.Cursor, label: 'Cursor', hasApiKey: false },
+		{ kind: PK.Opencode, label: 'OpenCode', hasApiKey: false },
+		{ kind: PK.Grok, label: 'Grok', hasApiKey: true },
+		{ kind: PK.Deepseek, label: 'DeepSeek', hasApiKey: true },
+		{ kind: PK.Meta, label: 'Meta', hasApiKey: true },
+		{ kind: PK.Devin, label: 'Devin', hasApiKey: false },
+		{ kind: PK.Antigravity, label: 'Antigravity', hasApiKey: false },
+		{ kind: PK.Copilot, label: 'Copilot', hasApiKey: false },
+	];
+
+	// ---------------------------------------------------------------------------
+	// State
+	// ---------------------------------------------------------------------------
 
 	let providers = $state<Provider[]>([]);
 	let isLoading = $state(true);
-	let showAddForm = $state(false);
-	let isTesting = $state<string | null>(null);
-	let activeTab = $state<'all' | 'active' | 'error'>('all');
+	let testingId = $state<string | null>(null);
+	let expandingId = $state<string | null>(null);
+	let expandedModels = $state<ModelInfo[]>([]);
+	let expandedCredits = $state<ProviderCredits | null>(null);
+	let expandedStatus = $state<ProviderStatus | null>(null);
+	let isRefreshing = $state(false);
 
-	let newProviderName = $state('');
-	let newProviderKind = $state<ProviderKind>(ProviderKind.Anthropic);
-	let newProviderKey = $state('');
-	let newProviderModel = $state('');
+	// API key editing state
+	let editingApiKeyId = $state<string | null>(null);
+	let apiKeyInput = $state('');
 
-	$effect(() => {
+	// Default provider state
+	let selectedDefault = $state<string | null>(null);
+
+	// ---------------------------------------------------------------------------
+	// Load
+	// ---------------------------------------------------------------------------
+
+	onMount(() => {
 		loadProviders();
 	});
 
 	async function loadProviders() {
 		try {
 			providers = await getProviders();
+			selectedDefault = providers.find((p) => p.is_default)?.id ?? null;
 		} catch (e) {
 			console.error('Failed to load providers:', e);
 		} finally {
@@ -33,246 +77,308 @@
 		}
 	}
 
+	// ---------------------------------------------------------------------------
+	// Actions
+	// ---------------------------------------------------------------------------
+
 	async function handleTest(providerId: string) {
-		isTesting = providerId;
+		testingId = providerId;
 		try {
-			await testProvider(providerId);
-			await loadProviders();
+			const result: ProviderTestResult = await testProvider(providerId);
+			// Update the provider in the list with any new model info
+			if (result.models && result.models.length > 0) {
+				providers = providers.map((p) =>
+					p.id === providerId ? { ...p, models: result.models, status_message: result.message } : p,
+				);
+			}
+			// Refresh status
+			const status = await refreshProviderStatus(providerId);
+			providers = providers.map((p) =>
+				p.id === providerId ? { ...p, installed: true, authenticated: result.success, version: status.version ?? p.version } : p,
+			);
 		} catch (e) {
 			console.error('Provider test failed:', e);
 		} finally {
-			isTesting = null;
+			testingId = null;
 		}
 	}
 
-	async function handleAdd() {
-		if (!newProviderName.trim() || !newProviderKey.trim()) return;
+	async function handleExpand(providerId: string) {
+		if (expandingId === providerId) {
+			expandingId = null;
+			expandedModels = [];
+			expandedCredits = null;
+			expandedStatus = null;
+			return;
+		}
+
+		expandingId = providerId;
+		expandedModels = [];
+		expandedCredits = null;
+		expandedStatus = null;
+
 		try {
-			await addProvider({
-				name: newProviderName.trim(),
-				kind: newProviderKind,
-				apiKey: newProviderKey,
-				model: newProviderModel || undefined,
+			const [models, credits, status] = await Promise.all([
+				getModelsForProvider(providerId).catch(() => []),
+				getProviderCredits(providerId).catch(() => null),
+				refreshProviderStatus(providerId).catch(() => null),
+			]);
+			expandedModels = models;
+			expandedCredits = credits;
+			expandedStatus = status;
+		} catch (e) {
+			console.error('Failed to load provider details:', e);
+		}
+	}
+
+	async function handleSaveApiKey(providerId: string) {
+		try {
+			await saveProvider({ id: providerId, api_key: apiKeyInput });
+			providers = providers.map((p) =>
+				p.id === providerId ? { ...p, api_key: apiKeyInput || null } : p,
+			);
+			editingApiKeyId = null;
+			apiKeyInput = '';
+		} catch (e) {
+			console.error('Failed to save API key:', e);
+		}
+	}
+
+	async function handleDelete(providerId: string) {
+		if (!confirm('Remove this provider?')) return;
+		try {
+			await deleteProvider(providerId);
+			providers = providers.filter((p) => p.id !== providerId);
+			if (selectedDefault === providerId) {
+				selectedDefault = providers[0]?.id ?? null;
+			}
+		} catch (e) {
+			console.error('Failed to delete provider:', e);
+		}
+	}
+
+	async function handleSetDefault(providerId: string) {
+		selectedDefault = providerId;
+		try {
+			await saveProvider({ id: providerId, is_default: true });
+			providers = providers.map((p) => ({
+				...p,
+				is_default: p.id === providerId,
+			}));
+		} catch (e) {
+			console.error('Failed to set default provider:', e);
+			// Revert
+			selectedDefault = providers.find((p) => p.is_default)?.id ?? null;
+		}
+	}
+
+	async function handleInstallProvider(kind: ProviderKind) {
+		try {
+			const saved = await saveProvider({
+				kind,
+				name: PROVIDER_LABELS[kind],
+				provider_type: kind === PK.Deepseek || kind === PK.Grok || kind === PK.Meta
+					? ProviderType.ApiKey
+					: ProviderType.Cli,
+				enabled: true,
 			});
-			newProviderName = '';
-			newProviderKey = '';
-			newProviderModel = '';
-			showAddForm = false;
-			await loadProviders();
+			providers = [...providers, saved];
 		} catch (e) {
-			console.error('Failed to add provider:', e);
+			console.error('Failed to install provider:', e);
 		}
 	}
 
-	async function handleRemove(providerId: string) {
-		if (!confirm('Remove this provider? This cannot be undone.')) return;
-		try {
-			await removeProvider(providerId);
-			await loadProviders();
-		} catch (e) {
-			console.error('Failed to remove provider:', e);
-		}
+	// ---------------------------------------------------------------------------
+	// Helpers
+	// ---------------------------------------------------------------------------
+
+	function getProviderByKind(kind: ProviderKind): Provider | undefined {
+		return providers.find((p) => p.kind === kind);
 	}
 
-	let filteredProviders = $derived(() => {
-		if (activeTab === 'active') return providers.filter(p => p.status === 'active');
-		if (activeTab === 'error') return providers.filter(p => p.status === 'error');
-		return providers;
-	});
-
-	let providerCounts = $derived(() => ({
-		all: providers.length,
-		active: providers.filter(p => p.status === 'active').length,
-		error: providers.filter(p => p.status === 'error').length,
-	}));
-
-	function formatCredits(provider: Provider): string {
-		if (!provider.credits) return '—';
-		const used = provider.credits.used_tokens || 0;
-		const total = provider.credits.credits_total || 0;
-		const remaining = provider.credits.credits_remaining ?? null;
-		if (remaining !== null && total > 0) {
-			return `${remaining.toLocaleString()} left`;
-		}
-		if (total > 0) {
-			return `${used.toLocaleString()} / ${total.toLocaleString()} used`;
-		}
-		return `${used.toLocaleString()} used`;
+	function statusLabel(p: Provider): string {
+		if (p.authenticated) return 'Connected';
+		if (p.installed) return 'Installed';
+		return 'Not Set Up';
 	}
 
-	function getProviderIcon(kind: ProviderKind): string {
-		switch (kind) {
-			case ProviderKind.Anthropic: return 'A';
-			case ProviderKind.OpenAI: return 'O';
-			case ProviderKind.Google: return 'G';
-			case ProviderKind.Ollama: return 'Ω';
-			case ProviderKind.Custom: return '?';
-		}
+	function statusClass(p: Provider): string {
+		if (p.authenticated) return 'connected';
+		if (p.installed) return 'installed';
+		return 'disconnected';
 	}
 
-	let providerKindOptions: ProviderKind[] = [
-		ProviderKind.Anthropic,
-		ProviderKind.OpenAI,
-		ProviderKind.Google,
-		ProviderKind.Ollama,
-		ProviderKind.Custom,
-	];
+	function maskApiKey(key: string | null): string {
+		if (!key) return '';
+		if (key.length <= 8) return '••••••••';
+		return key.slice(0, 4) + '••••' + key.slice(-4);
+	}
 </script>
 
 <div class="provider-settings">
-	<div class="settings-header">
-		<h2 class="settings-title">Providers</h2>
-		<button class="btn-primary" onclick={() => showAddForm = !showAddForm}>
-			{showAddForm ? 'Cancel' : '+ Add Provider'}
-		</button>
-	</div>
-
-	<!-- Add Provider Form -->
-	{#if showAddForm}
-		<div class="add-form">
-			<h3 class="form-title">New Provider</h3>
-			<div class="form-grid">
-				<div class="form-group">
-					<label class="form-label">Name</label>
-					<input
-						type="text"
-						class="form-input"
-						placeholder="My Provider"
-						value={newProviderName}
-						oninput={(e) => newProviderName = e.currentTarget.value}
-					/>
-				</div>
-				<div class="form-group">
-					<label class="form-label">Type</label>
-					<select
-						class="form-select"
-						value={newProviderKind}
-						onchange={(e) => newProviderKind = e.currentTarget.value as ProviderKind}
-					>
-						{#each providerKindOptions as kind (kind)}
-							<option value={kind}>{kind}</option>
-						{/each}
-					</select>
-				</div>
-				<div class="form-group">
-					<label class="form-label">API Key</label>
-					<input
-						type="password"
-						class="form-input"
-						placeholder="sk-..."
-						value={newProviderKey}
-						oninput={(e) => newProviderKey = e.currentTarget.value}
-					/>
-				</div>
-				<div class="form-group">
-					<label class="form-label">Model (optional)</label>
-					<input
-						type="text"
-						class="form-input"
-						placeholder="claude-3-opus"
-						value={newProviderModel}
-						oninput={(e) => newProviderModel = e.currentTarget.value}
-					/>
-				</div>
-			</div>
-			<div class="form-actions">
-				<button class="btn-primary" onclick={handleAdd} disabled={!newProviderName.trim() || !newProviderKey.trim()}>
-					Add Provider
-				</button>
-				<button class="btn-secondary" onclick={() => showAddForm = false}>Cancel</button>
-			</div>
-		</div>
-	{/if}
-
-	<!-- Tab Filter -->
-	<div class="filter-tabs">
-		<button class="filter-tab" class:active={activeTab === 'all'} onclick={() => activeTab = 'all'}>
-			All <span class="tab-count">{providerCounts().all}</span>
-		</button>
-		<button class="filter-tab" class:active={activeTab === 'active'} onclick={() => activeTab = 'active'}>
-			Active <span class="tab-count success">{providerCounts().active}</span>
-		</button>
-		<button class="filter-tab" class:active={activeTab === 'error'} onclick={() => activeTab = 'error'}>
-			Errors <span class="tab-count danger">{providerCounts().error}</span>
-		</button>
+	<div class="settings-page-header">
+		<h2 class="settings-page-title">Providers</h2>
+		<p class="settings-page-desc">Manage your AI providers and model connections</p>
 	</div>
 
 	{#if isLoading}
 		<div class="loading">
 			<div class="spinner"></div>
 		</div>
-	{:else if filteredProviders().length === 0}
-		<div class="empty-state">
-			<p>No providers configured yet.</p>
-			<span>Add a provider to connect to an AI model.</span>
-		</div>
 	{:else}
-		<div class="provider-list">
-			{#each filteredProviders() as provider (provider.id)}
-				<div class="provider-card" class:error={provider.status === 'error'}>
-					<div class="provider-card-header">
-						<div class="provider-icon">
-							{getProviderIcon(provider.kind)}
-						</div>
-						<div class="provider-details">
-							<span class="provider-name">{provider.name}</span>
-							<span class="provider-type">{provider.kind}</span>
-						</div>
-						<span class="status-badge {provider.status}">
-							{provider.status}
-						</span>
-					</div>
-					<div class="provider-card-body">
-						<div class="provider-meta">
-							{#if provider.models && provider.models.length > 0}
-								<div class="models-row">
-									<span class="meta-label">Models:</span>
-									{#each provider.models.slice(0, 5) as model (model.id)}
-										<span class="model-tag">{model.id}</span>
-									{/each}
-								</div>
-							{/if}
-							<div class="credits-row">
-								<span class="meta-label">Credits:</span>
-								<span class="credits-value">{formatCredits(provider)}</span>
-							</div>
-							{#if provider.lastError}
-								<div class="error-row">
-									<span class="error-msg">{provider.lastError}</span>
-								</div>
-							{/if}
-						</div>
-					</div>
-					<div class="provider-card-actions">
-						<button
-							class="action-btn test"
-							onclick={() => handleTest(provider.id)}
-							disabled={isTesting === provider.id}
-						>
-							{#if isTesting === provider.id}
-								<span class="spinner-sm"></span>
+		<!-- Provider Cards Grid -->
+		<div class="provider-grid">
+			{#each ALL_PROVIDER_KINDS as item (item.kind)}
+				{@const provider = getProviderByKind(item.kind)}
+				<div class="provider-card">
+					<div class="provider-card-top">
+						<div class="provider-icon-wrap">
+							{#if provider}
+								<img
+									src={providerIcon(item.kind)}
+									alt={item.label}
+									class="provider-icon-img"
+								/>
 							{:else}
-								Test
+								<span class="provider-icon-placeholder">{providerShortName(item.kind)}</span>
 							{/if}
-						</button>
-						<button
-							class="action-btn refresh"
-							onclick={() => updateProviderCredits(provider.id)}
-						>
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<path d="M1 4v6h6M23 20v-6h-6"/>
-								<path d="M20.49 9A9 9 0 0 0 5.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 0 1 3.51 15"/>
-							</svg>
-						</button>
-						<button
-							class="action-btn delete"
-							onclick={() => handleRemove(provider.id)}
-						>
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-								<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-							</svg>
-						</button>
+						</div>
+						<div class="provider-info">
+							<span class="provider-name">{item.label}</span>
+							<span class="provider-type">
+								{#if provider}
+									{provider.provider_type}
+								{:else}
+									Not configured
+								{/if}
+							</span>
+						</div>
+						{#if provider}
+							<span class="status-badge {statusClass(provider)}">
+								{statusLabel(provider)}
+							</span>
+						{:else}
+							<span class="status-badge not-configured">Not configured</span>
+						{/if}
 					</div>
+
+					{#if provider}
+						<!-- Model List (collapsed preview) -->
+						<div class="provider-models-preview">
+							{#if provider.models && provider.models.length > 0}
+								<div class="model-tags">
+									{#each provider.models.slice(0, 4) as model (model.id)}
+										<span class="model-tag">{model.name ?? model.id}</span>
+									{/each}
+									{#if provider.models.length > 4}
+										<span class="model-tag more">+{provider.models.length - 4}</span>
+									{/if}
+								</div>
+							{:else}
+								<span class="no-models">No models loaded</span>
+							{/if}
+						</div>
+
+						<!-- Expanded Detail -->
+						{#if expandingId === provider.id}
+							<div class="provider-detail-panel">
+								{#if expandedModels.length > 0}
+									<div class="detail-section">
+										<span class="detail-label">Models</span>
+										<div class="model-list">
+											{#each expandedModels as model (model.id)}
+												<div class="model-item" class:default={model.is_default}>
+													<span class="model-name">{model.name ?? model.id}</span>
+													<span class="model-detail">{model.detail ?? ''}</span>
+													{#if model.is_default}
+														<span class="model-default-badge">default</span>
+													{/if}
+												</div>
+											{/each}
+										</div>
+									</div>
+								{/if}
+
+								{#if expandedCredits}
+									<div class="detail-section">
+										<span class="detail-label">Credits</span>
+										<span class="credits-value">
+											{#if expandedCredits.is_unlimited}
+												Unlimited
+											{:else if expandedCredits.remaining !== null}
+												{expandedCredits.remaining?.toLocaleString()} {expandedCredits.unit ?? 'tokens'} remaining
+											{:else}
+												No credit data
+											{/if}
+										</span>
+										{#if expandedCredits.resets_at}
+											<span class="credits-reset">Resets: {new Date(expandedCredits.resets_at).toLocaleDateString()}</span>
+										{/if}
+									</div>
+								{/if}
+
+								{#if provider.status_message}
+									<div class="detail-section">
+										<span class="detail-label">Status</span>
+										<span class="status-message">{provider.status_message}</span>
+									</div>
+								{/if}
+							</div>
+						{/if}
+
+						<!-- Actions -->
+						<div class="provider-actions">
+							{#if item.hasApiKey}
+								{#if editingApiKeyId === provider.id}
+									<div class="api-key-edit">
+										<input
+											type="password"
+											class="api-key-input"
+											placeholder="Enter API key…"
+											value={apiKeyInput}
+											oninput={(e) => apiKeyInput = e.currentTarget.value}
+											onkeydown={(e) => { if (e.key === 'Enter') handleSaveApiKey(provider.id); if (e.key === 'Escape') { editingApiKeyId = null; apiKeyInput = ''; } }}
+										/>
+										<button class="btn btn-xs btn-primary" onclick={() => handleSaveApiKey(provider.id)}>Save</button>
+										<button class="btn btn-xs btn-secondary" onclick={() => { editingApiKeyId = null; apiKeyInput = ''; }}>Cancel</button>
+									</div>
+								{:else}
+									<button class="btn btn-xs btn-secondary" onclick={() => { editingApiKeyId = provider.id; apiKeyInput = provider.api_key ?? ''; }}>
+										{provider.api_key ? 'Update Key' : 'Add Key'}
+									</button>
+								{/if}
+							{/if}
+
+							<button class="btn btn-xs btn-secondary" onclick={() => handleExpand(provider.id)}>
+								{expandingId === provider.id ? 'Collapse' : 'Details'}
+							</button>
+							<button
+								class="btn btn-xs btn-secondary"
+								onclick={() => handleTest(provider.id)}
+								disabled={testingId === provider.id}
+							>
+								{testingId === provider.id ? 'Testing…' : 'Test'}
+							</button>
+							<button
+								class="btn btn-xs"
+								class:btn-primary={selectedDefault === provider.id}
+								class:btn-secondary={selectedDefault !== provider.id}
+								onclick={() => handleSetDefault(provider.id)}
+							>
+								{selectedDefault === provider.id ? 'Default' : 'Set Default'}
+							</button>
+							<button class="btn btn-xs btn-danger" onclick={() => handleDelete(provider.id)}>Remove</button>
+						</div>
+					{:else}
+						<div class="provider-actions">
+							<button
+								class="btn btn-xs btn-primary"
+								onclick={() => handleInstallProvider(item.kind)}
+							>
+								{item.hasApiKey ? 'Add API Key' : 'Install'}
+							</button>
+						</div>
+					{/if}
 				</div>
 			{/each}
 		</div>
@@ -281,143 +387,29 @@
 
 <style>
 	.provider-settings {
-		height: 100%;
-		overflow-y: auto;
-		padding: var(--space-6) var(--space-8);
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-5);
-		max-width: 680px;
+		width: 100%;
 	}
 
-	.settings-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding-bottom: var(--space-4);
-		border-bottom: var(--border-1) var(--border-color-1);
+	.settings-page-header {
+		margin-bottom: var(--space-2);
 	}
 
-	.settings-title {
+	.settings-page-title {
 		font-size: var(--font-size-xl);
 		font-weight: 700;
 		color: var(--text-primary);
 	}
 
-	.add-form {
-		background: var(--surface-3);
-		border: var(--border-1) var(--border-color-1);
-		border-radius: var(--radius-md);
-		padding: var(--space-4);
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-4);
-	}
-
-	.form-title {
+	.settings-page-desc {
 		font-size: var(--font-size-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.form-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--space-3);
-	}
-
-	.form-group {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-1);
-	}
-
-	.form-label {
-		font-size: var(--font-size-xs);
-		font-weight: 500;
-		color: var(--text-secondary);
-	}
-
-	.form-input,
-	.form-select {
-		width: 100%;
-		padding: 6px 10px;
-		border: var(--border-1) var(--border-color-1);
-		background: var(--surface-1);
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-sm);
-		color: var(--text-primary);
-		outline: none;
-		font-family: var(--font-system);
-	}
-
-	.form-input:focus,
-	.form-select:focus {
-		border-color: var(--accent-1);
-	}
-
-	.form-select {
-		appearance: none;
-		-webkit-appearance: none;
-		cursor: pointer;
-	}
-
-	.form-actions {
-		display: flex;
-		gap: var(--space-2);
-	}
-
-	.filter-tabs {
-		display: flex;
-		gap: 2px;
-		padding: 2px;
-		background: var(--surface-3);
-		border-radius: var(--radius-md);
-		width: fit-content;
-	}
-
-	.filter-tab {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		padding: 5px 12px;
-		border: none;
-		background: transparent;
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-xs);
-		font-weight: 500;
-		color: var(--text-secondary);
-		cursor: pointer;
-		transition: all var(--transition-fast);
-	}
-
-	.filter-tab.active {
-		background: var(--surface-1);
-		color: var(--text-primary);
-		box-shadow: var(--shadow-sm);
-	}
-
-	.filter-tab:hover:not(.active) {
-		color: var(--text-primary);
-	}
-
-	.tab-count {
-		font-size: 10px;
-		padding: 1px 5px;
-		border-radius: var(--radius-full);
-		background: var(--surface-4);
 		color: var(--text-tertiary);
+		margin-top: var(--space-1);
 	}
 
-	.tab-count.success {
-		background: rgba(48, 209, 88, 0.15);
-		color: var(--success);
-	}
-
-	.tab-count.danger {
-		background: rgba(255, 59, 48, 0.15);
-		color: var(--danger);
-	}
+	/* ── Loading ── */
 
 	.loading {
 		display: flex;
@@ -438,78 +430,63 @@
 		to { transform: rotate(360deg); }
 	}
 
-	.spinner-sm {
-		width: 12px;
-		height: 12px;
-		border: 1.5px solid var(--surface-3);
-		border-top-color: var(--text-inverse);
-		border-radius: 50%;
-		animation: spin 0.7s linear infinite;
-		display: inline-block;
-	}
+	/* ── Provider Grid ── */
 
-	.empty-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		padding: var(--space-8) var(--space-4);
-		text-align: center;
-		gap: var(--space-2);
-		color: var(--text-tertiary);
-	}
-
-	.empty-state p {
-		font-size: var(--font-size-sm);
-		color: var(--text-secondary);
-	}
-
-	.empty-state span {
-		font-size: var(--font-size-xs);
-	}
-
-	.provider-list {
-		display: flex;
-		flex-direction: column;
+	.provider-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
 		gap: var(--space-3);
 	}
 
 	.provider-card {
 		background: var(--surface-2);
 		border: var(--border-1) var(--border-color-1);
-		border-radius: var(--radius-md);
-		overflow: hidden;
+		border-radius: var(--radius-lg);
+		padding: var(--space-4);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
 		transition: border-color var(--transition-fast);
 	}
 
-	.provider-card.error {
-		border-color: rgba(255, 59, 48, 0.2);
+	.provider-card:hover {
+		border-color: var(--surface-5);
 	}
 
-	.provider-card-header {
+	.provider-card-top {
 		display: flex;
 		align-items: center;
 		gap: var(--space-3);
-		padding: var(--space-3) var(--space-4);
-		border-bottom: var(--border-1) var(--border-color-2);
 	}
 
-	.provider-icon {
-		width: 32px;
-		height: 32px;
+	.provider-icon-wrap {
+		width: 36px;
+		height: 36px;
 		border-radius: var(--radius-md);
-		background: var(--accent-3);
-		color: var(--accent-1);
+		background: var(--surface-3);
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		font-size: 14px;
-		font-weight: 700;
 		flex-shrink: 0;
+		overflow: hidden;
 	}
 
-	.provider-details {
+	.provider-icon-img {
+		width: 24px;
+		height: 24px;
+		object-fit: contain;
+	}
+
+	.provider-icon-placeholder {
+		font-size: var(--font-size-xs);
+		font-weight: 700;
+		color: var(--text-secondary);
+		font-family: var(--font-mono);
+	}
+
+	.provider-info {
 		flex: 1;
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
@@ -529,67 +506,56 @@
 		letter-spacing: 0.3px;
 	}
 
+	/* ── Status Badge ── */
+
 	.status-badge {
 		font-size: 10px;
 		font-weight: 500;
-		padding: 2px 8px;
+		padding: 2px 10px;
 		border-radius: var(--radius-full);
 		text-transform: capitalize;
+		white-space: nowrap;
+		flex-shrink: 0;
 	}
 
-	.status-badge.active {
-		background: rgba(48, 209, 88, 0.1);
+	.status-badge.connected {
+		background: rgba(52, 199, 89, 0.1);
 		color: var(--success);
 	}
 
-	.status-badge.idle {
+	.status-badge.installed {
+		background: rgba(255, 149, 0, 0.1);
+		color: var(--warning);
+	}
+
+	.status-badge.disconnected {
+		background: rgba(255, 149, 0, 0.06);
+		color: var(--text-tertiary);
+	}
+
+	.status-badge.not-configured {
 		background: var(--surface-3);
 		color: var(--text-tertiary);
 	}
 
-	.status-badge.error {
-		background: rgba(255, 59, 48, 0.1);
-		color: var(--danger);
-	}
+	/* ── Models Preview ── */
 
-	.status-badge.disabled {
-		background: var(--surface-3);
-		color: var(--text-tertiary);
-	}
-
-	.provider-card-body {
-		padding: var(--space-3) var(--space-4);
-	}
-
-	.provider-meta {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-	}
-
-	.models-row {
+	.provider-models-preview {
 		display: flex;
 		align-items: center;
 		flex-wrap: wrap;
 		gap: var(--space-1);
 	}
 
-	.credits-row,
-	.error-row {
+	.model-tags {
 		display: flex;
 		align-items: center;
-		gap: var(--space-2);
-	}
-
-	.meta-label {
-		font-size: 11px;
-		font-weight: 500;
-		color: var(--text-tertiary);
-		min-width: 50px;
+		flex-wrap: wrap;
+		gap: 4px;
 	}
 
 	.model-tag {
-		padding: 1px 6px;
+		padding: 1px 8px;
 		background: var(--surface-3);
 		border-radius: var(--radius-sm);
 		font-size: 10px;
@@ -597,97 +563,177 @@
 		color: var(--text-secondary);
 	}
 
-	.credits-value {
-		font-size: var(--font-size-xs);
-		color: var(--text-secondary);
-	}
-
-	.error-msg {
-		font-size: var(--font-size-xs);
-		color: var(--danger);
-		font-style: italic;
-	}
-
-	.provider-card-actions {
-		display: flex;
-		align-items: center;
-		gap: var(--space-1);
-		padding: var(--space-2) var(--space-4);
-		border-top: var(--border-1) var(--border-color-2);
-	}
-
-	.action-btn {
-		padding: 4px 10px;
-		border: none;
-		background: transparent;
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-xs);
-		color: var(--text-tertiary);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		gap: 3px;
-		transition: all var(--transition-fast);
-		font-weight: 500;
-	}
-
-	.action-btn:hover:not(:disabled) {
-		background: var(--surface-3);
-		color: var(--text-primary);
-	}
-
-	.action-btn:disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-
-	.action-btn.test:hover {
+	.model-tag.more {
 		background: var(--accent-3);
 		color: var(--accent-1);
 	}
 
-	.action-btn.refresh:hover {
-		background: var(--surface-3);
-		color: var(--text-primary);
+	.no-models {
+		font-size: var(--font-size-xs);
+		color: var(--text-tertiary);
+		font-style: italic;
 	}
 
-	.action-btn.delete:hover {
-		background: rgba(255, 59, 48, 0.1);
-		color: var(--danger);
+	/* ── Expanded Detail Panel ── */
+
+	.provider-detail-panel {
+		border-top: var(--border-1) var(--border-color-2);
+		padding-top: var(--space-3);
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
+	}
+
+	.detail-section {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+	}
+
+	.detail-label {
+		font-size: 10px;
+		font-weight: 600;
+		color: var(--text-tertiary);
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.model-list {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+	}
+
+	.model-item {
+		display: flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: 3px var(--space-2);
+		border-radius: var(--radius-sm);
+		background: var(--surface-1);
+	}
+
+	.model-item.default {
+		border: var(--border-1) var(--accent-3);
+	}
+
+	.model-name {
+		font-size: var(--font-size-xs);
+		font-weight: 500;
+		color: var(--text-primary);
+		font-family: var(--font-mono);
+	}
+
+	.model-detail {
+		font-size: 10px;
+		color: var(--text-tertiary);
+		flex: 1;
+	}
+
+	.model-default-badge {
+		font-size: 9px;
+		font-weight: 600;
+		text-transform: uppercase;
+		padding: 1px 6px;
+		border-radius: var(--radius-full);
+		background: var(--accent-3);
+		color: var(--accent-1);
+		letter-spacing: 0.3px;
+	}
+
+	.credits-value {
+		font-size: var(--font-size-sm);
+		color: var(--text-secondary);
+	}
+
+	.credits-reset {
+		font-size: 10px;
+		color: var(--text-tertiary);
+	}
+
+	.status-message {
+		font-size: var(--font-size-xs);
+		color: var(--text-secondary);
+	}
+
+	/* ── Actions ── */
+
+	.provider-actions {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: var(--space-1);
+		padding-top: var(--space-2);
+		border-top: var(--border-1) var(--border-color-2);
+	}
+
+	.api-key-edit {
+		display: flex;
+		align-items: center;
+		gap: var(--space-1);
+		width: 100%;
+	}
+
+	.api-key-input {
+		flex: 1;
+		padding: 4px 8px;
+		border: var(--border-1) var(--accent-1);
+		background: var(--surface-1);
+		border-radius: var(--radius-sm);
+		font-size: var(--font-size-xs);
+		color: var(--text-primary);
+		outline: none;
+		font-family: var(--font-mono);
+	}
+
+	/* ── Buttons ── */
+
+	.btn {
+		padding: 4px 10px;
+		border: none;
+		border-radius: var(--radius-sm);
+		font-size: var(--font-size-xs);
+		font-weight: 500;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		font-family: var(--font-system);
+		white-space: nowrap;
+	}
+
+	.btn-xs {
+		padding: 3px 8px;
+		font-size: 10px;
 	}
 
 	.btn-primary {
-		padding: 6px 16px;
-		border: none;
 		background: var(--accent-1);
-		color: var(--text-inverse);
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-sm);
-		font-weight: 500;
-		cursor: pointer;
-		transition: background var(--transition-fast);
+		color: white;
 	}
 
 	.btn-primary:hover:not(:disabled) {
 		background: var(--accent-2);
 	}
 
-	.btn-primary:disabled {
+	.btn-secondary {
+		background: var(--surface-3);
+		color: var(--text-primary);
+	}
+
+	.btn-secondary:hover:not(:disabled) {
+		background: var(--surface-4);
+	}
+
+	.btn-danger {
+		background: rgba(255, 59, 48, 0.08);
+		color: var(--danger);
+	}
+
+	.btn-danger:hover {
+		background: rgba(255, 59, 48, 0.15);
+	}
+
+	.btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
-	}
-
-	.btn-secondary {
-		padding: 5px 12px;
-		border: var(--border-1) var(--border-color-1);
-		background: transparent;
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-xs);
-		color: var(--text-secondary);
-		cursor: pointer;
-	}
-
-	.btn-secondary:hover {
-		background: var(--surface-3);
 	}
 </style>

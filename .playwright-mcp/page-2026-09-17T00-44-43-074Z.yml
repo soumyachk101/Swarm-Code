@@ -1,0 +1,18 @@
+- generic [ref=e5]:
+  - generic [ref=e8]:
+    - button [ref=e9] [cursor=pointer]
+    - button [ref=e10] [cursor=pointer]
+    - button [ref=e11] [cursor=pointer]
+    - button [ref=e12] [cursor=pointer]
+    - button [ref=e13] [cursor=pointer]
+    - button [ref=e14] [cursor=pointer]
+    - button [ref=e15] [cursor=pointer]
+  - generic [ref=e16]:
+    - heading "Welcome to SwarmAI" [level=2] [ref=e21]
+    - paragraph [ref=e22]: Multi-agent AI orchestration for the desktop
+    - paragraph [ref=e23]: SwarmAI lets you chat with multiple AI providers, orchestrate parallel agent swarms with Hydra, and manage all your conversations in one place.
+  - generic [ref=e24]:
+    - button "Skip tour" [ref=e25] [cursor=pointer]
+    - generic [ref=e26]:
+      - button "Back" [disabled] [ref=e27]
+      - button "Next" [ref=e30] [cursor=pointer]

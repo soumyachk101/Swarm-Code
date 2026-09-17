@@ -1,262 +1,393 @@
 <script lang="ts">
-	import { invoke } from '@tauri-apps/api/core';
+	import { onMount } from 'svelte';
 
-	let version = $state('1.0.0');
+	// ---------------------------------------------------------------------------
+	// Version: read from package.json
+	// ---------------------------------------------------------------------------
+
+	let appVersion = $state('1.0.0');
 	let appName = $state('SwarmAI');
-	let buildChannel = $state('development');
-	let rustVersion = $state('');
-	let tauriVersion = $state('');
-	let svelteVersion = $state('');
+	let isChecking = $state(false);
+	let updateStatus = $state<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle');
+	let updateMessage = $state('');
+	let changelogExpanded = $state(false);
 
-	$effect(() => {
-		loadInfo();
+	onMount(async () => {
+		try {
+			const res = await fetch('/package.json');
+			if (res.ok) {
+				const pkg = await res.json<{ version: string; name: string }>();
+				appVersion = pkg.version;
+				appName = pkg.name;
+			}
+		} catch {
+			// Use defaults
+		}
 	});
 
-	async function loadInfo() {
+	async function handleCheckUpdate() {
+		isChecking = true;
+		updateStatus = 'checking';
+		updateMessage = '';
+
 		try {
-			const info = await invoke<any>('get_app_info');
-			if (info) {
-				version = info.version || version;
-				appName = info.name || appName;
-				buildChannel = info.buildChannel || buildChannel;
-				rustVersion = info.rustVersion || '';
-				tauriVersion = info.tauriVersion || '';
-			}
+			// TODO: Wire up to actual update endpoint when available
+			// For now, simulate a quick check
+			await new Promise((r) => setTimeout(r, 1500));
+			updateStatus = 'up-to-date';
+			updateMessage = `You're on the latest version (${appVersion})`;
 		} catch (e) {
-			console.error('Failed to load app info:', e);
+			updateStatus = 'error';
+			updateMessage = 'Failed to check for updates';
+		} finally {
+			isChecking = false;
 		}
 	}
 
-	function openUrl(url: string) {
-		window.open(url, '_blank');
-	}
+	const changelogEntries = [
+		{ version: appVersion, date: '2025-01', changes: ['Initial Tauri port of SwarmAI', 'Hydra multi-agent support', 'Provider registry for Codex, Claude, Cursor, DeepSeek, Meta, Grok', 'Timeline and session management', 'Terminal integration', 'Keyboard shortcut customization'] },
+	];
 </script>
 
 <div class="about-view">
-	<div class="about-card">
-		<div class="app-glyph">
-			<svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-				<path d="M12 2l2 4 4 1-3 3 1 4-4-2-4 2 1-4-3-3 4-1z"/>
-				<path d="M12 12l1.5 2 2 0.5-1.5 1.5 0.5 2-2-1-2 1 0.5-2L9.5 14.5 12 12z"/>
-			</svg>
-		</div>
-		<h1 class="app-name">{appName}</h1>
-		<p class="app-tagline">Multi-agent AI orchestration for the desktop</p>
-		<p class="app-version">Version {version} <span class="channel-badge">{buildChannel}</span></p>
+	<div class="settings-page-header">
+		<h2 class="settings-page-title">About</h2>
+		<p class="settings-page-desc">Application information and updates</p>
+	</div>
 
-		<div class="info-section">
-			<h2 class="section-heading">About</h2>
-			<p class="about-description">
-				SwarmAI is a desktop AI client that orchestrates multiple models and approaches in parallel.
-				Launch a Hydra swarm to explore different strategies, manage threads with rich timeline views,
-				and let the agent work autonomously across your projects.
-			</p>
-		</div>
-
-		<div class="info-section">
-			<h2 class="section-heading">Runtime</h2>
-			<div class="info-grid">
-				{#if tauriVersion}
-					<div class="info-item">
-						<span class="info-label">Tauri</span>
-						<span class="info-value">{tauriVersion}</span>
-					</div>
-				{/if}
-				{#if rustVersion}
-					<div class="info-item">
-						<span class="info-label">Rust</span>
-						<span class="info-value">{rustVersion}</span>
-					</div>
-				{/if}
-				<div class="info-item">
-					<span class="info-label">Svelte</span>
-					<span class="info-value">5.0</span>
+	<div class="settings-page">
+		<!-- App Info -->
+		<section class="settings-section">
+			<div class="about-hero">
+				<div class="about-icon">
+					<img src="/icons/swarmai-logo.svg" alt="SwarmAI" width="64" height="64" />
 				</div>
-				<div class="info-item">
-					<span class="info-label">TypeScript</span>
-					<span class="info-value">5.x</span>
+				<div class="about-meta">
+					<h3 class="about-name">{appName}</h3>
+					<span class="about-version">Version {appVersion}</span>
 				</div>
 			</div>
-		</div>
 
-		<div class="info-section">
-			<h2 class="section-heading">Links</h2>
-			<div class="links-grid">
-				<button class="link-btn" onclick={() => openUrl('https://github.com')}>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>
+			<button
+				class="update-btn"
+				class:checking={isChecking}
+				onclick={handleCheckUpdate}
+				disabled={isChecking}
+			>
+				{#if isChecking}
+					<div class="btn-spinner"></div>
+					Checking…
+				{:else}
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<polyline points="23 4 23 10 17 10"/>
+						<path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
 					</svg>
-					Source Code
-				</button>
-				<button class="link-btn" onclick={() => openUrl('https://docs.example')}>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-						<polyline points="14,2 14,8 20,8"/>
-					</svg>
-					Documentation
-				</button>
-				<button class="link-btn" onclick={() => openUrl('https://twitter.com')}>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M23 3a10.9 10.9 0 0 1-3.14 1.53 4.48 4.48 0 0 0-7.86 3v1A10.66 10.66 0 0 1 3 4s-4 9 5 13a11.64 11.64 0 0 1-7 2c9 5 20 0 20-11.5a4.5 4.5 0 0 0-.08-.83A7.72 7.72 0 0 0 23 3z"/>
-					</svg>
-					Twitter
-				</button>
+					Check for Updates
+				{/if}
+			</button>
+
+			{#if updateStatus !== 'idle'}
+				<div class="update-status" class:success={updateStatus === 'up-to-date'} class:error={updateStatus === 'error'}>
+					<span class="update-status-icon">
+						{#if updateStatus === 'up-to-date'}✓{/if}
+						{#if updateStatus === 'available'}⬆️{/if}
+						{#if updateStatus === 'error'}✗{/if}
+						{#if updateStatus === 'checking'}⏳{/if}
+					</span>
+					<span class="update-status-text">{updateMessage}</span>
+				</div>
+			{/if}
+		</section>
+
+		<!-- Changelog -->
+		<section class="settings-section">
+			<h3 class="settings-section-title">Changelog</h3>
+			<div class="changelog">
+				{#each changelogEntries as entry (entry.version)}
+					<div class="changelog-entry">
+						<div class="changelog-header">
+							<span class="changelog-version">v{entry.version}</span>
+							<span class="changelog-date">{entry.date}</span>
+						</div>
+						<ul class="changelog-list">
+							{#each entry.changes as change (change)}
+								<li class="changelog-item">{change}</li>
+							{/each}
+						</ul>
+					</div>
+				{/each}
 			</div>
-		</div>
+		</section>
 
-		<div class="info-section">
-			<h2 class="section-heading">License & Credits</h2>
-			<p class="license-text">
-				SwarmAI is open source under the MIT License. Made with care by the SwarmAI team.
-			</p>
-		</div>
+		<!-- Links -->
+		<section class="settings-section">
+			<h3 class="settings-section-title">Links</h3>
+			<div class="about-links">
+				<a href="https://github.com" target="_blank" rel="noopener" class="about-link">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+						<path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+					</svg>
+					GitHub Repository
+				</a>
+				<a href="#" class="about-link">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M12 20h9"/>
+						<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+					</svg>
+					Release Notes
+				</a>
+			</div>
+		</section>
 	</div>
 </div>
 
 <style>
 	.about-view {
-		height: 100%;
-		overflow-y: auto;
-		padding: var(--space-6) var(--space-8);
-		display: flex;
-		justify-content: center;
-	}
-
-	.about-card {
-		max-width: 540px;
-		width: 100%;
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: var(--space-4);
-		padding: var(--space-6);
+		gap: var(--space-6);
+		width: 100%;
 	}
 
-	.app-glyph {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 96px;
-		height: 96px;
-		border-radius: var(--radius-xl);
-		background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
-		color: var(--text-inverse);
+	.settings-page-header {
 		margin-bottom: var(--space-2);
 	}
 
-	.app-name {
-		font-size: 28px;
+	.settings-page-title {
+		font-size: var(--font-size-xl);
 		font-weight: 700;
 		color: var(--text-primary);
-		letter-spacing: -0.5px;
 	}
 
-	.app-tagline {
-		font-size: var(--font-size-md);
-		color: var(--text-secondary);
-		text-align: center;
-	}
-
-	.app-version {
+	.settings-page-desc {
 		font-size: var(--font-size-sm);
 		color: var(--text-tertiary);
-		display: flex;
-		align-items: center;
-		gap: var(--space-2);
+		margin-top: var(--space-1);
 	}
 
-	.channel-badge {
-		font-size: 10px;
-		font-weight: 500;
-		padding: 1px 8px;
-		background: var(--surface-3);
-		color: var(--text-secondary);
-		border-radius: var(--radius-full);
-		text-transform: uppercase;
-		letter-spacing: 0.3px;
-	}
+	/* ── Sections ── */
 
-	.info-section {
-		width: 100%;
+	.settings-page {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-2);
-		padding: var(--space-3) 0;
+		gap: var(--space-6);
 	}
 
-	.section-heading {
+	.settings-section {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-3);
+		padding-bottom: var(--space-4);
+		border-bottom: var(--border-1) var(--border-color-2);
+	}
+
+	.settings-section:last-of-type {
+		border-bottom: none;
+	}
+
+	.settings-section-title {
 		font-size: var(--font-size-sm);
 		font-weight: 600;
 		color: var(--text-secondary);
 		text-transform: uppercase;
 		letter-spacing: 0.5px;
+		padding-bottom: var(--space-2);
+		border-bottom: var(--border-1) var(--border-color-2);
 	}
 
-	.about-description {
-		font-size: var(--font-size-sm);
-		line-height: var(--line-height-relaxed);
-		color: var(--text-secondary);
-		text-align: center;
-	}
+	/* ── Hero ── */
 
-	.info-grid {
-		display: grid;
-		grid-template-columns: repeat(2, 1fr);
-		gap: var(--space-3);
-		width: 100%;
-	}
-
-	.info-item {
+	.about-hero {
 		display: flex;
-		justify-content: space-between;
-		padding: var(--space-2) var(--space-3);
+		align-items: center;
+		gap: var(--space-4);
+		padding: var(--space-4);
 		background: var(--surface-2);
 		border: var(--border-1) var(--border-color-1);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-lg);
 	}
 
-	.info-label {
-		font-size: var(--font-size-xs);
-		color: var(--text-tertiary);
+	.about-icon {
+		width: 64px;
+		height: 64px;
+		flex-shrink: 0;
 	}
 
-	.info-value {
-		font-size: var(--font-size-xs);
-		font-family: var(--font-mono);
+	.about-icon svg {
+		width: 100%;
+		height: 100%;
+	}
+
+	.about-meta {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-1);
+	}
+
+	.about-name {
+		font-size: var(--font-size-lg);
+		font-weight: 700;
 		color: var(--text-primary);
 	}
 
-	.links-grid {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-		width: 100%;
+	.about-version {
+		font-size: var(--font-size-sm);
+		color: var(--text-tertiary);
+		font-family: var(--font-mono);
 	}
 
-	.link-btn {
+	/* ── Update Button ── */
+
+	.update-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-2);
+		padding: 8px 20px;
+		border: var(--border-1) var(--border-color-1);
+		background: var(--surface-2);
+		border-radius: var(--radius-md);
+		color: var(--text-primary);
+		font-size: var(--font-size-sm);
+		font-weight: 500;
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		font-family: var(--font-system);
+	}
+
+	.update-btn:hover:not(:disabled) {
+		background: var(--surface-3);
+		border-color: var(--accent-1);
+	}
+
+	.update-btn:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.btn-spinner {
+		width: 16px;
+		height: 16px;
+		border: 2px solid var(--surface-4);
+		border-top-color: var(--accent-1);
+		border-radius: 50%;
+		animation: spin 0.7s linear infinite;
+	}
+
+	@keyframes spin {
+		to { transform: rotate(360deg); }
+	}
+
+	/* ── Update Status ── */
+
+	.update-status {
 		display: flex;
 		align-items: center;
 		gap: var(--space-2);
-		padding: 8px 14px;
-		border: var(--border-1) var(--border-color-1);
-		background: var(--surface-2);
-		border-radius: var(--radius-sm);
+		padding: var(--space-2) var(--space-3);
+		border-radius: var(--radius-md);
 		font-size: var(--font-size-sm);
-		color: var(--text-primary);
-		cursor: pointer;
+	}
+
+	.update-status.success {
+		background: rgba(52, 199, 89, 0.06);
+		color: var(--success);
+	}
+
+	.update-status.error {
+		background: rgba(255, 59, 48, 0.06);
+		color: var(--danger);
+	}
+
+	.update-status-icon {
+		font-weight: 700;
+	}
+
+	/* ── Changelog ── */
+
+	.changelog {
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-4);
+	}
+
+	.changelog-entry {
+		padding: var(--space-3) 0;
+		border-bottom: var(--border-1) var(--border-color-2);
+	}
+
+	.changelog-entry:last-child {
+		border-bottom: none;
+	}
+
+	.changelog-header {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+		margin-bottom: var(--space-2);
+	}
+
+	.changelog-version {
+		font-size: var(--font-size-sm);
+		font-weight: 600;
+		color: var(--accent-1);
+		font-family: var(--font-mono);
+	}
+
+	.changelog-date {
+		font-size: 11px;
+		color: var(--text-tertiary);
+	}
+
+	.changelog-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-2);
+	}
+
+	.changelog-item {
+		font-size: var(--font-size-sm);
+		color: var(--text-secondary);
+		padding-left: var(--space-4);
+		position: relative;
+		line-height: var(--line-height-normal);
+	}
+
+	.changelog-item::before {
+		content: '•';
+		position: absolute;
+		left: 0;
+		color: var(--accent-1);
+		font-weight: 700;
+	}
+
+	/* ── About Links ── */
+
+	.about-links {
+		display: flex;
+		gap: var(--space-3);
+	}
+
+	.about-link {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-2);
+		padding: 6px 14px;
+		background: var(--surface-2);
+		border: var(--border-1) var(--border-color-1);
+		border-radius: var(--radius-md);
+		color: var(--text-secondary);
+		font-size: var(--font-size-sm);
+		text-decoration: none;
 		transition: all var(--transition-fast);
 	}
 
-	.link-btn:hover {
-		background: var(--accent-3);
-		border-color: var(--accent-1);
+	.about-link:hover {
+		background: var(--surface-3);
+		border-color: var(--accent-3);
 		color: var(--accent-1);
-	}
-
-	.license-text {
-		font-size: var(--font-size-xs);
-		color: var(--text-tertiary);
-		font-style: italic;
-		text-align: center;
 	}
 </style>

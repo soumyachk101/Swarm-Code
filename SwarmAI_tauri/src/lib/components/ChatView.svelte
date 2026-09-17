@@ -150,9 +150,7 @@
 					<div class="timeline-item assistant">
 						<div class="message-assistant">
 							<div class="message-avatar assistant-avatar">
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-									<path d="M12 2l2 4 4 1-3 3 1 4-4-2-4 2 1-4-3-3 4-1z"/>
-								</svg>
+								<img src="/icons/swarmai-logo.svg" alt="SwarmAI" width="14" height="14" />
 							</div>
 							<div class="message-body assistant-body">
 								<div class="message-text">{getMessageText(item)}</div>
@@ -198,9 +196,7 @@
 		{:else}
 			<div class="empty-timeline">
 				<div class="empty-glyph">
-					<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
-						<path d="M12 2l2 4 4 1-3 3 1 4-4-2-4 2 1-4-3-3 4-1z"/>
-					</svg>
+					<img src="/icons/swarmai-logo.svg" alt="SwarmAI" width="48" height="48" class="empty-glyph-img" />
 				</div>
 				<h3>No messages yet</h3>
 				<p>Type a message below to start the conversation.</p>

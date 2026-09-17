@@ -8,13 +8,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use global_hotkey::{GlobalHotKeyManager, HotKeyState, hotkey::{HotKey, Modifiers}};
+use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
 
 /// Every command a keyboard shortcut can trigger.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ShortcutAction {
     NewThread,
     NewWorktreeThread,
@@ -190,7 +191,7 @@ impl ShortcutStore {
 
 #[derive(Debug)]
 pub struct ShortcutManager {
-    _hotkey_manager: GlobalHotKeyManager,
+    _hotkey_manager: DebugHotKeyManager,
     hotkey_ids: RwLock<HashMap<HotKey, ShortcutAction>>,
     reverse_ids: RwLock<HashMap<u32, HotKey>>,
     bindings: RwLock<ShortcutStore>,
@@ -198,9 +199,19 @@ pub struct ShortcutManager {
     id_counter: Arc<RwLock<u32>>,
 }
 
-impl std::fmt::Debug for GlobalHotKeyManager {
+// Wrapper to allow Debug impl for GlobalHotKeyManager (orphan rule)
+pub struct DebugHotKeyManager(pub GlobalHotKeyManager);
+
+impl std::fmt::Debug for DebugHotKeyManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("GlobalHotKeyManager")
+    }
+}
+
+impl std::ops::Deref for DebugHotKeyManager {
+    type Target = GlobalHotKeyManager;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
@@ -209,7 +220,7 @@ impl ShortcutManager {
     /// so that registrations take effect immediately.
     pub fn new() -> Self {
         Self {
-            _hotkey_manager: GlobalHotKeyManager::new().expect("global hotkey manager"),
+            _hotkey_manager: DebugHotKeyManager(GlobalHotKeyManager::new().expect("global hotkey manager")),
             hotkey_ids: RwLock::new(HashMap::new()),
             reverse_ids: RwLock::new(HashMap::new()),
             bindings: RwLock::new(ShortcutStore::default()),
@@ -273,18 +284,19 @@ impl ShortcutManager {
     pub fn unregister(&self, action: ShortcutAction) {
         let mut hotkey_ids = self.hotkey_ids.write().unwrap();
         let mut reverse_ids = self.reverse_ids.write().unwrap();
-        let mut bindings = self.bindings.write().unwrap();
+        let bindings = self.bindings.read().unwrap();
 
-        if let Some(key) = hotkey_ids.remove(&action) {
-            if let Some(id) = reverse_ids
-                .iter()
-                .find(|(_, k)| **k == key)
-                .map(|(id, _)| *id)
-            {
+        // Find the HotKey for this action by scanning the hotkey_ids map.
+        if let Some((key, _)) = hotkey_ids.iter().find(|(_, a)| **a == action) {
+            let key = *key;
+            let id = key.id();
+            if reverse_ids.remove(&id).is_some() {
                 let _ = self._hotkey_manager.unregister(key);
-                reverse_ids.remove(&id);
             }
+            hotkey_ids.remove(&key);
         }
+        drop(bindings);
+        let mut bindings = self.bindings.write().unwrap();
         bindings.set(action, None);
     }
 
@@ -363,8 +375,6 @@ fn parse_shortcut(_shortcut: &str) -> Option<HotKey> {
     let _ = _shortcut;
     None
 }
-
-use serde::{Deserialize, Serialize};
 
 #[cfg(test)]
 mod tests {

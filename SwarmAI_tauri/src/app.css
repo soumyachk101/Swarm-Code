@@ -20,11 +20,11 @@
 	--text-tertiary: #aeaeb2;
 	--text-inverse: #ffffff;
 
-	/* Accent — Blue */
-	--accent-1: #007aff;
-	--accent-2: #0051d5;
-	--accent-3: rgba(0, 122, 255, 0.12);
-	--accent-4: rgba(0, 122, 255, 0.06);
+	/* Accent — SwarmAI Gold */
+	--accent-1: #e8a512;
+	--accent-2: #c88a0e;
+	--accent-3: rgba(232, 165, 18, 0.14);
+	--accent-4: rgba(232, 165, 18, 0.06);
 
 	/* Semantic */
 	--success: #34c759;
@@ -116,10 +116,10 @@
 	--text-tertiary: #636366;
 	--text-inverse: #1d1d1f;
 
-	--accent-1: #0a84ff;
-	--accent-2: #0066d6;
-	--accent-3: rgba(10, 132, 255, 0.18);
-	--accent-4: rgba(10, 132, 255, 0.08);
+	--accent-1: #ffd257;
+	--accent-2: #e8a512;
+	--accent-3: rgba(255, 210, 87, 0.18);
+	--accent-4: rgba(255, 210, 87, 0.08);
 
 	--border-color-1: rgba(255, 255, 255, 0.1);
 	--border-color-2: rgba(255, 255, 255, 0.06);
@@ -150,10 +150,10 @@
 		--text-secondary: #98989d;
 		--text-tertiary: #636366;
 		--text-inverse: #1d1d1f;
-		--accent-1: #0a84ff;
-		--accent-2: #0066d6;
-		--accent-3: rgba(10, 132, 255, 0.18);
-		--accent-4: rgba(10, 132, 255, 0.08);
+		--accent-1: #ffd257;
+		--accent-2: #e8a512;
+		--accent-3: rgba(255, 210, 87, 0.18);
+		--accent-4: rgba(255, 210, 87, 0.08);
 		--border-color-1: rgba(255, 255, 255, 0.1);
 		--border-color-2: rgba(255, 255, 255, 0.06);
 		--border-color-3: rgba(255, 255, 255, 0.04);

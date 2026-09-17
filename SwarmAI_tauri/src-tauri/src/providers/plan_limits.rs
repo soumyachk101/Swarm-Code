@@ -872,7 +872,7 @@ pub fn parse_claude_usage(root: &Value, plan_name: Option<&str>) -> Option<PlanL
             let group = limit
                 .get("group")
                 .and_then(|v| v.as_str())
-                .map(PlanLimitsReader::plan_name)
+                .map(|s| PlanLimitsReader::plan_name(Some(s)))
                 .flatten()
                 .unwrap_or_else(|| "Usage".to_string());
             let scope = limit

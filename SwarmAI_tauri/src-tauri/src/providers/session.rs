@@ -240,19 +240,10 @@ impl Notice {
 // Session event
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum SessionEvent {
- SessionStarted { session_id: String },
- MessageChunk { content: String },
- Reasoning { content: String },
- ToolCall { tool: String, args: serde_json::Value },
- ToolResult { tool: String, output: String, success: bool },
- ApprovalRequested { id: String, prompt: String },
- QuestionAsked { id: String, prompt: String, options: Vec<String> },
- SessionEnded { status: SessionStatus },
- Error { message: String },
-}
+// Session event - alias for ProviderEvent
+// ---------------------------------------------------------------------------
+
+pub type SessionEvent = crate::runtime::thread_runtime::ProviderEvent;
 
 // ---------------------------------------------------------------------------
 // Provider session trait

@@ -190,7 +190,7 @@ impl ProviderCredits {
     /// Look up the currency symbol for an ISO code, falling back to the code
     /// itself when no symbol is known.
     fn currency_symbol(code: &str) -> &'static str {
-        match code.as_str() {
+        match code {
             "USD" => "$",
             "EUR" => "\u{20AC}",
             "GBP" => "\u{00A3}",
@@ -213,7 +213,7 @@ impl ProviderCredits {
             "TRY" => "\u{20BA}",
             "THB" => "\u{0E3F}",
             "TWD" => "NT$",
-            _ => &code,
+            _ => "$",
         }
     }
 

@@ -7,10 +7,22 @@
 	import Tour from '$lib/components/Tour.svelte';
 	import TerminalPanel from '$lib/components/TerminalPanel.svelte';
 	import SettingsView from '$lib/components/settings/SettingsView.svelte';
+	import AboutView from '$lib/components/settings/AboutView.svelte';
 	import { appStore } from '$lib/stores/appStore';
 	import { loadThreads } from '$lib/stores/sidebarStore';
 	import type { ViewKind, ChatThread, AppTheme } from '$lib/types';
 	import { AppTheme as ThemeEnum } from '$lib/types';
+
+	interface PaletteCommand {
+		id: string;
+		label: string;
+		desc: string;
+		action: () => void;
+		icon: string;
+		shortcut?: string;
+		category?: string;
+		keywords?: string[];
+	}
 
 	let {
 		selectedThreadID = $bindable<string | null>(null),
@@ -23,46 +35,40 @@
 	} = $props();
 
 	let showCommandPalette = $state(false);
-	let paletteQuery = $state('');
-	let paletteIndex = $state(0);
 	let isFirstLaunch = $state(false);
 	let terminalVisible = $state(false);
 	let sidebarCollapsed = $state(false);
+	let paletteIndex = $state(0);
 
 	let selectedThread = $derived(
 		$appStore.threads.find((t) => t.id === selectedThreadID) ?? null
 	);
 
-	let filteredPaletteItems = $derived(() => {
-		const q = paletteQuery.toLowerCase().trim();
-		const items: { label: string; desc: string; action: () => void; icon: string; shortcut?: string }[] = [];
+	let paletteCommands: PaletteCommand[] = $derived.by(() => {
+		const items: PaletteCommand[] = [];
 
-		items.push({ label: 'New Thread', desc: 'Start a new conversation', action: () => { createNewThread(); showCommandPalette = false; }, icon: 'plus', shortcut: '⌘N' });
-		items.push({ label: 'Settings', desc: 'Open settings', action: () => { viewKind = 'settings'; showCommandPalette = false; }, icon: 'gear', shortcut: '⌘,' });
-		items.push({ label: 'Command Palette', desc: 'Search commands and actions', action: () => { showCommandPalette = true; paletteQuery = ''; paletteIndex = 0; }, icon: 'search', shortcut: '⌘K' });
+		items.push({ id: 'new-thread', label: 'New Thread', desc: 'Start a new conversation', action: () => { createNewThread(); }, icon: 'plus', shortcut: '⌘N', category: 'Threads', keywords: ['create', 'new'] });
+		items.push({ id: 'settings', label: 'Settings', desc: 'Open settings', action: () => { viewKind = 'settings'; }, icon: 'gear', shortcut: '⌘,', category: 'Navigation', keywords: ['preferences', 'config'] });
+		items.push({ id: 'about', label: 'About SwarmAI', desc: 'Show app version and credits', action: () => { viewKind = 'about'; }, icon: 'info', category: 'Navigation', keywords: ['version', 'info'] });
 
 		if (selectedThread) {
-			items.push({ label: 'Toggle Terminal', desc: 'Show/hide terminal panel', action: () => { terminalVisible = !terminalVisible; showCommandPalette = false; }, icon: 'terminal' });
-			items.push({ label: 'Toggle Hydra Panel', desc: 'Show/hide hydra heads', action: () => { showCommandPalette = false; }, icon: 'hydra' });
-			items.push({ label: 'Share Thread', desc: 'Copy shareable link', action: () => { showCommandPalette = false; }, icon: 'share' });
-			items.push({ label: 'Export Thread', desc: 'Export as markdown', action: () => { showCommandPalette = false; }, icon: 'export' });
-			items.push({ label: 'Delete Thread', desc: 'Remove this thread', action: () => { showCommandPalette = false; }, icon: 'trash' });
+			items.push({ id: 'toggle-terminal', label: 'Toggle Terminal', desc: 'Show/hide terminal panel', action: () => { terminalVisible = !terminalVisible; }, icon: 'terminal', shortcut: '⌘T', category: 'Navigation', keywords: ['shell', 'bash'] });
+			items.push({ id: 'toggle-hydra', label: 'Toggle Hydra Panel', desc: 'Show/hide hydra heads', action: () => {}, icon: 'hydra', category: 'Actions', keywords: ['swarm', 'parallel', 'multi'] });
+			items.push({ id: 'attach-file', label: 'Attach File', desc: 'Add a file to the message', action: () => {}, icon: 'attach', category: 'Actions', keywords: ['upload', 'file'] });
+			items.push({ id: 'delete-thread', label: 'Delete Thread', desc: 'Remove this thread', action: () => {}, icon: 'trash', category: 'Actions', keywords: ['remove'] });
 		}
 
 		const recentProjects = $appStore.projects.slice(0, 5);
 		for (const p of recentProjects) {
-			items.push({ label: `Project: ${p.name}`, desc: p.path, action: () => { selectedProjectID = p.id; loadThreads(p.id); showCommandPalette = false; viewKind = 'chat'; }, icon: 'folder' });
+			items.push({ id: 'project-' + p.id, label: `Project: ${p.name}`, desc: p.path, action: () => { selectedProjectID = p.id; loadThreads(p.id); viewKind = 'chat'; }, icon: 'folder', category: 'Projects', keywords: ['switch', 'open'] });
 		}
 
-		if (!q) return items;
-
-		return items.filter((item) =>
-			item.label.toLowerCase().includes(q) ||
-			item.desc.toLowerCase().includes(q)
-		);
+		return items;
 	});
 
-	let paletteSelectedIndex = $derived(Math.min(paletteIndex, Math.max(0, filteredPaletteItems().length - 1)));
+	let filteredPaletteItems = $derived(paletteCommands);
+
+	let paletteSelectedIndex = $derived(Math.min(paletteIndex, Math.max(0, filteredPaletteItems.length - 1)));
 
 	onMount(() => {
 		const hasLaunched = localStorage.getItem('swarmai_has_launched');
@@ -81,7 +87,6 @@
 		if (mod && e.key === 'k') {
 			e.preventDefault();
 			showCommandPalette = !showCommandPalette;
-			paletteQuery = '';
 			paletteIndex = 0;
 		}
 		if (mod && e.key === 'n') {
@@ -142,7 +147,7 @@
 
 	function handlePaletteKeydown(e: KeyboardEvent) {
 		if (!showCommandPalette) return;
-		const items = filteredPaletteItems();
+		const items = filteredPaletteItems;
 		if (e.key === 'ArrowDown') {
 			e.preventDefault();
 			paletteIndex = Math.min(paletteIndex + 1, items.length - 1);
@@ -151,14 +156,9 @@
 			paletteIndex = Math.max(paletteIndex - 1, 0);
 		} else if (e.key === 'Enter' && items[paletteSelectedIndex]) {
 			e.preventDefault();
+			showCommandPalette = false;
 			items[paletteSelectedIndex].action();
 		}
-	}
-
-	function handleThemeChange(e: Event) {
-		const target = e.target as HTMLSelectElement;
-		appStore.update((s) => ({ ...s, theme: target.value as AppTheme }));
-		applyTheme(target.value as AppTheme);
 	}
 
 	function applyTheme(theme: AppTheme) {
@@ -223,12 +223,13 @@
 				</div>
 			{:else}
 				<div class="empty-state">
-					<h2>Welcome to SwarmAI</h2>
-					<p>Select a project from the sidebar or create a new thread to get started</p>
+					<img src="/icons/swarmai-logo.svg" alt="SwarmAI" class="welcome-glyph" width="72" height="72" />
+					<h2 class="welcome-title">Welcome to SwarmAI</h2>
+					<p class="welcome-desc">Multi-agent orchestration for the desktop.<br/>Select a project or create a thread to begin.</p>
 					<div class="shortcut-hints">
-						<span class="hint"><kbd>⌘</kbd><kbd>N</kbd> New Thread</span>
-						<span class="hint"><kbd>⌘</kbd><kbd>K</kbd> Command Palette</span>
-						<span class="hint"><kbd>⌘</kbd><kbd>,</kbd> Settings</span>
+						<span class="hint"><kbd>&#x2318;</kbd><kbd>N</kbd> New Thread</span>
+						<span class="hint"><kbd>&#x2318;</kbd><kbd>K</kbd> Command Palette</span>
+						<span class="hint"><kbd>&#x2318;</kbd><kbd>,</kbd> Settings</span>
 					</div>
 				</div>
 			{/if}
@@ -237,10 +238,23 @@
 
 	{#if showCommandPalette}
 		<CommandPalette
-			bind:open={showCommandPalette}
-			bind:query={paletteQuery}
-			bind:selectedIndex={paletteIndex}
-			items={filteredPaletteItems()}
+			open={showCommandPalette}
+			onClose={() => { showCommandPalette = false; }}
+			onSelect={(id) => {
+				const cmd = paletteCommands.find(c => c.id === id);
+				if (cmd) cmd.action();
+			}}
+			items={paletteCommands.map((c) => ({
+				id: c.id,
+				label: c.label,
+				icon: c.icon,
+				category: c.category,
+				keywords: c.keywords,
+				action: () => {
+					showCommandPalette = false;
+					c.action();
+				}
+			}))}
 		/>
 	{/if}
 </div>
@@ -268,5 +282,36 @@
 		font-size: 10px;
 		background: var(--surface-2);
 		color: var(--text-secondary);
+	}
+
+	.empty-state {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		flex: 1;
+		padding: 40px 20px;
+		text-align: center;
+		color: var(--text-secondary);
+	}
+
+	.welcome-glyph {
+		margin-bottom: var(--space-6);
+		opacity: 0.5;
+	}
+
+	.welcome-title {
+		font-size: var(--font-size-2xl);
+		font-weight: 700;
+		color: var(--text-primary);
+		margin: 0 0 var(--space-3);
+		letter-spacing: -0.3px;
+	}
+
+	.welcome-desc {
+		font-size: var(--font-size-md);
+		color: var(--text-secondary);
+		margin: 0 0 var(--space-6);
+		line-height: var(--line-height-relaxed);
 	}
 </style>

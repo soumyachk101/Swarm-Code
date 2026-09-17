@@ -38,7 +38,7 @@
 			subtitle: 'Organize your chats by project',
 			description: 'Each conversation lives in a thread. Threads are grouped by project, can be pinned, archived, and searched. Use Cmd+N to start a new one instantly.',
 			icon: 'threads',
-			accent: '#3D8BFF',
+			accent: '#e8a512',
 		},
 		{
 			id: 'composer',
@@ -46,7 +46,7 @@
 			subtitle: 'Compose, review, and control',
 			description: 'Write messages with auto-resizing text input. Adjust effort levels from Minimal to Maximum, attach files, and switch between Compose, Follow-ups, Approvals, and Questions tabs.',
 			icon: 'compose',
-			accent: '#34C46A',
+			accent: '#34c759',
 		},
 		{
 			id: 'hydra',

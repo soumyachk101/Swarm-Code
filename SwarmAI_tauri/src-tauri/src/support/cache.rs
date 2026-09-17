@@ -23,7 +23,7 @@ pub struct RecentCache<K: Eq + std::hash::Hash, V> {
     max_age: Duration,
 }
 
-impl<K: Eq + std::hash::Hash, V> RecentCache<K, V> {
+impl<K: Eq + std::hash::Hash + Clone, V: Clone> RecentCache<K, V> {
     /// Create a new cache with the given entry limit per generation and a TTL
     /// after which expired entries are discarded.
     ///
@@ -61,16 +61,18 @@ impl<K: Eq + std::hash::Hash, V> RecentCache<K, V> {
     ///
     /// Returns `None` if the key is absent from both generations.
     pub fn get(&mut self, key: &K) -> Option<&V> {
-        if let Some((value, _)) = self.current.get(key) {
-            return Some(value);
+        // Check current generation first (no promotion).
+        if self.current.contains_key(key) {
+            return self.current.get(key).map(|(v, _)| v);
         }
+
+        // Try previous generation with promotion.
         if let Some((value, ts)) = self.previous.remove(key) {
             if ts.elapsed() < self.max_age {
                 let now = Instant::now();
                 self.current.insert(key.clone(), (value.clone(), now));
                 return self.current.get(key).map(|(v, _)| v);
             }
-            // Expired in the previous generation -- drop it.
         }
         None
     }

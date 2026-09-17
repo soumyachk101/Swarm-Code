@@ -31,7 +31,8 @@ pub fn next_provider_id() -> String {
 /// A short, human-readable identifier (base36 of a u64). Useful for display
 /// in the UI alongside icons or avatars.
 pub fn short_id() -> String {
-    let bytes = Uuid::new_v4().as_bytes();
+    let uuid = Uuid::new_v4();
+    let bytes = uuid.as_bytes();
     let num = u128::from_be_bytes(*bytes);
     format!("{:x}", num)[..8].to_string()
 }

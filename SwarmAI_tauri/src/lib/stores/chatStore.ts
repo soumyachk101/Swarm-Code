@@ -8,7 +8,6 @@ import type {
 	ThreadDocument,
 	ThreadSummary,
 	MessageChunk,
-	StreamEvent,
 	FollowUpPrompt,
 	ApprovalRequest,
 	QuestionRequest,
@@ -16,14 +15,15 @@ import type {
 	AttachmentInfo,
 	MessageOptions,
 } from '$lib/types';
+import type { StreamEvent } from '$lib/api/events';
 import * as Commands from '$lib/api/commands';
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-export const threads: Writable<ChatThread[]> = readable([]);
-export const threadSummaries: Writable<ThreadSummary[]> = readable([]);
+export const threads: Writable<ChatThread[]> = writable([]);
+export const threadSummaries: Writable<ThreadSummary[]> = writable([]);
 export const activeThreadId: Writable<string | null> = writable(null);
 export const threadDocument: Writable<ThreadDocument | null> = writable(null);
 export const threadUsage: Writable<ContextUsage | null> = writable(null);

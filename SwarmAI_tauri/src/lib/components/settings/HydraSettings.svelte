@@ -1,26 +1,27 @@
 <script lang="ts">
-	import { getHydraSettings, updateHydraSettings } from '$lib/api/commands';
-	import type { HydraPair, HydraSettings } from '$lib/types';
+	import { getSettings, updateSettings } from '$lib/api/commands';
+	import HydraGlyph from '$lib/components/HydraGlyph.svelte';
 
-	interface Props {
-		projectId: string | null;
-	}
+	// ---------------------------------------------------------------------------
+	// Hydra settings live inside AppSettings — use updateSettings to persist
+	// ---------------------------------------------------------------------------
 
-	let { projectId = null }: Props = $props();
+	let settings = $state<{
+		hydra_max_heads: number;
+		hydra_auto_merge: boolean;
+		hydra_reviews_heads: boolean;
+		hydra_isolates_heads: boolean;
+	} | null>(null);
 
-	let settings = $state<HydraSettings | null>(null);
 	let isLoading = $state(true);
 	let isSaving = $state(false);
+	let hasChanges = $state(false);
 
-	// Form state
+	// Local form state
 	let maxHeads = $state(3);
-	let autoMerge = $state(true);
-	let reviewsHeads = $state(true);
-	let isolatesHeads = $state(false);
-	let requireApproval = $state(false);
-	let defaultOrchestrator = $state('claude-3-opus');
-	let defaultWorker = $state('claude-3-sonnet');
-	let timeoutMinutes = $state(15);
+	let autoMerge = $state(false);
+	let reviewsHeads = $state(false);
+	let isolatesHeads = $state(true);
 
 	$effect(() => {
 		loadSettings();
@@ -28,19 +29,21 @@
 
 	async function loadSettings() {
 		try {
-			settings = await getHydraSettings();
-			if (settings) {
-				maxHeads = settings.maxHeads ?? 3;
-				autoMerge = settings.autoMerge ?? true;
-				reviewsHeads = settings.reviewsHeads ?? true;
-				isolatesHeads = settings.isolatesHeads ?? false;
-				requireApproval = settings.requireApproval ?? false;
-				defaultOrchestrator = settings.defaultOrchestrator ?? 'claude-3-opus';
-				defaultWorker = settings.defaultWorker ?? 'claude-3-sonnet';
-				timeoutMinutes = settings.timeoutMinutes ?? 15;
+			const s = await getSettings();
+			if (s) {
+				maxHeads = s.hydra_max_heads ?? 3;
+				autoMerge = s.hydra_auto_merge ?? false;
+				reviewsHeads = s.hydra_reviews_heads ?? false;
+				isolatesHeads = s.hydra_isolates_heads ?? true;
+				settings = {
+					hydra_max_heads: s.hydra_max_heads,
+					hydra_auto_merge: s.hydra_auto_merge,
+					hydra_reviews_heads: s.hydra_reviews_heads,
+					hydra_isolates_heads: s.hydra_isolates_heads,
+				};
 			}
 		} catch (e) {
-			console.error('Failed to load hydra settings:', e);
+			console.error('Failed to load settings:', e);
 		} finally {
 			isLoading = false;
 		}
@@ -49,33 +52,48 @@
 	async function handleSave() {
 		isSaving = true;
 		try {
-			await updateHydraSettings({
-				maxHeads,
-				autoMerge,
-				reviewsHeads,
-				isolatesHeads,
-				requireApproval,
-				defaultOrchestrator,
-				defaultWorker,
-				timeoutMinutes,
+			await updateSettings({
+				hydra_max_heads: maxHeads,
+				hydra_auto_merge: autoMerge,
+				hydra_reviews_heads: reviewsHeads,
+				hydra_isolates_heads: isolatesHeads,
 			});
+			hasChanges = false;
 		} catch (e) {
-			console.error('Failed to save settings:', e);
+			console.error('Failed to save hydra settings:', e);
 		} finally {
 			isSaving = false;
 		}
 	}
+
+	function trackChange() {
+		if (!settings) return;
+		hasChanges =
+			settings.hydra_max_heads !== maxHeads ||
+			settings.hydra_auto_merge !== autoMerge ||
+			settings.hydra_reviews_heads !== reviewsHeads ||
+			settings.hydra_isolates_heads !== isolatesHeads;
+	}
+
+	$effect(() => {
+		trackChange();
+	});
 </script>
 
 <div class="hydra-settings">
-	<div class="settings-header">
+	<div class="settings-page-header">
 		<div class="header-info">
-			<h2 class="settings-title">Hydra Swarm</h2>
-			<p class="header-desc">Configure how Hydra explores multiple approaches in parallel</p>
+			<div class="hydra-glyph-row">
+				<HydraGlyph size={24} state="idle" />
+				<h2 class="settings-page-title">Hydra Swarm</h2>
+			</div>
+			<p class="settings-page-desc">Configure multi-agent swarm behavior and parallel execution</p>
 		</div>
-		<button class="btn-primary" onclick={handleSave} disabled={isSaving}>
-			{isSaving ? 'Saving…' : 'Save Changes'}
-		</button>
+		{#if hasChanges}
+			<button class="btn btn-primary" onclick={handleSave} disabled={isSaving}>
+				{isSaving ? 'Saving…' : 'Save Changes'}
+			</button>
+		{/if}
 	</div>
 
 	{#if isLoading}
@@ -83,151 +101,101 @@
 			<div class="spinner"></div>
 		</div>
 	{:else}
-		<div class="settings-content">
+		<div class="settings-page">
 			<!-- Swarm Configuration -->
 			<section class="settings-section">
-				<h3 class="section-heading">Swarm Configuration</h3>
+				<h3 class="settings-section-title">Swarm Configuration</h3>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Maximum Heads</span>
-						<span class="setting-desc">Maximum number of parallel agents per swarm</span>
+				<div class="settings-field">
+					<div class="settings-field-info">
+						<span class="settings-field-label">Max Heads</span>
+						<span class="settings-field-desc">Maximum number of parallel agent heads per swarm</span>
 					</div>
-					<div class="number-control">
-						<button class="size-btn" onclick={() => maxHeads = Math.max(2, maxHeads - 1)} disabled={maxHeads <= 2}>−</button>
-						<span class="size-value">{maxHeads}</span>
-						<button class="size-btn" onclick={() => maxHeads = Math.min(8, maxHeads + 1)} disabled={maxHeads >= 8}>+</button>
-					</div>
-				</div>
-
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Default Orchestrator Model</span>
-						<span class="setting-desc">Model used to coordinate the swarm</span>
-					</div>
-					<input
-						type="text"
-						class="form-input"
-						value={defaultOrchestrator}
-						oninput={(e) => defaultOrchestrator = e.currentTarget.value}
-					/>
-				</div>
-
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Default Worker Model</span>
-						<span class="setting-desc">Model used for individual head execution</span>
-					</div>
-					<input
-						type="text"
-						class="form-input"
-						value={defaultWorker}
-						oninput={(e) => defaultWorker = e.currentTarget.value}
-					/>
-				</div>
-
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Timeout (minutes)</span>
-						<span class="setting-desc">Maximum time before a head is auto-stopped</span>
-					</div>
-					<div class="number-control">
-						<button class="size-btn" onclick={() => timeoutMinutes = Math.max(1, timeoutMinutes - 1)} disabled={timeoutMinutes <= 1}>−</button>
-						<span class="size-value">{timeoutMinutes}</span>
-						<button class="size-btn" onclick={() => timeoutMinutes = Math.min(60, timeoutMinutes + 1)} disabled={timeoutMinutes >= 60}>+</button>
+					<div class="settings-field-control">
+						<div class="slider-control">
+							<input
+								type="range"
+								class="slider-input"
+								min="2"
+								max="8"
+								bind:value={maxHeads}
+							/>
+							<span class="slider-value">{maxHeads}</span>
+						</div>
 					</div>
 				</div>
 			</section>
 
 			<!-- Behavior -->
 			<section class="settings-section">
-				<h3 class="section-heading">Behavior</h3>
+				<h3 class="settings-section-title">Behavior</h3>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Auto-merge Results</span>
-						<span class="setting-desc">Automatically merge head outputs when complete</span>
+				<div class="settings-field">
+					<div class="settings-field-info">
+						<span class="settings-field-label">Auto-merge Results</span>
+						<span class="settings-field-desc">Automatically merge head outputs when all complete</span>
 					</div>
-					<button
-						class="toggle"
-						class:on={autoMerge}
-						onclick={() => autoMerge = !autoMerge}
-						role="switch"
-						aria-checked={autoMerge}
-					>
-						<span class="toggle-track"><span class="toggle-thumb"></span></span>
-					</button>
+					<label class="toggle-switch">
+						<input type="checkbox" bind:checked={autoMerge} />
+						<span class="toggle-track"></span>
+						<span class="toggle-thumb"></span>
+					</label>
 				</div>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Cross-Head Reviews</span>
-						<span class="setting-desc">Have heads review each other's output</span>
+				<div class="settings-field">
+					<div class="settings-field-info">
+						<span class="settings-field-label">Cross-Head Reviews</span>
+						<span class="settings-field-desc">Have heads review each other's outputs before merging</span>
 					</div>
-					<button
-						class="toggle"
-						class:on={reviewsHeads}
-						onclick={() => reviewsHeads = !reviewsHeads}
-						role="switch"
-						aria-checked={reviewsHeads}
-					>
-						<span class="toggle-track"><span class="toggle-thumb"></span></span>
-					</button>
+					<label class="toggle-switch">
+						<input type="checkbox" bind:checked={reviewsHeads} />
+						<span class="toggle-track"></span>
+						<span class="toggle-thumb"></span>
+					</label>
 				</div>
 
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Isolate Heads</span>
-						<span class="setting-desc">Run heads in isolated contexts (more tokens, safer)</span>
+				<div class="settings-field">
+					<div class="settings-field-info">
+						<span class="settings-field-label">Isolate Heads</span>
+						<span class="settings-field-desc">Run each head in an isolated context (more tokens, safer)</span>
 					</div>
-					<button
-						class="toggle"
-						class:on={isolatesHeads}
-						onclick={() => isolatesHeads = !isolatesHeads}
-						role="switch"
-						aria-checked={isolatesHeads}
-					>
-						<span class="toggle-track"><span class="toggle-thumb"></span></span>
-					</button>
-				</div>
-
-				<div class="setting-row">
-					<div class="setting-info">
-						<span class="setting-name">Require Approval</span>
-						<span class="setting-desc">Show landing preview before applying head outputs</span>
-					</div>
-					<button
-						class="toggle"
-						class:on={requireApproval}
-						onclick={() => requireApproval = !requireApproval}
-						role="switch"
-						aria-checked={requireApproval}
-					>
-						<span class="toggle-track"><span class="toggle-thumb"></span></span>
-					</button>
+					<label class="toggle-switch">
+						<input type="checkbox" bind:checked={isolatesHeads} />
+						<span class="toggle-track"></span>
+						<span class="toggle-thumb"></span>
+					</label>
 				</div>
 			</section>
 
 			<!-- Preview -->
 			<section class="settings-section">
-				<h3 class="section-heading">Preview</h3>
-				<div class="preview-card">
-					<div class="preview-icon">
-						<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M12 2l2 4 4 1-3 3 1 4-4-2-4 2 1-4-3-3 4-1z"/>
-						</svg>
+				<h3 class="settings-section-title">What This Does</h3>
+				<div class="info-card">
+					<div class="info-row">
+						<span class="info-icon">🐙</span>
+						<span class="info-text">
+							Launching a Hydra swarm spawns <strong>{maxHeads}</strong> parallel agent heads
+							that explore different approaches to your task simultaneously.
+						</span>
 					</div>
-					<h4 class="preview-title">When you launch a Hydra swarm:</h4>
-					<ul class="preview-list">
-						<li>{maxHeads} parallel heads will explore different approaches</li>
-						<li>Coordinator: <code>{defaultOrchestrator}</code></li>
-						<li>Workers: <code>{defaultWorker}</code></li>
-						<li>{autoMerge ? '✓' : '✗'} Auto-merge when complete</li>
-						<li>{reviewsHeads ? '✓' : '✗'} Heads review each other</li>
-						<li>{isolatesHeads ? '✓' : '✗'} Isolated contexts</li>
-						<li>{requireApproval ? '✓' : '✗'} Require approval before landing</li>
-						<li>Timeout: {timeoutMinutes} minutes</li>
-					</ul>
+					<div class="info-row">
+						<span class="info-icon">{autoMerge ? '✅' : '⏸️'}</span>
+						<span class="info-text">
+							{autoMerge ? 'Results are auto-merged when all heads finish.' : 'You must manually merge head results.'}
+						</span>
+					</div>
+					<div class="info-row">
+						<span class="info-icon">{isolatesHeads ? '🔒' : '🔓'}</span>
+						<span class="info-text">
+							{isolatesHeads ? 'Each head runs in an isolated context with its own file system view.' : 'Heads share the same working directory and can see each other\'s files.'}
+						</span>
+					</div>
+					<div class="info-row">
+						<span class="info-icon">{reviewsHeads ? '👁️' : '🚫'}</span>
+						<span class="info-text">
+							{reviewsHeads ? 'Heads will review each other\'s outputs before merging.' : 'No cross-head review — heads work independently.'}
+						</span>
+					</div>
 				</div>
 			</section>
 		</div>
@@ -236,39 +204,44 @@
 
 <style>
 	.hydra-settings {
-		height: 100%;
-		overflow-y: auto;
-		padding: var(--space-6) var(--space-8);
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-5);
-		max-width: 680px;
+		gap: var(--space-6);
+		width: 100%;
 	}
 
-	.settings-header {
+	.settings-page-header {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		justify-content: space-between;
-		padding-bottom: var(--space-4);
-		border-bottom: var(--border-1) var(--border-color-1);
+		gap: var(--space-4);
 	}
 
 	.header-info {
 		display: flex;
 		flex-direction: column;
-		gap: 2px;
+		gap: var(--space-1);
+		flex: 1;
 	}
 
-	.settings-title {
+	.hydra-glyph-row {
+		display: flex;
+		align-items: center;
+		gap: var(--space-3);
+	}
+
+	.settings-page-title {
 		font-size: var(--font-size-xl);
 		font-weight: 700;
 		color: var(--text-primary);
 	}
 
-	.header-desc {
+	.settings-page-desc {
 		font-size: var(--font-size-sm);
 		color: var(--text-tertiary);
 	}
+
+	/* ── Loading ── */
 
 	.loading {
 		display: flex;
@@ -289,7 +262,9 @@
 		to { transform: rotate(360deg); }
 	}
 
-	.settings-content {
+	/* ── Sections ── */
+
+	.settings-page {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-6);
@@ -299,9 +274,15 @@
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3);
+		padding-bottom: var(--space-4);
+		border-bottom: var(--border-1) var(--border-color-2);
 	}
 
-	.section-heading {
+	.settings-section:last-of-type {
+		border-bottom: none;
+	}
+
+	.settings-section-title {
 		font-size: var(--font-size-sm);
 		font-weight: 600;
 		color: var(--text-secondary);
@@ -311,51 +292,112 @@
 		border-bottom: var(--border-1) var(--border-color-2);
 	}
 
-	.setting-row {
+	.settings-field {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: var(--space-3) 0;
 		gap: var(--space-4);
+		padding: var(--space-3) 0;
 	}
 
-	.setting-info {
+	.settings-field-info {
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
 		flex: 1;
+		min-width: 0;
 	}
 
-	.setting-name {
+	.settings-field-label {
 		font-size: var(--font-size-sm);
-		font-weight: 500;
 		color: var(--text-primary);
+		font-weight: 400;
 	}
 
-	.setting-desc {
-		font-size: var(--font-size-xs);
+	.settings-field-desc {
+		font-size: 11px;
 		color: var(--text-tertiary);
+		margin-top: 1px;
 	}
 
-	.toggle {
+	.settings-field-control {
+		flex-shrink: 0;
+	}
+
+	/* ── Slider ── */
+
+	.slider-control {
 		display: flex;
 		align-items: center;
-		background: none;
-		border: none;
+		gap: var(--space-3);
+	}
+
+	.slider-input {
+		width: 140px;
+		height: 6px;
+		-webkit-appearance: none;
+		appearance: none;
+		border-radius: 3px;
+		background: var(--surface-3);
+		outline: none;
 		cursor: pointer;
-		padding: 2px;
+	}
+
+	.slider-input::-webkit-slider-thumb {
+		-webkit-appearance: none;
+		appearance: none;
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: var(--accent-1);
+		cursor: pointer;
+		border: 2px solid white;
+		box-shadow: var(--shadow-sm);
+	}
+
+	.slider-input::-moz-range-thumb {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: var(--accent-1);
+		cursor: pointer;
+		border: 2px solid white;
+		box-shadow: var(--shadow-sm);
+	}
+
+	.slider-value {
+		width: 30px;
+		text-align: center;
+		font-size: var(--font-size-sm);
+		font-weight: 600;
+		color: var(--text-primary);
+		font-family: var(--font-mono);
+	}
+
+	/* ── Toggle ── */
+
+	.toggle-switch {
+		position: relative;
+		width: 42px;
+		height: 24px;
+		cursor: pointer;
+	}
+
+	.toggle-switch input {
+		opacity: 0;
+		width: 0;
+		height: 0;
 	}
 
 	.toggle-track {
-		width: 40px;
-		height: 22px;
-		border-radius: 11px;
+		position: absolute;
+		inset: 0;
 		background: var(--surface-4);
-		position: relative;
+		border-radius: 12px;
 		transition: background var(--transition-fast);
 	}
 
-	.toggle.on .toggle-track {
+	.toggle-switch input:checked + .toggle-track {
 		background: var(--accent-1);
 	}
 
@@ -363,78 +405,22 @@
 		position: absolute;
 		top: 2px;
 		left: 2px;
-		width: 18px;
-		height: 18px;
-		border-radius: 50%;
+		width: 20px;
+		height: 20px;
 		background: white;
-		box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+		border-radius: 50%;
+		box-shadow: var(--shadow-sm);
 		transition: transform var(--transition-fast);
+		pointer-events: none;
 	}
 
-	.toggle.on .toggle-thumb {
+	.toggle-switch input:checked ~ .toggle-thumb {
 		transform: translateX(18px);
 	}
 
-	.number-control {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		background: var(--surface-3);
-		border-radius: var(--radius-md);
-		padding: 2px;
-	}
+	/* ── Info Card ── */
 
-	.size-btn {
-		width: 28px;
-		height: 28px;
-		border: none;
-		background: transparent;
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-md);
-		color: var(--text-secondary);
-		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all var(--transition-fast);
-	}
-
-	.size-btn:hover:not(:disabled) {
-		background: var(--surface-1);
-		color: var(--text-primary);
-	}
-
-	.size-btn:disabled {
-		opacity: 0.3;
-		cursor: not-allowed;
-	}
-
-	.size-value {
-		width: 40px;
-		text-align: center;
-		font-size: var(--font-size-sm);
-		font-weight: 500;
-		color: var(--text-primary);
-		font-family: var(--font-mono);
-	}
-
-	.form-input {
-		padding: 6px 10px;
-		border: var(--border-1) var(--border-color-1);
-		background: var(--surface-2);
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-sm);
-		color: var(--text-primary);
-		outline: none;
-		font-family: var(--font-system);
-		width: 200px;
-	}
-
-	.form-input:focus {
-		border-color: var(--accent-1);
-	}
-
-	.preview-card {
+	.info-card {
 		background: var(--surface-2);
 		border: var(--border-1) var(--border-color-1);
 		border-radius: var(--radius-md);
@@ -444,56 +430,52 @@
 		gap: var(--space-3);
 	}
 
-	.preview-icon {
-		color: var(--accent-1);
-	}
-
-	.preview-title {
-		font-size: var(--font-size-sm);
-		font-weight: 600;
-		color: var(--text-primary);
-	}
-
-	.preview-list {
-		list-style: none;
-		padding: 0;
+	.info-row {
 		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		align-items: flex-start;
+		gap: var(--space-3);
 	}
 
-	.preview-list li {
-		font-size: var(--font-size-xs);
+	.info-icon {
+		flex-shrink: 0;
+		font-size: 16px;
+		line-height: 1.4;
+	}
+
+	.info-text {
+		font-size: var(--font-size-sm);
 		color: var(--text-secondary);
-		padding: 2px 0;
+		line-height: var(--line-height-normal);
 	}
 
-	.preview-list code {
-		font-family: var(--font-mono);
-		font-size: 11px;
-		background: var(--surface-3);
-		padding: 1px 5px;
-		border-radius: 3px;
-		color: var(--accent-1);
+	.info-text strong {
+		color: var(--text-primary);
+		font-weight: 600;
 	}
 
-	.btn-primary {
+	/* ── Buttons ── */
+
+	.btn {
 		padding: 6px 16px;
 		border: none;
-		background: var(--accent-1);
-		color: var(--text-inverse);
-		border-radius: var(--radius-sm);
+		border-radius: var(--radius-md);
 		font-size: var(--font-size-sm);
 		font-weight: 500;
 		cursor: pointer;
-		transition: background var(--transition-fast);
+		transition: all var(--transition-fast);
+		font-family: var(--font-system);
+	}
+
+	.btn-primary {
+		background: var(--accent-1);
+		color: white;
 	}
 
 	.btn-primary:hover:not(:disabled) {
 		background: var(--accent-2);
 	}
 
-	.btn-primary:disabled {
+	.btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}

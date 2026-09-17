@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::session::{
-    ProviderError, ProviderSession, SessionConfiguration, SessionStatus, TurnInput,
+    ProviderError, ProviderSession, SessionConfiguration, SessionEvent, SessionStatus, TurnInput,
 };
 use crate::models::provider::{ModelOption, ProviderKind, SlashCommand};
 use crate::models::timeline::{ContextUsage, Notice, NoticeLevel};
@@ -20,12 +20,6 @@ pub struct ClaudeSession {
     config: SessionConfiguration,
     event_handler: Option<Arc<dyn Fn(ProviderEvent) + Send + Sync>>,
 
-    // Process management
-    process: Option<std::process::Child>,
-    stdin_writer: Option<tokio::process::ChildStdin>,
-    stdout_reader: Option<tokio::process::ChildStdout>,
-    stderr_reader: Option<tokio::process::ChildStderr>,
-
     // State
     session_id: Option<String>,
     permission_mode: String,
@@ -38,6 +32,11 @@ pub struct ClaudeSession {
     turn_active: bool,
     interrupt_requested: bool,
     is_stopping: bool,
+    // Process management
+    process: Option<tokio::process::Child>,
+    stdin_writer: Option<tokio::process::ChildStdin>,
+    stdout_reader: Option<tokio::process::ChildStdout>,
+    stderr_reader: Option<tokio::process::ChildStderr>,
     // Hydra / multi-agent state
     main_stream: StreamState,
     agent_streams: std::collections::HashMap<String, StreamState>,
@@ -79,7 +78,7 @@ impl ClaudeSession {
             stdout_reader: None,
             stderr_reader: None,
             session_id: None,
-            permission_mode: mode_name,
+            permission_mode: mode_name.to_string(),
             runtime_mode: crate::models::provider::RuntimeMode::default(),
             model: None,
             control_counter: 0,
@@ -141,13 +140,7 @@ impl ProviderSession for ClaudeSession {
     }
 
     fn is_running(&self) -> bool {
-        self.process
-            .as_ref()
-            .map(|p| match p.try_wait() {
-                Ok(None) => true,
-                _ => false,
-            })
-            .unwrap_or(false)
+        self.turn_active
     }
 
     fn provider_kind(&self) -> ProviderKind {
@@ -172,7 +165,7 @@ impl ProviderSession for ClaudeSession {
             "--permission-prompt-tool".into(), "stdio".into(),
             "--setting-sources".into(), "user,project,local".into(),
             "--allow-dangerously-skip-permissions".into(),
-            "--permission-mode".into(), self.permission_mode.into(),
+            "--permission-mode".into(), self.permission_mode.clone(),
         ];
 
         if let Some(ref model) = self.config.model {
@@ -259,11 +252,11 @@ impl ProviderSession for ClaudeSession {
         match init_result {
             Ok(Ok(models)) => {
                 if !models.is_empty() {
-                    self.emit(ProviderEvent::Models(models, self.config.model.as_deref()));
+                    self.emit(ProviderEvent::Models { list: models, provider: ProviderKind::Claude });
                 }
                 let commands = self.read_commands().await;
                 if !commands.is_empty() {
-                    self.emit(ProviderEvent::Commands(commands));
+                    self.emit(ProviderEvent::Commands { list: commands });
                 }
                 Ok(id)
             }
@@ -287,7 +280,7 @@ impl ProviderSession for ClaudeSession {
                 "subtype": "set_permission_mode",
                 "mode": mode
             })).await;
-            self.permission_mode = mode;
+            self.permission_mode = mode.to_string();
         }
 
         if input.model.as_deref() != self.model.as_deref() {
@@ -334,7 +327,7 @@ impl ProviderSession for ClaudeSession {
         self.write_line(&message).await?;
         self.turn_active = true;
         self.interrupt_requested = false;
-        self.emit(ProviderEvent::TurnStarted(None));
+        self.emit(ProviderEvent::TurnStarted { provider_turn_id: None });
         Ok(())
     }
 
@@ -360,7 +353,7 @@ impl ProviderSession for ClaudeSession {
                     }
                 }
             })).await;
-            self.emit(ProviderEvent::RequestResolved(request_id));
+            self.emit(ProviderEvent::RequestResolved { id: request_id });
         }
         self.pending_tools.clear();
 
@@ -426,12 +419,12 @@ impl ProviderSession for ClaudeSession {
         })).await;
 
         if pending.name == "ExitPlanMode" {
-            self.emit(ProviderEvent::ModeChanged(crate::models::provider::InteractionMode::Build));
+            self.emit(ProviderEvent::ModeChanged { mode: crate::models::provider::InteractionMode::Build });
             let mode = Self::mode_name(self.runtime_mode, crate::models::provider::InteractionMode::Build);
-            self.permission_mode = mode;
+            self.permission_mode = mode.to_string();
         }
 
-        self.emit(ProviderEvent::RequestResolved(request_id));
+        self.emit(ProviderEvent::RequestResolved { id: request_id });
     }
 
     async fn answer_question(
@@ -464,13 +457,13 @@ impl ProviderSession for ClaudeSession {
             }
         })).await;
 
-        self.emit(ProviderEvent::RequestResolved(request_id));
+        self.emit(ProviderEvent::RequestResolved { id: request_id });
     }
 
     async fn stop(&mut self) {
         self.is_stopping = true;
         if let Some(mut process) = self.process.take() {
-            let _ = process.kill().await;
+            let _ = process.kill();
         }
         self.read_handle.take();
         self.stderr_handle.take();
@@ -518,7 +511,7 @@ impl ClaudeSession {
 
     async fn write_line(&mut self, value: &serde_json::Value) -> Result<(), ProviderError> {
         use tokio::io::AsyncWriteExt;
-        let mut writer = self.stdin_writer.as_mut()
+        let writer = self.stdin_writer.as_mut()
             .ok_or_else(|| ProviderError::not_running())?;
         let line = serde_json::to_string(value)
             .map_err(|e| ProviderError::failed(format!("JSON serialization: {}", e)))?;
@@ -545,7 +538,7 @@ impl ClaudeSession {
             Ok(result) => {
                 let models: Vec<ModelOption> = result.get("models")
                     .and_then(|m| m.as_array())
-                    .map_or(&[], |v| v)
+                    .map_or(&[] as &[serde_json::Value], |v| v.as_slice())
                     .iter()
                     .filter_map(|entry| {
                         let value = entry.get("value")?.as_str()?;
@@ -555,7 +548,7 @@ impl ClaudeSession {
                             detail: entry.get("description").and_then(|d| d.as_str()).map(|s| s.to_string()),
                             efforts: entry.get("supportedEffortLevels")
                                 .and_then(|e| e.as_array())
-                                .map_or(&[], |v| v)
+                                .map_or(&[] as &[serde_json::Value], |v| v.as_slice())
                                 .iter()
                                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                                 .collect(),
@@ -627,11 +620,11 @@ impl ClaudeSession {
                     match subtype {
                         "init" => {
                             if let Some(session_id) = message.get("session_id").and_then(|s| s.as_str()) {
-                                handler(ProviderEvent::session_started(session_id.to_string()));
+                                handler(ProviderEvent::SessionStarted { session_id: session_id.to_string() });
                             }
                         }
                         "compact_boundary" => {
-                            handler(ProviderEvent::notice(Notice::new("info", "Context compacted.")));
+                            handler(ProviderEvent::notice(Notice::new(NoticeLevel::Info, "Context compacted.")));
                         }
                         _ => {}
                     }
@@ -649,7 +642,7 @@ impl ClaudeSession {
             "rate_limit_event" => {
                 if let Some(info) = message.get("rate_limit_info") {
                     if info.get("status").and_then(|s| s.as_str()) == Some("rejected") {
-                        handler(ProviderEvent::notice(Notice::new("warning",
+                        handler(ProviderEvent::notice(Notice::new(NoticeLevel::Warning,
                             "Claude hit a usage limit.")));
                     }
                 }
@@ -736,7 +729,7 @@ impl ClaudeSession {
                                 .cloned()
                                 .unwrap_or(serde_json::Value::Null);
                             handler(ProviderEvent::tool_call(tool_id.to_string(), name.to_string(),
-                                input.as_object().cloned().unwrap_or_default()));
+                                serde_json::Value::Object(input.as_object().cloned().unwrap_or_default())));
                         }
                         _ => {}
                     }
@@ -755,7 +748,7 @@ impl ClaudeSession {
                 + usage.get("cache_read_input_tokens").and_then(|t| t.as_u64()).unwrap_or(0)
                 + usage.get("cache_creation_input_tokens").and_then(|t| t.as_u64()).unwrap_or(0);
             if used > 0 {
-                handler(ProviderEvent::usage(ContextUsage::new(used as usize, None)));
+                handler(ProviderEvent::Usage { used, window: 0 });
             }
         }
 
@@ -769,20 +762,20 @@ impl ClaudeSession {
     }
 
     // Hydra prompt helpers
-    fn claude_agents_spec(_hydra: &crate::types::HydraRun) -> String {
+    fn claude_agents_spec(_hydra: &crate::providers::session::HydraLaunch) -> String {
         // Returns a JSON array of agent definitions for --agents flag
         // Simplified: in production this would render full agent specs
         r#"[{"type": "agent", "name": "head", "description": "Hydra head"}]"#.into()
     }
 
-    fn hydra_policy(_hydra: &crate::types::HydraRun) -> String {
+    fn hydra_policy(_hydra: &crate::providers::session::HydraLaunch) -> String {
         format!(
             "You have access to sub-agents. Use the Task tool to delegate work. Maximum {} heads.",
             _hydra.max_heads.unwrap_or(4)
         )
     }
 
-    fn fallback_policy(_hydra: &crate::types::HydraRun) -> String {
+    fn fallback_policy(_hydra: &crate::providers::session::HydraLaunch) -> String {
         "Delegate work to available sub-agents using the Agent tool.".into()
     }
 }

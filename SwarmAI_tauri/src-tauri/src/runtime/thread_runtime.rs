@@ -13,7 +13,7 @@ use crate::models::timeline::{
 	ContextUsage as TimelineContextUsage,
 	FollowUpPrompt, TimelineEntry, TimelineItem, TodoStep, ToolKind as TimelineToolKind,
 	ToolStatus as TimelineToolStatus,
-	TurnRecord, TurnSummary, TurnStatus, NoticeLevel,
+	TurnRecord, TurnSummary, TurnStatus, Notice, NoticeLevel,
 };
 
 // ---------------------------------------------------------------------------
@@ -341,17 +341,17 @@ pub enum ProviderEvent {
 		status: TurnStatus,
 		summary: Option<String>,
 	},
-	// Convenience variants with snake_case names for call-site compatibility
-	models(list: Vec<crate::models::provider::ModelInfo>, provider: Option<&str>),
-	commands(list: Vec<crate::models::provider::SlashCommand>),
-	turn_started(provider_turn_id: Option<String>),
-	request_resolved(id: String),
-	mode_changed(mode: InteractionMode),
-	session_ended(status: crate::providers::session::SessionStatus, error: Option<String>),
-	message_chunk(text: String),
-	reasoning(text: String),
-	tool_call(id: String, name: String, input: serde_json::Value),
-	session_started(session_id: String),
+	// Convenience snake_case aliases (different field shape than PascalCase)
+	models_short(Vec<crate::models::provider::ModelInfo>, Option<&'static str>),
+	commands_short(Vec<crate::models::provider::SlashCommand>),
+	turn_started(Option<String>),
+	request_resolved(String),
+	mode_changed(InteractionMode),
+	session_ended(crate::providers::session::SessionStatus, Option<String>),
+	message_chunk(String),
+	reasoning(String),
+	tool_call(String, String, serde_json::Value),
+	session_started(String),
 	notice(Notice),
 }
 

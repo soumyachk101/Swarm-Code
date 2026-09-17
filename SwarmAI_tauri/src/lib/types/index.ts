@@ -682,6 +682,32 @@ export interface AppSettings {
 	hydra_auto_merge: boolean;
 	hydra_reviews_heads: boolean;
 	hydra_isolates_heads: boolean;
+	// Additional settings from AppSettings.swift
+	notify_when_finished: boolean;
+	chime_when_finished: string;
+	confirm_before_deleting: boolean;
+	auto_continue_after_limit: boolean;
+	thread_finish_action: 'settle' | 'archive';
+	settle_sound: string;
+	show_reasoning: boolean;
+	chat_zoom: number;
+	sidebar_activity_view: boolean;
+	app_theme: AppTheme;
+	backdrop_opacity: number;
+	binary_paths: Record<string, string>;
+	disabled_providers: ProviderKind[];
+	model_list: ModelInfo[];
+	model_preferences: Record<string, { effort?: string; fastMode?: boolean }>;
+	hydra_enabled: boolean;
+	hydra_queue_heads: boolean;
+	hydra_always_heads: boolean;
+	hydra_isolate_heads: boolean;
+	hydra_auto_merge: boolean;
+	hydra_review_heads: boolean;
+	hydra_max_heads: number | undefined;
+	last_project_id: UUID | null;
+	last_effort: Record<ProviderKind, string>;
+	default_workspace_mode: string;
 }
 
 export interface Shortcut {

@@ -169,6 +169,7 @@ pub async fn start_hydra_run(
  status: HydraRunStatus::Running,
  started_at: chrono::Utc::now(),
  completed_at: None,
+ max_heads: None,
  };
 
  Ok(run)

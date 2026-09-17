@@ -250,10 +250,10 @@ impl Library {
     }
 
     /// Return the most recently used items.
-    pub fn recent(&self, limit: usize) -> Vec<&LibraryItem> {
+    pub fn recent(&self, limit: usize) -> Vec<LibraryItem> {
         let mut v = self.items.clone();
         v.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
-        v.iter().take(limit).collect()
+        v.into_iter().take(limit).collect()
     }
 
     /// Search by substring in title or body (case-insensitive).

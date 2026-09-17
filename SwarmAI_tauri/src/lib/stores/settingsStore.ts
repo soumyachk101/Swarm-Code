@@ -7,8 +7,6 @@ import type {
 	AppSettings,
 	Provider,
 	ProviderKind,
-	ThemeMode,
-	ColorPalette,
 	UUID,
 } from '$lib/types';
 import * as Commands from '$lib/api/commands';
@@ -18,30 +16,61 @@ import * as Commands from '$lib/api/commands';
 // ---------------------------------------------------------------------------
 
 export const settings: Writable<AppSettings> = writable({
-	id: 'default',
+	theme: 'system',
 	theme_mode: 'system',
-	color_palette: 'blue',
-	font_size: 13,
+	font_size: 14,
 	font_family: 'system',
-	show_timestamps: true,
-	show_token_usage: true,
-	auto_continue: true,
-	max_concurrent_hydras: 2,
-	default_provider: null,
-	default_effort: 'medium',
-	auto_save_conversations: true,
-	enable_animations: true,
-	terminal_shell: '/bin/zsh',
-	editor_command: 'code',
-	shortcut_new_thread: 'cmd+t',
-	shortcut_toggle_sidebar: 'cmd+shift+s',
-	shortcut_send_message: 'cmd+enter',
-	shortcut_open_settings: 'cmd+,',
-	shortcut_open_palette: 'cmd+shift+p',
-};);
+	sidebar_width: 220,
+	show_timeline: true,
+	show_usage: true,
+	auto_scroll: true,
+	streaming: true,
+	sound_enabled: true,
+	notification_enabled: true,
+	default_provider: 'codex' as ProviderKind,
+	default_model: null,
+	default_effort: null,
+	default_runtime_mode: 'supervised',
+	pinned_models: [],
+	shortcuts: [],
+	recent_threads: [],
+	editor_path: null,
+	terminal_shell: '/bin/bash',
+	terminal_rows: 24,
+	terminal_cols: 80,
+	hydra_max_heads: 5,
+	hydra_auto_merge: false,
+	hydra_reviews_heads: false,
+	hydra_isolates_heads: true,
+	notify_when_finished: true,
+	chime_when_finished: 'drop',
+	confirm_before_deleting: true,
+	auto_continue_after_limit: false,
+	thread_finish_action: 'settle',
+	settle_sound: 'soft',
+	show_reasoning: false,
+	chat_zoom: 1,
+	sidebar_activity_view: false,
+	app_theme: 'system',
+	backdrop_opacity: 0.5,
+	binary_paths: {},
+	disabled_providers: [],
+	model_list: [],
+	model_preferences: {},
+	hydra_enabled: true,
+	hydra_queue_heads: true,
+	hydra_always_heads: false,
+	hydra_isolate_heads: true,
+	hydra_auto_merge: false,
+	hydra_review_heads: false,
+	hydra_max_heads: 5,
+	last_project_id: null,
+	last_effort: {},
+	default_workspace_mode: 'local',
+});
 
 export const providers: Writable<Provider[]> = writable([]);
-export const activeSettingsTab: Writable<string> = writable('general');
+export const activeSettingsTab: Writable<string> = writable('providers');
 export const hasUnsavedChanges: Writable<boolean> = writable(false);
 
 // ---------------------------------------------------------------------------
@@ -54,34 +83,9 @@ export const activeProvider: Readable<Provider | null> = derived(
 		$providers.find((p) => p.id === $settings.default_provider) ?? null,
 );
 
-export const providersByKind: Readable<Record<ProviderKind, Provider[]>> = derived(
-	providers,
-	($providers) => {
-		const result: Record<string, Provider[]> = {
-			openai: [],
-			anthropic: [],
-			ollama: [],
-			openrouter: [],
-			azure: [],
-			gemini: [],
-			custom: [],
-		};
-		for (const p of $providers) {
-			if (!result[p.kind]) result[p.kind] = [];
-			result[p.kind].push(p);
-		}
-		return result as Record<ProviderKind, Provider[]>;
-	},
-);
-
-export const themeMode: Readable<ThemeMode> = derived(
+export const themeMode: Readable<string> = derived(
 	settings,
 	($settings) => $settings.theme_mode,
-);
-
-export const colorPalette: Readable<ColorPalette> = derived(
-	settings,
-	($settings) => $settings.color_palette,
 );
 
 // ---------------------------------------------------------------------------
@@ -120,6 +124,7 @@ export async function resetSettings(): Promise<void> {
 		hasUnsavedChanges.set(false);
 	} catch (err) {
 		console.error('Failed to reset settings:', err);
+		throw err;
 	}
 }
 

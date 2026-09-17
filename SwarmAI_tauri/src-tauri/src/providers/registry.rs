@@ -40,6 +40,12 @@ pub enum RegistryError {
 
 pub type RegistryResult<T> = Result<T, RegistryError>;
 
+impl From<RegistryError> for String {
+    fn from(err: RegistryError) -> Self {
+        err.to_string()
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Provider capability metadata
 // ---------------------------------------------------------------------------
@@ -383,7 +389,7 @@ impl ProviderRegistry {
                 id: "default".to_string(),
                 name: "Default".to_string(),
                 detail: Some("Claude Code's recommended model".to_string()),
-                efforts: vec!["low", "medium", "high", "xhigh", "max"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string(), "xhigh".to_string(), "max".to_string()],
                 default_effort: Some("high".to_string()),
                 is_default: true,
                 fast_tier: Some("fast".to_string()),
@@ -392,7 +398,7 @@ impl ProviderRegistry {
                 id: "opus".to_string(),
                 name: "Opus".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high", "xhigh", "max"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string(), "xhigh".to_string(), "max".to_string()],
                 default_effort: None,
                 is_default: false,
                 fast_tier: Some("fast".to_string()),
@@ -401,7 +407,7 @@ impl ProviderRegistry {
                 id: "claude-fable-5-1[1m]".to_string(),
                 name: "Fable".to_string(),
                 detail: Some("Fable 5.1 · Most capable for your hardest and longest-running tasks".to_string()),
-                efforts: vec!["low", "medium", "high", "xhigh", "max"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string(), "xhigh".to_string(), "max".to_string()],
                 default_effort: None,
                 is_default: false,
                 fast_tier: None,
@@ -410,7 +416,7 @@ impl ProviderRegistry {
                 id: "sonnet".to_string(),
                 name: "Sonnet".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high", "xhigh", "max"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string(), "xhigh".to_string(), "max".to_string()],
                 default_effort: None,
                 is_default: false,
                 fast_tier: None,
@@ -419,7 +425,7 @@ impl ProviderRegistry {
                 id: "haiku".to_string(),
                 name: "Haiku".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: None,
                 is_default: false,
                 fast_tier: None,
@@ -451,7 +457,7 @@ impl ProviderRegistry {
                 id: "deepseek-v4-pro".to_string(),
                 name: "DeepSeek V4 Pro".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: Some("medium".to_string()),
                 is_default: true,
                 fast_tier: None,
@@ -460,7 +466,7 @@ impl ProviderRegistry {
                 id: "deepseek-flash".to_string(),
                 name: "DeepSeek Flash".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: None,
                 is_default: false,
                 fast_tier: Some("fast".to_string()),
@@ -476,7 +482,7 @@ impl ProviderRegistry {
                 id: "muse-spark-1.3".to_string(),
                 name: "Muse Spark 1.3".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: None,
                 is_default: true,
                 fast_tier: None,
@@ -485,7 +491,7 @@ impl ProviderRegistry {
                 id: "muse-spark-1.3-contributor".to_string(),
                 name: "Muse Spark 1.3 Contributor".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: None,
                 is_default: false,
                 fast_tier: None,
@@ -494,7 +500,7 @@ impl ProviderRegistry {
                 id: "muse-spark-1.2".to_string(),
                 name: "Muse Spark 1.2".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: None,
                 is_default: false,
                 fast_tier: None,
@@ -503,7 +509,7 @@ impl ProviderRegistry {
                 id: "muse-spark-1.2-contributor".to_string(),
                 name: "Muse Spark 1.2 Contributor".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: None,
                 is_default: false,
                 fast_tier: None,
@@ -512,7 +518,7 @@ impl ProviderRegistry {
                 id: "muse-spark-1.1".to_string(),
                 name: "Muse Spark 1.1".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: None,
                 is_default: false,
                 fast_tier: None,
@@ -528,7 +534,7 @@ impl ProviderRegistry {
                 id: "gemini-3.8-flash".to_string(),
                 name: "Gemini 3.8 Flash".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: Some("high".to_string()),
                 is_default: true,
                 fast_tier: None,
@@ -537,7 +543,7 @@ impl ProviderRegistry {
                 id: "gemini-3.7-flash".to_string(),
                 name: "Gemini 3.7 Flash".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: Some("high".to_string()),
                 is_default: false,
                 fast_tier: None,
@@ -546,7 +552,7 @@ impl ProviderRegistry {
                 id: "gemini-3.6-flash".to_string(),
                 name: "Gemini 3.6 Flash".to_string(),
                 detail: None,
-                efforts: vec!["low", "medium", "high"],
+                efforts: vec!["low".to_string(), "medium".to_string(), "high".to_string()],
                 default_effort: Some("high".to_string()),
                 is_default: false,
                 fast_tier: None,
@@ -555,7 +561,7 @@ impl ProviderRegistry {
                 id: "gemini-3.1-pro".to_string(),
                 name: "Gemini 3.1 Pro".to_string(),
                 detail: None,
-                efforts: vec!["low", "high"],
+                efforts: vec!["low".to_string(), "high".to_string()],
                 default_effort: Some("high".to_string()),
                 is_default: false,
                 fast_tier: None,
@@ -582,7 +588,7 @@ impl ProviderRegistry {
                 id: "gpt-oss-120b".to_string(),
                 name: "GPT-OSS 120B".to_string(),
                 detail: None,
-                efforts: vec!["medium"],
+                efforts: vec!["medium".to_string()],
                 default_effort: Some("medium".to_string()),
                 is_default: false,
                 fast_tier: None,
@@ -991,6 +997,11 @@ impl ProviderRegistry {
     }
 
     /// Get all provider statuses as (kind, status) pairs.
+    pub fn all_statuses(&self) -> Vec<(ProviderKind, ProviderStatus)> {
+        self.statuses.iter().map(|(k, v)| (*k, v.clone())).collect()
+    }
+
+    /// Get all provider statuses (alias).
     pub fn statuses(&self) -> Vec<(ProviderKind, ProviderStatus)> {
         self.all_statuses()
     }
@@ -1031,9 +1042,11 @@ impl ProviderTestResult {
     /// Build a test result from a registry validation.
     pub fn from_validation(kind: ProviderKind, validation: &ValidationResult) -> Self {
         Self {
-            kind,
+            kind: kind.to_string(),
             success: validation.valid,
-            message: validation.error.clone(),
+            message: validation.error.clone().unwrap_or_default(),
+            models: Vec::new(),
+            response_time_ms: None,
             tested_at: validation.checked_at,
         }
     }

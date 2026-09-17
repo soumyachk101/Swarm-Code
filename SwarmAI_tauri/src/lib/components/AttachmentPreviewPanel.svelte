@@ -1,485 +1,309 @@
 <script lang="ts">
-	// ---------------------------------------------------------------------------
-	// AttachmentPreviewPanel – expanded preview for a single attachment
-	// Matches AttachmentPreviewPanel.swift: image zoom, file info, actions.
-	// ---------------------------------------------------------------------------
-
-	import type { Attachment } from '$lib/types';
-
-	// ---------------------------------------------------------------------------
-	// Props
-	// ---------------------------------------------------------------------------
+	import type { Attachment, AttachmentInfo } from '$lib/types';
+	import AttachmentPreview from './AttachmentPreview.svelte';
 
 	interface Props {
-		attachment: Attachment;
-		open: boolean;
+		attachments: AttachmentInfo[];
 		readonly?: boolean;
-		onClose: () => void;
-		onOpenFile: (attachment: Attachment) => void;
-		onReveal: (attachment: Attachment) => void;
-		onRemove: (attachment: Attachment) => void;
+		maxItems?: number;
+		accept?: string;
+		onAdd: (files: AttachmentInfo[]) => void;
+		onRemove: (attachment: AttachmentInfo) => void;
+		onClick?: (attachment: AttachmentInfo) => void;
 	}
 
-	let { attachment, open, readonly = false, onClose, onOpenFile, onReveal, onRemove }: Props = $props();
+	let { attachments, readonly = false, maxItems = 10, accept = '*/*', onAdd, onRemove, onClick }: Props = $props();
 
-	// ---------------------------------------------------------------------------
-	// State
-	// ---------------------------------------------------------------------------
+	let isDragOver = $state(false);
+	let fileInput: HTMLInputElement | undefined = $state();
+	let dropzoneRef: HTMLDivElement | undefined = $state();
 
-	let scale = $state(1);
-	let translateX = $state(0);
-	let translateY = $state(0);
-	let modalRef: HTMLDivElement | undefined = $state();
-	let imageRef: HTMLImageElement | undefined = $state();
-	let imageContainerRef: HTMLDivElement | undefined = $state();
+	function pickFiles() {
+		if (readonly) return;
+		fileInput?.click();
+	}
 
-	// ---------------------------------------------------------------------------
-	// Derived
-	// ---------------------------------------------------------------------------
+	async function handleFileChange(e: Event) {
+		const target = e.target as HTMLInputElement;
+		if (!target.files) return;
+		await processFiles(Array.from(target.files));
+		target.value = '';
+	}
 
-	let isImage = $derived(attachment.mime_type.startsWith('image/'));
-	let fileSize = $derived(() => {
-		const match = attachment.path.match(/\/(\d+(?:\.\d+)?)([KMGTP]?B?)$/i);
-		return match ? match[0] : 'Unknown';
-	});
-	let zoomPercent = $derived(Math.round(scale * 100));
+	async function processFiles(fileList: File[]) {
+		const remaining = Math.max(0, maxItems - attachments.length);
+		const sliced = fileList.slice(0, remaining);
+		const newItems: AttachmentInfo[] = sliced.map((f) => ({
+			id: crypto.randomUUID(),
+			name: f.name,
+			path: (f as any).path ?? f.name,
+			mime_type: f.type || 'application/octet-stream'
+		}));
+		if (newItems.length > 0) onAdd(newItems);
+	}
 
-	// ---------------------------------------------------------------------------
-	// Reset transform
-	// ---------------------------------------------------------------------------
+	function handleDragOver(e: DragEvent) {
+		if (readonly) return;
+		e.preventDefault();
+		isDragOver = true;
+	}
 
-	function resetTransform() {
-		scale = 1;
-		translateX = 0;
-		translateY = 0;
+	function handleDragLeave(e: DragEvent) {
+		e.preventDefault();
+		if (dropzoneRef && e.target === dropzoneRef) {
+			isDragOver = false;
+		} else if (!dropzoneRef?.contains(e.relatedTarget as Node)) {
+			isDragOver = false;
+		}
+	}
+
+	async function handleDrop(e: DragEvent) {
+		if (readonly) return;
+		e.preventDefault();
+		isDragOver = false;
+		const files = e.dataTransfer?.files;
+		if (files && files.length > 0) {
+			await processFiles(Array.from(files));
+		}
+	}
+
+	function handleRemove(a: AttachmentInfo) {
+		if (readonly) return;
+		onRemove(a);
+	}
+
+	function handleClick(a: AttachmentInfo) {
+		onClick?.(a);
+	}
+
+	function handleKeyDown(e: KeyboardEvent) {
+		if (readonly) return;
+		if (e.key === 'Enter' || e.key === ' ') {
+			e.preventDefault();
+			pickFiles();
+		}
 	}
 
 	$effect(() => {
-		if (!open) resetTransform();
+		if (!isDragOver) return;
+		const reset = () => { isDragOver = false; };
+		window.addEventListener('dragend', reset);
+		return () => window.removeEventListener('dragend', reset);
 	});
-
-	// ---------------------------------------------------------------------------
-	// Image zoom (wheel)
-	// ---------------------------------------------------------------------------
-
-	function onWheel(event: WheelEvent) {
-		if (!isImage) return;
-		event.preventDefault();
-		const delta = event.deltaY > 0 ? -0.08 : 0.08;
-		scale = Math.min(4, Math.max(0.25, scale + delta));
-		if (scale === 1) {
-			translateX = 0;
-			translateY = 0;
-		}
-	}
-
-	// ---------------------------------------------------------------------------
-	// Image pan (drag)
-	// ---------------------------------------------------------------------------
-
-	let dragging = $state(false);
-	let dragStartX = $state(0);
-	let dragStartY = $state(0);
-	let dragTransX = $state(0);
-	let dragTransY = $state(0);
-
-	function onMouseDown(e: MouseEvent) {
-		if (!isImage || scale <= 1) return;
-		dragging = true;
-		dragStartX = e.clientX;
-		dragStartY = e.clientY;
-		dragTransX = translateX;
-		dragTransY = translateY;
-	}
-
-	function onMouseMove(e: MouseEvent) {
-		if (!dragging) return;
-		translateX = dragTransX + (e.clientX - dragStartX) / scale;
-		translateY = dragTransY + (e.clientY - dragStartY) / scale;
-	}
-
-	function onMouseUp() {
-		dragging = false;
-	}
-
-	// ---------------------------------------------------------------------------
-	// Keyboard
-	// ---------------------------------------------------------------------------
-
-	function onKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape') {
-			onClose();
-		} else if (e.key === '=' || e.key === '+') {
-			scale = Math.min(4, scale + 0.25);
-		} else if (e.key === '-') {
-			scale = Math.max(0.25, scale - 0.25);
-			if (scale <= 1) resetTransform();
-		} else if (e.key === '0') {
-			resetTransform();
-		}
-	}
-
-	// ---------------------------------------------------------------------------
-	// Actions
-	// ---------------------------------------------------------------------------
-
-	function openFile() {
-		onOpenFile(attachment);
-	}
-
-	function reveal() {
-		onReveal(attachment);
-	}
-
-	function remove() {
-		onRemove(attachment);
-	}
-
-	// Close on backdrop click
-	function onBackdropClick(e: MouseEvent) {
-		if (e.target === modalRef) {
-			onClose();
-		}
-	}
 </script>
 
-{#if open}
-	<div
-		bind:this={modalRef}
-		class="preview-panel"
-		onclick={onBackdropClick}
-		onkeydown={onKeydown}
-		role="dialog"
-		aria-label={`Previewing ${attachment.name}`}
-	>
-		<!-- Header -->
-		<header class="panel-header">
-			<span class="file-name">{attachment.name}</span>
-			<div class="header-actions">
-				<span class="mime-type">{attachment.mime_type}</span>
-				{#if isImage}
-					<span class="zoom-label">{zoomPercent}%</span>
-				{/if}
-				<button class="icon-btn" onclick={reveal} type="button" title="Reveal in Finder">⤴</button>
-				<button class="icon-btn" onclick={openFile} type="button" title="Open file">⏵</button>
-				{#if !readonly}
-					<button class="icon-btn danger" onclick={remove} type="button" title="Remove">✕</button>
-				{/if}
-				<button class="icon-btn" onclick={onClose} type="button" aria-label="Close">✕</button>
-			</div>
-		</header>
-
-		<!-- Body -->
-		<div class="panel-body">
-			<!-- Image viewer -->
-			{#if isImage}
-				<div
-					bind:this={imageContainerRef}
-					class="image-container"
-					onwheel={onWheel}
-					onmousedown={onMouseDown}
-					onmousemove={onMouseMove}
-					onmouseup={onMouseUp}
-					onmouseleave={onMouseUp}
-				>
-					<img
-						bind:this={imageRef}
-						src={attachment.path}
-						alt={attachment.name}
-						class="preview-image"
-						style="transform: scale({scale}) translate({translateX}px, {translateY}px); cursor: {scale > 1 ? 'grab' : 'zoom-in'};"
-						draggable={false}
+<div
+	bind:this={dropzoneRef}
+	class="attachment-panel"
+	class:readonly
+	class:drag-over={isDragOver}
+	ondragover={handleDragOver}
+	ondragleave={handleDragLeave}
+	ondrop={handleDrop}
+	role="region"
+	aria-label="Attachments"
+>
+	{#if attachments.length === 0 && !isDragOver}
+		<button
+			type="button"
+			class="empty-upload"
+			onclick={pickFiles}
+			onkeydown={handleKeyDown}
+			disabled={readonly}
+			aria-label="Add attachments"
+		>
+			<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+				<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+			</svg>
+			<span class="empty-text">
+				<strong>Drop files here</strong>
+				<small>or click to browse</small>
+			</span>
+		</button>
+	{:else}
+		<div class="attachment-grid">
+			{#each attachments as att (att.id)}
+				<div class="grid-cell">
+					<AttachmentPreview
+						attachment={att}
+						readonly={readonly}
+						onRemove={() => handleRemove(att)}
+						onExpand={() => handleClick(att)}
 					/>
 				</div>
-			{:else}
-				<div class="fallback-viewer">
-					<span class="fallback-icon">📄</span>
-					<p class="fallback-text">Preview not available for this file type.</p>
-					<button class="fallback-action" onclick={openFile} type="button">
-						Open externally
-					</button>
-				</div>
+			{/each}
+
+			{#if !readonly && attachments.length < maxItems}
+				<button
+					type="button"
+					class="upload-cell"
+					onclick={pickFiles}
+					onkeydown={handleKeyDown}
+					aria-label="Add more attachments"
+				>
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M12 5v14M5 12h14"/>
+					</svg>
+					<span class="upload-cell-label">Add</span>
+				</button>
 			{/if}
 		</div>
 
-		<!-- Footer / zoom controls -->
-		{#if isImage}
-			<footer class="panel-footer">
-				<div class="zoom-controls">
-					<button class="zoom-btn" onclick={() => { scale = Math.max(0.25, scale - 0.25); if (scale <= 1) resetTransform(); }} type="button">−</button>
-					<input
-						type="range"
-						class="zoom-range"
-						min="0.25"
-						max="4"
-						step="0.25"
-						value={scale}
-						oninput={(e) => {
-							const v = parseFloat((e.target as HTMLInputElement).value);
-							if (!isNaN(v)) {
-								scale = v;
-								if (v === 1) resetTransform();
-							}
-						}}
-					/>
-					<button class="zoom-btn" onclick={() => { scale = Math.min(4, scale + 0.25); }} type="button">+</button>
-					<button class="zoom-reset-btn" onclick={resetTransform} type="button">Reset</button>
-				</div>
-				<div class="file-info">
-					<span>{attachment.name}</span>
-					<span>{attachment.mime_type}</span>
-					<span>{attachment.path}</span>
-				</div>
-			</footer>
+		{#if isDragOver}
+			<div class="drop-overlay">
+				<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+					<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+					<polyline points="17 8 12 3 7 8"/>
+					<line x1="12" y1="3" x2="12" y2="15"/>
+				</svg>
+				<span>Drop files to add</span>
+			</div>
 		{/if}
-	</div>
-{/if}
+	{/if}
+
+	<input
+		bind:this={fileInput}
+		type="file"
+		multiple
+		accept={accept}
+		onchange={handleFileChange}
+		class="hidden-input"
+		aria-hidden="true"
+	/>
+</div>
 
 <style>
-	.preview-panel {
-		position: fixed;
-		inset: 0;
-		z-index: 200;
-		background: rgba(0, 0, 0, 0.82);
-		backdrop-filter: blur(8px);
-		display: flex;
-		flex-direction: column;
-		animation: fadeIn 150ms ease;
-		font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+	.attachment-panel {
+		position: relative;
+		padding: var(--space-3);
+		background: var(--surface-2);
+		border: var(--border-1) var(--border-color-2);
+		border-radius: var(--radius-md);
+		min-height: 80px;
+		transition: all var(--transition-fast);
 	}
 
-	@keyframes fadeIn {
+	.attachment-panel.drag-over {
+		border-color: var(--accent-1);
+		background: var(--accent-4);
+	}
+
+	.attachment-panel.readonly {
+		background: transparent;
+		border-style: dashed;
+	}
+
+	.empty-upload {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-2);
+		width: 100%;
+		padding: var(--space-6) var(--space-4);
+		border: 1px dashed var(--border-color-1);
+		background: transparent;
+		border-radius: var(--radius-md);
+		color: var(--text-tertiary);
+		cursor: pointer;
+		font-family: inherit;
+		transition: all var(--transition-fast);
+	}
+
+	.empty-upload:hover:not(:disabled) {
+		border-color: var(--accent-1);
+		color: var(--accent-1);
+		background: var(--accent-4);
+	}
+
+	.empty-upload:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.empty-text {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 2px;
+	}
+
+	.empty-text strong {
+		font-size: var(--font-size-sm);
+		font-weight: 600;
+		color: var(--text-secondary);
+	}
+
+	.empty-text small {
+		font-size: 11px;
+		color: var(--text-tertiary);
+	}
+
+	.attachment-grid {
+		display: flex;
+		flex-wrap: wrap;
+		gap: var(--space-2);
+		align-items: flex-start;
+	}
+
+	.grid-cell {
+		display: inline-flex;
+	}
+
+	.upload-cell {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 2px;
+		width: 72px;
+		height: 72px;
+		border: 1px dashed var(--border-color-1);
+		background: transparent;
+		border-radius: 10px;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		font-family: inherit;
+		font-size: 10px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.3px;
+		transition: all var(--transition-fast);
+	}
+
+	.upload-cell:hover {
+		border-color: var(--accent-1);
+		color: var(--accent-1);
+		background: var(--accent-4);
+	}
+
+	.upload-cell-label {
+		font-size: 9px;
+	}
+
+	.drop-overlay {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: var(--space-2);
+		background: var(--accent-3);
+		border-radius: var(--radius-md);
+		color: var(--accent-1);
+		font-size: var(--font-size-sm);
+		font-weight: 600;
+		pointer-events: none;
+		animation: fade-in 120ms ease;
+	}
+
+	@keyframes fade-in {
 		from { opacity: 0; }
 		to { opacity: 1; }
 	}
 
-	.panel-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-		padding: 12px 16px;
-		border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-		flex-wrap: wrap;
-	}
-
-	.file-name {
-		font-size: 13px;
-		font-weight: 500;
-		color: #e5e7eb;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		flex: 1;
-		min-width: 120px;
-	}
-
-	.header-actions {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-
-	.mime-type {
-		font-size: 11px;
-		color: #9ca3af;
-		font-family: 'SF Mono', monospace;
-	}
-
-	.zoom-label {
-		font-size: 11px;
-		color: #6b7280;
-		font-variant-numeric: tabular-nums;
-		min-width: 40px;
-		text-align: center;
-	}
-
-	.icon-btn {
-		appearance: none;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		background: transparent;
-		color: #d1d5db;
-		width: 28px;
-		height: 28px;
-		border-radius: 7px;
-		cursor: pointer;
-		font-size: 12px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all 140ms ease;
-		font-family: inherit;
-		line-height: 1;
-	}
-
-	.icon-btn:hover {
-		background: rgba(255, 255, 255, 0.08);
-		color: #ffffff;
-	}
-
-	.icon-btn.danger:hover {
-		background: #ef444430;
-		color: #ef4444;
-		border-color: #ef444450;
-	}
-
-	/* ── Body ── */
-
-	.panel-body {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		overflow: hidden;
-		padding: 20px;
-	}
-
-	.image-container {
-		max-width: 100%;
-		max-height: 100%;
-		overflow: auto;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		cursor: zoom-in;
-	}
-
-	.preview-image {
-		max-width: 100%;
-		max-height: calc(100vh - 180px);
-		object-fit: contain;
-		border-radius: 8px;
-		user-select: none;
-		transform-origin: center center;
-		transition: transform 100ms ease;
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-	}
-
-	.fallback-viewer {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 16px;
-		color: #9ca3af;
-	}
-
-	.fallback-icon {
-		font-size: 48px;
-		opacity: 0.5;
-	}
-
-	.fallback-text {
-		font-size: 14px;
-		margin: 0;
-	}
-
-	.fallback-action {
-		appearance: none;
-		border: 1px solid rgba(255, 255, 255, 0.15);
-		background: transparent;
-		color: #d1d5db;
-		font-size: 13px;
-		font-weight: 500;
-		padding: 8px 16px;
-		border-radius: 8px;
-		cursor: pointer;
-		transition: all 140ms;
-		font-family: inherit;
-	}
-
-	.fallback-action:hover {
-		background: rgba(255, 255, 255, 0.08);
-	}
-
-	/* ── Footer ── */
-
-	.panel-footer {
-		padding: 10px 16px;
-		border-top: 1px solid rgba(255, 255, 255, 0.08);
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
-	.zoom-controls {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-	}
-
-	.zoom-btn {
-		appearance: none;
-		border: 1px solid rgba(255, 255, 255, 0.12);
-		background: transparent;
-		color: #d1d5db;
-		width: 28px;
-		height: 28px;
-		border-radius: 7px;
-		cursor: pointer;
-		font-size: 16px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all 140ms;
-		font-family: inherit;
-		line-height: 1;
-	}
-
-	.zoom-btn:hover {
-		background: rgba(255, 255, 255, 0.08);
-	}
-
-	.zoom-range {
-		flex: 1;
-		accent-color: #6366f1;
-	}
-
-	.zoom-reset-btn {
-		appearance: none;
-		border: 1px solid rgba(255, 255, 255, 0.1);
-		background: transparent;
-		color: #9ca3af;
-		font-size: 11px;
-		padding: 4px 10px;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: all 140ms;
-		font-family: inherit;
-	}
-
-	.zoom-reset-btn:hover {
-		background: rgba(255, 255, 255, 0.08);
-		color: #d1d5db;
-	}
-
-	.file-info {
-		display: flex;
-		gap: 12px;
-		font-size: 10px;
-		color: #6b7280;
-		overflow: hidden;
-	}
-
-	.file-info span {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.preview-panel,
-		.preview-image {
-			animation: none;
-			transition: none;
-		}
-	}
-
-	@media (max-width: 480px) {
-		.panel-header {
-			padding: 10px 12px;
-		}
-		.preview-image {
-			max-height: calc(100vh - 220px);
-		}
+	.hidden-input {
+		display: none;
 	}
 </style>

@@ -48,9 +48,18 @@ pub struct ChimeBuffer {
 
 /// Holds the rodio audio output stream and handle so sound can be played.
 pub struct AudioEngine {
+    inner: *mut InnerAudioEngine,
+}
+
+struct InnerAudioEngine {
     _stream: OutputStream,
     handle: OutputStreamHandle,
 }
+
+// SAFETY: AudioEngine is used only on macOS where cpal types are actually
+// Send+Sync. The pointer is invariant for the life of the process.
+unsafe impl Send for AudioEngine {}
+unsafe impl Sync for AudioEngine {}
 
 impl std::fmt::Debug for AudioEngine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -61,21 +70,33 @@ impl std::fmt::Debug for AudioEngine {
 impl AudioEngine {
     fn new() -> Option<Self> {
         match OutputStream::try_default() {
-            Ok((stream, handle)) => Some(Self {
-                _stream: stream,
-                handle,
-            }),
+            Ok((stream, handle)) => {
+                let boxed = Box::new(InnerAudioEngine {
+                    _stream: stream,
+                    handle,
+                });
+                let raw = Box::into_raw(boxed);
+                Some(Self { inner: raw })
+            }
             Err(_) => None,
         }
     }
 
     fn play(&self, data: &[u8]) {
+        let engine = unsafe { self.inner.as_ref().unwrap() };
         let cursor = Cursor::new(data.to_vec());
         if let Ok(source) = Decoder::new(cursor) {
-            if let Ok(sink) = Sink::try_new(&self.handle) {
+            if let Ok(sink) = Sink::try_new(&engine.handle) {
                 sink.append(source);
-                // Do not block; the sound finishes on its own.
             }
+        }
+    }
+}
+
+impl Drop for AudioEngine {
+    fn drop(&mut self) {
+        if !self.inner.is_null() {
+            unsafe { Box::from_raw(self.inner) };
         }
     }
 }
@@ -175,7 +196,7 @@ pub fn play_settle_chime() {
         ],
         0.32,
     );
-    if let Some(engine) = audio_engine().lock().unwrap().as_ref() {
+    if let Some(engine) = audio_engine().lock().as_ref() {
         engine.play(&data);
     }
 }
@@ -198,7 +219,7 @@ pub fn play_finish_chime() {
         ],
         0.7,
     );
-    if let Some(engine) = audio_engine().lock().unwrap().as_ref() {
+    if let Some(engine) = audio_engine().lock().as_ref() {
         engine.play(&data);
     }
 }
@@ -227,7 +248,6 @@ pub fn play_sequence(sequence: &[ToneEvent]) {
             SoundType::Tink => play_settle_chime(),
             SoundType::Drop => play_finish_chime(),
             SoundType::Bell => {
-                // Generate a bell-like tone.
                 let data = generate_wave(
                     &[Note { frequency: 800.0, onset: 0.0, level: 0.5 }],
                     &[
@@ -238,12 +258,11 @@ pub fn play_sequence(sequence: &[ToneEvent]) {
                     0.5,
                 );
                 ensure_audio_engine();
-                if let Some(engine) = audio_engine().lock().unwrap().as_ref() {
+                if let Some(engine) = audio_engine().lock().as_ref() {
                     engine.play(&data);
                 }
             }
         }
-        // Respect the delay_ms between events.
         if event.delay_ms > 0 && event.delay_ms < 2000 {
             std::thread::sleep(Duration::from_millis(event.delay_ms));
         }
@@ -261,7 +280,6 @@ mod tests {
             &[Partial { multiple: 1.0, level: 1.0, decay: 0.1 }],
             0.1,
         );
-        // 44 bytes header + 2 bytes per sample * sample_rate * duration
         let expected_samples = (SAMPLE_RATE * 0.1).round() as usize;
         assert_eq!(data.len(), 44 + expected_samples * 2);
     }
@@ -292,7 +310,16 @@ fn audio_engine() -> &'static Mutex<Option<AudioEngine>> {
 }
 
 fn ensure_audio_engine() {
-    if audio_engine().lock().unwrap().is_none() {
-        *audio_engine().lock().unwrap() = AudioEngine::new();
+    let engine_ref = audio_engine();
+    {
+        let guard = engine_ref.lock();
+        if guard.is_none() {
+            // drop happens here
+            drop(guard);
+            let mut guard = engine_ref.lock();
+            if guard.is_none() {
+                *guard = AudioEngine::new();
+            }
+        }
     }
 }

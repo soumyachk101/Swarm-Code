@@ -106,7 +106,7 @@
 	<!-- Sidebar Header -->
 	<div class="sidebar-header">
 		<div class="sidebar-logo">
-			<img src="/icons/hydra-mark.svg" alt="SwarmAI" class="logo-icon" width="22" height="22" />
+			<img src="/icons/swarmai-logo.svg" alt="SwarmAI" class="logo-icon" width="22" height="22" />
 			<span class="logo-text">SwarmAI</span>
 		</div>
 		<div class="sidebar-header-actions">

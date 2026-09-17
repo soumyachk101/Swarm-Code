@@ -14,6 +14,7 @@ import type {
 	QuestionRequest,
 	HydraReport,
 	ContextUsage,
+	ChatThread,
 } from '$lib/types';
 
 // ---------------------------------------------------------------------------

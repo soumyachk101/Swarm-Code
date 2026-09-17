@@ -1,15 +1,15 @@
-import swamlLogo from '../assets/icons/swarmai-logo.svg';
-import hydraMark from '../assets/icons/hydra-mark.svg';
-import providerClaude from '../assets/icons/provider-claude.svg';
-import providerAntigravity from '../assets/icons/provider-antigravity.svg';
-import providerCodex from '../assets/icons/provider-codex.svg';
-import providerCopilot from '../assets/icons/provider-copilot.svg';
-import providerCursor from '../assets/icons/provider-cursor.svg';
-import providerDeepSeek from '../assets/icons/provider-deepseek.svg';
-import providerDevin from '../assets/icons/provider-devin.svg';
-import providerGrok from '../assets/icons/provider-grok.svg';
-import providerMeta from '../assets/icons/provider-meta.svg';
-import providerOllama from '../assets/icons/provider-opencode.svg';
+import swamlLogo from '../../assets/icons/swarmai-logo.svg';
+import hydraMark from '../../assets/icons/hydra-mark.svg';
+import providerClaude from '../../assets/icons/provider-claude.svg';
+import providerAntigravity from '../../assets/icons/provider-antigravity.svg';
+import providerCodex from '../../assets/icons/provider-codex.svg';
+import providerCopilot from '../../assets/icons/provider-copilot.svg';
+import providerCursor from '../../assets/icons/provider-cursor.svg';
+import providerDeepSeek from '../../assets/icons/provider-deepseek.svg';
+import providerDevin from '../../assets/icons/provider-devin.svg';
+import providerGrok from '../../assets/icons/provider-grok.svg';
+import providerMeta from '../../assets/icons/provider-meta.svg';
+import providerOllama from '../../assets/icons/provider-opencode.svg';
 
 export const ICONS = {
 	swarmai_logo: swamlLogo,
