@@ -244,11 +244,13 @@ private struct ModelEffortPanel: View {
 struct ModelList: View {
     @Environment(AppModel.self) private var model
     let thread: ChatThread
-    let hasHistory: Bool
+    var hasHistory: Bool = false
     let onChoose: (ModelCatalog.Entry) -> Void
     /// Left out where the list is only shown, as in the website captures.
     var onEnterPair: (HydraPair) -> Void = { _ in }
     let onBack: () -> Void
+
+    @State private var searchText = ""
 
     /// A pair row carries two lines, like a model row with its provider under it.
     private static let pairRowHeight: CGFloat = 46
@@ -256,18 +258,40 @@ struct ModelList: View {
     private static let sectionHeaderHeight: CGFloat = 22
 
     var body: some View {
-        let entries = ModelCatalog.entries(model, including: thread)
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseEntries = ModelCatalog.entries(model, including: thread)
+        let candidateEntries: [ModelCatalog.Entry] = if query.isEmpty {
+            baseEntries
+        } else {
+            // When searching, search across all available providers so any model can be found
+            model.providers.availableProviders.flatMap { provider in
+                model.providers.models(for: provider).map { ModelCatalog.Entry(provider: provider, option: $0) }
+            }
+        }
+        let entries = candidateEntries.filter { entry in
+            guard !query.isEmpty else { return true }
+            return ModelsSettingsPage.matches(entry.option, id: entry.option.id, provider: entry.provider, query: query)
+        }
+
         // The pairs are Hydra's: on offer while it is on, out of sight otherwise.
-        let pairs = model.hydraIsOn(thread) ? model.hydraPickerPairs : []
+        let allPairs = model.hydraIsOn(thread) ? model.hydraPickerPairs : []
+        let pairs = allPairs.filter { pair in
+            guard !query.isEmpty else { return true }
+            let title = HydraPairSummary.title(pair, registry: model.providers)
+            let pairDetail = detail(for: pair)
+            let fields = [title, pairDetail, pair.provider.displayName, pair.headsProvider.displayName]
+            return fields.contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+
         // A chat leads with one pair or runs one model, never both: the checkmark sits on
         // the pair while the chat is in one, even though the pair's lead model is a row too.
         let leadsWithPair = pairs.contains { model.leadsWithHydraPair($0, thread: thread) }
-        let showsProviders = Set(entries.map(\.provider)).count > 1
+        let showsProviders = Set(candidateEntries.map(\.provider)).count > 1 || model.providers.availableProviders.count > 1
         // Fixed row heights let the popover size itself in one pass instead of measuring and resizing.
-        let rowHeight: CGFloat = showsProviders || (hasHistory && entries.contains { $0.provider != thread.provider }) ? 46 : 34
-        // The pairs section is part of that one pass: its two headers and its rows are
-        // counted here, so the popover opens at the size it keeps.
+        let rowHeight: CGFloat = showsProviders ? 46 : 34
         let pairsHeight = pairs.isEmpty ? 0 : Self.sectionHeaderHeight * 2 + CGFloat(pairs.count) * (Self.pairRowHeight + 1)
+        let targetHeight: CGFloat = min(max(72 + pairsHeight + CGFloat(max(entries.count, pairs.isEmpty ? 1 : 0)) * (rowHeight + 1), 180), 440)
+
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Button(action: onBack) {
@@ -280,62 +304,74 @@ struct ModelList: View {
                 .foregroundStyle(Chrome.secondaryText)
                 .help("Back")
                 Text("Select model")
-                    .font(.system(size: 13))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Chrome.secondaryText)
                 Spacer()
             }
             .padding(.horizontal, 8)
             .padding(.top, 8)
-            .padding(.bottom, 4)
+            .padding(.bottom, 6)
+
+            SidebarSearchField(text: $searchText, prompt: "Search models…")
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if !pairs.isEmpty {
                         PopoverSectionHeader("Pairs")
                         ForEach(pairs) { pair in
-                            let locked = hasHistory && pair.provider != thread.provider
                             HydraPairListRow(
                                 pair: pair,
                                 title: HydraPairSummary.title(pair, registry: model.providers),
-                                detail: locked ? "New chats only" : detail(for: pair),
+                                detail: detail(for: pair),
                                 rowHeight: Self.pairRowHeight,
                                 isSelected: model.leadsWithHydraPair(pair, thread: thread),
-                                isEnabled: !locked
+                                isEnabled: true
                             ) {
                                 onEnterPair(pair)
                             }
                         }
-                        PopoverSectionHeader("Models")
+                        if !entries.isEmpty {
+                            PopoverSectionHeader("Models")
+                        }
                     }
                     ForEach(entries) { entry in
-                        let locked = hasHistory && entry.provider != thread.provider
                         ModelListRow(
                             entry: entry,
-                            detail: locked ? "New chats only" : (showsProviders ? entry.provider.displayName : nil),
+                            detail: showsProviders ? entry.provider.displayName : nil,
                             showsIcon: showsProviders,
                             rowHeight: rowHeight,
                             isSelected: !leadsWithPair && entry.provider == thread.provider && entry.option.id == thread.model,
-                            isEnabled: !locked
+                            isEnabled: true
                         ) {
                             onChoose(entry)
                         }
                     }
-                    if entries.isEmpty {
-                        Text("Loading models…")
-                            .font(.system(size: 13))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .padding(10)
+                    if entries.isEmpty && pairs.isEmpty {
+                        if !query.isEmpty {
+                            Text("No models found")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Chrome.secondaryText)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(16)
+                        } else {
+                            Text("Loading models…")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Chrome.secondaryText)
+                                .padding(10)
+                        }
                     }
                 }
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(height: min(pairsHeight + CGFloat(max(entries.count, 1)) * (rowHeight + 1), 440))
+            .frame(height: targetHeight)
         }
         .padding(6)
         .task {
             // A pair on another provider, or with its heads on one, names its models from
             // that provider's catalogue, which this chat may never have loaded.
-            for provider in Set(pairs.flatMap { [$0.provider, $0.headsProvider] }) where provider != thread.provider {
+            for provider in Set(allPairs.flatMap { [$0.provider, $0.headsProvider] }) where provider != thread.provider {
                 await model.providers.loadCatalog(provider)
             }
         }
