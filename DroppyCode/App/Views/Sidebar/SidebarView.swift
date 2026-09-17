@@ -1469,6 +1469,9 @@ private struct SidebarThreadRow: View, Equatable {
     @State private var isMenuPresented = false
     /// The check was just clicked: it pops green as the row takes off.
     @State private var isSettling = false
+    /// The row is on its way out after a settle: it fades and shrinks in place a beat after
+    /// the check pops, and the list closes up once it is gone (see `settle`).
+    @State private var isLeaving = false
     @State private var windowFrame = FrameHolder()
 
     var body: some View {
@@ -1584,6 +1587,11 @@ private struct SidebarThreadRow: View, Equatable {
         // showing eases in over the 0.12 s handover window in which the ghost still covers
         // the row (see `RowGlideAnimator`).
         .animation(isHidden ? nil : .easeOut(duration: 0.12), value: isHidden)
+        // A settling row leaves in place: a short fade with a slight shrink, so it is gone
+        // before the rows below close up over its space.
+        .opacity(isLeaving ? 0 : 1)
+        .scaleEffect(isLeaving ? Self.leaveScale : 1)
+        .animation(Self.leave, value: isLeaving)
         // Lifted: a touch larger with a shadow, over an opaque fill so the rows sliding
         // underneath never show through. The queue's rows lift the same way.
         .background {
@@ -1658,15 +1666,31 @@ private struct SidebarThreadRow: View, Equatable {
 
     // MARK: Settling
 
-    /// The check pops green, the note sounds and the row takes off, all on the click:
-    /// the ghost's own check carries the pop through the flight (see `RowGlideView`),
-    /// so nothing waits for it to land first.
+    /// The row's exit on a settle: a quick ease-out, a beat after the check's pop so the
+    /// pop reads first. Reduce Motion keeps the fade and drops the shrink.
+    private static let leaveDelay: TimeInterval = 0.06
+    private static let leaveDuration: TimeInterval = 0.16
+    private static var leave: Animation { .easeOut(duration: leaveDuration).delay(leaveDelay) }
+    private static var leaveScale: CGFloat { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0.97 }
+
+    /// The check pops green and the note sounds on the click; the row fades and shrinks
+    /// away in place right behind the pop, and the thread settles once it is gone, so the
+    /// rows below close up over an empty space with the list's own motion. Nothing flies:
+    /// the row never chases a landing frame, so the exit is the same every time, wherever
+    /// the settled rows are (folded away, or below the fold of the list).
     private func settle() {
         guard !isSettling, !thread.isSettled else { return }
         if model.settings.settleSound { SettleChime.play() }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.45)) { isSettling = true }
-        glide(.settle)
-        model.settleAnimated(thread.id, sounds: false)
+        isLeaving = true
+        let id = thread.id
+        let model = model
+        // The thread changes once the row is out of sight; the list's removal fade then
+        // takes an already invisible row, and only the closing up shows.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.leaveDelay + Self.leaveDuration))
+            withAnimation(Chrome.panelSlide) { model.settle(id, sounds: false) }
+        }
     }
 
     private func reopen() {
@@ -1678,7 +1702,9 @@ private struct SidebarThreadRow: View, Equatable {
     /// Sends the row's ghost on its way: from this row's frame, looking like this row, to
     /// where the thread's other row will be (or the list's edge, when that is out of view),
     /// looking like that one. Launched just before the thread changes, so the new row can
-    /// report its frame to the ghost as it arrives.
+    /// report its frame to the ghost as it arrives. Only a reopen flies now: a settle leaves
+    /// in place (see `settle`), so the settle branches below are kept for the flight's shape
+    /// but no longer run.
     private func glide(_ direction: RowGlideAnimator.Glide.Direction) {
         guard let listFrame else { return }
         let from = windowFrame.frame
