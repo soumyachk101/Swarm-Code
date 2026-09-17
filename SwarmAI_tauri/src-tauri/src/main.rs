@@ -4,6 +4,8 @@
 #![allow(unused_variables)]
 #![allow(unused_imports)]
 #![allow(unused_mut)]
+#![allow(non_camel_case_types)]
+#![allow(unused_must_use)]
 
 mod commands;
 mod git;

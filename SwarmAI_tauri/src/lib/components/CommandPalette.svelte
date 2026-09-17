@@ -19,7 +19,7 @@
 
 	let { open = false, onClose, onSelect, items = [] }: Props = $props();
 
-	let inputEl: HTMLInputElement | null = null;
+	let inputEl = $state<HTMLInputElement | null>(null);
 	let query = $state('');
 	let selectedIndex = $state(0);
 

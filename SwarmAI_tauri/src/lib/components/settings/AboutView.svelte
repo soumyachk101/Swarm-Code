@@ -62,9 +62,9 @@
 		}
 	}
 
-	const changelogEntries = [
+	const changelogEntries = $derived([
 		{ version: appVersion, date: '2025-01', changes: ['Initial Tauri port of SwarmAI', 'Hydra multi-agent support', 'Provider registry for Codex, Claude, Cursor, DeepSeek, Meta, Grok', 'Timeline and session management', 'Terminal integration', 'Keyboard shortcut customization'] },
-	];
+	]);
 </script>
 
 <div class="about-view">
