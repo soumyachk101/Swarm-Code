@@ -147,6 +147,8 @@ extension AppModel {
     /// tempers it, and go out without a cap.
     func hydraLaunch(for thread: ChatThread) -> HydraLaunch? {
         guard hydraIsOn(thread) else { return nil }
+        let refs = projects.map { HydraProjectRef(name: $0.name, path: $0.path) }
+        let ownRefs = refs.filter { $0.path == project(thread.projectID)?.path } + refs.filter { $0.path != project(thread.projectID)?.path }
         let pair = hydraPair(for: thread)
         let headsProvider = pair.map(hydraHeadsProvider) ?? thread.provider
         let elsewhere = headsProvider != thread.provider
@@ -177,7 +179,8 @@ extension AppModel {
             maxHeads: pair?.maxHeads,
             isolatesHeads: settings.hydraIsolateHeads,
             autoMerges: settings.hydraAutoMerge,
-            reviewsHeads: settings.hydraReviewHeads
+            reviewsHeads: settings.hydraReviewHeads,
+            projects: ownRefs
         )
     }
 
@@ -246,6 +249,40 @@ extension AppModel {
         lead.worktreePath ?? project(lead.projectID)?.path
     }
 
+    /// The project a delegation entry sends its head to: the chat's own with no name, a
+    /// sidebar project by name or by path (the path itself or one inside it), or any
+    /// folder on this Mac inside a git repository, which joins the sidebar. Nil when the
+    /// name matches nothing.
+    func hydraProject(named reference: String?, for lead: ChatThread) -> Project? {
+        guard let reference, !reference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return project(lead.projectID) }
+        let expanded = (reference as NSString).expandingTildeInPath
+        if let named = projects.first(where: { $0.name.caseInsensitiveCompare(expanded) == .orderedSame }) { return named }
+        let standard = (expanded as NSString).standardizingPath
+        let inside = projects.filter {
+            TouchedPaths.relative(expanded, root: $0.path) != nil
+                || ($0.path as NSString).standardizingPath == standard
+        }
+        if let best = inside.max(by: { $0.path.count < $1.path.count }) { return best }
+        guard expanded.hasPrefix("/") else { return nil }
+        var isDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDir), isDir.boolValue else { return nil }
+        var dir = (expanded as NSString).standardizingPath
+        while true {
+            if FileManager.default.fileExists(atPath: dir + "/.git") {
+                return addProject(at: URL(fileURLWithPath: dir, isDirectory: true))
+            }
+            if dir == "/" { return nil }
+            dir = (dir as NSString).deletingLastPathComponent
+            if dir.isEmpty { dir = "/" }
+        }
+    }
+
+    /// The checkout a head's copy is made from and its work lands in: the lead's own for
+    /// a head in the lead's project, else the head's project folder.
+    private func hydraCheckout(of head: ChatThread, lead: ChatThread) -> String? {
+        head.projectID == lead.projectID ? hydraCheckout(of: lead) : project(head.projectID)?.path
+    }
+
     // MARK: - Sending heads out
 
     /// Sends out a head that mirrors one the provider started inside the lead's session.
@@ -262,8 +299,9 @@ extension AppModel {
 
     /// Sends out a head with a session of its own, on the pair's model and effort. With
     /// isolation on and a git repository to copy, the head first gets a worktree of its
-    /// own, made from the lead's checkout as it is; otherwise it works in the checkout
-    /// itself. `brief` writes the prompt once it is known where the head works.
+    /// own, made as it is from the checkout of the project the delegation names (the
+    /// lead's own when it names none); otherwise it works in that checkout itself.
+    /// `brief` writes the prompt once it is known where the head works.
     @discardableResult
     func spawnDroppyHead(
         from parentID: UUID,
@@ -272,9 +310,10 @@ extension AppModel {
         attachments: [Attachment] = [],
         batchID: UUID? = nil,
         preferredIndex: Int? = nil,
+        project: String? = nil,
         brief: @escaping @Sendable (HydraPersona, HydraPrompts.Workplace) -> String
     ) -> ChatThread? {
-        guard let head = insertHydraHead(from: parentID, task: task, kind: .droppy, origin: origin, native: nil, batchID: batchID, preferredIndex: preferredIndex) else { return nil }
+        guard let head = insertHydraHead(from: parentID, task: task, kind: .droppy, origin: origin, native: nil, batchID: batchID, preferredIndex: preferredIndex, project: project) else { return nil }
         Task { await startDroppyHead(head.id, attachments: attachments, brief: brief) }
         return head
     }
@@ -286,7 +325,8 @@ extension AppModel {
         origin: HydraHeadInfo.Origin,
         native: AgentSpawn?,
         batchID: UUID?,
-        preferredIndex: Int? = nil
+        preferredIndex: Int? = nil,
+        project: String? = nil
     ) -> ChatThread? {
         guard let parent = thread(parentID) else { return nil }
         // A lead with no heads left starts the roster over. The count would otherwise
@@ -321,6 +361,13 @@ extension AppModel {
         updateThread(parentID) { $0.hydraSpawnCount = max((pinned == nil ? index : sequential) + 1, parent.hydraSpawnCount + 1) }
         let launch = hydraLaunch(for: parent)
         let persona = HydraRoster.persona(at: index)
+        let resolved = hydraProject(named: project, for: parent)
+        let target = resolved ?? self.project(parent.projectID)
+        let sameProject = target?.id == parent.projectID
+        if let reference = project, !reference.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, resolved == nil {
+            let fallback = self.project(parent.projectID)?.name ?? "this chat's project"
+            runtime(for: parentID).appendHydraNote("Hydra: no project named \(reference) is in the sidebar or on this Mac, so \(persona.name) works in \(fallback).")
+        }
 
         // A Droppy-run head goes out on the pair's heads' provider, which may not be the
         // lead's: there it runs the pair's model or that provider's default, and the lead's
@@ -328,7 +375,7 @@ extension AppModel {
         let headsProvider = kind == .droppy ? launch?.headsProvider ?? parent.provider : parent.provider
         let elsewhere = headsProvider != parent.provider
         var head = ChatThread(
-            projectID: parent.projectID,
+            projectID: target?.id ?? parent.projectID,
             provider: headsProvider,
             model: native?.model ?? launch?.workerModel ?? (elsewhere ? providers.defaultModel(for: headsProvider)?.id : parent.model),
             effort: launch?.workerEffort ?? (elsewhere ? nil : parent.effort),
@@ -343,9 +390,15 @@ extension AppModel {
         )
         head.parentThreadID = parentID
         head.isInPanel = true
-        head.worktreePath = parent.worktreePath
-        head.branch = parent.branch
-        head.title = task.isEmpty ? persona.name : "\(persona.name) · \(TextCleanup.singleLine(task, limit: 60))"
+        head.worktreePath = sameProject ? parent.worktreePath : nil
+        head.branch = sameProject ? parent.branch : nil
+        if task.isEmpty {
+            head.title = persona.name
+        } else if !sameProject, let target {
+            head.title = "\(persona.name) · \(TextCleanup.singleLine(task, limit: 60)) · \(target.name)"
+        } else {
+            head.title = "\(persona.name) · \(TextCleanup.singleLine(task, limit: 60))"
+        }
         head.hasCustomTitle = true
         var info = HydraHeadInfo(index: index, task: task, kind: kind, origin: origin)
         info.nativeID = native?.id
@@ -367,7 +420,7 @@ extension AppModel {
     /// Gives a Droppy-run head its copy of the checkout, then its brief.
     private func startDroppyHead(_ id: UUID, attachments: [Attachment], brief: @Sendable (HydraPersona, HydraPrompts.Workplace) -> String) async {
         guard let head = thread(id), let info = head.hydra, let parentID = head.parentThreadID, let lead = thread(parentID),
-              let checkout = hydraCheckout(of: lead) else { return }
+              let checkout = hydraCheckout(of: head, lead: lead) else { return }
         // A head on another provider than its lead, with no model chosen for it, runs that
         // provider's default: the catalogue it comes from may not have loaded yet.
         if head.provider != lead.provider, head.model == nil {
@@ -664,7 +717,7 @@ extension AppModel {
     private func applyHydraHead(_ id: UUID, landing: HydraLanding, patch: HydraPatch) async -> HydraLanding {
         var landing = landing
         guard let head = thread(id), let info = head.hydra,
-              let parentID = head.parentThreadID, let lead = thread(parentID), let checkout = hydraCheckout(of: lead) else { return landing }
+              let parentID = head.parentThreadID, let lead = thread(parentID), let checkout = hydraCheckout(of: head, lead: lead) else { return landing }
         let checkoutGit = Git(checkout)
         // A rebase or a merge is half done in the checkout: a patch laid on top of that
         // would be impossible to tell from the operation's own conflicts, and resolving

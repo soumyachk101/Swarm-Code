@@ -96,6 +96,9 @@ struct HydraLaunch: Hashable, Sendable {
     /// `hydraReviewHeads` setting): it reads the files the reports name and corrects what
     /// is wrong itself, rather than trusting the reports or sending out a head to check.
     var reviewsHeads = false
+    /// The projects in the sidebar, the chat's own first: the lead may send a head to any
+    /// of them by name, and its work lands and merges there.
+    var projects: [HydraProjectRef] = []
 
     /// How many Droppy-run heads may work at once for a pair with no cap of its own. The
     /// tasks past it wait their turn (`ThreadRuntime.spawnWaitingHeads`) and go out as
@@ -365,6 +368,16 @@ struct HydraDelegation: Hashable, Sendable {
     var task: String
     var prompt: String
     var name: String?
+    /// The project the head works in when the lead named one ("project": a sidebar
+    /// project's name or path, or a repository's absolute path); nil keeps it in the
+    /// chat's own project.
+    var project: String?
+}
+
+/// A project the lead may send heads to: its name in the sidebar and its folder.
+struct HydraProjectRef: Hashable, Sendable {
+    var name: String
+    var path: String
 }
 
 /// What a head sends back to its lead.
@@ -402,7 +415,7 @@ enum HydraPrompts {
         switch workplace {
         case .ownCopy(let path):
             """
-            You have your own copy of the project at \(path): a git worktree Droppy Code made for you from the lead's checkout as it was when you were sent out, uncommitted work included. Work in it directly, on the files as they are; your tools already run there. When you report, Droppy Code carries your changes into the lead's checkout itself. So never commit, branch, stash, push, check out, reset, restore or clean anything, and never make or remove worktrees, whatever the project's own guidelines say about agents and worktrees: this copy already is yours. Do not use git to check your work either.
+            You have your own copy of the project at \(path): a git worktree Droppy Code made for you from the project's checkout as it was when you were sent out, uncommitted work included. Work in it directly, on the files as they are; your tools already run there. When you report, Droppy Code carries your changes into that checkout itself. So never commit, branch, stash, push, check out, reset, restore or clean anything, and never make or remove worktrees, whatever the project's own guidelines say about agents and worktrees: this copy already is yours. Do not use git to check your work either.
             Build only into a folder git ignores, such as `build.noindex/<your name>` with `-derivedDataPath`; never put build output in the project folder or the `.xcodeproj`, since everything not ignored in this copy lands in the lead's checkout.
             """
         case .shared(let path):
@@ -429,7 +442,16 @@ enum HydraPrompts {
     /// slow model thinking for minutes between tool calls, and some never make an edit.
     private static let briefRule = "A brief is a numbered list of mechanical steps a head can start on at once. Each step names the file and a line anchor, the symbol, and the exact change: the code shape, the new name, the value. Never a question, never two alternatives, never verify by reasoning or read the file fully: a head spends minutes weighing what a brief leaves open, and some never make an edit. When you have not decided something, decide it before you write the brief, or keep that part for yourself. A head should be able to make its first edit within its first few tool calls."
 
-    private static let projectRule = "Heads and the merge only ever see this chat's project: the checkout your tools run in. If the request concerns files in another project or repository, say so in your first sentence and ask the user to open the chat in that project instead of working there yourself; anything changed outside this checkout is never merged and no head can reach it. Run your own checks in the checkout itself: never make a worktree or a copy of the project for them."
+    /// Where heads work and where their work lands: this chat's project unless an entry
+    /// names another, any project in the sidebar or any repository on the Mac, with the
+    /// merge going out per project. The lead's own tools run in this chat's checkout, but
+    /// nothing keeps it to that project.
+    private static func projectRule(_ projects: [HydraProjectRef]) -> String {
+        let own = projects.first.map { "this chat's project, \($0.name) (`\($0.path)`)" } ?? "this chat's project"
+        let others = projects.dropFirst()
+        let named = others.isEmpty ? "" : " The other projects in the sidebar: " + others.map { "\($0.name) (`\($0.path)`)" }.joined(separator: ", ") + "."
+        return "Heads may work in any project. A head works in \(own) unless it is sent to another: an entry of the delegation block names it with \"project\" (a sidebar project's name or path, or the absolute path of any git repository on this Mac, which Droppy Code then adds to the sidebar), and a head spawned with your own agent tool is told the project's folder in its prompt.\(named) Whatever a head changes lands in the checkout of the project it worked in, and the team's work is merged per project, one merge request each. Your own tools run in this chat's checkout, and you may read and edit files in any project all the same: what you change elsewhere is merged along with that project's work. Run your own checks in the checkout itself: never make a worktree or a copy of the project for them."
+    }
 
     /// What a lead is told when the setting has Droppy Code land the work: the merge is
     /// the app's, not the lead's, whatever else it has been told about merging, and asking
@@ -448,7 +470,7 @@ enum HydraPrompts {
 
     /// Appended to the lead's system prompt on providers that run heads natively: when to
     /// delegate, how to split the work and what to do with the reports.
-    static func policy(for provider: ProviderKind, maxHeads: Int?, autoMerges: Bool = false, reviewsHeads: Bool = false) -> String {
+    static func policy(for provider: ProviderKind, maxHeads: Int?, autoMerges: Bool = false, reviewsHeads: Bool = false, projects: [HydraProjectRef] = []) -> String {
         let howToSpawn: String
         let howToWait: String
         switch provider {
@@ -476,7 +498,7 @@ enum HydraPrompts {
         - \(howToWait)
         - Give each head one self-contained task with the exact files, symbols and acceptance criteria it needs. Heads share the checkout but not your context, so write the task as if to a capable colleague who has read nothing yet.
         - \(briefRule)
-        - \(projectRule)
+        - \(projectRule(projects))
         - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself: never send out a head to verify, redo or finish another head's work.
         - Tell the user in one line which heads you sent out and what each one does. Droppy Code names the heads in roster order (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on): announce each head by its task and use exactly those names in that order, never invented ones. There is no head called Ives; the roster has Ivo.
         - While they work, prepare the integration rather than starting on their tasks: how the pieces fit together, and the one check you will run at the end.
@@ -608,9 +630,9 @@ enum HydraPrompts {
     /// The standing rules for a lead on a provider that runs no heads of its own: when to
     /// delegate, how, and what the reports mean. An API session keeps this in its system
     /// prompt, once; a CLI session gets it in front of every message.
-    static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, reviewsHeads: Bool = false, heads: String? = nil) -> String {
+    static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, reviewsHeads: Bool = false, heads: String? = nil, projects: [HydraProjectRef] = []) -> String {
         let whereHeadsWork = isolated
-            ? "Each head works in a copy of the project of its own and Droppy Code lands its changes in your checkout when it reports"
+            ? "Each head works in a copy of its project of its own and Droppy Code lands its changes in that project's checkout when it reports"
             : "The heads work in your checkout"
         let team = maxHeads.map { "a team of up to \($0) helper agents" } ?? "a team of helper agents"
         // Heads on another provider are a different model from the lead, chosen for speed
@@ -630,7 +652,7 @@ enum HydraPrompts {
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. When a request is yours to do alone, do it and end with no block at all: an empty block sends no heads and is not needed. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. Each entry goes out to a head the moment its closing brace streams, before the block is finished, so write the entries in the order the heads should start and complete one entry before beginning the next. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. \(briefRule) \(projectRule) A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre)\(whatHeadsCanDo) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "") \(reportStyleRule)
+        and stop there: do not wait, poll or verify anything after it. When a request is yours to do alone, do it and end with no block at all: an empty block sends no heads and is not needed. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. An entry for work in another project carries `"project"` with that project's name or path, as in `{"task": "...", "prompt": "...", "project": "gaze-site"}`. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. Each entry goes out to a head the moment its closing brace streams, before the block is finished, so write the entries in the order the heads should start and complete one entry before beginning the next. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. \(briefRule) \(projectRule(projects)) A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre)\(whatHeadsCanDo) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "") \(reportStyleRule)
         """
     }
 
@@ -638,7 +660,7 @@ enum HydraPrompts {
     /// providers, and the providers with heads of their own whose pair sends the heads out
     /// on another provider.
     static func fallbackPolicy(_ launch: HydraLaunch) -> String {
-        fallbackPolicy(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, reviewsHeads: launch.reviewsHeads, heads: launch.headsLabel)
+        fallbackPolicy(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, reviewsHeads: launch.reviewsHeads, heads: launch.headsLabel, projects: launch.projects)
     }
 
     /// In front of the user's own message: the team so far, when there is one.

@@ -81,7 +81,7 @@ final class ClaudeSession: ProviderSession {
                 // The heads and the lead's brief.
                 arguments += [
                     "--agents", HydraPrompts.claudeAgents(hydra).compactString,
-                    "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads),
+                    "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads, projects: hydra.projects),
                     "--system-prompt-snapshot", "off",
                     "--forward-subagent-text",
                 ]
@@ -461,8 +461,27 @@ final class ClaudeSession: ProviderSession {
         }
     }
 
+    /// Text Claude Code puts in the transcript itself, under the model name `<synthetic>`,
+    /// where the model said nothing: "No response requested." for a turn it found
+    /// unanswered when a session was resumed, "(no content)" for an empty reply.
+    private static let syntheticModel = "<synthetic>"
+    private static let syntheticPlaceholders: Set<String> = ["No response requested.", "(no content)"]
+
     private func handleAssistant(_ message: JSONValue, stream: inout StreamState, sink: (ProviderEvent) -> Void) {
         guard let body = message["message"], let content = body["content"]?.array else { return }
+        // Claude Code's own bookkeeping is never the model's words: a resumed session whose
+        // transcript ended on a user message (a turn stopped or rewound here) gets a
+        // synthetic "No response requested." after it, and the chat drew that as a reply
+        // from the lead. An API error the CLI wraps the same way keeps its text, as a
+        // notice rather than a message; the placeholders say nothing and are dropped.
+        if body["model"]?.string == Self.syntheticModel {
+            let text = content.compactMap { $0["type"]?.string == "text" ? $0["text"]?.string : nil }
+                .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if message["isApiErrorMessage"]?.bool == true, !text.isEmpty, !Self.syntheticPlaceholders.contains(text) {
+                sink(.notice(Notice(level: .warning, message: text)))
+            }
+            return
+        }
         let messageID = body["id"]?.string ?? UUID().uuidString
         if let uuid = message["uuid"]?.string { sink(.assistantMessageID(uuid)) }
         for block in content {

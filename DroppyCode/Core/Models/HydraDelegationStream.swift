@@ -102,14 +102,18 @@ extension HydraPrompts {
 
     /// One entry of a block read as a head's task: kept only with a prompt, titled from
     /// the prompt when it has no task, and carrying the announced name ("name", or "head")
-    /// as-is when the lead gave one, for the spawner to resolve against the roster.
+    /// as-is when the lead gave one, for the spawner to resolve against the roster, and
+    /// the project ("project", or "repo") the head is sent to, for the spawner to resolve
+    /// against the sidebar.
     static func delegation(fromEntry entry: JSONValue) -> HydraDelegation? {
         guard let prompt = entry["prompt"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty else { return nil }
         let task = entry["task"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let name = entry["name"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
             ?? entry["head"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
         let announced = (name?.isEmpty == false) ? name : nil
-        return HydraDelegation(task: task.isEmpty ? TextCleanup.singleLine(prompt, limit: 60) : task, prompt: prompt, name: announced)
+        let project = entry["project"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? entry["repo"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return HydraDelegation(task: task.isEmpty ? TextCleanup.singleLine(prompt, limit: 60) : task, prompt: prompt, name: announced, project: (project?.isEmpty == false) ? project : nil)
     }
 
     private static func isJSONWhitespace(_ byte: UInt8) -> Bool {

@@ -211,7 +211,7 @@ final class CodexSession: ProviderSession {
         if let hydra = configuration.hydra {
             if hydra.runsNatively {
                 params["config"] = .object(HydraPrompts.codexConfig(hydra))
-                params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))
+                params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads, projects: hydra.projects))
             } else {
                 // Heads on another provider are Droppy-run: the lead asks for them with the
                 // delegation block, and Codex's own agents are switched off for the thread,
