@@ -362,11 +362,15 @@ final class PiSession: ProviderSession {
         }
         let usage = message["usage"] ?? event["usage"] ?? .null
         let total = usage["totalTokens"]?.int
-        let summed = (usage["input"]?.int ?? usage["inputTokens"]?.int ?? 0)
-            + (usage["output"]?.int ?? usage["outputTokens"]?.int ?? 0)
-            + (usage["cacheRead"]?.int ?? usage["cacheReadTokens"]?.int ?? 0)
-            + (usage["cacheWrite"]?.int ?? usage["cacheWriteTokens"]?.int ?? 0)
-        let used = total ?? summed
+        // One sum of four fallback pairs is more than the expression type checker will take:
+        // `swiftc -typecheck` gives up on it with "unable to type-check this expression in
+        // reasonable time". Naming each part is the fix the diagnostic asks for, and the
+        // arithmetic is unchanged.
+        let input = usage["input"]?.int ?? usage["inputTokens"]?.int ?? 0
+        let output = usage["output"]?.int ?? usage["outputTokens"]?.int ?? 0
+        let cacheRead = usage["cacheRead"]?.int ?? usage["cacheReadTokens"]?.int ?? 0
+        let cacheWrite = usage["cacheWrite"]?.int ?? usage["cacheWriteTokens"]?.int ?? 0
+        let used = total ?? (input + output + cacheRead + cacheWrite)
         if used > 0 { onEvent?(.usage(ContextUsage(usedTokens: used, windowTokens: contextWindow))) }
     }
 
