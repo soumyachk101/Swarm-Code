@@ -170,21 +170,10 @@ extension AppModel {
                     }
                 }
             }
-            // Files the team wrote outside the checkout (a lead's own memory, say) are
-            // dropped without a word: they were never the project's to merge, and the
-            // note about them read as if something had gone wrong.
-            if work.droppedBuildOutputs > 0 {
-                lines.append("\(work.droppedBuildOutputs) build-output paths a head's build left behind were left out.")
-            }
-            if work.droppedIgnored > 0 {
-                lines.append("\(work.droppedIgnored) ignored paths were left out.")
-            }
-            if work.droppedMissing > 0 {
-                lines.append("\(work.droppedMissing) missing paths were left out.")
-            }
-            if work.siblingSkipped > 0 {
-                lines.append("\(work.siblingSkipped == 1 ? "1 file" : "\(work.siblingSkipped) files") another chat's team changed in this checkout \(work.siblingSkipped == 1 ? "was" : "were") left for that chat's merge.")
-            }
+            // What the merge left out (files written outside the checkout, build output,
+            // ignored or missing paths, a sibling chat's files) is not said: none of it
+            // was this merge's to take, and every line about it read as if something
+            // had gone wrong.
             if ownBranch {
                 runtime.hydraMergeStage = "Bringing the checkout up to date"
                 let synced = await syncDefaultBranch(git, from: head, target: target, ownPaths: sorted)
@@ -309,7 +298,7 @@ extension AppModel {
     /// Paths outside the checkout are dropped rather than passed on: a lead writes to its
     /// own memory files, and `git add -A -- <path>` on one of those fails outright and
     /// takes the whole merge with it.
-    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], headIDs: [UUID], outside: [String], droppedBuildOutputs: Int, droppedIgnored: Int, droppedMissing: Int, siblingSkipped: Int, heads: [HydraMergeHead]) {
+    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], headIDs: [UUID], outside: [String], heads: [HydraMergeHead]) {
         let turns = runtime.hydraUnmergedTurns
         var reported: [String] = turns.flatMap { $0.touchedPaths ?? [] }
         // A head counts until a merge has taken its work (see `HydraHeadInfo.mergedAt`).
@@ -381,21 +370,17 @@ extension AppModel {
                 }
             }
         }
-        var siblingSkipped = 0
         if let base = turns.first?.baseCheckpoint,
            let alreadyDirty = try? await git.changedPaths(from: "HEAD", to: base),
            let now = try? await git.captureTree(),
            let changedSince = try? await git.changedPaths(from: base, to: now) {
             let theirs = Set(alreadyDirty)
             let fresh = changedSince.filter { !theirs.contains($0) }
-            siblingSkipped = fresh.filter { siblingPaths.contains($0) && !paths.contains($0) }.count
             paths.formUnion(fresh.filter { !siblingPaths.contains($0) || paths.contains($0) })
         }
 
-        let buildOutputs = Set(paths.filter(TouchedPaths.isBuildOutput))
-        paths.subtract(buildOutputs)
-        let ignored = await git.ignoredPaths(among: paths.sorted())
-        paths.subtract(ignored)
+        paths = paths.filter { !TouchedPaths.isBuildOutput($0) }
+        paths.subtract(await git.ignoredPaths(among: paths.sorted()))
         let tracked = await git.trackedPaths(among: paths.sorted())
         let fileManager = FileManager.default
         let checkoutURL = URL(fileURLWithPath: checkout)
@@ -406,7 +391,7 @@ extension AppModel {
         let heads = headPaths.map { entry in
             HydraMergeHead(name: entry.name, index: entry.index, task: entry.task, files: entry.paths.filter { paths.contains($0) })
         }
-        return (paths.sorted(), turns.map(\.id), headIDs, outside.sorted(), buildOutputs.count, ignored.count, missing.count, siblingSkipped, heads)
+        return (paths.sorted(), turns.map(\.id), headIDs, outside.sorted(), heads)
     }
 
     /// Brings the checkout's default branch up to the merge without touching the working
