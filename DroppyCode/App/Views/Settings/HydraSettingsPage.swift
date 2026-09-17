@@ -103,7 +103,9 @@ struct HydraSettingsPage: View {
                     toggleRow("Merge automatically", detail: "The team's changes go out as a merge request and are merged.", isOn: $settings.hydraAutoMerge)
                 }
             }
-            ChromeSection(title: "Pairs") {
+            // The cookbook opens from the section's header, at its far right: the card
+            // below keeps its width for the words.
+            ChromeSection(title: "Pairs", trailing: AnyView(HydraCookbookButton())) {
                 ChromeCard {
                     HStack(alignment: .center, spacing: 14) {
                         // A lead and the heads it sends out: the pair, drawn with the roster.
@@ -128,11 +130,9 @@ struct HydraSettingsPage: View {
                                 .foregroundStyle(Chrome.secondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
-                        Spacer(minLength: 12)
-                        HydraCookbookButton()
+                        Spacer(minLength: 0)
                     }
-                    .padding(.leading, 16)
-                    .padding(.trailing, Chrome.rowControlTrailingPadding)
+                    .padding(.horizontal, 16)
                     .padding(.vertical, 14)
                 }
                 ChromeCard {
@@ -209,7 +209,8 @@ private struct HydraCookbookButton: View {
             Label("Open cookbook", systemImage: "book")
         }
         .buttonStyle(.glass)
-        .popover(isPresented: $isOpen, arrowEdge: .trailing) {
+        .controlSize(.small)
+        .popover(isPresented: $isOpen, arrowEdge: .bottom) {
             HydraCookbookPanel()
                 .presentedChrome()
         }
