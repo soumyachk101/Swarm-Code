@@ -17,6 +17,19 @@ enum ChromeVisualTileMetrics {
     static let captionGap: CGFloat = 5
 }
 
+/// Whether the mock is drawn on the chosen tile, so it can pick out in accent the part the
+/// option changes. Set by `ChromeVisualTile`, read by the mocks.
+private struct ChromeVisualTileSelectedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var chromeTileIsSelected: Bool {
+        get { self[ChromeVisualTileSelectedKey.self] }
+        set { self[ChromeVisualTileSelectedKey.self] = newValue }
+    }
+}
+
 /// The row control: one tile per option, the chosen one ringed.
 struct ChromeVisualPicker<Value: Hashable, Preview: View>: View {
     let options: [(value: Value, title: String)]
@@ -74,10 +87,11 @@ struct ChromeVisualTile<Content: View>: View {
 
     private var stage: some View {
         content()
+            .environment(\.chromeTileIsSelected, isSelected)
             .frame(width: width, height: ChromeVisualTileMetrics.height)
             .background(
                 RoundedRectangle(cornerRadius: ChromeVisualTileMetrics.cornerRadius, style: .continuous)
-                    .fill(Chrome.overlay(isHovering ? 0.10 : 0.06))
+                    .fill(Chrome.overlay(isHovering || isSelected ? 0.10 : 0.06))
             )
             .clipShape(RoundedRectangle(cornerRadius: ChromeVisualTileMetrics.cornerRadius, style: .continuous))
             .padding(ChromeVisualTileMetrics.ringInset)
