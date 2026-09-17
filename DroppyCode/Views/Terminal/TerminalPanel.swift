@@ -56,7 +56,7 @@ struct TerminalPanel: View {
             .frame(height: 38)
 
             if let selected {
-                TerminalHost(session: selected, isDark: colorScheme == .dark) { runtime.isTerminalVisible = false }
+                TerminalHost(session: selected, runtime: runtime, isDark: colorScheme == .dark) { runtime.isTerminalVisible = false }
                     .id(selected.id)
                     .padding(.leading, 12)
                     .padding(.trailing, 6)
@@ -315,6 +315,7 @@ private struct TerminalTab: View {
 /// `TerminalHostContainer`); outside a resize the view resizes exactly as before.
 struct TerminalHost: NSViewRepresentable {
     let session: TerminalSession
+    let runtime: ThreadRuntime
     let isDark: Bool
     /// Escape in the terminal with the shell at its prompt: the panel closes the way ⌘J
     /// closes it. A program in the foreground (vim, claude, less) gets its Escape as ever.
@@ -350,6 +351,17 @@ struct TerminalHost: NSViewRepresentable {
         session.applyAppearance(isDark: isDark)
         if session.view.superview !== container { attach(to: container) }
         (container as? TerminalHostContainer)?.hostedView = session.view
+        // A terminal the reader just opened takes the keyboard, once it is in its window;
+        // a click elsewhere afterwards moves it as ever. Off the update, which may not
+        // write the runtime.
+        guard runtime.terminalWantsFocus else { return }
+        let runtime = runtime
+        let view = session.view
+        Task { @MainActor in
+            guard runtime.terminalWantsFocus, let window = view.window else { return }
+            runtime.terminalWantsFocus = false
+            window.makeFirstResponder(view)
+        }
     }
 
     private func attach(to container: NSView) {

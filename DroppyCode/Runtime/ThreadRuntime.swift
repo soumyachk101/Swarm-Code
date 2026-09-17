@@ -221,7 +221,12 @@ final class ThreadRuntime {
     /// `draft.isEmpty`, flipped only when it changes: the menu bar's commands read this
     /// rather than the draft, so a keystroke never re-evaluates the command tree.
     private(set) var draftIsEmpty = true
-    var isTerminalVisible = false
+    var isTerminalVisible = false {
+        // Opened, the terminal takes the keyboard (see `TerminalHost`); a thread switched to
+        // with its terminal already open leaves the keyboard where it is.
+        didSet { if isTerminalVisible, !oldValue { terminalWantsFocus = true } }
+    }
+    @ObservationIgnored var terminalWantsFocus = false
     /// True while the terminal's divider is held: the pane's height follows the pointer, and the chat's panels follow it with no spring until it is let go.
     var isTerminalResizing = false
     var isDiffVisible = false
