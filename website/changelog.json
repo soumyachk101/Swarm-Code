@@ -1,6 +1,37 @@
 {
-  "generated_at": "2026-09-17T11:39:03+00:00",
+  "generated_at": "2026-09-17T13:08:47.730942+00:00",
   "releases": [
+    {
+      "version": "1.5.4",
+      "date": "2026-09-17",
+      "platform": "mac",
+      "summary": "Droppy Code 1.5.4 gets a Hydra team moving sooner: heads start the moment their brief is written rather than when the lead's whole reply is done, a lead can send heads to any project in the sidebar, and an older Claude Code no longer fails to launch when Hydra is on. Apple silicon, macOS 26 or later. Signed and notarized.",
+      "sections": [
+        {
+          "title": "New features",
+          "items": [
+            "Heads start while the lead is still writing: each one goes out the moment its entry in the delegation block is complete, so the first head is working before the last brief is typed.",
+            "A lead can send a head to another project in the sidebar, or to any git repository on the Mac by path, which then joins the sidebar. Each project's work lands and merges on its own."
+          ]
+        },
+        {
+          "title": "Bug fixes",
+          "items": [
+            "With Hydra on, a Claude Code older than the flags Droppy Code passes it no longer fails at once with \"unknown option\": the app checks what the installed CLI understands and passes only that.",
+            "The app no longer aborts when a window's chrome is redrawn in the middle of macOS laying out the title bar.",
+            "A merge whose files were already on the default branch, taken along by another chat or by hand, no longer posts a card about it: the merging pill simply goes.",
+            "Hydra's merge summary no longer lists the build output, ignored paths and a sibling chat's files it left out, which read as if something had gone wrong."
+          ]
+        },
+        {
+          "title": "Refinements",
+          "items": [
+            "The picture tiles in Settings (sidebar layout, heads' panels, working line, checkouts) are redrawn as crisp little windows that fill their tile, and the part each option changes lights up in accent on the chosen one.",
+            "The source is arranged in four layers, Core, Services, UI and App, so a change to a model, a provider or a view has one home."
+          ]
+        }
+      ]
+    },
     {
       "version": "1.5.3",
       "date": "2026-09-17",
