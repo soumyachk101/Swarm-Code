@@ -112,6 +112,7 @@ struct UsagePanel: View {
             let text = String(format: "%.1f", value)
             return (text.hasSuffix(".0") ? String(text.dropLast(2)) : text) + suffix
         }
+        if count >= 1_000_000_000 { return compact(Double(count) / 1_000_000_000, "B") }
         if count >= 1_000_000 { return compact(Double(count) / 1_000_000, "M") }
         if count >= 1_000 { return compact(Double(count) / 1_000, "k") }
         return "\(count)"
