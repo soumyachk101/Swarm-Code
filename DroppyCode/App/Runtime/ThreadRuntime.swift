@@ -2660,16 +2660,24 @@ final class ThreadRuntime {
     }
 
     /// The delegation card keeps its place for `HydraPrompts.delegationSentHold` once the
-    /// heads are out, wearing its done wave, and then the block leaves the reply with a fade.
+    /// heads are out, wearing its done wave. Then it fades where it stands, still holding
+    /// its room (`hydra-leaving`), and only once it is gone from sight does the block leave
+    /// the reply and the text below close up: two steps, so the card never fades over
+    /// content that has already moved up under it.
     private func holdSentDelegationBlock(_ entryID: String) {
         Task { [weak self] in
             try? await Task.sleep(for: HydraPrompts.delegationSentHold)
             guard let self, let entry = self.entryIndex[entryID],
                   case .assistant(var message) = entry.item.content,
                   HydraPrompts.hasSentDelegationBlock(in: message.text) else { return }
-            message.text = HydraPrompts.withoutDelegationBlock(message.text)
-            if message.text.isEmpty { message.text = "Sent out heads." }
-            withAnimation(.easeInOut(duration: 0.5)) { entry.item.content = .assistant(message) }
+            message.text = HydraPrompts.markingDelegationBlockLeaving(message.text)
+            withAnimation(.easeOut(duration: 0.4)) { entry.item.content = .assistant(message) }
+            try? await Task.sleep(for: HydraPrompts.delegationLeaveFade)
+            guard case .assistant(var faded) = entry.item.content,
+                  HydraPrompts.hasSentDelegationBlock(in: faded.text) else { return }
+            faded.text = HydraPrompts.withoutDelegationBlock(faded.text)
+            if faded.text.isEmpty { faded.text = "Sent out heads." }
+            withAnimation(Chrome.panelSlide) { entry.item.content = .assistant(faded) }
             self.saveRevision += 1
             self.scheduleSave()
         }

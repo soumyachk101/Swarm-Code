@@ -882,7 +882,7 @@ enum HydraPrompts {
     /// The opening fence of a delegation block: three backticks, the word hydra in any
     /// case, and the end of that line.
     private static func delegationOpener(in text: String) -> Range<String.Index>? {
-        text.firstMatch(of: #/```[ \t]*hydra(?:-sent)?[ \t]*\r?\n/#.ignoresCase())?.range
+        text.firstMatch(of: #/```[ \t]*hydra(?:-sent|-leaving)?[ \t]*\r?\n/#.ignoresCase())?.range
     }
 
     /// Every three backticks that open a line from `start` on, in order. A fence with an
@@ -919,7 +919,7 @@ enum HydraPrompts {
     /// opening fence is, so a reader that has scanned the text up to some point only
     /// needs to scan what arrived since (see `HydraButton`).
     static func hasDelegationOpener(in tail: Substring) -> Bool {
-        tail.firstMatch(of: #/```[ \t]*hydra(?:-sent)?[ \t]*\r?\n/#.ignoresCase()) != nil
+        tail.firstMatch(of: #/```[ \t]*hydra(?:-sent|-leaving)?[ \t]*\r?\n/#.ignoresCase()) != nil
     }
 
     /// The delegation block at the end of a reply, if the lead wrote one. The body up to
@@ -964,9 +964,27 @@ enum HydraPrompts {
     /// before it leaves the reply.
     static let delegationSentHold: Duration = .seconds(3.2)
 
-    /// Whether the reply holds a delegation block already marked sent (see `markingDelegationBlockSent`).
+    /// How long the card takes to fade out in place, still holding its room in the reply,
+    /// before the block goes and the text below closes up (see `markingDelegationBlockLeaving`).
+    static let delegationLeaveFade: Duration = .milliseconds(450)
+
+    /// Whether the reply holds a delegation block already marked sent or on its way out
+    /// (see `markingDelegationBlockSent` and `markingDelegationBlockLeaving`).
     static func hasSentDelegationBlock(in text: String) -> Bool {
-        text.contains(#/```[ \t]*hydra-sent[ \t]*\r?\n/#.ignoresCase())
+        text.contains(#/```[ \t]*hydra-(?:sent|leaving)[ \t]*\r?\n/#.ignoresCase())
+    }
+
+    /// Whether the reply's delegation block is fading out (its info string is `hydra-leaving`).
+    static func hasLeavingDelegationBlock(in text: String) -> Bool {
+        text.contains(#/```[ \t]*hydra-leaving[ \t]*\r?\n/#.ignoresCase())
+    }
+
+    /// The reply with its sent block's info string turned into `hydra-leaving`: the card fades
+    /// where it stands, still taking up its room, so nothing below slides up under it. A
+    /// removal that glided the card over the closing text read as a ghost of the card.
+    static func markingDelegationBlockLeaving(_ text: String) -> String {
+        guard hasSentDelegationBlock(in: text), !hasLeavingDelegationBlock(in: text), let opener = delegationOpener(in: text) else { return text }
+        return text.replacingCharacters(in: opener, with: "```hydra-leaving\n")
     }
 
     /// The reply with its delegation block's info string turned from `hydra` into `hydra-sent`,

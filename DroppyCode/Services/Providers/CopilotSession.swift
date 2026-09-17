@@ -467,9 +467,13 @@ final class CopilotSession: ProviderSession {
         environment: [String: String],
         configure: (JSONRPCConnection) -> Void
     ) async throws -> JSONRPCConnection {
+        var arguments = ["--headless", "--stdio", "--no-auto-update", "--log-level", "error"]
+        // Connected MCP servers from Settings ride along at launch; no JSON means none.
+        // Passed as an extra config so the user's own servers keep working untouched.
+        if let json = MCPProviderConfig.copilotConfigJSON() { arguments += ["--additional-mcp-config", json] }
         let process = StdioProcess(
             executable: executable,
-            arguments: ["--headless", "--stdio", "--no-auto-update", "--log-level", "error"],
+            arguments: arguments,
             directory: directory,
             environment: environment,
             framing: .contentLength

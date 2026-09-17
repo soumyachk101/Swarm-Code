@@ -288,18 +288,15 @@ struct HydraReportRow: View {
             .buttonStyle(.plain)
             .disabled(details.isEmpty)
             .help(details.isEmpty ? "" : "Show the message")
-            .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
+            .badgePopover(isPresented: $isShowingReport) {
                 // Reports from heads draw the digest; a merge note draws its own card;
                 // every other note keeps the markdown view.
                 if let link, let request = MergeRequestLink(url: link), let note = HydraMergeNote.parse(details, link: request) {
                     HydraMergePopover(note: note)
-                        .presentedChrome()
                 } else if !personas.isEmpty {
                     HydraReportsPopover(title: title, text: body, personas: personas)
-                        .presentedChrome()
                 } else {
                     HydraReportPopover(text: body)
-                        .presentedChrome()
                 }
             }
             if let link {
@@ -470,9 +467,8 @@ private struct FinishedHeadPill: View {
         }
         .buttonStyle(.plain)
         .help("Show the report")
-        .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
+        .badgePopover(isPresented: $isShowingReport) {
             HydraHeadReportPopover(head: head)
-                .presentedChrome()
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text(title))
@@ -585,9 +581,8 @@ struct HydraBriefRow: View {
             .buttonStyle(.plain)
             .focusable(false)
             .help("Show the brief")
-            .popover(isPresented: $isShowingBrief, arrowEdge: .bottom) {
+            .badgePopover(isPresented: $isShowingBrief) {
                 HydraBriefPopover(persona: persona, task: runtime.thread?.hydra?.task, text: message.text)
-                    .presentedChrome()
             }
             .accessibilityLabel(Text(title))
         }
@@ -1768,7 +1763,8 @@ struct ToolRow: View {
         // sending it out: the name from the call's own title when it leads with one from
         // the roster, else the team's first face. Never a spinner and "Delegating Subagent".
         let departing: (persona: HydraPersona, name: String?, task: String)? = call.kind == .agent && head == nil ? Self.departingHead(for: call) : nil
-        let isBadge = head != nil || departing != nil
+        let mcp = ToolPresentation.mcpParts(call)
+        let isBadge = head != nil || departing != nil || mcp != nil
         HStack(spacing: TimelineMetrics.iconSpacing) {
             HStack(spacing: isBadge ? 8 : TimelineMetrics.iconSpacing) {
                 if let head {
@@ -1776,6 +1772,8 @@ struct ToolRow: View {
                 } else if let departing {
                     HydraGlyph(persona: departing.persona, size: 18, isRunning: call.status == .running, status: Self.departureStatus(for: call))
                         .transition(.scale(scale: 0.6).combined(with: .opacity))
+                } else if let mcp {
+                    MCPGlyph(entry: mcp.entry, size: 18, isRunning: call.status == .running, status: call.status)
                 } else {
                     ToolStatusIcon(call: call, symbol: imagePath != nil && call.kind == .read ? "photo" : nil)
                 }
@@ -1783,6 +1781,7 @@ struct ToolRow: View {
                 // icon + space + text instead of three spaced items.
                 Text(head.map { "\(call.status == .running ? "Sending out" : "Sent out") \($0.persona.name): \(call.title)" }
                     ?? departing.map { Self.departureLabel(for: call, name: $0.name, task: $0.task) }
+                    ?? mcp.map { ToolPresentation.mcpLabel(entry: $0.entry, tool: $0.tool, running: call.status == .running) }
                     ?? ToolPresentation.label(for: call))
                     .font(isBadge ? .chat(.callout, weight: .medium, zoom: zoom) : .chat(.callout, zoom: zoom))
                     .foregroundStyle(isBadge ? AnyShapeStyle(Chrome.primaryText.opacity(0.9)) : AnyShapeStyle(.secondary))
@@ -1952,10 +1951,17 @@ struct HydraHeadStepsPopover: View {
     private func step(_ entry: TimelineEntry) -> some View {
         switch entry.item.content {
         case .tool(let call):
+            let mcp = ToolPresentation.mcpParts(call)
             HStack(alignment: .firstTextBaseline, spacing: TimelineMetrics.iconSpacing) {
-                ToolStatusIcon(call: call)
-                    .frame(width: TimelineMetrics.iconWidth)
-                Text(verbatim: ToolPresentation.label(for: call))
+                Group {
+                    if let mcp {
+                        MCPGlyph(entry: mcp.entry, size: 14, isRunning: call.status == .running, status: call.status)
+                    } else {
+                        ToolStatusIcon(call: call)
+                    }
+                }
+                .frame(width: TimelineMetrics.iconWidth)
+                Text(verbatim: mcp.map { ToolPresentation.mcpLabel(entry: $0.entry, tool: $0.tool, running: call.status == .running) } ?? ToolPresentation.label(for: call))
                     .font(.chat(.callout, zoom: zoom))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -2228,6 +2234,20 @@ enum ToolPresentation {
         let additions = call.edits.reduce(0) { $0 + $1.additions }
         let deletions = call.edits.reduce(0) { $0 + $1.deletions }
         return additions + deletions > 0 ? (additions, deletions) : nil
+    }
+
+    static func mcpParts(_ call: ToolCall) -> (entry: MCPCatalogEntry, tool: String)? {
+        guard call.kind == .mcp else { return nil }
+        guard let range = call.title.range(of: " · ") else { return nil }
+        let server = String(call.title[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let tool = String(call.title[range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !server.isEmpty, !tool.isEmpty else { return nil }
+        guard let entry = MCPCatalog.entry(matching: server) else { return nil }
+        return (entry, tool)
+    }
+
+    static func mcpLabel(entry: MCPCatalogEntry, tool: String, running: Bool) -> String {
+        "\(entry.name): \(tool)"
     }
 }
 
