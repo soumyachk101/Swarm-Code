@@ -56,7 +56,7 @@ struct TerminalPanel: View {
             .frame(height: 38)
 
             if let selected {
-                TerminalHost(session: selected, isDark: colorScheme == .dark)
+                TerminalHost(session: selected, isDark: colorScheme == .dark) { runtime.isTerminalVisible = false }
                     .id(selected.id)
                     .padding(.leading, 12)
                     .padding(.trailing, 6)
@@ -316,10 +316,33 @@ private struct TerminalTab: View {
 struct TerminalHost: NSViewRepresentable {
     let session: TerminalSession
     let isDark: Bool
+    /// Escape in the terminal with the shell at its prompt: the panel closes the way ⌘J
+    /// closes it. A program in the foreground (vim, claude, less) gets its Escape as ever.
+    let onEscapeAtPrompt: () -> Void
+
+    final class Coordinator {
+        var keyMonitor: Any?
+
+        deinit {
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSView {
         let container = TerminalHostContainer()
         attach(to: container)
+        let view = session.view
+        let onEscapeAtPrompt = onEscapeAtPrompt
+        context.coordinator.keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak view] event in
+            guard let view, event.keyCode == 53, // Escape
+                  event.modifierFlags.intersection(KeyChord.allowedModifiers).isEmpty,
+                  event.window?.firstResponder === view,
+                  TerminalSession.foregroundJobIsTheShell(view.process.shellPid) else { return event }
+            onEscapeAtPrompt()
+            return nil
+        }
         return container
     }
 

@@ -332,8 +332,16 @@ struct ComposerView: View {
         case .down:
             return recall(older: false)
         case .escape:
-            guard runtime.isRunning else { return false }
-            runtime.interrupt()
+            // Stop first; with nothing running, the panels go the way ⌘J and ⌘D take them.
+            if runtime.isRunning {
+                runtime.interrupt()
+            } else if runtime.isTerminalVisible {
+                runtime.isTerminalVisible = false
+            } else if runtime.isDiffVisible {
+                runtime.toggleDiff()
+            } else {
+                return false
+            }
             return true
         case .tab:
             return false
