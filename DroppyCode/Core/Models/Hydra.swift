@@ -130,8 +130,8 @@ struct HydraLaunch: Hashable, Sendable {
     /// (on the lead's provider) or take the heads' provider's default (elsewhere).
     var workerModel: String?
     var workerEffort: String?
-    /// The pair's cap on heads at work at once; nil, with no pair or an uncapped one,
-    /// lets as many out as the work asks for.
+    /// The cap on heads at work at once: the lower of the pair's and the Hydra page's;
+    /// nil, with neither set, lets as many out as the work asks for.
     var maxHeads: Int?
     /// The pair's purpose-tuned heads (its advanced mode): a delegation naming one runs
     /// on that profile's model and effort. Empty, every head takes the worker fields.

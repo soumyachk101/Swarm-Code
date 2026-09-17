@@ -176,7 +176,8 @@ extension AppModel {
             headsLabel: label,
             workerModel: keepsModel ? pair?.workerModel : nil,
             workerEffort: workerEffort,
-            maxHeads: pair?.maxHeads,
+            // The lower of the pair's cap and the Hydra page's; with neither, the heads run uncapped.
+            maxHeads: [pair?.maxHeads, settings.hydraMaxHeads].compactMap { $0 }.min(),
             headProfiles: pair?.headProfiles ?? [],
             isolatesHeads: settings.hydraIsolateHeads,
             autoMerges: settings.hydraAutoMerge,

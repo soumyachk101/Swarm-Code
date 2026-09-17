@@ -58,6 +58,13 @@ struct HydraSettingsPage: View {
                         }
                     }
                     ChromeRowDivider()
+                    ChromeRow(
+                        title: "Heads at once",
+                        detail: settings.hydraMaxHeads.map { "At most \($0) at a time; a pair with a lower cap keeps its own." } ?? "As many as the job asks for, eight at a time; a pair's own cap still counts."
+                    ) {
+                        ChromeSegmentedPicker(options: [(Int?.none, "Off")] + HydraPair.maxHeadsRange.map { (Optional($0), String($0)) }, selection: $settings.hydraMaxHeads)
+                    }
+                    ChromeRowDivider()
                     toggleRow("Clear finished heads", detail: "A finished head moves from the panel to the sidebar.", isOn: $settings.hydraAutoClearFinished)
                     ChromeRowDivider()
                     ChromeRow(title: "Head panel", detail: "The head's progress bar, or each of its steps as it goes.") {
