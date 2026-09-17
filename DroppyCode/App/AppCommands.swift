@@ -14,6 +14,10 @@ struct AppCommands: Commands {
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .openSettings))
         }
 
+        // File's stock Close sits before the Thread menu and would take ⌘W from Archive thread…,
+        // closing the main window instead. Secondary windows close on ⌘W themselves (SecondaryWindow).
+        CommandGroup(replacing: .saveItem) {}
+
         CommandGroup(before: .windowArrangement) {
             Button(AppInfo.name) { WindowManager.shared.showMain() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .showMainWindow))
