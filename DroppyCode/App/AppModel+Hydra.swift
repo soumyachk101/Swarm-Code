@@ -177,6 +177,7 @@ extension AppModel {
             workerModel: keepsModel ? pair?.workerModel : nil,
             workerEffort: workerEffort,
             maxHeads: pair?.maxHeads,
+            headProfiles: pair?.headProfiles ?? [],
             isolatesHeads: settings.hydraIsolateHeads,
             autoMerges: settings.hydraAutoMerge,
             reviewsHeads: settings.hydraReviewHeads,
@@ -301,7 +302,9 @@ extension AppModel {
     /// isolation on and a git repository to copy, the head first gets a worktree of its
     /// own, made as it is from the checkout of the project the delegation names (the
     /// lead's own when it names none); otherwise it works in that checkout itself.
-    /// `brief` writes the prompt once it is known where the head works.
+    /// `brief` writes the prompt once it is known where the head works. A `profile`
+    /// naming one of the pair's head profiles runs the head on that profile's model,
+    /// effort and provider instead of the pair's shared worker fields.
     @discardableResult
     func spawnDroppyHead(
         from parentID: UUID,
@@ -311,9 +314,10 @@ extension AppModel {
         batchID: UUID? = nil,
         preferredIndex: Int? = nil,
         project: String? = nil,
+        profile: String? = nil,
         brief: @escaping @Sendable (HydraPersona, HydraPrompts.Workplace) -> String
     ) -> ChatThread? {
-        guard let head = insertHydraHead(from: parentID, task: task, kind: .droppy, origin: origin, native: nil, batchID: batchID, preferredIndex: preferredIndex, project: project) else { return nil }
+        guard let head = insertHydraHead(from: parentID, task: task, kind: .droppy, origin: origin, native: nil, batchID: batchID, preferredIndex: preferredIndex, project: project, profile: profile) else { return nil }
         Task { await startDroppyHead(head.id, attachments: attachments, brief: brief) }
         return head
     }
@@ -326,7 +330,8 @@ extension AppModel {
         native: AgentSpawn?,
         batchID: UUID?,
         preferredIndex: Int? = nil,
-        project: String? = nil
+        project: String? = nil,
+        profile: String? = nil
     ) -> ChatThread? {
         guard let parent = thread(parentID) else { return nil }
         // A lead with no heads left starts the roster over. The count would otherwise
@@ -360,6 +365,10 @@ extension AppModel {
         let index = pinned ?? fallback
         updateThread(parentID) { $0.hydraSpawnCount = max((pinned == nil ? index : sequential) + 1, parent.hydraSpawnCount + 1) }
         let launch = hydraLaunch(for: parent)
+        // A delegation routed to one of the pair's head profiles runs on that profile's
+        // model, effort and provider instead of the pair's shared worker fields; an
+        // unknown profile name falls back to the shared fields, like an unrouted one.
+        let routed = profile.flatMap { launch?.profile(named: $0) }
         let persona = HydraRoster.persona(at: index)
         let resolved = hydraProject(named: project, for: parent)
         let target = resolved ?? self.project(parent.projectID)
@@ -372,13 +381,13 @@ extension AppModel {
         // A Droppy-run head goes out on the pair's heads' provider, which may not be the
         // lead's: there it runs the pair's model or that provider's default, and the lead's
         // model and effort mean nothing to it. A native head lives in the lead's session.
-        let headsProvider = kind == .droppy ? launch?.headsProvider ?? parent.provider : parent.provider
+        let headsProvider = kind == .droppy ? (routed?.provider ?? launch?.headsProvider ?? parent.provider) : parent.provider
         let elsewhere = headsProvider != parent.provider
         var head = ChatThread(
             projectID: target?.id ?? parent.projectID,
             provider: headsProvider,
-            model: native?.model ?? launch?.workerModel ?? (elsewhere ? providers.defaultModel(for: headsProvider)?.id : parent.model),
-            effort: launch?.workerEffort ?? (elsewhere ? nil : parent.effort),
+            model: native?.model ?? routed?.model ?? launch?.workerModel ?? (elsewhere ? providers.defaultModel(for: headsProvider)?.id : parent.model),
+            effort: routed?.effort ?? launch?.workerEffort ?? (elsewhere ? nil : parent.effort),
             // A Droppy-run head works in its own copy under a brief that forbids git and
             // build-output work, and its landing is a patch the lead reviews: nobody sits
             // at its chat to answer a permission prompt, so it runs with full access. Left
