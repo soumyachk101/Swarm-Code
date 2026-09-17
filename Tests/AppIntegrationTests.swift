@@ -61,6 +61,28 @@ import Testing
     window.close()
 }
 
+@Test @MainActor func commandDigitsSelectThreadsBeforeAnyMenuSeesThem() throws {
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    let window = ThreadWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200), styleMask: .titled, backing: .buffered, defer: false)
+    other.isReleasedWhenClosed = false
+    var numbers: [Int] = []
+    window.selectThreadNumber = { numbers.append($0) }
+    func chord(_ keyCode: UInt16, _ text: String, _ flags: NSEvent.ModifierFlags, in target: NSWindow) throws -> NSEvent {
+        try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: target.windowNumber, context: nil, characters: text, charactersIgnoringModifiers: text, isARepeat: false, keyCode: keyCode))
+    }
+    // The chord is taken as the app dispatches it, before the menu bar's own search.
+    NSApp.sendEvent(try chord(20, "3", .command, in: window))
+    NSApp.sendEvent(try chord(25, "9", .command, in: window))
+    // Not a thread: another modifier, or another window's chord.
+    NSApp.sendEvent(try chord(20, "3", [.command, .shift], in: window))
+    NSApp.sendEvent(try chord(20, "3", .command, in: other))
+    #expect(numbers == [3, 9])
+    window.close()
+    other.close()
+}
+
 @Test func revertTouchesOnlyTheThreadsOwnFiles() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("droppy-revert-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
