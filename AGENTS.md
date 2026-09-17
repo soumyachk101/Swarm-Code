@@ -13,6 +13,18 @@
   `git worktree remove --force ~/.droppy-code/worktrees/agent-<slug>` + `git worktree prune`.
 - Never delete Jordy's main checkout, never touch another agent's worktree.
 
+## Layout (four layers, one way)
+
+- `DroppyCode/Core` (models, pure support) reaches into nothing else in the app.
+  `DroppyCode/Services` (Git, Store, Providers) and `DroppyCode/UI` (Chrome, Common,
+  Markdown, Theme, Sound) reach only into Core. `DroppyCode/App` (entry, model, runtime,
+  windows, captures and every feature view) reaches into everything.
+- New code goes in the lowest layer whose dependencies it has. A Core file that needs
+  the provider registry, the settings or a view is in the wrong layer: split the part
+  that needs them into an extension in the layer above (see `App/HydraCookbook+Resolve.swift`).
+- There is no test target and no test scripts; the build is the check
+  (`xcodebuild -project DroppyCode.xcodeproj -scheme DroppyCode -configuration Debug build`).
+
 ## Relaunching (never unprompted)
 
 - NEVER run `scripts/quick_run.sh` or otherwise quit/relaunch Droppy Code unless Jordy explicitly asks for it in that moment.

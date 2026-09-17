@@ -95,8 +95,6 @@ final class UpdateChecker {
         return latest > current
     }
 
-    var latestVersion: String? { updateAvailable ? update?.version : nil }
-
     @ObservationIgnored private var backgroundTask: Task<Void, Never>?
     @ObservationIgnored private var activationObserver: NSObjectProtocol?
     @ObservationIgnored private var previewVersion: String?

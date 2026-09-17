@@ -99,8 +99,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## MonoCode
 
-Spending a Codex account's banked rate-limit resets from the usage popover (`DroppyCode/Providers/CodexSession.swift`,
-`DroppyCode/Views/Common/UsageViews.swift`) follows MonoCode by hardbeat920, https://github.com/hardbeat920/monocode,
+Spending a Codex account's banked rate-limit resets from the usage popover (`DroppyCode/Services/Providers/CodexSession.swift`,
+`DroppyCode/App/Views/Usage/UsageViews.swift`) follows MonoCode by hardbeat920, https://github.com/hardbeat920/monocode,
 `src/lib/rateLimitsFetch.ts` and `src/chrome/UsageProviderChip.tsx`: the app-server's `account/rateLimitResetCredit/consume`
 call sent with an idempotency key, the reset credits read beside the rate limits, the confirm step before a reset is spent,
 and the four outcomes it can answer with. No MonoCode code is in this repository; its license is reproduced here in
@@ -130,7 +130,7 @@ SOFTWARE.
 
 ## Zeron
 
-Droppy Code's working indicators (`DroppyCode/Views/Common/WorkingIndicators.swift`) are ported from Zeron,
+Droppy Code's working indicators (`DroppyCode/UI/Common/WorkingIndicators.swift`) are ported from Zeron,
 https://github.com/zeronsh/zeron, `apps/ios/Zeron/Views/Loaders.swift` and `apps/ios/Zeron/Theme/Motion.swift`.
 
 MIT License
@@ -185,7 +185,7 @@ SOFTWARE.
 
 ## TourKit
 
-The welcome tour (`DroppyCode/Views/Tour/`) is a port of TourKit by Ram Patra,
+The welcome tour (`DroppyCode/App/Views/Tour/`) is a port of TourKit by Ram Patra,
 https://github.com/rampatra/TourKit: the slideshow card, its page indicator, its top controls
 and its floating window controller, carried over to the app's glass and asset catalog.
 

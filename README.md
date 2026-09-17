@@ -63,14 +63,14 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 
 ## Layout
 
+The sources sit in four layers with a one-way rule: Core reaches into nothing else, Services and UI reach only into Core, and App reaches into everything.
+
 | Folder | Contents |
 | --- | --- |
-| `DroppyCode/App` | App entry, commands, settings and the project library |
-| `DroppyCode/Providers` | Codex, Claude, ACP, Antigravity, Copilot, Command Code and Pi adapters behind one event model |
-| `DroppyCode/Runtime` | Per-thread state, streaming, checkpoints and rewind |
-| `DroppyCode/Git` | Git, worktrees, checkpoints and diff parsing |
-| `DroppyCode/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
-| `DroppyCode/Support` | Process I/O, JSON-RPC and the login shell environment |
+| `DroppyCode/Core` | Models and pure support: projects and threads, timelines, providers (`ProviderKind` lives here), Hydra, shortcuts, process I/O, JSON-RPC and the login shell. Depends on nothing else in the app. |
+| `DroppyCode/Services` | Git, worktrees and diff parsing, the on-disk store, and the Codex, Claude, ACP, Antigravity, Copilot, Command Code, Pi, DeepSeek, Meta and Z.ai adapters behind one event model. Depends on Core. |
+| `DroppyCode/UI` | Window chrome, common controls, Markdown rendering, the theme and the chimes. Depends on Core only. |
+| `DroppyCode/App` | The app entry, commands and settings, the project library, the per-thread runtime, windows, captures and every feature view: sidebar, chat, composer, changes, terminal, palette, settings, usage and the tour. Depends on all of the above. |
 | `website` | The marketing site, a static page published by Netlify (`netlify.toml`) |
 
 ## Made by Droppy
