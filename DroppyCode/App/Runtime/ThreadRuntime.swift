@@ -2658,7 +2658,7 @@ final class ThreadRuntime {
             // spawned head to exactly that roster name. Unknown or already-taken names
             // resolve to nil and the head goes out next in order, as before.
             let preferredIndex = delegation.name.flatMap(HydraRoster.index(named:))
-            guard let head = app.spawnDroppyHead(from: threadID, task: delegation.task, origin: .delegated, batchID: next.batchID, preferredIndex: preferredIndex, brief: { persona, workplace in
+            guard let head = app.spawnDroppyHead(from: threadID, task: delegation.task, origin: .delegated, batchID: next.batchID, preferredIndex: preferredIndex, project: delegation.project, brief: { persona, workplace in
                 HydraPrompts.delegatedHeadPrompt(persona: persona, delegation: delegation, workplace: workplace)
             }) else { continue }
             hydraBatches[next.batchID, default: HydraBatch(pending: [])].pending.insert(head.id)

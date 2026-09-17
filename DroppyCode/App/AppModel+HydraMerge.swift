@@ -17,7 +17,16 @@ struct HydraMergeHead {
     var files: [String]
 }
 
+/// What merging one project's share of a Hydra job came to.
+private enum HydraProjectMerge {
+    case merged
+    case alreadyOnMain
+    case failed
+}
+
 extension AppModel {
+    typealias HydraWork = (paths: [String], turnIDs: [UUID], headIDs: [UUID], outside: [String], heads: [HydraMergeHead])
+
     /// Lands a lead's finished work, when the setting says so. Runs once per finished job;
     /// what happened lands in the lead's timeline as a note from Hydra.
     func autoMergeHydraWork(of leadID: UUID) async {
@@ -38,67 +47,100 @@ extension AppModel {
         // not started yet wait for the merge instead (see `waitForSettledCheckout`).
         await runtime.hydraLanding?.value
 
-        let checkout = lead.worktreePath ?? project.path
-        let git = Git(checkout)
-        guard await git.isRepository(), await git.hasCommits() else { return }
-        guard await git.remoteURL() != nil else {
-            note(leadID, "Hydra did not merge: no remote.", "The team's work is in the checkout; there is no origin to push it to.")
+        // What the team touched, and only that, so a sibling's uncommitted work in the
+        // same checkout stays behind. The chat's own checkout goes first, then every
+        // other sidebar project that holds touched files, one merge each; only paths
+        // under no sidebar project at all stay out.
+        let ownCheckout = lead.worktreePath ?? project.path
+        let own = await hydraWork(of: leadID, runtime: runtime, checkout: ownCheckout, git: Git(ownCheckout), projectID: project.id, sweepsCheckout: true)
+        var groups: [(project: Project, checkout: String, work: HydraWork)] = own.paths.isEmpty ? [] : [(project, ownCheckout, own)]
+        // An outside path belongs to the sidebar project with the longest path that
+        // holds it, so nested checkouts resolve to the inner one.
+        var owners: [String: Project] = [:]
+        for path in own.outside {
+            if let holder = projects.filter({ $0.id != project.id && TouchedPaths.relative(path, root: $0.path) != nil }).max(by: { $0.path.count < $1.path.count }) {
+                owners[path] = holder
+            }
+        }
+        for other in projects where other.id != project.id && owners.values.contains(where: { $0.id == other.id }) {
+            let work = await hydraWork(of: leadID, runtime: runtime, checkout: other.path, git: Git(other.path), projectID: other.id, sweepsCheckout: false)
+            if !work.paths.isEmpty { groups.append((other, other.path, work)) }
+        }
+        let stray = own.outside.filter { path in !projects.contains { TouchedPaths.relative(path, root: $0.path) != nil } }
+        func strayBody(_ paths: [String]) -> String {
+            let shown = paths.prefix(6).map { "`\($0)`" }.joined(separator: ", ") + (paths.count > 6 ? " and \(paths.count - 6) more" : "")
+            return "\(paths.count == 1 ? "1 file was" : "\(paths.count) files were") changed outside every project: \(shown). Add the folder that holds them to the sidebar and ask for the merge again."
+        }
+        guard !groups.isEmpty else {
+            guard !stray.isEmpty else { return }
+            note(leadID, "Hydra did not merge: the team's files are outside every project.", strayBody(stray))
             return
+        }
+        let several = groups.count > 1
+        var outcomes: [HydraProjectMerge] = []
+        for group in groups {
+            outcomes.append(await mergeHydraProject(of: leadID, lead: lead, project: group.project, checkout: group.checkout, work: group.work, runtime: runtime, several: several))
+        }
+        guard !outcomes.contains(.failed) else { return }
+        // The work is on the default branch now, so these turns are spent: the next
+        // job merges what comes after them and never this again.
+        runtime.markHydraMerged(own.turnIDs)
+        let mergedAt = Date.now
+        for headID in own.headIDs { updateHydraHead(headID) { $0.mergedAt = mergedAt } }
+        if !stray.isEmpty {
+            note(leadID, "Hydra did not merge: the team's files are outside every project.", strayBody(stray))
+        }
+    }
+
+    /// Merges one project's share of a lead's finished work from its checkout: the guards
+    /// for repository, remote and operation in progress; the conflict-marker check; the
+    /// commit, branch, push, merge request and notes. The caller groups the projects and
+    /// marks the turns and heads merged once every project went through.
+    private func mergeHydraProject(of leadID: UUID, lead: ChatThread, project: Project, checkout: String, work: HydraWork, runtime: ThreadRuntime, several: Bool) async -> HydraProjectMerge {
+        func stage(_ name: String) -> String { several ? "\(project.name): \(name)" : name }
+        func title(_ name: String) -> String { several ? "\(project.name): \(name)" : name }
+
+        let git = Git(checkout)
+        guard await git.isRepository(), await git.hasCommits() else { return .failed }
+        guard await git.remoteURL() != nil else {
+            note(leadID, title("Hydra did not merge: no remote."), "The team's work is in the checkout; there is no origin to push it to.")
+            return .failed
         }
         guard !(await git.hasOperationInProgress()) else {
-            note(leadID, "Hydra did not merge: a rebase or merge is underway.", "The team's work is in the checkout; finish that first and merge by hand.")
-            return
+            note(leadID, title("Hydra did not merge: a rebase or merge is underway."), "The team's work is in the checkout; finish that first and merge by hand.")
+            return .failed
         }
 
-        // What the team touched, and only that, so a sibling's uncommitted work in the
-        // same checkout stays behind.
-        let work = await hydraWork(of: leadID, runtime: runtime, checkout: checkout, git: git)
         let sorted = work.paths
-        guard !sorted.isEmpty else {
-            // Work done outside this project's checkout was never this chat's to merge; the
-            // usual cause is a chat opened in one project while the request concerned
-            // another. Say so, and name the project that holds the files.
-            guard !work.outside.isEmpty else { return }
-            let owner = projects.first { project in
-                project.id != lead.projectID && work.outside.allSatisfy { TouchedPaths.relative($0, root: project.path) != nil }
-            }
-            let shown = work.outside.prefix(6).map { "`\($0)`" }.joined(separator: ", ") + (work.outside.count > 6 ? " and \(work.outside.count - 6) more" : "")
-            let advice = owner.map { "They belong to the project \($0.name) (`\($0.path)`): open a chat in that project and ask for the merge there." } ?? "They are not under this project's checkout (`\(checkout)`), so there is nothing here to merge; open a chat in the project that holds them."
-            note(leadID, "Hydra did not merge: the team's files are outside this project.", "\(work.outside.count == 1 ? "1 file was" : "\(work.outside.count) files were") changed outside `\(checkout)`: \(shown). \(advice)")
-            return
-        }
         // A head's landing can leave conflict markers behind (see `Git.apply`), and a lead
         // told not to look at git status may answer without settling them. Those markers
         // must never reach the remote: the job stays in the checkout until they are gone.
         let conflicted = await Self.pathsWithConflictMarkers(sorted, in: checkout)
         guard conflicted.isEmpty else {
             let files = conflicted.map { "`\($0)`" }.joined(separator: ", ")
-            note(leadID, "Hydra did not merge: conflict markers in \(conflicted.count == 1 ? "a file" : "\(conflicted.count) files").", "\(files) still \(conflicted.count == 1 ? "holds" : "hold") conflict markers from a head's landing. Resolve them, then ask for the merge again.")
-            return
+            note(leadID, title("Hydra did not merge: conflict markers in \(conflicted.count == 1 ? "a file" : "\(conflicted.count) files")."), "\(files) still \(conflicted.count == 1 ? "holds" : "hold") conflict markers from a head's landing. Resolve them, then ask for the merge again.")
+            return .failed
         }
 
         do {
             let head = try await git.commitHash()
-            runtime.hydraMergeStage = "Writing the commit"
+            runtime.hydraMergeStage = stage("Writing the commit")
             let tree = try await git.captureTree(paths: sorted)
             // Everything the team did is committed already: taken along by another chat's
             // merge from the same checkout, or committed by hand. The job is spent either
-            // way, so it is marked merged and the chat is told, rather than left wondering.
+            // way, so the chat is told, rather than left wondering.
             guard try await tree != git.treeHash(of: "HEAD") else {
-                runtime.markHydraMerged(work.turnIDs)
-                let mergedAt = Date.now
-                for headID in work.headIDs { updateHydraHead(headID) { $0.mergedAt = mergedAt } }
                 let target = await git.defaultBranch()
                 let shown = sorted.prefix(8).map { "`\($0)`" }.joined(separator: ", ") + (sorted.count > 8 ? " and \(sorted.count - 8) more" : "")
-                note(leadID, "Hydra found the team's work on `\(target)` already.", "\(shown) match HEAD: an earlier merge from this checkout, another chat's or one made by hand, took \(sorted.count == 1 ? "this file" : "these files") along. Nothing is left for this chat to merge.")
-                return
+                note(leadID, title("Hydra found the team's work on `\(target)` already."), "\(shown) match HEAD: an earlier merge from this checkout, another chat's or one made by hand, took \(sorted.count == 1 ? "this file" : "these files") along. Nothing is left for this chat to merge.")
+                return .alreadyOnMain
             }
 
             let patch = (try? await git.diff(from: head, to: tree)) ?? ""
             // A whole job's patch is big and parsing it counts every line: off the main
             // actor, so the chat stays live while the work goes out.
             let files = await Task.detached(priority: .utility) { DiffParser.parse(patch) }.value
-            runtime.hydraMergeStage = "Writing the commit message"
+            runtime.hydraMergeStage = stage("Writing the commit message")
             let message = await commitMessage(for: lead, files: files, patch: patch, directory: checkout)
             let subject = TextCleanup.singleLine(message, limit: 72)
 
@@ -116,8 +158,8 @@ extension AppModel {
             // and the move itself names the value it expects, so git refuses the write
             // outright if the branch shifts in the moment between the two.
             guard try await git.commitHash() == head else {
-                note(leadID, "Hydra did not merge: the checkout moved while it worked.", "A commit landed on `\(current ?? target)` while the team's work was being prepared, and moving the branch now would orphan it. The work is still in the checkout; ask for the merge again.")
-                return
+                note(leadID, title("Hydra did not merge: the checkout moved while it worked."), "A commit landed on `\(current ?? target)` while the team's work was being prepared, and moving the branch now would orphan it. The work is still in the checkout; ask for the merge again.")
+                return .failed
             }
             // A branch of its own must not exist yet; the checkout's own branch must still
             // be where it was read.
@@ -127,36 +169,30 @@ extension AppModel {
                 // tree already has the content.
                 try await git.resetIndex(paths: sorted)
             }
-            runtime.hydraMergeStage = "Pushing the branch"
+            runtime.hydraMergeStage = stage("Pushing the branch")
             try await git.pushBranch(branch)
 
             let body = mergeRequestBody(for: lead, files: files, runtime: runtime)
-            runtime.hydraMergeStage = "Opening the merge request"
+            runtime.hydraMergeStage = stage("Opening the merge request")
             let requestURL: URL?
             do {
                 requestURL = try await hydraCreateMergeRequest(git: git, title: subject, body: body, source: branch, target: target)
             } catch {
-                note(leadID, "Hydra pushed \(branch) but could not open a merge request.", "\(error.localizedDescription)\n\nOpen one for `\(branch)` into `\(target)` and merge it from there. The work is still in the checkout.")
-                return
+                note(leadID, title("Hydra pushed \(branch) but could not open a merge request."), "\(error.localizedDescription)\n\nOpen one for `\(branch)` into `\(target)` and merge it from there. The work is still in the checkout.")
+                return .failed
             }
             guard let url = requestURL,
                   let link = MergeRequestLink(url: url) else {
-                note(leadID, "Hydra pushed \(branch) but could not open a merge request.", "Open one for `\(branch)` into `\(target)` and merge it from there.")
-                return
+                note(leadID, title("Hydra pushed \(branch) but could not open a merge request."), "Open one for `\(branch)` into `\(target)` and merge it from there.")
+                return .failed
             }
-            runtime.hydraMergeStage = "Merging"
+            runtime.hydraMergeStage = stage("Merging")
             do {
                 try await git.mergePullRequest(link)
             } catch {
-                note(leadID, "Hydra opened \(link.label) but could not merge it.", "\(url.absoluteString)\n\n\(error.localizedDescription)\n\nMerge it from the link once it is ready; the branch `\(branch)` has the team's work.")
-                return
+                note(leadID, title("Hydra opened \(link.label) but could not merge it."), "\(url.absoluteString)\n\n\(error.localizedDescription)\n\nMerge it from the link once it is ready; the branch `\(branch)` has the team's work.")
+                return .failed
             }
-
-            // The work is on the default branch now, so these turns are spent: the next
-            // job merges what comes after them and never this again.
-            runtime.markHydraMerged(work.turnIDs)
-            let mergedAt = Date.now
-            for headID in work.headIDs { updateHydraHead(headID) { $0.mergedAt = mergedAt } }
 
             var lines = ["\(url.absoluteString)", "", Self.filesLine(files) + " landed on `\(target)` from `\(branch)`."]
             if !work.heads.isEmpty {
@@ -175,21 +211,23 @@ extension AppModel {
             // was this merge's to take, and every line about it read as if something
             // had gone wrong.
             if ownBranch {
-                runtime.hydraMergeStage = "Bringing the checkout up to date"
+                runtime.hydraMergeStage = stage("Bringing the checkout up to date")
                 let synced = await syncDefaultBranch(git, from: head, target: target, ownPaths: sorted)
                 lines.append(synced ? "The checkout is up to date." : "The checkout was left as it was: `\(target)` moved on in other ways meanwhile, or the team's files changed again; `git pull` when it suits you.")
             } else if lead.worktreePath != nil {
                 // The lead worked in a worktree: the project's own checkout follows when it can.
-                runtime.hydraMergeStage = "Bringing the checkout up to date"
+                runtime.hydraMergeStage = stage("Bringing the checkout up to date")
                 let main = Git(project.path)
                 if await main.status()?.branch == target, await main.dirtyPaths().isEmpty, !(await main.hasOperationInProgress()) {
                     if (try? await main.pullFastForward()) != nil { lines.append("The project checkout is up to date.") }
                 }
             }
-            note(leadID, "Hydra merged \(link.label)", lines.joined(separator: "\n"))
+            note(leadID, title("Hydra merged \(link.label)"), lines.joined(separator: "\n"))
             existingRuntime(for: leadID)?.noteDiffChanged()
+            return .merged
         } catch {
-            note(leadID, "Hydra could not merge the team's work.", "\(error.localizedDescription)\n\nThe work is still in the checkout.")
+            note(leadID, title("Hydra could not merge the team's work."), "\(error.localizedDescription)\n\nThe work is still in the checkout.")
+            return .failed
         }
     }
 
@@ -298,7 +336,7 @@ extension AppModel {
     /// Paths outside the checkout are dropped rather than passed on: a lead writes to its
     /// own memory files, and `git add -A -- <path>` on one of those fails outright and
     /// takes the whole merge with it.
-    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], headIDs: [UUID], outside: [String], heads: [HydraMergeHead]) {
+    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git, projectID: UUID, sweepsCheckout: Bool) async -> HydraWork {
         let turns = runtime.hydraUnmergedTurns
         var reported: [String] = turns.flatMap { $0.touchedPaths ?? [] }
         // A head counts until a merge has taken its work (see `HydraHeadInfo.mergedAt`).
@@ -353,7 +391,6 @@ extension AppModel {
         // yet: that chat's merge carries them, never this one's. Without this, the
         // sweep below took a sibling's landed files along, and the sibling's own merge
         // then found nothing left and said nothing.
-        let projectID = thread(leadID)?.projectID
         let team = Set(hydraTeam(of: leadID).map(\.id))
         var siblingPaths = Set<String>()
         for other in threads where other.id != leadID && other.projectID == projectID && !team.contains(other.id) {
@@ -370,7 +407,8 @@ extension AppModel {
                 }
             }
         }
-        if let base = turns.first?.baseCheckpoint,
+        if sweepsCheckout,
+           let base = turns.first?.baseCheckpoint,
            let alreadyDirty = try? await git.changedPaths(from: "HEAD", to: base),
            let now = try? await git.captureTree(),
            let changedSince = try? await git.changedPaths(from: base, to: now) {
