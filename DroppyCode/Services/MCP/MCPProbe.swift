@@ -28,11 +28,11 @@ enum MCPProbeError: LocalizedError, Sendable {
         case .http(let status, _):
             switch status {
             case 401, 403: return "The key was rejected. Check it and try again."
-            case 404: return "Nothing answered at that address."
+            case 404: return "Nothing answered at that address. Check the address and try again."
             default: return "The server answered \(status)."
             }
         case .unauthorizedOAuth:
-            return "Sign-in didn't finish. Try again and complete it in the browser."
+            return "Sign-in was rejected. Sign in again in your browser."
         case .malformed(let detail):
             return "The server sent something unexpected: \(detail)"
         }
@@ -234,9 +234,13 @@ enum MCPProbe {
         var sessionID: String?
 
         func post(_ payload: JSONValue) async throws -> JSONValue? {
-            let posted = try await postJSON(to: url, headers: server.headers, sessionID: sessionID, payload: payload)
-            sessionID = posted.sessionID ?? sessionID
-            return posted.body
+            do {
+                let posted = try await postJSON(to: url, headers: server.headers, sessionID: sessionID, payload: payload)
+                sessionID = posted.sessionID ?? sessionID
+                return posted.body
+            } catch MCPProbeError.http(let status, _) where (status == 401 || status == 403) && server.oauthUpstream != nil {
+                throw MCPProbeError.unauthorizedOAuth
+            }
         }
 
         func nearest(_ value: JSONValue?) throws -> JSONValue {

@@ -273,7 +273,7 @@ enum MCPCatalog {
             asset: "mcp-atlassian",
             colorValue: 0x0052CC,
             transport: .oauth(url: "https://mcp.atlassian.com/v1/mcp"),
-            docsURL: "https://support.atlassian.com/atlassian-rovo-mcp-server/",
+            docsURL: "https://developer.atlassian.com/cloud/rovo-mcp/",
             sampleTools: ["searchJiraIssuesUsingJql", "createJiraIssue", "getConfluencePage"]
         ),
         MCPCatalogEntry(
@@ -421,7 +421,7 @@ enum MCPCatalog {
             fields: [
                 MCPField(key: "token", label: "Access token", placeholder: "hf_…", kind: .secret, help: "Optional, raises the limits", isRequired: false)
             ],
-            docsURL: "https://huggingface.co/settings/mcp",
+            docsURL: "https://github.com/huggingface/hf-mcp-server",
             sampleTools: ["model_search", "dataset_search", "paper_search", "hub_repo_details"],
             keysURL: "https://huggingface.co/settings/tokens"
         ),

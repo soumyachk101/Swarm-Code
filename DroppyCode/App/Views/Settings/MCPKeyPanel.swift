@@ -93,7 +93,7 @@ struct MCPKeyPanelView: View {
             }
             HStack {
                 Spacer()
-                Button(entry.isOAuth ? "Save and sign in" : "Save and connect") {
+                Button(entry.isOAuth ? "Sign in" : "Save and connect") {
                     save()
                 }
                 .buttonStyle(.glassProminent)
@@ -148,8 +148,8 @@ struct MCPKeyPanelView: View {
             }
         } else {
             VStack(alignment: .leading, spacing: 6) {
-                stepRow(1, text: Text("Choose the \(entry.fields.first?.label.lowercased() ?? "value")"))
-                stepRow(2, text: Text("Save"))
+                stepRow(1, text: Text("Enter the \(entry.fields.first?.label.lowercased() ?? "value")"))
+                stepRow(2, text: Text(entry.isOAuth ? "Sign in in your browser" : "Save"))
             }
         }
     }

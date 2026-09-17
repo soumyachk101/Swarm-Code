@@ -385,9 +385,9 @@ struct HydraReportRow: View {
     }
 }
 
-/// The heads finished while their batch is still out: one small pill each, the report one
-/// tap away. The heads still at work get no pill here: the floating panel already shows
-/// them, and a row saying the same thing was noise.
+/// The finished heads the block names, in the order it draws them: one small pill
+/// each, the report one tap away. The heads still at work get no pill here: the
+/// floating panel already shows them, and a row saying the same thing was noise.
 struct HydraHeadsWorkingRow: View {
     @Environment(AppModel.self) private var model
     let heads: [Int]
@@ -399,8 +399,8 @@ struct HydraHeadsWorkingRow: View {
         // `model.threads`: a write to some other chat never re-renders these pills.
         let team = model.helpers(of: runtime.threadID)
             .filter(\.isHydraHead)
-            .sorted { ($0.hydra?.index ?? 0) < ($1.hydra?.index ?? 0) }
-        let finished = Self.finishedHeads(in: team)
+        let infos = Dictionary(team.compactMap(\.hydra).map { ($0.index, $0) }, uniquingKeysWith: { first, _ in first })
+        let finished = heads.compactMap { infos[$0] }
         // Every pill starts at the same left edge, glyphs in one column, whatever its
         // width: trailing alignment hung each narrower pill off the widest one's right
         // edge, and a head coming or going moved them all.
@@ -417,8 +417,8 @@ struct HydraHeadsWorkingRow: View {
 
     /// The finished heads whose report has not reached the lead yet: a finished head whose
     /// batch still has a head at work, or — with no batch — a head that finished since the
-    /// earliest running head set out, so heads done in an earlier turn stay out. In roster order.
-    private static func finishedHeads(in threads: [ChatThread]) -> [HydraHeadInfo] {
+    /// earliest running head set out, so heads done in an earlier turn stay out. Order is the caller's.
+    static func finishedHeads(in threads: [ChatThread]) -> [HydraHeadInfo] {
         let infos = threads.compactMap(\.hydra)
         let running = infos.filter { $0.status == .running }
         guard !running.isEmpty else { return [] }

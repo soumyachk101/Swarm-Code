@@ -6,10 +6,11 @@
 #
 # A Debug build is "Droppy Code Dev" (bundle id iordv.droppycode.dev): it runs
 # beside the released Droppy Code with its own library, settings, keychain items
-# and worktrees (~/.droppy-code-dev), and never touches the release app's. Before
-# each relaunch scripts/sync_dev_data.sh mirrors the release app's library,
-# settings and API keys into it, so Dev opens on the real data as of that moment;
-# set DROPPY_DEV_SYNC=0 to skip the mirror.
+# and worktrees (~/.droppy-code-dev), and never touches the release app's. Dev
+# keeps its own data across relaunches: pair names, MCP sign-ins and the threads
+# made in Dev live only there, and a mirror of the release app would wipe them.
+# Set DROPPY_DEV_SYNC=1 to have scripts/sync_dev_data.sh replace Dev's library,
+# settings and API keys with the release app's before the relaunch.
 #
 # Builds under build.noindex (never ~/Library/Developer/Xcode/DerivedData),
 # because the ".noindex" suffix keeps Spotlight and Launchpad from listing
@@ -62,7 +63,7 @@ for _ in $(seq 1 20); do
   ps aux | grep -F "$APP_NAME.app/Contents/MacOS" | grep -v grep >/dev/null || break
   sleep 1
 done
-if [ "${DROPPY_DEV_SYNC:-1}" != "0" ]; then
+if [ "${DROPPY_DEV_SYNC:-0}" = "1" ]; then
   step "Mirroring the release app's data into $APP_NAME"
   scripts/sync_dev_data.sh
 fi

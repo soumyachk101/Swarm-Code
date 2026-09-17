@@ -269,7 +269,7 @@ private struct MCPServerCard: View {
                     Text(verbatim: message)
                         .font(.system(size: 11))
                         .foregroundStyle(Chrome.danger)
-                        .lineLimit(2)
+                        .lineLimit(3)
                 }
             }
         }
@@ -325,14 +325,14 @@ private struct MCPServerCard: View {
         case .connected:
             EmptyView()
         case .failed:
-            Button("Try again") { begin() }
+            Button(entry.isOAuth ? "Sign in again" : "Try again") { begin() }
                 .buttonStyle(.glass)
                 .controlSize(.small)
         }
     }
 
     private func begin() {
-        if entry.fields.isEmpty {
+        if !entry.needsInput {
             model.mcp.connect(entry)
         } else {
             MCPKeyPanel.shared.present(entry: entry, model: model)
@@ -426,6 +426,7 @@ private struct MCPHoverInfoButton<Content: View>: View {
 /// and where its docs are.
 private struct MCPInfoPopover: View {
     let entry: MCPCatalogEntry
+    @Environment(AppModel.self) private var model
 
     private static let width: CGFloat = 340
 
@@ -457,6 +458,14 @@ private struct MCPInfoPopover: View {
                         .foregroundStyle(Chrome.secondaryText)
                     FlowChips(entry.sampleTools)
                 }
+            }
+            if let optional = entry.fields.first(where: { !$0.isRequired }) {
+                Button("Change the \(optional.label.lowercased())…") {
+                    MCPKeyPanel.shared.present(entry: entry, model: model)
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Chrome.accent)
+                .buttonStyle(.plain)
             }
             if let url = URL(string: entry.docsURL) {
                 Link(destination: url) {

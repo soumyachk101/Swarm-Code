@@ -93,16 +93,31 @@ struct ThreadTimeline: View, Equatable {
         let heads = model.hydraHeads(of: runtime.threadID)
         // Nothing here reads an entry's content: the cache keys on identities and kinds,
         // so a streaming row redraws itself and never brings this body with it.
+        // Every unarchived head, in the panel or not: a finished head that has already left
+        // the panel for the sidebar (auto-clear, or Clear finished heads) keeps its pill
+        // until its batch reports, so the list is not the panel's.
+        let team = model.helpers(of: runtime.threadID).filter(\.isHydraHead)
+        let finished = HydraHeadsWorkingRow.finishedHeads(in: team).sorted { ($0.finishedAt ?? .distantPast) < ($1.finishedAt ?? .distantPast) }
+        let since = runtime.isRunning ? runtime.turnStartedAt : nil
+        let earlier = since.map { cut in finished.filter { ($0.finishedAt ?? .distantPast) < cut } } ?? []
+        let later = finished.filter { head in !earlier.contains { $0.index == head.index } }
+        let pills = HeadPills(earlier: earlier.map(\.index), later: later.map(\.index))
         let blocks = blockCache.blocks(
             for: entries,
             showReasoning: model.settings.showReasoning, isRunning: runtime.isRunning,
             hydraMergeID: runtime.isHydraMerging ? (runtime.hydraMergeNoteID ?? "hydra-merging") : nil,
-            workingHeads: heads.compactMap { $0.hydra?.status == .running ? $0.hydra?.index : nil }
+            pills: pills
         )
         // Every head the chat ever sent out, not only those still in the panel: a head that
         // finished and left for the sidebar is still named in the prose above, and keeps its
-        // glyph and colour there rather than falling back to plain text as it clears.
-        let hydraMentionPersonas = blockCache.mentionPersonas(for: model.children(of: runtime.threadID).filter(\.isHydraHead))
+        // glyph and colour there rather than falling back to plain text as it clears. With
+        // Hydra on, the whole roster besides: the lead names its heads in the prose before
+        // the block that sends them out, so a name is drawn as its head from the first
+        // frame rather than as plain text until the spawn lands.
+        let hydraMentionPersonas = blockCache.mentionPersonas(
+            for: model.children(of: runtime.threadID).filter(\.isHydraHead),
+            roster: model.thread(runtime.threadID).map(model.hydraIsOn) ?? false
+        )
         // A history still being read off the main thread is not an empty thread: the
         // prompt for a new one would flash for the frames before it lands.
         if runtime.isLoadingHistory {
@@ -1346,6 +1361,10 @@ enum TimelineGroup: Identifiable, Equatable {
     }
 }
 
+/// The finished heads' roster indices in finish order, `earlier` those done before the
+/// running turn began (drawn above it), `later` the rest (drawn at the end).
+struct HeadPills: Equatable { var earlier: [Int] = []; var later: [Int] = [] }
+
 /// A turn is one block of the timeline from the moment it starts. While it runs, the block
 /// shows its prompt, its steps and replies as rows, and the working line; when it ends it
 /// folds to its final response plus its file summary, so the chat stays clean, and the
@@ -1378,7 +1397,7 @@ enum DisplayBlock: Identifiable, Equatable {
     /// The heads still out on the lead's behalf once its turn is over, by their roster
     /// index in the order they went. Never built from the entries: the timeline appends
     /// it while any head works and drops it when the last one reports back.
-    case headsWorking(heads: [Int])
+    case headsWorking(heads: [Int], trailing: Bool)
 
     var id: String {
         switch self {
@@ -1386,7 +1405,7 @@ enum DisplayBlock: Identifiable, Equatable {
         case .group(let group, _, _): group.id
         case .working(let turnID, _): "working-\(turnID?.uuidString ?? "")"
         case .merging(let id): id
-        case .headsWorking: "hydra-heads-working"
+        case .headsWorking(_, let trailing): trailing ? "hydra-heads-working-tail" : "hydra-heads-working"
         }
     }
 
@@ -1437,14 +1456,14 @@ enum DisplayBlock: Identifiable, Equatable {
     }
 
     @MainActor
-    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, workingHeads: [Int] = []) -> [DisplayBlock] {
-        build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads).blocks
+    static func build(_ entries: [TimelineEntry], meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, pills: HeadPills = HeadPills()) -> [DisplayBlock] {
+        build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, pills: pills).blocks
     }
 
     /// The blocks for the entries from `start` on, after `kept`: the blocks the entries
     /// before `start` built last time. Building from 0 with nothing kept is the full build.
     @MainActor
-    static func build(_ entries: [TimelineEntry], from start: Int, keeping kept: ArraySlice<DisplayBlock>, meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, workingHeads: [Int]) -> Built {
+    static func build(_ entries: [TimelineEntry], from start: Int, keeping kept: ArraySlice<DisplayBlock>, meta: TimelineMeta, showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, pills: HeadPills) -> Built {
         // Partition into contiguous runs sharing one turnID (nil groups together), so every
         // turn becomes one block. A run is a range of indices: no entry is copied to find it.
         var runs: [(turnID: UUID?, range: Range<Int>)] = []
@@ -1489,21 +1508,20 @@ enum DisplayBlock: Identifiable, Equatable {
         if waiting, !(blocks.last?.carriesWorkingLine ?? false) {
             blocks.append(.working(turnID: entries.last?.turnID, liveWork: []))
         }
-        // Heads out on the lead's behalf once its turn is over: their row says who is at
-        // work, and which have finished, until they all report back. When the user sends
-        // the lead something else meanwhile, the row keeps its place above that new turn
-        // rather than vanishing with it: a head that just finished is still done. Only a
-        // turn that sent heads out itself (native heads, whose rows sit inside it) says
-        // so on its own and gets no row.
-        if !workingHeads.isEmpty {
-            if !isRunning {
-                blocks.append(.headsWorking(heads: workingHeads))
-            } else if let running = blocks.lastIndex(where: { block in
-                if case .turn(_, _, _, let summary, _) = block { return summary == nil }
-                return false
-            }), case .turn(_, _, let rows, _, _) = blocks[running], !rows.contains(where: TimelineGroup.isHead) {
-                blocks.insert(.headsWorking(heads: workingHeads), at: running)
-            }
+        // Pills in finish order; heads done before the running turn began keep their
+        // place above it; heads done since it began land at the end, after the turn's
+        // live box, when they happen; with no turn running every pill ends the
+        // timeline under the untrailed id, so when the next turn starts the same row
+        // is simply above it.
+        if isRunning, !pills.earlier.isEmpty,
+           let running = blocks.lastIndex(where: { block in
+               if case .turn(_, _, _, let summary, _) = block { return summary == nil }
+               return false
+           }), case .turn(_, _, let rows, _, _) = blocks[running], !rows.contains(where: TimelineGroup.isHead) {
+            blocks.insert(.headsWorking(heads: pills.earlier, trailing: false), at: running)
+        }
+        if !pills.later.isEmpty {
+            blocks.append(.headsWorking(heads: pills.later, trailing: isRunning))
         }
         // The merge begins once the lead's turn is over; while it runs, its pill ends the
         // timeline, and stays if the user starts the lead on something else meanwhile.
@@ -1581,7 +1599,7 @@ final class TimelineBlockCache {
         /// The merge's row comes and goes on this alone; no entry changes for it.
         var hydraMergeID: String?
         /// The heads' row likewise: it comes and goes as heads start and finish.
-        var workingHeads: [Int]
+        var pills: HeadPills
         var showReasoning: Bool
 
         /// Whether this key is `old` with entries appended and nothing else changed.
@@ -1589,7 +1607,7 @@ final class TimelineBlockCache {
             entries.count > old.entries.count
                 && isRunning == old.isRunning
                 && hydraMergeID == old.hydraMergeID
-                && workingHeads == old.workingHeads
+                && pills == old.pills
                 && showReasoning == old.showReasoning
                 && entries.starts(with: old.entries)
         }
@@ -1601,12 +1619,13 @@ final class TimelineBlockCache {
     /// The mention list, once per roster of heads: heads come and go far more rarely
     /// than this body runs.
     private var personaHeads: [Int?] = []
+    private var personaRoster = false
     private var personas: [HydraPersona] = []
     #if DEBUG
     private var tailBuilds = 0
     #endif
 
-    func blocks(for entries: [TimelineEntry], showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, workingHeads: [Int] = []) -> [DisplayBlock] {
+    func blocks(for entries: [TimelineEntry], showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, pills: HeadPills = HeadPills()) -> [DisplayBlock] {
         var identities: [ObjectIdentifier] = []
         identities.reserveCapacity(entries.count)
         var turnEnds = 0
@@ -1619,16 +1638,16 @@ final class TimelineBlockCache {
             turnEnds: turnEnds,
             isRunning: isRunning,
             hydraMergeID: hydraMergeID,
-            workingHeads: workingHeads,
+            pills: pills,
             showReasoning: showReasoning
         )
         if wanted == key { return built.blocks }
         if let key, wanted.extends(key),
-           let tail = buildTail(entries, appendedFrom: key.entries.count, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads) {
+           let tail = buildTail(entries, appendedFrom: key.entries.count, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, pills: pills) {
             built = tail
         } else {
             meta = TimelineMeta.build(entries)
-            built = DisplayBlock.build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads)
+            built = DisplayBlock.build(entries, from: 0, keeping: [], meta: meta, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, pills: pills)
         }
         key = wanted
         return built.blocks
@@ -1640,7 +1659,7 @@ final class TimelineBlockCache {
     /// and the synthetic blocks after it are built again, over the meta grown by the new
     /// entries, and the rest is kept. Nil when a new end marker folds a kept turn block;
     /// that build starts over.
-    private func buildTail(_ entries: [TimelineEntry], appendedFrom appended: Int, showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, workingHeads: [Int]) -> DisplayBlock.Built? {
+    private func buildTail(_ entries: [TimelineEntry], appendedFrom appended: Int, showReasoning: Bool, isRunning: Bool, hydraMergeID: String?, pills: HeadPills) -> DisplayBlock.Built? {
         var grown = meta
         for entry in entries[appended...] {
             grown.add(entry)
@@ -1649,14 +1668,14 @@ final class TimelineBlockCache {
                 return nil
             }
         }
-        let tail = DisplayBlock.build(entries, from: built.lastRunStart, keeping: built.blocks[..<built.stableCount], meta: grown, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads)
+        let tail = DisplayBlock.build(entries, from: built.lastRunStart, keeping: built.blocks[..<built.stableCount], meta: grown, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, pills: pills)
         #if DEBUG
         // The fast path must be invisible: now and then, hold it against a full build.
         // A difference is a bug in the fast path, not a reason to crash a chat: it is
         // logged, and the full build stands in.
         tailBuilds += 1
         if tailBuilds % 20 == 0 {
-            let full = DisplayBlock.build(entries, meta: grown, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, workingHeads: workingHeads)
+            let full = DisplayBlock.build(entries, meta: grown, showReasoning: showReasoning, isRunning: isRunning, hydraMergeID: hydraMergeID, pills: pills)
             if tail.blocks != full {
                 print("ThreadTimeline: the tail build differed from a full build after \(entries.count) entries")
                 return nil
@@ -1667,14 +1686,19 @@ final class TimelineBlockCache {
         return tail
     }
 
-    /// The personas the prose may name, by the heads' roster indices. Memoized on them,
-    /// so the list is built when a head comes or goes and not on every pass.
-    func mentionPersonas(for heads: [ChatThread]) -> [HydraPersona] {
+    /// The personas the prose may name, by the heads' roster indices, and with `roster`
+    /// every name on the roster after them (a head still to be sent out). Memoized on
+    /// both, so the list is built when a head comes or goes and not on every pass.
+    func mentionPersonas(for heads: [ChatThread], roster: Bool) -> [HydraPersona] {
         let indices = heads.map { $0.hydra?.index }
-        if indices == personaHeads { return personas }
+        if indices == personaHeads, roster == personaRoster { return personas }
         var seen = Set<String>()
         personas = heads.compactMap { $0.hydra?.persona }.filter { seen.insert($0.name).inserted }
+        if roster {
+            personas += HydraRoster.personas.filter { seen.insert($0.name).inserted }
+        }
         personaHeads = indices
+        personaRoster = roster
         return personas
     }
 }
@@ -1811,7 +1835,7 @@ private struct DisplayBlockView: View, Equatable {
             case .merging:
                 // Routed through `hydraMergePhase` above; never reached.
                 EmptyView()
-            case .headsWorking(let heads):
+            case .headsWorking(let heads, _):
                 HydraHeadsWorkingRow(heads: heads, runtime: runtime)
             }
         }
