@@ -14,6 +14,8 @@ struct AppAlert: Identifiable {
 final class AppModel {
     let settings: AppSettings
     let providers: ProviderRegistry
+    /// The user's MCP connections, handed to every provider session at launch.
+    let mcp: MCPStore
     let terminals: TerminalStore
     let sidebar: SidebarLayout
     /// Picks chats back up once a spent usage limit resets, with the setting on.
@@ -106,6 +108,7 @@ final class AppModel {
     init() {
         settings = AppSettings()
         providers = ProviderRegistry(settings: settings)
+        mcp = MCPStore()
         terminals = TerminalStore()
         sidebar = SidebarLayout()
         let library = Storage.loadLibrary()

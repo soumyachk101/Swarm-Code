@@ -1490,10 +1490,20 @@ enum DisplayBlock: Identifiable, Equatable {
             blocks.append(.working(turnID: entries.last?.turnID, liveWork: []))
         }
         // Heads out on the lead's behalf once its turn is over: their row says who is at
-        // work until they report back. While the lead itself runs, its working line and
-        // the heads' own rows already say so.
-        if !workingHeads.isEmpty, !isRunning {
-            blocks.append(.headsWorking(heads: workingHeads))
+        // work, and which have finished, until they all report back. When the user sends
+        // the lead something else meanwhile, the row keeps its place above that new turn
+        // rather than vanishing with it: a head that just finished is still done. Only a
+        // turn that sent heads out itself (native heads, whose rows sit inside it) says
+        // so on its own and gets no row.
+        if !workingHeads.isEmpty {
+            if !isRunning {
+                blocks.append(.headsWorking(heads: workingHeads))
+            } else if let running = blocks.lastIndex(where: { block in
+                if case .turn(_, _, _, let summary, _) = block { return summary == nil }
+                return false
+            }), case .turn(_, _, let rows, _, _) = blocks[running], !rows.contains(where: TimelineGroup.isHead) {
+                blocks.insert(.headsWorking(heads: workingHeads), at: running)
+            }
         }
         // The merge begins once the lead's turn is over; while it runs, its pill ends the
         // timeline, and stays if the user starts the lead on something else meanwhile.

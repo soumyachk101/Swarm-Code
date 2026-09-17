@@ -14,9 +14,46 @@ struct PromptEditor<Extra: View, Actions: View>: View {
     @ViewBuilder var extra: () -> Extra
     @ViewBuilder var actions: () -> Actions
 
-    @State private var textHeight: CGFloat = 22
+    @State private var textHeight: CGFloat
     @State private var controller = ComposerController()
     @State private var showingFiles = false
+
+    init(
+        title: String,
+        text: Binding<String>,
+        attachments: Binding<[Attachment]>,
+        onSubmit: @escaping () -> Void,
+        onCancel: @escaping () -> Void,
+        @ViewBuilder extra: @escaping () -> Extra,
+        @ViewBuilder actions: @escaping () -> Actions
+    ) {
+        self.title = title
+        _text = text
+        _attachments = attachments
+        self.onSubmit = onSubmit
+        self.onCancel = onCancel
+        self.extra = extra
+        self.actions = actions
+        // Sized for its text from the first layout: the text view reports its height a
+        // pass later, and a popover that opened one line tall and then grew to three
+        // played that growth over its own appearance.
+        _textHeight = State(initialValue: Self.measuredHeight(of: text.wrappedValue))
+    }
+
+    /// The text view's height for `text` at the editor's width, the way the view measures
+    /// itself (`ComposerTextView.Coordinator.updateHeight`): the used rect plus the container inset.
+    private static func measuredHeight(of text: String) -> CGFloat {
+        // 520 wide, less the outer and the field's own padding (the container has no fragment padding).
+        let width = editorWidth - 2 * 20 - 2 * 10
+        let bounds = (text.isEmpty ? " " : text as NSString).boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: [.font: NSFont.systemFont(ofSize: 14)]
+        )
+        return ceil(max(18, bounds.height) + 2 * 2)
+    }
+
+    private static var editorWidth: CGFloat { 520 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -60,7 +97,7 @@ struct PromptEditor<Extra: View, Actions: View>: View {
             .controlSize(.regular)
         }
         .padding(20)
-        .frame(width: 520)
+        .frame(width: Self.editorWidth)
     }
 
     private func handleKey(_ key: ComposerKey) -> Bool {
@@ -166,7 +203,12 @@ final class PromptEditorPopover<Content: View>: NSObject {
     private func resize(to size: CGSize) {
         guard size.width > 0, size.height > 0, let shownPopover,
               abs(shownPopover.contentSize.height - size.height) > 0.5 else { return }
+        // The size follows at once, never as a morph: the popover's own animation is for
+        // its appearance and its close, and a resize played through it as a wobble.
+        let animates = shownPopover.animates
+        shownPopover.animates = false
         shownPopover.contentSize = size
+        shownPopover.animates = animates
     }
 
     /// Closes the popover without touching the thread's edit.

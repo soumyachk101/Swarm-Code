@@ -69,7 +69,7 @@ struct HydraGlyph: View {
 /// Animation, so the breath runs on the render server and no frame of it re-renders
 /// the pill or the panel the glyph sits in (a SwiftUI `repeatForever` did, at the
 /// display's full rate, once per head at work).
-private struct HydraBreathRing: NSViewRepresentable {
+struct HydraBreathRing: NSViewRepresentable {
     let color: CGColor
     let lineWidth: CGFloat
 

@@ -81,6 +81,36 @@ struct ChatBadge<Glyph: View, Detail: View>: View {
     }
 }
 
+extension View {
+    /// `detail` as the anchored popover the chat's pills open (see `BadgePopoverCoordinator`),
+    /// for a pill that draws itself rather than through `ChatBadge`: it hangs from this
+    /// view's window rect with the popover's own animation, growing out of the pill. A
+    /// SwiftUI `.popover` on the same pill came in from the top edge instead.
+    func badgePopover(isPresented: Binding<Bool>, @ViewBuilder detail: @escaping () -> some View) -> some View {
+        modifier(BadgePopoverModifier(isPresented: isPresented, detail: { AnyView(detail()) }))
+    }
+}
+
+private struct BadgePopoverModifier: ViewModifier {
+    @Binding var isPresented: Bool
+    let detail: () -> AnyView
+    @State private var coordinator = BadgePopoverCoordinator()
+
+    func body(content: Content) -> some View {
+        content
+            .windowRectAnchor { coordinator.setAnchor(windowRect: $0) }
+            .onChange(of: isPresented) { _, shown in
+                if shown {
+                    if !coordinator.isShown { coordinator.show(detail().presentedChrome()) }
+                } else {
+                    coordinator.close()
+                }
+            }
+            .onAppear { coordinator.onClose = { isPresented = false } }
+            .onDisappear { coordinator.close() }
+    }
+}
+
 /// The badge's detail as an anchored popover instead of a SwiftUI popover, so
 /// the arrow starts on the badge: measured once and frozen (see
 /// setFixedContent), it never resizes off the badge while shown.

@@ -44,14 +44,20 @@ struct MarkdownView: View, Equatable {
         return out
     }
 
-    /// The lead's delegation card leaves the reply the way a settled chat leaves the
-    /// sidebar once its heads are out (see `ThreadRuntime.holdSentDelegationBlock`); every
-    /// other block comes and goes with the soft appear.
+    /// The lead's delegation card has faded out in place by the time its block leaves the
+    /// reply (see `ThreadRuntime.holdSentDelegationBlock`), so it goes without a transition
+    /// of its own and only the text below animates closing up: a removal that glided the
+    /// card over that text drew it as a ghost. Every other block comes and goes with the soft appear.
     private static func transition(for block: MarkdownBlock) -> AnyTransition {
-        if case .code(let language, _) = block, let info = language?.lowercased(), info == "hydra" || info == "hydra-sent" {
-            return .settleGlide
+        if case .code(let language, _) = block, let info = language?.lowercased(), Self.isDelegationInfo(info) {
+            return .asymmetric(insertion: .softAppear, removal: .identity)
         }
         return .softAppear
+    }
+
+    /// The info strings the delegation card wears: streaming or read, sent, and fading out.
+    static func isDelegationInfo(_ info: String) -> Bool {
+        info == "hydra" || info == "hydra-sent" || info == "hydra-leaving"
     }
 
     var body: some View {
@@ -288,8 +294,13 @@ struct MarkdownBlockView: View, Equatable {
         case .code(let language, let code):
             // The lead's delegation block (info string `hydra`) is a brief for the team, not
             // code: it reads as a card while it streams and whenever it stays in the reply.
-            if let info = language?.lowercased(), info == "hydra" || info == "hydra-sent" {
-                HydraDelegationBlock(json: code, sent: info == "hydra-sent")
+            if let info = language?.lowercased(), MarkdownView.isDelegationInfo(info) {
+                // `hydra-leaving`: the card fades where it stands, still taking up its room,
+                // before the block leaves the reply and the text below closes up.
+                HydraDelegationBlock(json: code, sent: info != "hydra")
+                    .opacity(info == "hydra-leaving" ? 0 : 1)
+                    .scaleEffect(info == "hydra-leaving" ? 0.98 : 1, anchor: .top)
+                    .allowsHitTesting(info != "hydra-leaving")
             } else {
                 CodeBlock(language: language, code: code)
             }

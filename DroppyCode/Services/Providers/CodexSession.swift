@@ -222,6 +222,13 @@ final class CodexSession: ProviderSession {
                 params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
             }
         }
+        // Connected MCP servers from Settings ride along at launch; no file means none.
+        // Merged into whatever config is already there, never replacing it.
+        if let servers = MCPProviderConfig.codexOverrides() {
+            var config = params["config"]?.object ?? [:]
+            config["mcp_servers"] = servers
+            params["config"] = .object(config)
+        }
         return params
     }
 

@@ -6,6 +6,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     // Second in the sidebar: Hydra is what the app is about, so it sits right under General.
     case hydra
     case providers
+    case mcp
     case models
     case sourceControl
     case shortcuts
@@ -18,6 +19,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: "General"
         case .providers: "Providers"
+        case .mcp: "MCP"
         case .models: "Models"
         case .hydra: "Hydra"
         case .sourceControl: "Source control"
@@ -31,6 +33,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gear"
         case .providers: "cpu"
+        case .mcp: "puzzlepiece.extension"
         case .models: "slider.horizontal.3"
         // Never drawn: the sidebar gives the Hydra row the dragon mark instead. Kept so
         // the switch stays exhaustive and anything else that asks gets a sane symbol.
@@ -46,6 +49,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         switch self {
         case .general: Chrome.gray
         case .providers: Chrome.blue
+        case .mcp: Color(red: 0.95, green: 0.55, blue: 0.20)
         case .models: Color(red: 0.686, green: 0.322, blue: 0.871)
         case .hydra: Color(red: 0.188, green: 0.690, blue: 0.780)
         case .sourceControl: Color(red: 0.345, green: 0.337, blue: 0.839)
@@ -61,6 +65,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .hydra: ["hydra", "heads", "subagents", "sub-agents", "agents", "team", "orchestrator", "worker", "pair", "pairs", "parallel", "delegate", "queue"]
         case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "zai", "z.ai", "glm", "coding plan", "devin", "cognition", "antigravity", "agy", "google", "gemini", "copilot", "github", "command code", "commandcode", "cmd", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
+        case .mcp: ["mcp", "model context protocol", "servers", "tools", "connect", "integrations", "github", "playwright", "notion", "linear", "slack", "figma", "supabase", "stripe", "context7", "sentry", "postgres", "browser"]
         case .sourceControl: ["git", "commit", "pull request", "titles", "text generation"]
         case .shortcuts: ["keyboard", "keys"]
         case .archive: ["archived", "restore"]
@@ -83,6 +88,7 @@ struct SettingsView: View {
     @State private var page: SettingsPage = .general
     @State private var search = ""
     @State private var modelSearch = ""
+    @State private var mcpSearch = ""
     @State private var scrollChrome = ChromeScrollModel()
 
     private var visiblePages: [SettingsPage] {
@@ -191,6 +197,7 @@ struct SettingsView: View {
         .onChange(of: page, initial: true) {
             scrollChrome.update(travel: 0)
             modelSearch = ""
+            mcpSearch = ""
         }
     }
 
@@ -218,6 +225,9 @@ struct SettingsView: View {
                 if page == .models {
                     ChromeSearchField(query: $modelSearch, prompt: "Search models")
                 }
+                if page == .mcp {
+                    ChromeSearchField(query: $mcpSearch, prompt: "Search servers")
+                }
                 if page == .providers {
                     ProvidersRefreshButton()
                 }
@@ -235,7 +245,7 @@ struct SettingsView: View {
     }
 
     private var pageHasChromeControls: Bool {
-        page == .providers || page == .models || page == .archive || page == .about
+        page == .providers || page == .models || page == .mcp || page == .archive || page == .about
     }
 
     @ViewBuilder
@@ -243,6 +253,7 @@ struct SettingsView: View {
         switch page {
         case .general: GeneralSettingsPage()
         case .providers: ProvidersSettingsPage()
+        case .mcp: MCPSettingsPage(query: mcpSearch)
         case .models:
             ModelsSettingsPage(query: modelSearch)
         case .hydra: HydraSettingsPage()
