@@ -1641,7 +1641,7 @@ final class TimelineBlockCache {
 /// milliseconds — so the window opens with a handful, grows to its resting size a beat
 /// later, and then a page at a time as the reader scrolls back.
 enum TimelineWindow {
-    static let firstPaint = 6
+    static let firstPaint = 3
     static let initial = 24
     static let page = 24
 }
