@@ -727,7 +727,6 @@ private struct ArchiveSettingsPage: View {
 
 private struct AboutSettingsPage: View {
     @Environment(AppModel.self) private var model
-    private static let droppyURL = URL(string: "https://getdroppy.app")!
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
@@ -735,7 +734,7 @@ private struct AboutSettingsPage: View {
             appCard
             ChromeSection(title: "Credits") {
                 ChromeCard {
-                    MadeByRow(url: Self.droppyURL)
+                    MadeByRow()
                     ChromeRowDivider()
                     ChromeRow(title: "Working indicators", detail: "Ported from Zeron by Wing, MIT License.") {
                         CreditLink(title: "zeronsh/zeron", url: URL(string: "https://github.com/zeronsh/zeron")!)
@@ -839,48 +838,29 @@ private struct LicensesRow: View {
     }
 }
 
-/// SwarmAI's logo and name, linking to getdroppy.app, so it is clear the app is made by Soumya Chakraborty.
+/// SwarmAI's logo and name, showing attribution that the app is made by Soumya Chakraborty.
 private struct MadeByRow: View {
-    let url: URL
-    @State private var isHovering = false
-
     var body: some View {
-        Link(destination: url) {
-            HStack(spacing: 12) {
-                Image("swarmai-logo")
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 40, height: 40)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Made by Soumya Chakraborty")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Chrome.primaryText)
-                    Text("SwarmAI is a coding app by Soumya Chakraborty for Mac.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.secondaryText)
-                }
-                Spacer(minLength: 12)
-                HStack(spacing: 4) {
-                    Text(verbatim: "getdroppy.app")
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Chrome.accent)
-                .opacity(isHovering ? 1 : 0.9)
+        HStack(spacing: 12) {
+            Image("swarmai-logo")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 40, height: 40)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Made by Soumya Chakraborty")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Chrome.primaryText)
+                Text("SwarmAI is a coding app by Soumya Chakraborty for Mac.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
             }
-            .padding(.leading, 16)
-            .padding(.trailing, Chrome.rowControlTrailingPadding + 4)
-            .padding(.vertical, 12)
-            .contentShape(.rect)
+            Spacer(minLength: 12)
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(Chrome.hover) { isHovering = hovering }
-        }
-        .help("Open getdroppy.app")
-        .accessibilityLabel(Text("Made by Soumya Chakraborty. Open getdroppy.app"))
+        .padding(.leading, 16)
+        .padding(.trailing, Chrome.rowControlTrailingPadding + 4)
+        .padding(.vertical, 12)
+        .accessibilityLabel(Text("Made by Soumya Chakraborty."))
     }
 }
 
