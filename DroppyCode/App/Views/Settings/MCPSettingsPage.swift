@@ -111,20 +111,25 @@ private struct MCPLeadCard: View {
                 .font(.system(size: 22))
                 .foregroundStyle(Chrome.accent)
             VStack(alignment: .leading, spacing: 6) {
-                Text("Connected servers lead")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Chrome.primaryText)
+                HStack(spacing: 4) {
+                    Text("Connected servers lead")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Chrome.primaryText)
+                    // The three facts live behind the `i`: stacked in the card they took
+                    // more room than the point they made.
+                    MCPHoverInfoButton(label: "About connected servers") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            fact(symbol: "lock.fill", text: "Keys stay in your Keychain")
+                            fact(symbol: "arrow.uturn.backward", text: "Disconnect to go back to your own setup")
+                            fact(symbol: "sparkles", text: "Every provider, whatever the model")
+                        }
+                        .padding(14)
+                    }
+                }
                 Text("When you connect a server here, it is the only MCP server your threads use. Anything set up in a terminal or another app's config is left exactly as it is, and stays out of the way until you disconnect.")
                     .font(.system(size: 12))
                     .foregroundStyle(Chrome.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
-                // Stacked: three facts in one line ran past the pane and truncated the last.
-                VStack(alignment: .leading, spacing: 4) {
-                    fact(symbol: "lock.fill", text: "Keys stay in your Keychain")
-                    fact(symbol: "arrow.uturn.backward", text: "Disconnect to go back to your own setup")
-                    fact(symbol: "sparkles", text: "Every provider, whatever the model")
-                }
-                .padding(.top, 4)
             }
         }
         .padding(16)
@@ -136,14 +141,14 @@ private struct MCPLeadCard: View {
     }
 
     private func fact(symbol: String, text: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: symbol)
                 .foregroundStyle(Chrome.accent)
                 .frame(width: 14)
             Text(verbatim: text)
         }
-        .font(.system(size: 11))
-        .foregroundStyle(Chrome.secondaryText)
+        .font(.system(size: 12))
+        .foregroundStyle(Chrome.primaryText.opacity(0.9))
     }
 }
 
@@ -457,6 +462,19 @@ private struct MCPServerCard: View {
 private struct MCPInfoButton: View {
     let entry: MCPCatalogEntry
 
+    var body: some View {
+        MCPHoverInfoButton(label: "About \(entry.name)") {
+            MCPInfoPopover(entry: entry)
+        }
+    }
+}
+
+/// An `i` that opens `content` in a popover on hover or click, and keeps it open while
+/// the pointer is on either the button or the popover.
+private struct MCPHoverInfoButton<Content: View>: View {
+    let label: String
+    @ViewBuilder let content: Content
+
     @State private var isPresented = false
     @State private var isOverButton = false
     @State private var isOverPopover = false
@@ -475,13 +493,13 @@ private struct MCPInfoButton: View {
         }
         .buttonStyle(.plain)
         .focusable(false)
-        .accessibilityLabel(Text("About \(entry.name)"))
+        .accessibilityLabel(Text(verbatim: label))
         .onHover { over in
             isOverButton = over
             reconsider()
         }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            MCPInfoPopover(entry: entry)
+            content
                 .onHover { over in
                     isOverPopover = over
                     reconsider()

@@ -537,6 +537,21 @@ final class AppModel {
             }
             .max { $0.createdAt < $1.createdAt }
         if let unused {
+            // The row may be older than the pair or model chosen since: nothing was sent in
+            // it, so it starts over on what a fresh chat would open on today.
+            let fresh = makeThread(in: project, carrying: nil)
+            updateThread(unused.id) { thread in
+                if thread.provider != fresh.provider {
+                    thread.providerSessionID = nil
+                    thread.providerResumeAt = nil
+                }
+                thread.provider = fresh.provider
+                thread.model = fresh.model
+                thread.effort = fresh.effort
+                thread.fastMode = fresh.fastMode
+                thread.hydraPairID = fresh.hydraPairID
+                thread.hydraEnabled = fresh.hydraEnabled
+            }
             selectedThreadID = unused.id
         } else {
             newThread(in: project)
@@ -549,11 +564,34 @@ final class AppModel {
             chooseProjectFolder()
             return nil
         }
-        let current = selectedThread
+        let thread = makeThread(in: project, carrying: selectedThread)
+        threads.append(thread)
+        updateProject(project.id) { $0.isExpanded = true }
+        rememberLastProject(project.id)
+        selectedThreadID = thread.id
+        scheduleSave()
+        if (workspace ?? settings.defaultWorkspaceMode) == .worktree {
+            Task { await createWorktree(for: thread.id) }
+        }
+        return thread
+    }
+
+    /// A chat as it would start in `project`: on `current`'s provider, model and pair when
+    /// made from an open chat, otherwise on what was last used. Not yet in `threads`.
+    private func makeThread(in project: Project, carrying current: ChatThread?) -> ChatThread {
         let installed = ProviderKind.allCases.filter { providers.status($0).isInstalled && settings.isEnabled($0) }
         // The project's own pair, when it has one, sets the provider before anything else.
         let projectPair = HydraPair.projectPair(project.hydraPairID, hydraOn: settings.hydraEnabled, in: hydraPickerPairs)
-        var provider = projectPair?.provider ?? current?.provider ?? settings.defaultProvider
+        // With no chat to carry from (a fresh launch), the pair last entered from the
+        // picker is where the new chat starts. Before any pair has been entered since
+        // this was remembered, the chat last worked in stands in: its pair if it led one,
+        // and none if it had left its pair for a model of its own.
+        let lastPairID = settings.lastHydraPairID
+            ?? threads.filter { !$0.isHelper }.max { $0.updatedAt < $1.updatedAt }?.hydraPairID
+        let lastPair = current == nil && settings.hydraEnabled
+            ? lastPairID.flatMap { id in hydraPickerPairs.first { $0.id == id } }
+            : nil
+        var provider = projectPair?.provider ?? current?.provider ?? lastPair?.provider ?? settings.defaultProvider
         if !installed.isEmpty, !installed.contains(provider) { provider = installed[0] }
         // A chat that starts on the project's pair takes that pair's lead model. A pair with
         // no lead model keeps the current chat's model, as the picker does.
@@ -571,15 +609,10 @@ final class AppModel {
             fastMode: fastMode
         )
         // A chat made from one that leads a pair carries the pair along with the model.
-        // With no chat to carry from (a fresh launch), the pair last entered from the
-        // picker is where the new chat starts, on its lead model and effort, provided
-        // Hydra is on and the pair is still there for this provider. Before any pair
-        // has been entered since this was remembered, the pair of the chat last worked
-        // in stands in, so an existing pair chat carries over the first relaunch too.
-        // The project's pair wins over all of that: the user set it as the rule for this
-        // project, so every new chat here starts on it.
-        let lastPairID = settings.lastHydraPairID
-            ?? threads.filter { $0.hydraPairID != nil && !$0.isHelper }.max { $0.updatedAt < $1.updatedAt }?.hydraPairID
+        // With no chat to carry from, the last pair is where the new chat starts, on its
+        // lead model and effort, provided its provider is still installed. The project's
+        // pair wins over all of that: the user set it as the rule for this project, so
+        // every new chat here starts on it.
         if let pair = projectPair {
             let lead = hydraLead(of: pair, for: thread)
             thread.model = lead.model
@@ -589,22 +622,13 @@ final class AppModel {
             thread.hydraEnabled = true
         } else if carriesModel {
             thread.hydraPairID = current?.hydraPairID
-        } else if settings.hydraEnabled, let pairID = lastPairID,
-                  let pair = hydraPickerPairs.first(where: { $0.id == pairID }), pair.provider == provider {
+        } else if let pair = lastPair, pair.provider == provider {
             let lead = hydraLead(of: pair, for: thread)
             thread.model = lead.model
             thread.effort = lead.effort
             thread.fastMode = lead.fastMode
             thread.hydraPairID = pair.id
             thread.hydraEnabled = true
-        }
-        threads.append(thread)
-        updateProject(project.id) { $0.isExpanded = true }
-        rememberLastProject(project.id)
-        selectedThreadID = thread.id
-        scheduleSave()
-        if (workspace ?? settings.defaultWorkspaceMode) == .worktree {
-            Task { await createWorktree(for: thread.id) }
         }
         return thread
     }
