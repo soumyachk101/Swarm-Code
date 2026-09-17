@@ -294,9 +294,10 @@ struct Git: Sendable {
         (try? await run(["merge-base", "--is-ancestor", commit, other]))?.succeeded ?? false
     }
 
-    /// Paths that differ between two commits or trees.
+    /// Paths that differ between two commits or trees, as they are on disk: NUL-separated,
+    /// so a name with a quote or a tab in it comes back unquoted and usable as a path.
     func changedPaths(from: String, to: String) async throws -> [String] {
-        try await output(["diff", "--name-only", from, to]).split(separator: "\n").map(String.init)
+        try await output(["diff", "--name-only", "-z", from, to]).split(separator: "\0").map(String.init)
     }
 
     /// Paths with uncommitted changes, staged or not, untracked ones included.
@@ -530,11 +531,18 @@ struct Git: Sendable {
     }
 
     /// The patch between two trees or refs. `binary` puts whole binary blobs in it, so a
-    /// picture a head added applies elsewhere.
-    func diff(from: String, to: String, binary: Bool = false) async throws -> String {
-        var arguments = ["diff", "--no-ext-diff", "-M"]
+    /// picture a head added applies elsewhere. Over `paths` alone when given: a diff of a
+    /// tree that holds build output runs to hundreds of megabytes, so the caller names
+    /// the files it wants rather than cutting the rest out afterwards.
+    func diff(from: String, to: String, binary: Bool = false, paths: [String]? = nil) async throws -> String {
+        // `diff` takes no pathspec file, so the paths go on the command line, and as
+        // plain names: a `?` or `[` in one is a character, not a pattern.
+        var arguments = paths == nil ? [] : ["--literal-pathspecs"]
+        arguments += ["diff", "--no-ext-diff", "-M"]
         if binary { arguments.append("--binary") }
-        let result = try await run(arguments + [from, to])
+        arguments += [from, to]
+        if let paths { arguments += ["--"] + paths }
+        let result = try await run(arguments, timeout: 300)
         try Self.check(result)
         return result.output
     }
