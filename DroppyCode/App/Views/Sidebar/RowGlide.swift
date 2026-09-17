@@ -41,8 +41,12 @@ final class RowGlideAnimator {
         /// Landing is close: the real row shows again under the ghost's last frames.
         var hasArrived = false
         /// The new row reported its frame, so the ghost lands on a real row; otherwise
-        /// it is headed for the fallback and fades out on the way.
+        /// it is headed for the fallback: past the list's edge, where the clip takes it.
         var hasLanded = false
+        /// Headed for the folded `Settled` header, which moves as the list closes up: the
+        /// ghost follows the header's frame (see `noteSettledHeader`) and fades into it
+        /// as it arrives.
+        var headsForHeader = false
     }
 
     private(set) var glides: [Glide] = []
@@ -57,7 +61,19 @@ final class RowGlideAnimator {
     /// on screen; a settle with the section folded lands on it.
     @ObservationIgnored private(set) var settledHeaderFrame: CGRect?
 
-    func noteSettledHeader(_ frame: CGRect?) { settledHeaderFrame = frame }
+    /// The header reports its frame as it moves; a ghost headed for it re-targets on every
+    /// report, so it lands where the header ends up, not where it was when the ghost took
+    /// off. Same-frame reports are dropped so the layer is not re-rendered for nothing.
+    func noteSettledHeader(_ frame: CGRect?) {
+        settledHeaderFrame = frame
+        guard let frame else { return }
+        for index in glides.indices where glides[index].headsForHeader && !glides[index].hasLanded {
+            let target = CGRect(x: glides[index].to.minX, y: frame.maxY - glides[index].to.height, width: glides[index].to.width, height: glides[index].to.height)
+            if abs(target.minY - glides[index].to.minY) > 0.5 {
+                glides[index].to = target
+            }
+        }
+    }
 
     /// A landing frame counts through the first half second of the flight, from the
     /// thread's arriving row only; the new row lays out in the pass after the change,
@@ -77,13 +93,14 @@ final class RowGlideAnimator {
         departure: NSImage,
         arrival: NSImage,
         departureFill: Double,
-        arrivalFill: Double
+        arrivalFill: Double,
+        headsForHeader: Bool = false
     ) {
         guard from.width > 1, from.height > 1, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
         glides.removeAll { $0.threadID == threadID }
         glides.append(Glide(
             threadID: threadID, direction: direction, departure: departure, arrival: arrival,
-            departureFill: departureFill, arrivalFill: arrivalFill, from: from, to: fallback, bounds: bounds
+            departureFill: departureFill, arrivalFill: arrivalFill, from: from, to: fallback, bounds: bounds, headsForHeader: headsForHeader
         ))
         setHiding(threadID, true)
     }
@@ -225,9 +242,10 @@ private struct RowGlideView: View {
                         .opacity(settles ? 1 - 0.2 * p : 1 - Self.smoothstep(0.55, 0.9, p))
                         .position(x: checkStart + (checkEnd - checkStart) * checkTravel, y: frame.midY)
                 }
-                // A ghost with no row to hand over to (headed for the list's edge or the
-                // folded header) fades out on the way instead of vanishing on arrival.
-                .opacity(glide.hasLanded ? 1 : 1 - Self.smoothstep(0.55, 0.92, p))
+                // A ghost landing on a row, or slipping out past the list's edge (the clip to
+                // bounds takes it), stays opaque; one headed for the folded header fades into the
+                // header's line over the last stretch of the flight, so it reads as absorbed.
+                .opacity(glide.headsForHeader && !glide.hasLanded ? 1 - Self.smoothstep(0.8, 0.97, p) : 1)
                 .frame(width: canvas.width, height: canvas.height, alignment: .topLeading)
                 .clipShape(FrameShape(frame: glide.bounds))
             } keyframes: { _ in

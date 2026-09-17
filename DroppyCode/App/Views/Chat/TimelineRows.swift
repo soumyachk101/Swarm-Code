@@ -813,7 +813,6 @@ private struct HydraMergeOutcome {
     }
 }
 
-/// The merge's progress: a track of one dot per stage with the head above it, hopping to the dot of the stage under way. Done, every dot lights and the head gives one small bounce before the track fades and the head settles back to its resting size.
 /// The merge's progress: a track of one dot per stage with the head above it, hopping to
 /// the dot of the stage under way. Done, every dot lights and the head gives one small
 /// bounce before the track fades and the head settles back to its resting size.

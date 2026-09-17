@@ -4,19 +4,30 @@ All notable changes to Droppy Code are documented here, newest first. The format
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date.
 
-## [Unreleased]
+## [1.5.5] - 2026-09-17
+
+Droppy Code 1.5.5 gives a Hydra pair more to work with: named head profiles that route each task to a purpose-built configuration, a global cap on how many heads work at once, custom pair names with fused icons, and a running turn that can stay in the order it arrived. It also fixes resumed Claude Code chats the CLI no longer remembers, token totals for resumed chats and cross-project heads, and merges that a head's build output had swamped. Apple silicon, macOS 26 or later. Signed and notarized.
 
 ### New features
 - A pair can carry head profiles: purpose-named configurations ("quick", "deep", "visual" or any word) with their own provider, model or effort, edited in the pair's Head profiles section in Settings. The lead hears which profiles exist and routes each task to one by name in its delegation block; a task without a profile, or with a name the pair does not have, runs on the heads' shared model as before.
 - Chronological order, a switch in Settings › Conversation: a running turn's replies and tool runs stay in the order they arrived instead of the steps before the last tool call gathering into the working line. Off by default; finished turns keep their fold either way.
 - Heads at once, a row of buttons on the Hydra page: cap how many heads work at a time for every chat, Off or 1 to 8, without setting up a pair. Off by default; a pair with a lower cap of its own keeps it.
+- A pair can carry a name of its own, typed on the Hydra page in Settings, and shows as a fused icon of its lead's and heads' provider marks in the composer's model picker and model chip.
 
 ### Bug fixes
 - Opening the working line while scrolled up now follows the stream: the timeline pins to the end and keeps up with the reasoning as it arrives, instead of leaving the expanded thinking fixed while the text streams out of view below.
 - OpenCode models show their reasoning levels before a chat starts: the effort slider no longer says "This model has one reasoning level" for a model that has several until the first message is sent, and starting a chat no longer forgets the levels of every other OpenCode model. OpenCode reports the levels of the model a session is on, so the catalog now asks it for each model in turn, the way it already did for Cursor.
+- Resuming a Claude Code chat whose conversation the CLI no longer has ("No conversation found with session ID") starts the session over instead of leaving the chat stuck: a CLI that exits before answering the first request is treated as a lost session and a new one begins.
+- Token totals are right again for resumed chats: a resumed Codex chat no longer adds the whole conversation's total on every turn, Claude Code usage is counted per turn, and heads working in another project count toward their chat.
+- A merge no longer carries a head's build output: files under build folders that a head's command touched are left out of the merge and its command rows, so a merge that succeeded is no longer reported as one that did not.
+- Heads sent to another project now form that project's merge: their landed files were reported as outside every project because the paths were never anchored to that checkout.
+- The Hydra reports popover no longer jumps when a head's report is opened: expanding a report no longer animates the toggle the way the popover's height is measured, and the report lays out eagerly instead of lazily, so the popover takes its height once rather than resizing a second time after the rows appear.
+- Settling a chat with the Settled section folded no longer leaves its row fading out in the empty space below the header: the row's ghost follows the header as the list closes up and is absorbed into it, and a ghost leaving past the list's edge slips out without fading on the way.
 
 ### Refinements
 - The disk image opens to a styled drag-to-Applications window, with its own background and the app icon as the volume icon, the same installer window Droppy has.
+- The merge card in the timeline now walks a track of dots, one per stage, that fills as the merge moves through its stages, with the head hopping along above it and giving a small bounce once every dot lights; finished heads and the merge pill settle into place with a glide transition.
+- Head popovers now open on the head itself when a head's name or mention is clicked in the timeline: a finished head's pill opens its report under a header with the head's glyph, name, status and task, and a brief's pill opens the brief the same way, while the delegation card names each head it summons with its glyph and the project it goes to.
 
 ## [1.5.4] - 2026-09-17
 
