@@ -63,11 +63,12 @@ struct AvailableUpdate: Codable, Equatable, Sendable {
 final class UpdateChecker {
     static let shared = UpdateChecker()
 
-    /// The project on GitLab. Public, so the API needs no token.
-    static let projectID = "86415974"
-    static let projectURL = URL(string: "https://gitlab.com/droppyformac1/swarmai")!
-    static let releasesURL = projectURL.appending(path: "-/releases")
-    private static let apiURL = URL(string: "https://gitlab.com/api/v4/projects/\(projectID)/releases?per_page=20")!
+    /// The project on GitHub. Public, so the API needs no token.
+    static let repoOwner = "soumyachk101"
+    static let repoName = "SwarmAI-V1"
+    static let projectURL = URL(string: "https://github.com/soumyachk101/SwarmAI-V1")!
+    static let releasesURL = URL(string: "https://github.com/soumyachk101/SwarmAI-V1/releases")!
+    private static let apiURL = URL(string: "https://api.github.com/repos/soumyachk101/SwarmAI-V1/releases?per_page=20")!
 
     /// How often the background check runs, and how stale a check may be before the app
     /// coming to the front runs another.
@@ -106,8 +107,11 @@ final class UpdateChecker {
         configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 30
-        configuration.waitsForConnectivity = false
-        configuration.httpAdditionalHeaders = ["User-Agent": "SwarmAI/\(AppInfo.version)", "Accept": "application/json"]
+        var headers = ["User-Agent": "SwarmAI/\(AppInfo.version)", "Accept": "application/vnd.github+json"]
+        if let token = ProcessInfo.processInfo.environment["GITHUB_TOKEN"] ?? ProcessInfo.processInfo.environment["GH_TOKEN"] {
+            headers["Authorization"] = "Bearer \(token)"
+        }
+        configuration.httpAdditionalHeaders = headers
         return URLSession(configuration: configuration)
     }()
 
@@ -180,38 +184,39 @@ final class UpdateChecker {
                 notifyOnce(about: found)
             }
         } catch {
-            lastError = (error as? UpdateError)?.errorDescription ?? "Couldn't reach GitLab."
+            lastError = (error as? UpdateError)?.errorDescription ?? "Couldn't reach GitHub."
             lastCheckedAt = .now
             UserDefaults.standard.set(lastCheckedAt, forKey: Keys.lastChecked)
         }
         return updateAvailable
     }
 
-    private func fetchReleases() async throws -> [GitLabRelease] {
+    private func fetchReleases() async throws -> [GitHubRelease] {
         let (data, response) = try await session.data(from: Self.apiURL)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             throw UpdateError.badResponse((response as? HTTPURLResponse)?.statusCode ?? -1)
         }
-        return try JSONDecoder().decode([GitLabRelease].self, from: data)
+        return try JSONDecoder().decode([GitHubRelease].self, from: data)
     }
 
-    /// The newest stable release that ships a disk image. Prereleases and upcoming releases
+    /// The newest stable release that ships a disk image. Prereleases and drafts
     /// never count, whatever their date.
-    static func newestRelease(in releases: [GitLabRelease]) -> AvailableUpdate? {
+    static func newestRelease(in releases: [GitHubRelease]) -> AvailableUpdate? {
         var best: (AppVersion, AvailableUpdate)?
         for release in releases {
-            guard !release.upcomingRelease, let version = AppVersion(release.tagName) else { continue }
-            if let releasedAt = release.releasedAt, releasedAt > .now { continue }
-            guard let link = release.assets.links.first(where: { $0.isDiskImage }) else { continue }
-            guard let downloadURL = URL(string: link.directAssetURL ?? link.url) else { continue }
+            guard !release.prerelease, !release.draft, let version = AppVersion(release.tagName) else { continue }
+            if let publishedAt = release.publishedAt, publishedAt > .now { continue }
+            guard let asset = release.assets.first(where: { $0.isDiskImage }) else { continue }
+            guard let downloadURL = URL(string: asset.browserDownloadURL) else { continue }
+            let pageURL = release.htmlURL.flatMap(URL.init(string:)) ?? releasesURL.appending(path: "tag/\(release.tagName)")
             let candidate = AvailableUpdate(
                 version: AppVersion.text(ofTag: release.tagName),
                 tag: release.tagName,
                 downloadURL: downloadURL,
-                size: nil,
-                notes: release.description ?? "",
-                releasedAt: release.releasedAt,
-                pageURL: releasesURL.appending(path: release.tagName)
+                size: asset.size,
+                notes: release.body ?? "",
+                releasedAt: release.publishedAt,
+                pageURL: pageURL
             )
             if let current = best, current.0 >= version { continue }
             best = (version, candidate)
@@ -270,58 +275,58 @@ enum UpdateError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noRelease: "No release with a disk image was found."
-        case .badResponse(let status): "GitLab answered with HTTP \(status)."
+        case .badResponse(let status): "GitHub answered with HTTP \(status)."
         }
     }
 }
 
-/// The parts of a GitLab release the checker reads.
-struct GitLabRelease: Decodable, Sendable {
-    struct Assets: Decodable, Sendable {
-        var links: [Link]
-    }
-
-    struct Link: Decodable, Sendable {
+/// The parts of a GitHub release the checker reads.
+struct GitHubRelease: Decodable, Sendable {
+    struct Asset: Decodable, Sendable {
         var name: String
-        var url: String
-        var directAssetURL: String?
+        var browserDownloadURL: String
+        var size: Int64?
 
         var isDiskImage: Bool {
-            let path = (directAssetURL ?? url).lowercased()
+            let path = browserDownloadURL.lowercased()
             return path.hasSuffix(".dmg") || name.lowercased().hasSuffix(".dmg")
         }
 
         private enum CodingKeys: String, CodingKey {
-            case name, url
-            case directAssetURL = "direct_asset_url"
+            case name, size
+            case browserDownloadURL = "browser_download_url"
         }
     }
 
     var tagName: String
     var name: String?
-    var description: String?
-    var releasedAt: Date?
-    var upcomingRelease: Bool
-    var assets: Assets
+    var body: String?
+    var publishedAt: Date?
+    var prerelease: Bool
+    var draft: Bool
+    var htmlURL: String?
+    var assets: [Asset]
 
     private enum CodingKeys: String, CodingKey {
         case tagName = "tag_name"
-        case name, description, assets
-        case releasedAt = "released_at"
-        case upcomingRelease = "upcoming_release"
+        case name, body, assets, prerelease, draft
+        case publishedAt = "published_at"
+        case htmlURL = "html_url"
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         tagName = try container.decode(String.self, forKey: .tagName)
         name = try container.decodeIfPresent(String.self, forKey: .name)
-        description = try container.decodeIfPresent(String.self, forKey: .description)
-        releasedAt = try container.decodeIfPresent(String.self, forKey: .releasedAt).flatMap(Self.parseDate)
-        upcomingRelease = try container.decodeIfPresent(Bool.self, forKey: .upcomingRelease) ?? false
-        assets = try container.decodeIfPresent(Assets.self, forKey: .assets) ?? Assets(links: [])
+        body = try container.decodeIfPresent(String.self, forKey: .body)
+        publishedAt = try container.decodeIfPresent(String.self, forKey: .publishedAt).flatMap(Self.parseDate)
+        prerelease = try container.decodeIfPresent(Bool.self, forKey: .prerelease) ?? false
+        draft = try container.decodeIfPresent(Bool.self, forKey: .draft) ?? false
+        htmlURL = try container.decodeIfPresent(String.self, forKey: .htmlURL)
+        assets = try container.decodeIfPresent([Asset].self, forKey: .assets) ?? []
     }
 
-    /// GitLab writes `2026-09-13T18:28:42.057Z`; the fraction is optional.
+    /// GitHub writes `2026-09-13T18:28:42Z` or `2026-09-13T18:28:42.057Z`.
     nonisolated static func parseDate(_ text: String) -> Date? {
         let fractional = ISO8601DateFormatter()
         fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Publishes a built disk image as a GitLab release: what the in-app updater
-# offers and what the website's download link resolves to.
+# Publishes a built disk image as a GitHub release: what the in-app updater
+# offers and what the download link resolves to.
 #
 #   scripts/publish_release.sh [path/to/SwarmAI-1.2.3.dmg]
 #
@@ -8,19 +8,15 @@
 # the one scripts/release.sh leaves in build.noindex. The notes come from
 # ReleaseNotes/<version>.md, written as "## New features", "## Bug fixes" and
 # "## Refinements" headings with a bullet per change: the app reads those
-# three sections into its cards. Needs glab signed in as a maintainer.
+# three sections into its cards. Needs gh signed in.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-PROJECT="droppyformac1/swarmai"
-ENCODED_PROJECT="${PROJECT//\//%2F}"
+PROJECT="soumyachk101/SwarmAI-V1"
 VERSION=$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -1)
 TAG="v$VERSION"
 DMG="${1:-build.noindex/SwarmAI-$VERSION.dmg}"
 NOTES="ReleaseNotes/$VERSION.md"
-# Every release links its image under this path, so GitLab's
-# /-/releases/permalink/latest/downloads/SwarmAI.dmg is always the newest.
-ASSET_PATH="/SwarmAI.dmg"
 
 step() { printf '\n==> %s\n' "$1"; }
 
@@ -40,24 +36,14 @@ if ! git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
 fi
 git push origin "$TAG"
 
-step "Creating the release"
-if glab release view "$TAG" -R "$PROJECT" > /dev/null 2>&1; then
-  echo "Release $TAG already exists on GitLab."
+step "Creating the GitHub release"
+if gh release view "$TAG" -R "$PROJECT" > /dev/null 2>&1; then
+  echo "Release $TAG already exists on GitHub."
   exit 1
 fi
-glab release create "$TAG" "$DMG#SwarmAI $VERSION (Apple silicon)" \
+gh release create "$TAG" "$DMG#SwarmAI $VERSION (Apple silicon)" \
   -R "$PROJECT" \
-  --name "SwarmAI $VERSION" \
+  --title "SwarmAI $VERSION" \
   --notes-file "$NOTES"
 
-step "Pointing the latest-download permalink at it"
-LINK_ID=$(glab api "projects/$ENCODED_PROJECT/releases/$TAG/assets/links" \
-  | python3 -c 'import json, sys; links = json.load(sys.stdin); print(next(l["id"] for l in links if l["url"].lower().endswith(".dmg")))')
-# GitLab insists on a name or url in every link update, so the name rides along.
-glab api -X PUT "projects/$ENCODED_PROJECT/releases/$TAG/assets/links/$LINK_ID" \
-  -f "name=SwarmAI $VERSION (Apple silicon)" -f "direct_asset_path=$ASSET_PATH" -f link_type=package > /dev/null
-
-step "Checking the permalink"
-curl -sIL "https://gitlab.com/$PROJECT/-/releases/permalink/latest/downloads${ASSET_PATH}" | grep -i "content-disposition"
-
-printf '\nPublished: https://gitlab.com/%s/-/releases/%s\n' "$PROJECT" "$TAG"
+printf '\nPublished: https://github.com/%s/releases/tag/%s\n' "$PROJECT" "$TAG"
