@@ -7,14 +7,15 @@ import SwiftUI
 /// head's own colour. Under it, what that amounts to; how long the head has been at it
 /// sits in the strip's pill (see `HydraElapsedTime`). The steps themselves are the
 /// sidebar's to show; here the shape of the work is enough, and a stave under the pointer
-/// names the steps it stands for on a card above the bar, as the timeline rail previews
+/// names the step it stands for on a card above the bar, as the timeline rail previews
 /// the message under the pointer.
 ///
 /// The staves are one `Canvas`, redrawn on the display's clock while the head works: a new
 /// stave rises over 0.45 s from the moment its entry arrived, and a soft highlight sweeps
 /// the filled staves every 1.8 s. Once the head is done and its last stave is up, the clock
-/// stops and the bar is drawn once. Past what the width holds, consecutive steps share a
-/// stave, the tallest of them setting its height, so the bar always fits and keeps filling.
+/// stops and the bar is drawn once. A stave is always one step: past what the width holds,
+/// the oldest steps slide off the left and the bar shows the latest ones, so it always
+/// fits and keeps moving.
 struct HydraProgressBar: View {
     let runtime: ThreadRuntime
     let startedAt: Date
@@ -31,7 +32,7 @@ struct HydraProgressBar: View {
     /// A stave arrived within the last `rise` seconds and is still growing, the one time
     /// a bar without the sweep needs the display's clock.
     @State private var isRising = false
-    /// The stave under the pointer, whose steps the card names.
+    /// The stave under the pointer, whose step the card names.
     @State private var hoveredIndex: Int?
     /// The last events, staves and counts, so an evaluation where nothing changed
     /// redraws without walking every entry again.
@@ -56,9 +57,6 @@ struct HydraProgressBar: View {
     /// running heads keep the sweep, the rest stand still between staves, and a bar
     /// takes a slot as soon as one frees up.
     static let sweepSlots = 3
-    /// How many of a stave's steps the card lists before "and N more": few enough that
-    /// the card clears the strip of a compact panel, where the bar sits under the task.
-    private static let cardLines = 4
 
     /// The last events, staves and counts, keyed by entry identity plus each tool
     /// row's status, since a status flip rewrites the step's verb. A hit skips the
@@ -190,46 +188,28 @@ struct HydraProgressBar: View {
         .accessibilityLabel(Text(verbatim: "\(counts.sentence), \(elapsed)\(isRunning ? " so far" : "")"))
     }
 
-    /// The steps a stave stands for, on the rail's card: one step is the title on its own,
-    /// several are counted with the first few listed. Sits just above the bar, centred on
+    /// The step a stave stands for, on the rail's card. Sits just above the bar, centred on
     /// the stave as far as the bar's width allows, and never takes the pointer.
     private func stepsCard(for stave: Stave, at index: Int) -> some View {
-        let steps = stave.steps
-        let listed = steps.count > 1 ? Array(steps.prefix(Self.cardLines)) : []
-        let more = steps.count - listed.count
         let centre = CGFloat(index) * Self.pitch + Self.staveWidth / 2
         let x = min(max(0, centre - Self.cardWidth / 2), max(0, width - Self.cardWidth))
-        return VStack(alignment: .leading, spacing: 3) {
-            Text(verbatim: steps.count == 1 ? steps[0] : "\(steps.count) steps")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Chrome.primaryText)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            ForEach(Array(listed.enumerated()), id: \.offset) { _, step in
-                Text(verbatim: step)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Chrome.secondaryText)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            if listed.count < steps.count, more > 0 {
-                Text(verbatim: "and \(more) more")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Chrome.secondaryText)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(width: Self.cardWidth, alignment: .leading)
-        .modifier(ProgressCardSurface(isOnGlassPanel: isOnGlassPanel, isDark: colorScheme == .dark))
-        // Hung from a zero-height frame at the bar's top edge, so the card's bottom sits 8
-        // points above the bar whatever its height: an alignment guide on the overlay
-        // was not honoured and left the card over the staves.
-        .padding(.bottom, 8)
-        .frame(height: 0, alignment: .bottom)
-        .offset(x: x)
-        .allowsHitTesting(false)
-        .transition(.opacity)
+        return Text(verbatim: stave.step)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(Chrome.primaryText)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(width: Self.cardWidth, alignment: .leading)
+            .modifier(ProgressCardSurface(isOnGlassPanel: isOnGlassPanel, isDark: colorScheme == .dark))
+            // Hung from a zero-height frame at the bar's top edge, so the card's bottom sits 8
+            // points above the bar whatever its height: an alignment guide on the overlay
+            // was not honoured and left the card over the staves.
+            .padding(.bottom, 8)
+            .frame(height: 0, alignment: .bottom)
+            .offset(x: x)
+            .allowsHitTesting(false)
+            .transition(.opacity)
     }
 
     // MARK: - Steps
@@ -246,8 +226,8 @@ struct HydraProgressBar: View {
 
         let kind: Kind
         let arrivedAt: Date
-        /// What the stave stands for, one line per step, for the card under the pointer.
-        var steps: [String]
+        /// What the stave stands for, for the card under the pointer.
+        let step: String
 
         /// The stave's share of the bar's height.
         var height: CGFloat {
@@ -306,30 +286,23 @@ struct HydraProgressBar: View {
                 case .command: call.edits.isEmpty ? .command : .edit
                 default: call.edits.isEmpty ? .lookup : .edit
                 }
-                return Stave(kind: kind, arrivedAt: entry.item.date, steps: [ToolPresentation.label(for: call)])
+                return Stave(kind: kind, arrivedAt: entry.item.date, step: ToolPresentation.label(for: call))
             case .assistant:
                 guard case .assistant(let message) = entry.item.content else { return nil }
                 // The first line of the reply is all the stave shows, so only the head of the
                 // text is split, not the whole reply on every streamed flush.
                 let words = TextCleanup.singleLine(String(message.text.prefix(600)), limit: 60)
-                return Stave(kind: .reply, arrivedAt: entry.item.date, steps: [words.isEmpty ? "Replied" : "Replied: \(words)"])
+                return Stave(kind: .reply, arrivedAt: entry.item.date, step: words.isEmpty ? "Replied" : "Replied: \(words)")
             default:
                 return nil
             }
         }
     }
 
-    /// The staves the bar draws: the events themselves while they fit, else consecutive
-    /// runs of them, each run's stave as tall as its tallest member. A run is as old as
-    /// its first member, so its stave rises once, when the run opens, and only grows after.
+    /// The staves the bar draws, one per event: all of them while they fit, else the
+    /// latest `capacity` of them, the oldest having slid off the left.
     private static func staves(for events: [Stave], capacity: Int) -> [Stave] {
-        guard events.count > capacity else { return events }
-        let run = Int((Double(events.count) / Double(capacity)).rounded(.up))
-        return stride(from: 0, to: events.count, by: run).map { start in
-            let bucket = events[start..<min(start + run, events.count)]
-            let tallest = bucket.max { $0.height < $1.height } ?? events[start]
-            return Stave(kind: tallest.kind, arrivedAt: events[start].arrivedAt, steps: bucket.flatMap(\.steps))
-        }
+        events.count > capacity ? Array(events.suffix(capacity)) : events
     }
 
     // MARK: - Drawing

@@ -58,9 +58,10 @@ struct ChatView: View {
     /// Whether the panels and the room the chat makes for them follow the pointer with
     /// no spring: a panel grip, the sidebar's edge or the terminal's divider is held. A
     /// sidebar drag or a terminal-divider drag moves the pane every frame the way a live
-    /// resize does; a spring restarted per frame lagged the panels behind and swam.
+    /// resize does; a spring restarted per frame lagged the panels behind and swam. The
+    /// sidebar's open or close slide is held the same way for its run.
     private var panelsHeld: Bool {
-        panelResize.isActive || model.sidebar.isDragging || runtime.isTerminalResizing
+        panelResize.isActive || model.sidebar.isDragging || model.sidebar.isSliding || runtime.isTerminalResizing
     }
     @State private var hydraShownSince: Date?
     @State private var hydraLingers = false
@@ -256,8 +257,9 @@ struct ChatView: View {
                 for drag in autoDrags.values { drag.reclamp(in: layout) }
             }
             // A sidebar or terminal-divider drag reshapes the pane per frame the way a
-            // live resize does; the timeline and composer read one signal for both.
-            .onChange(of: model.sidebar.isDragging || runtime.isTerminalResizing, initial: true) { _, dragging in
+            // live resize does; the sidebar's toggle slide reshapes the pane per frame too;
+            // the timeline and composer read one signal for both.
+            .onChange(of: model.sidebar.isDragging || model.sidebar.isSliding || runtime.isTerminalResizing, initial: true) { _, dragging in
                 liveResize.isPaneResizing = dragging
             }
             // The pane's final size: docked panels land on their new docked spot, and

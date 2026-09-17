@@ -262,11 +262,22 @@ final class SidebarLayout {
     private(set) var holdsTrafficLights: Bool
     /// True while the sidebar's edge is held; the chat follows the width with no spring until it is let go.
     private(set) var isDragging = false
+    /// True for the run of the open or close slide started by `toggle()` or a drag let go past
+    /// the collapse point: the chat treats the slide as a pane reshape (no springs inside the
+    /// timeline, one layout width) the way it treats a drag of the edge.
+    private(set) var isSliding = false
+    /// How much the chat pane's width changes over the current slide: negative while the
+    /// sidebar opens, positive while it closes. Zero outside a slide.
+    private(set) var slideDelta: CGFloat = 0
+    @ObservationIgnored private var slideTask: Task<Void, Never>?
 
     /// The width from which the buttons fit beside the sidebar's edge with their usual clearance.
     static var trafficLightsFitWidth: CGFloat {
         Chrome.trafficLightLeading + Chrome.trafficLightsWidth + Chrome.trafficLightClearance
     }
+
+    /// The spring of Chrome.panelSlide is visually settled by then.
+    private static var slideRun: Int { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 220 : 420 }
 
     @ObservationIgnored private var anchorWidth: CGFloat = 0
     @ObservationIgnored private var restingWidth: CGFloat
@@ -296,7 +307,22 @@ final class SidebarLayout {
         if fits != holdsTrafficLights { holdsTrafficLights = fits }
     }
 
+    private func beginSlide(delta: CGFloat) {
+        slideDelta = delta
+        isSliding = true
+        slideTask?.cancel()
+        slideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.slideRun))
+            guard !Task.isCancelled, let self else { return }
+            isSliding = false
+            slideDelta = 0
+        }
+    }
+
     func beginDrag() {
+        slideTask?.cancel()
+        isSliding = false
+        slideDelta = 0
         isDragging = true
         if isVisible {
             anchorWidth = width
@@ -317,6 +343,7 @@ final class SidebarLayout {
 
     func endDrag() {
         if width < Self.collapseThreshold {
+            beginSlide(delta: width)
             withAnimation(Chrome.panelSlide) { isVisible = false }
             width = restingWidth
         } else {
@@ -329,7 +356,9 @@ final class SidebarLayout {
     }
 
     func toggle() {
-        if !isVisible { width = restingWidth }
+        let opening = !isVisible
+        if opening { width = restingWidth }
+        beginSlide(delta: opening ? -restingWidth : width)
         withAnimation(Chrome.panelSlide) { isVisible.toggle() }
         persist()
     }

@@ -816,6 +816,13 @@ private struct HydraMergeOutcome {
 /// The merge's progress: a track of one dot per stage with the head above it, hopping to
 /// the dot of the stage under way. Done, every dot lights and the head gives one small
 /// bounce before the track fades and the head settles back to its resting size.
+///
+/// The whole track is one animatable drawing (`HydraMergeTrackBody`): the head's place on
+/// the track, how far the outcome has lit the dots, and how far the head has settled are
+/// three continuous values, and every frame is drawn from them. So a stage that changes
+/// while the head is still in the air retargets the same motion instead of restarting it
+/// from the ground, a jump over several dots arcs over each one, and the lift, the glide
+/// and the size change can never fall out of step with each other.
 struct HydraMergeTrack: View {
     enum Mode { case running, done, resting }
 
@@ -825,89 +832,87 @@ struct HydraMergeTrack: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    var body: some View {
+        HydraMergeTrackBody(
+            position: CGFloat(step),
+            done: mode == .running ? 0 : 1,
+            rest: mode == .resting ? 1 : 0,
+            count: count,
+            hops: !reduceMotion
+        )
+        .animation(.smooth(duration: 0.5), value: step)
+        .animation(.smooth(duration: 0.45), value: mode)
+    }
+}
+
+/// The track as drawn from its three continuous values; SwiftUI interpolates them.
+private struct HydraMergeTrackBody: View, Animatable {
+    /// The head's place along the track in dots: whole at rest on a dot, fractional in
+    /// flight between two.
+    var position: CGFloat
+    /// 0 while the merge runs, 1 once it is over: lights the dots left to right and pops
+    /// the head on the way.
+    var done: CGFloat
+    /// 0 on the track, 1 settled: the track fades and the head grows to its resting size.
+    var rest: CGFloat
+    let count: Int
+    let hops: Bool
+
+    var animatableData: AnimatablePair<CGFloat, AnimatablePair<CGFloat, CGFloat>> {
+        get { AnimatablePair(position, AnimatablePair(done, rest)) }
+        set { position = newValue.first; done = newValue.second.first; rest = newValue.second.second }
+    }
+
     private static let dot: CGFloat = 4
     private static let gap: CGFloat = 3
     private static let headSize: CGFloat = 12
     private static let restingSize: CGFloat = 18
     private static let height: CGFloat = 20
-
-    private struct HopValue: Equatable { var lift: CGFloat = 0 }
-    private struct BounceValue: Equatable { var scale: CGFloat = 1 }
+    private static let lift: CGFloat = 4
 
     private var trackWidth: CGFloat {
         CGFloat(count) * Self.dot + CGFloat(count - 1) * Self.gap
     }
 
-    private func dotCentre(_ i: Int) -> CGFloat {
-        CGFloat(i) * (Self.dot + Self.gap) + Self.dot / 2
+    private static func dotCentre(_ i: CGFloat) -> CGFloat {
+        i * (dot + gap) + dot / 2
     }
 
-    private func dotFill(_ i: Int) -> Color {
-        (i <= step || mode == .done) ? Chrome.accent : Chrome.overlay(0.28)
+    /// How lit dot `i` is: fully once the head has reached it, and otherwise as far as
+    /// the outcome's wave has come, sweeping the track left to right as `done` rises.
+    private func lit(_ i: Int) -> CGFloat {
+        let reached: CGFloat = position + 0.35 >= CGFloat(i) ? 1 : 0
+        let wave = min(max(done * CGFloat(count + 1) - CGFloat(i), 0), 1)
+        return max(reached, wave)
     }
 
     var body: some View {
+        // The head in flight arcs over every dot it crosses: the arc is zero at each whole
+        // dot and highest half way, so a jump over several dots hops each one in turn.
+        let arc = hops ? Self.lift * abs(sin(.pi * position)) : 0
+        let side = Self.headSize + (Self.restingSize - Self.headSize) * rest
+        let x = (Self.dotCentre(position) - Self.headSize / 2) * (1 - rest)
+        let y = -arc * (1 - rest) + (Self.height - Self.restingSize) / 2 * rest
+        // One pop as the outcome lands, up and back within the same rise of `done`.
+        let pop = hops ? 1 + 0.18 * sin(.pi * min(done, 1)) : 1
         ZStack(alignment: .topLeading) {
             HStack(spacing: Self.gap) {
                 ForEach(0..<count, id: \.self) { i in
                     Circle()
-                        .fill(dotFill(i))
+                        .fill(Chrome.overlay(0.28))
+                        .overlay(Circle().fill(Chrome.accent).opacity(lit(i)))
                         .frame(width: Self.dot, height: Self.dot)
-                        .animation(.smooth(duration: 0.3), value: step)
-                        .animation(.smooth(duration: 0.25).delay(Double(i) * 0.045), value: mode)
                 }
             }
             .frame(maxHeight: .infinity, alignment: .bottom)
-            .opacity(mode == .resting ? 0 : 1)
-            .animation(.smooth(duration: 0.35), value: mode)
-            head
+            .opacity(1 - rest)
+            HydraMarkImage()
+                .foregroundStyle(Chrome.secondaryText)
+                .frame(width: side, height: side)
+                .scaleEffect(pop)
+                .offset(x: x, y: y)
         }
-        .frame(width: mode == .resting ? Self.restingSize : trackWidth, height: Self.height)
-        .animation(.smooth(duration: 0.35), value: mode)
-    }
-
-    private var headX: CGFloat {
-        guard mode != .resting else { return 0 }
-        return dotCentre(step) - Self.headSize / 2
-    }
-
-    private var headY: CGFloat {
-        mode == .resting ? (Self.height - Self.restingSize) / 2 : 0
-    }
-
-    private var headBase: some View {
-        let side = mode == .resting ? Self.restingSize : Self.headSize
-        return HydraMarkImage()
-            .foregroundStyle(Chrome.secondaryText)
-            .frame(width: side, height: side)
-            .offset(x: headX, y: headY)
-            .animation(.spring(duration: 0.45, bounce: 0.25), value: step)
-            .animation(.smooth(duration: 0.35), value: mode)
-    }
-
-    @ViewBuilder
-    private var head: some View {
-        if reduceMotion {
-            headBase
-        } else {
-            headBase
-                .keyframeAnimator(initialValue: HopValue(), trigger: step) { content, value in
-                    content.offset(y: value.lift)
-                } keyframes: { _ in
-                    KeyframeTrack(\.lift) {
-                        CubicKeyframe(-4, duration: 0.16)
-                        CubicKeyframe(0, duration: 0.26)
-                    }
-                }
-                .keyframeAnimator(initialValue: BounceValue(), trigger: mode == .done) { content, value in
-                    content.scaleEffect(mode == .done ? value.scale : 1)
-                } keyframes: { _ in
-                    KeyframeTrack(\.scale) {
-                        SpringKeyframe(1.18, duration: 0.18)
-                        SpringKeyframe(1, duration: 0.3)
-                    }
-                }
-        }
+        .frame(width: trackWidth + (Self.restingSize - trackWidth) * rest, height: Self.height)
     }
 }
 
