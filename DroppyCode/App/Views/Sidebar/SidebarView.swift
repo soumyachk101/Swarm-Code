@@ -1700,10 +1700,13 @@ private struct SidebarThreadRow: View, Equatable {
             width: from.width,
             height: arrivalHeight
         )
-        // With the settled section folded there is no row to land on, so the ghost
-        // heads for the `Settled` header's line and fades out there.
+        var headsForHeader = false
+        // With the settled section folded there is no row to land on, so the ghost heads
+        // for the `Settled` header's line, following the header as the list closes up, and
+        // fades into it there.
         if settled, model.settings.settledCollapsed, let header = RowGlideAnimator.shared.settledHeaderFrame, bounds.intersects(header) {
             fallback = CGRect(x: from.minX, y: header.maxY - arrivalHeight, width: from.width, height: arrivalHeight)
+            headsForHeader = true
         }
         let animator = RowGlideAnimator.shared
         let badge = ThreadGhostBadge(thread: thread, runtime: model.existingRuntime(for: thread.id))
@@ -1727,7 +1730,7 @@ private struct SidebarThreadRow: View, Equatable {
             departure: departure,
             arrival: arrival,
             departureFill: Self.fill(isSelected: isSelected, isHovering: isHovering),
-            arrivalFill: Self.fill(isSelected: isSelected, isHovering: false)
+            arrivalFill: Self.fill(isSelected: isSelected, isHovering: false), headsForHeader: headsForHeader
         )
     }
 
