@@ -12,7 +12,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-PROJECT="soumyachk101/SwarmAI-V1"
+PROJECT="soumyachk101/SwarmAI-Release"
 VERSION=$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -1)
 TAG="v$VERSION"
 DMG="${1:-build.noindex/SwarmAI-$VERSION.dmg}"
