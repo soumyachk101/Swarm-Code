@@ -4,6 +4,16 @@ All notable changes to Droppy Code are documented here, newest first. The format
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date.
 
+## [1.5.6] - 2026-09-17
+
+Droppy Code 1.5.6 stops a new chat from being told its agent had lost a conversation that never was, and draws the uncapped Heads at once choice as an infinity sign. Apple silicon, macOS 26 or later. Signed and notarized.
+
+### Bug fixes
+- A first message no longer opens with "Claude no longer has this conversation. It starts a new one here": the session started while the message was being typed was resumed as a conversation the CLI had never written whenever a setting changed the launch in between (effort, fast mode, the heads' provider coming online, a heads cap). A session's ID now reaches the chat with its first message, and a session replaced before then is followed by one that starts fresh, with no resume attempt and no warning.
+
+### Refinements
+- The Heads at once row on the Hydra page shows the uncapped choice as an infinity sign instead of the word Off; it reads as "No cap" to VoiceOver, the wording a pair's own editor uses.
+
 ## [1.5.5] - 2026-09-17
 
 Droppy Code 1.5.5 gives a Hydra pair more to work with: named head profiles that route each task to a purpose-built configuration, a global cap on how many heads work at once, custom pair names with fused icons, and a running turn that can stay in the order it arrived. It also fixes resumed Claude Code chats the CLI no longer remembers, token totals for resumed chats and cross-project heads, and merges that a head's build output had swamped. Apple silicon, macOS 26 or later. Signed and notarized.
