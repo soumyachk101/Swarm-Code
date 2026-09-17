@@ -410,6 +410,7 @@ struct HydraHeadsWorkingRow: View {
         VStack(alignment: .leading, spacing: 6) {
             ForEach(finished, id: \.index) { head in
                 FinishedHeadPill(head: head)
+                    .transition(.settleGlide)
             }
         }
         .animation(.smooth(duration: 0.3), value: finished.map(\.index))
@@ -812,10 +813,109 @@ private struct HydraMergeOutcome {
     }
 }
 
+/// The merge's progress: a track of one dot per stage with the head above it, hopping to the dot of the stage under way. Done, every dot lights and the head gives one small bounce before the track fades and the head settles back to its resting size.
+/// The merge's progress: a track of one dot per stage with the head above it, hopping to
+/// the dot of the stage under way. Done, every dot lights and the head gives one small
+/// bounce before the track fades and the head settles back to its resting size.
+struct HydraMergeTrack: View {
+    enum Mode { case running, done, resting }
+
+    let step: Int
+    let count: Int
+    let mode: Mode
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let dot: CGFloat = 4
+    private static let gap: CGFloat = 3
+    private static let headSize: CGFloat = 12
+    private static let restingSize: CGFloat = 18
+    private static let height: CGFloat = 20
+
+    private struct HopValue: Equatable { var lift: CGFloat = 0 }
+    private struct BounceValue: Equatable { var scale: CGFloat = 1 }
+
+    private var trackWidth: CGFloat {
+        CGFloat(count) * Self.dot + CGFloat(count - 1) * Self.gap
+    }
+
+    private func dotCentre(_ i: Int) -> CGFloat {
+        CGFloat(i) * (Self.dot + Self.gap) + Self.dot / 2
+    }
+
+    private func dotFill(_ i: Int) -> Color {
+        (i <= step || mode == .done) ? Chrome.accent : Chrome.overlay(0.28)
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            HStack(spacing: Self.gap) {
+                ForEach(0..<count, id: \.self) { i in
+                    Circle()
+                        .fill(dotFill(i))
+                        .frame(width: Self.dot, height: Self.dot)
+                        .animation(.smooth(duration: 0.3), value: step)
+                        .animation(.smooth(duration: 0.25).delay(Double(i) * 0.045), value: mode)
+                }
+            }
+            .frame(maxHeight: .infinity, alignment: .bottom)
+            .opacity(mode == .resting ? 0 : 1)
+            .animation(.smooth(duration: 0.35), value: mode)
+            head
+        }
+        .frame(width: mode == .resting ? Self.restingSize : trackWidth, height: Self.height)
+        .animation(.smooth(duration: 0.35), value: mode)
+    }
+
+    private var headX: CGFloat {
+        guard mode != .resting else { return 0 }
+        return dotCentre(step) - Self.headSize / 2
+    }
+
+    private var headY: CGFloat {
+        mode == .resting ? (Self.height - Self.restingSize) / 2 : 0
+    }
+
+    private var headBase: some View {
+        let side = mode == .resting ? Self.restingSize : Self.headSize
+        return HydraMarkImage()
+            .foregroundStyle(Chrome.secondaryText)
+            .frame(width: side, height: side)
+            .offset(x: headX, y: headY)
+            .animation(.spring(duration: 0.45, bounce: 0.25), value: step)
+            .animation(.smooth(duration: 0.35), value: mode)
+    }
+
+    @ViewBuilder
+    private var head: some View {
+        if reduceMotion {
+            headBase
+        } else {
+            headBase
+                .keyframeAnimator(initialValue: HopValue(), trigger: step) { content, value in
+                    content.offset(y: value.lift)
+                } keyframes: { _ in
+                    KeyframeTrack(\.lift) {
+                        CubicKeyframe(-4, duration: 0.16)
+                        CubicKeyframe(0, duration: 0.26)
+                    }
+                }
+                .keyframeAnimator(initialValue: BounceValue(), trigger: mode == .done) { content, value in
+                    content.scaleEffect(mode == .done ? value.scale : 1)
+                } keyframes: { _ in
+                    KeyframeTrack(\.scale) {
+                        SpringKeyframe(1.18, duration: 0.18)
+                        SpringKeyframe(1, duration: 0.3)
+                    }
+                }
+        }
+    }
+}
+
 /// The team's work on its way to the remote once the lead has finished, and then the word
-/// on how it went, in one pill in the report pill's frame. While the merge runs: the mark,
-/// the spinner, the stage the merge is at right now (the same words the sidebar shows), and
-/// how long it has been at it. Once the outcome note lands: the note's title with its report
+/// on how it went, in one pill in the report pill's frame. While the merge runs: the head on
+/// its track of dots (see `HydraMergeTrack`) and the stage the merge is at right now (the
+/// same words the sidebar shows). Merged, the track lights and the head settles. Once the outcome note lands: the note's title with its report
 /// a tap away, and the merge request's link beside it. The timeline draws the pill under the
 /// outcome note's own id from the first stage on (see `ThreadRuntime.hydraMergeNoteID`), so
 /// this one row keeps its identity across the change and morphs: the contents crossfade
@@ -826,6 +926,7 @@ struct HydraMergeRow: View {
     let phase: HydraMergePhase
 
     @State private var isShowingReport = false
+    @State private var flourish = false
 
     /// The one motion for anything in the pill changing: the stage's words, the time's
     /// digits, and the merging state giving way to the outcome.
@@ -837,11 +938,15 @@ struct HydraMergeRow: View {
         // A merging pill for a merge that is over (the flag is down and no outcome note
         // has taken the pill's place) has nothing to say: it goes, rather than reading
         // "Merging…" for good. Observed here, so the flag going down takes it away.
-        if isMerging, !runtime.isHydraMerging {
-            EmptyView()
-        } else {
-            pill(outcome: outcome, isMerging: isMerging)
+        ZStack(alignment: .leading) {
+            if isMerging, !runtime.isHydraMerging {
+                EmptyView()
+            } else {
+                pill(outcome: outcome, isMerging: isMerging)
+                    .transition(.settleGlide)
+            }
         }
+        .animation(.spring(Chrome.glideSpring), value: runtime.isHydraMerging)
     }
 
     private func pill(outcome: HydraMergeOutcome?, isMerging: Bool) -> some View {
@@ -850,10 +955,12 @@ struct HydraMergeRow: View {
         // The stage alone, no clock: the merge's stages say what it is doing, and a
         // count of seconds beside them read as a stall.
         return HStack(spacing: 8) {
-            // The mark stays put through the change; it opens the report like the title does.
-            HydraMarkImage()
-                .foregroundStyle(Chrome.secondaryText)
-                .frame(width: 18, height: 18)
+            // The track stays put through the change; the head opens the report like the title does.
+            // Done, the head stands on the last dot: the merge clears its step as the
+            // outcome note lands, so the runtime's own would send it back to the first.
+            let mode = trackMode(outcome: outcome)
+            let count = HydraMergeStage.allCases.count
+            HydraMergeTrack(step: mode == .running ? (runtime.hydraMergeStep?.rawValue ?? 0) : count - 1, count: count, mode: mode)
                 .contentShape(.rect)
                 .onTapGesture {
                     guard let outcome, !outcome.details.isEmpty else { return }
@@ -908,6 +1015,14 @@ struct HydraMergeRow: View {
         .padding(.trailing, 96)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(outcome?.title ?? "Merging the team's work: \(stage)"))
+        .onChange(of: isMerging) { wasMerging, merging in
+            guard wasMerging, !merging, let outcome, outcome.title.contains("Hydra merged") else { return }
+            flourish = true
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1100))
+                flourish = false
+            }
+        }
         // The report parses off the main thread as the pill appears, so the tap that
         // opens it finds the blocks ready rather than parsing the whole batch first.
         .task(id: outcome?.body) {
@@ -916,13 +1031,16 @@ struct HydraMergeRow: View {
         }
     }
 
+    private func trackMode(outcome: HydraMergeOutcome?) -> HydraMergeTrack.Mode {
+        guard outcome != nil else { return .running }
+        return flourish ? .done : .resting
+    }
+
     // MARK: Merging
 
     /// The merging state as shown: the spinner, the stage with its shimmer, the time.
     private func mergingContent(stage: String) -> some View {
         HStack(spacing: 8) {
-            WorkingSpinner(cellSize: 3)
-                .frame(width: 14)
             // A new stage is a new text: the old one fades up and out as the new one fades in
             // from below, each with its own shimmer at its own width. A content transition
             // over the shimmer crossfaded the band's mask between the two lengths, so the
@@ -964,8 +1082,6 @@ struct HydraMergeRow: View {
     /// words, in the font they show in.
     private func mergingLabel(stage: String) -> some View {
         HStack(spacing: 8) {
-            Color.clear
-                .frame(width: 14, height: 1)
             Text(verbatim: stage)
                 .font(.chat(.callout, weight: .medium, zoom: zoom))
                 .animation(Self.change, value: stage)
