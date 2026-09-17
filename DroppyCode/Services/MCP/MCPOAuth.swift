@@ -50,7 +50,7 @@ private struct AuthServerMetadata: Sendable {
     var tokenEndpoint: String
     var registrationEndpoint: String?
     var resource: String?
-    var scopes: [String]?
+    var resourceScopes: [String]?
 }
 
 private struct RegisteredClient: Sendable {
@@ -202,29 +202,59 @@ enum MCPOAuth {
         }
         var issuer: String?
         var resource: String?
-        if let metadataURL = await protectedResourceMetadataURL(baseURL: url) {
+        var resourceScopes: [String]?
+        let challenge = await protectedResourceMetadataURL(baseURL: url)
+        if let metadataURL = challenge.metadataURL {
             if let json = try? await fetchJSON(url: metadataURL) {
                 issuer = json["authorization_servers"]?.array?.first?.string
                 resource = json["resource"]?.string
+                if let listed = json["scopes_supported"]?.array {
+                    let names = listed.compactMap(\.string).filter { !$0.isEmpty }
+                    resourceScopes = names.isEmpty ? nil : names
+                }
             }
+        } else if let requestURL = URL(string: url) {
+            let origin = try origin(of: url)
+            let path = requestURL.path.isEmpty ? "" : requestURL.path
+            let candidates = [
+                origin + "/.well-known/oauth-protected-resource" + path,
+                origin + "/.well-known/oauth-protected-resource",
+            ]
+            for candidate in candidates {
+                if let json = try? await fetchJSON(url: candidate) {
+                    let hasServers = json["authorization_servers"]?.array != nil
+                    let hasResource = json["resource"]?.string != nil
+                    guard hasServers || hasResource else { continue }
+                    issuer = json["authorization_servers"]?.array?.first?.string
+                    resource = json["resource"]?.string
+                    if let listed = json["scopes_supported"]?.array {
+                        let names = listed.compactMap(\.string).filter { !$0.isEmpty }
+                        resourceScopes = names.isEmpty ? nil : names
+                    }
+                    break
+                }
+            }
+        }
+        if resourceScopes == nil {
+            resourceScopes = challenge.challengeScopes
         }
         let fallbackIssuer = try origin(of: url)
         let normalizedIssuer = (issuer ?? fallbackIssuer).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !normalizedIssuer.isEmpty else {
             throw MCPOAuthError.discoveryFailed("That address doesn't look like a URL.")
         }
-        return try await fetchAuthorizationServerMetadata(issuer: normalizedIssuer, resource: resource)
+        return try await fetchAuthorizationServerMetadata(issuer: normalizedIssuer, resource: resource, resourceScopes: resourceScopes)
     }
 
-    private static func protectedResourceMetadataURL(baseURL: String) async -> String? {
-        guard let requestURL = URL(string: baseURL) else { return nil }
+    private static func protectedResourceMetadataURL(baseURL: String) async -> (metadataURL: String?, challengeScopes: [String]?) {
+        guard let requestURL = URL(string: baseURL) else { return (nil, nil) }
         var request = URLRequest(url: requestURL, timeoutInterval: 30)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               let http = response as? HTTPURLResponse,
               http.statusCode == 401
-        else { return nil }
+        else { return (nil, nil) }
         var challenges: [String] = []
         for (key, value) in http.allHeaderFields {
             guard let name = key as? String,
@@ -236,28 +266,60 @@ enum MCPOAuth {
                 challenges.append(contentsOf: parts)
             }
         }
+        var metadataURL: String?
+        var scopesFromChallenge: [String]?
         for challenge in challenges {
-            if let metadataURL = resourceMetadataURL(from: challenge) {
-                return metadataURL
+            if metadataURL == nil, let found = resourceMetadataURL(from: challenge) {
+                metadataURL = found
             }
+            if scopesFromChallenge == nil, let found = challengeScopes(from: challenge) {
+                scopesFromChallenge = found
+            }
+            if metadataURL != nil, scopesFromChallenge != nil { break }
         }
         _ = data
-        return nil
+        return (metadataURL, scopesFromChallenge)
     }
 
     private static func resourceMetadataURL(from header: String) -> String? {
-        guard let range = header.range(of: "resource_metadata=") else { return nil }
-        let rest = header[range.upperBound...].trimmingCharacters(in: .whitespaces)
-        guard rest.hasPrefix("\"") else { return nil }
-        let inner = rest.dropFirst()
-        guard let end = inner.firstIndex(of: "\"") else { return nil }
-        let url = String(inner[..<end])
-        return url.isEmpty ? nil : url
+        challengeParameter("resource_metadata", in: header)
     }
 
-    private static func fetchAuthorizationServerMetadata(issuer: String, resource: String?) async throws -> AuthServerMetadata {
+    /// The value of one parameter of a WWW-Authenticate challenge, quoted or (as Stripe
+    /// sends `resource_metadata`) bare up to the next comma or space; nil when absent or empty.
+    private static func challengeParameter(_ name: String, in header: String) -> String? {
+        guard let range = header.range(of: name + "=") else { return nil }
+        let rest = header[range.upperBound...].trimmingCharacters(in: .whitespaces)
+        let value: String
+        if rest.hasPrefix("\"") {
+            let inner = rest.dropFirst()
+            guard let end = inner.firstIndex(of: "\"") else { return nil }
+            value = String(inner[..<end])
+        } else {
+            value = String(rest.prefix { $0 != "," && $0 != " " })
+        }
+        return value.isEmpty ? nil : value
+    }
+
+    private static func challengeScopes(from header: String) -> [String]? {
+        guard let value = challengeParameter("scope", in: header) else { return nil }
+        let names = value.split(separator: " ").map(String.init).filter { !$0.isEmpty }
+        return names.isEmpty ? nil : names
+    }
+
+    private static func fetchAuthorizationServerMetadata(issuer: String, resource: String?, resourceScopes: [String]?) async throws -> AuthServerMetadata {
         let base = issuer.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let candidates = [
+        var candidates: [String] = []
+        // An issuer with a path (Stripe's is https://access.stripe.com/mcp) keeps its
+        // metadata where RFC 8414 puts it, the path after the well-known segment; the
+        // path-first forms below are what the rest answer to.
+        if let components = URLComponents(string: base), let origin = try? origin(of: base), !components.path.isEmpty, components.path != "/" {
+            candidates += [
+                origin + "/.well-known/oauth-authorization-server" + components.path,
+                origin + "/.well-known/openid-configuration" + components.path,
+            ]
+        }
+        candidates += [
             base + "/.well-known/oauth-authorization-server",
             base + "/.well-known/openid-configuration",
         ]
@@ -273,18 +335,13 @@ enum MCPOAuth {
                     lastError = "It's missing the addresses needed to sign in."
                     continue
                 }
-                var scopes: [String]?
-                if let listed = json["scopes_supported"]?.array {
-                    let names = listed.compactMap(\.string).filter { !$0.isEmpty }
-                    scopes = names.isEmpty ? nil : names
-                }
                 return AuthServerMetadata(
                     issuer: base,
                     authorizationEndpoint: authorizationEndpoint,
                     tokenEndpoint: tokenEndpoint,
                     registrationEndpoint: json["registration_endpoint"]?.string,
                     resource: resource,
-                    scopes: scopes
+                    resourceScopes: resourceScopes
                 )
             } catch {
                 lastError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -307,20 +364,26 @@ enum MCPOAuth {
         guard let registrationEndpoint = metadata.registrationEndpoint, !registrationEndpoint.isEmpty else {
             throw MCPOAuthError.registrationUnsupported
         }
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "client_name": "Droppy Code",
             "redirect_uris": [redirectURI],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
             "token_endpoint_auth_method": "none",
         ]
+        if let resourceScopes = metadata.resourceScopes, !resourceScopes.isEmpty {
+            body["scope"] = resourceScopes.joined(separator: " ")
+        }
         let (data, response) = try await post(url: registrationEndpoint, body: body)
         guard (200..<300).contains(response.statusCode),
               let json = JSONValue.parse(data),
               let clientID = json["client_id"]?.string,
               !clientID.isEmpty
         else {
-            throw MCPOAuthError.registrationFailed(oauthErrorMessage(data: data) ?? "The server refused to set things up.")
+            let refusal = response.statusCode == 403
+                ? "The server only signs in apps it has approved (403), so this one can't yet."
+                : "The server refused to set things up (\(response.statusCode))."
+            throw MCPOAuthError.registrationFailed(oauthErrorMessage(data: data) ?? refusal)
         }
         let clientSecret = json["client_secret"]?.string
         var stored: [String: Any] = ["client_id": clientID, "issuer": metadata.issuer]
@@ -527,8 +590,8 @@ enum MCPOAuth {
         if let resource = metadata.resource, !resource.isEmpty {
             items.append(URLQueryItem(name: "resource", value: resource))
         }
-        if let scopes = metadata.scopes, !scopes.isEmpty {
-            items.append(URLQueryItem(name: "scope", value: scopes.joined(separator: " ")))
+        if let resourceScopes = metadata.resourceScopes, !resourceScopes.isEmpty {
+            items.append(URLQueryItem(name: "scope", value: resourceScopes.joined(separator: " ")))
         }
         components.queryItems = items
         return components.url

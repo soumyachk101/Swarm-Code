@@ -81,6 +81,12 @@ final class MCPStore {
             MCPOAuth.signOut(serverID: entry.id)
             MCPProxy.shared.unregister(serverID: entry.id)
         }
+        // A Try again after a rejection must not reuse the rejected token: a failed
+        // OAuth entry starts signed out so the browser flow runs afresh.
+        if entry.isOAuth, case .failed = states[entry.id] {
+            MCPOAuth.signOut(serverID: entry.id)
+            MCPProxy.shared.unregister(serverID: entry.id)
+        }
         if let draft = drafts[entry.id] {
             for field in entry.fields {
                 guard let text = draft[field.key] else { continue }
@@ -178,20 +184,35 @@ final class MCPStore {
         return values
     }
 
+    private func probeOnce(_ entry: MCPCatalogEntry, resolved: MCPResolvedServer) async throws -> MCPProbeResult {
+        // A server that signs in: the browser flow first (Droppy Code's own, with its
+        // branded page), then its route on the proxy, and only then the probe, which
+        // goes through that route like every provider will.
+        if let remote = resolved.oauthUpstream {
+            if !MCPOAuth.isSignedIn(serverID: entry.id) {
+                try await MCPOAuth.signIn(serverID: entry.id, serverName: entry.name, url: remote)
+            }
+            MCPProxy.shared.register(serverID: entry.id, upstream: remote, headers: [:], usesOAuth: true)
+        }
+        return try await MCPProbe.probe(resolved)
+    }
+
     private func startProbe(_ entry: MCPCatalogEntry) {
         probes[entry.id] = Task {
             do {
-                // A server that signs in: the browser flow first (Droppy Code's own, with its
-                // branded page), then its route on the proxy, and only then the probe, which
-                // goes through that route like every provider will.
                 let resolved = entry.resolve(values: storedValues(for: entry))
-                if let remote = resolved.oauthUpstream {
-                    if !MCPOAuth.isSignedIn(serverID: entry.id) {
-                        try await MCPOAuth.signIn(serverID: entry.id, serverName: entry.name, url: remote)
-                    }
-                    MCPProxy.shared.register(serverID: entry.id, upstream: remote, headers: [:], usesOAuth: true)
+                let result: MCPProbeResult
+                do {
+                    result = try await probeOnce(entry, resolved: resolved)
+                } catch MCPProbeError.unauthorizedOAuth where resolved.oauthUpstream != nil {
+                    MCPOAuth.signOut(serverID: entry.id)
+                    MCPProxy.shared.unregister(serverID: entry.id)
+                    result = try await probeOnce(entry, resolved: resolved)
+                } catch MCPProbeError.http(let status, _) where resolved.oauthUpstream != nil && (status == 401 || status == 403) {
+                    MCPOAuth.signOut(serverID: entry.id)
+                    MCPProxy.shared.unregister(serverID: entry.id)
+                    result = try await probeOnce(entry, resolved: resolved)
                 }
-                let result = try await MCPProbe.probe(resolved)
                 if var connection = connections[entry.id] {
                     connection.connectedAt = .now
                     connection.serverVersion = result.serverVersion
