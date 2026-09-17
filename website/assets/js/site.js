@@ -2,7 +2,7 @@
   SwarmAI marketing site, shared site script
   ===============================================
 
-  Plain vanilla JS, no build step, ported from getdroppy.app's site.js
+  Plain vanilla JS, no build step, ported from getswarmai.app's site.js
   and trimmed to what this page uses:
 
     1. Staggered reveal-on-load and reveal-on-scroll for `.reveal`.
@@ -254,7 +254,7 @@
 /* ------------------------------------------------------------------- */
 /* Button morph hover: builds the two content layers the shared hover    */
 /* needs (see "Morph hover" in assets/css/site.css). Ported from         */
-/* getdroppy.app's site.js.                                              */
+/* getswarmai.app's site.js.                                              */
 /* ------------------------------------------------------------------- */
 /*
   Every button hovers the same way: its content dissolves and reforms

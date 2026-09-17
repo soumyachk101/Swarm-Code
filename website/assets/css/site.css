@@ -2,16 +2,13 @@
   SwarmAI marketing site, shared design system
   =================================================
 
-  A dark port of the getdroppy.app design system: the same notch dock,
-  pills, reveal motion, highlight rail, FAQ and footer, re-tokened for a
-  deep code-editor canvas and the blue of the SwarmAI icon. The
-  binary field and the tile system are new and live at the bottom.
+  A dark Liquid Glass marketing site with notch navigation, glass pills,
+  reveal motion, feature highlight rail, blog section, FAQ accordion and
+  a bold footer. No build step. One stylesheet, one page.
 
   Fonts (loaded in the page head): Inter (body/UI), Instrument Sans and
-  Inter Tight (display), exactly as on getdroppy.app. Code inside the
-  chips uses the Mac's own SF Mono; nothing else is imported.
-
-  No build step. One stylesheet, one page.
+  Inter Tight (display). Code inside chips uses the Mac's own SF Mono;
+  nothing else is imported.
 */
 
 /* ---------------------------------------------------------------------- */
@@ -282,7 +279,7 @@ section {
 }
 
 /* ---------------------------------------------------------------------- */
-/* Fixed notch navigation, identical geometry to getdroppy.app            */
+/* Fixed notch navigation */
 /* ---------------------------------------------------------------------- */
 
 .nav {
@@ -470,7 +467,7 @@ section {
    open like the SwarmAI shelf (shelf curve + blur snapping into focus). A
    head-inline gate adds html.nav-intro-done on later loads so it never
    replays when navigating between pages. Tokens and keyframes are the
-   getdroppy.app ones, unchanged. */
+   getswarmai.app ones, unchanged. */
 :root {
   --nav-dock-duration: 640ms;
   --nav-dock-curve: cubic-bezier(0.32, 1.22, 0.36, 1);
@@ -583,7 +580,7 @@ html.nav-intro-done .nav__pill { animation: none; }
 /* ---------------------------------------------------------------------- */
 /* Morph hover — the one hover every button on the site shares.            */
 /* ---------------------------------------------------------------------- */
-/* Ported from getdroppy.app. On hover a button's content dissolves and
+/* Ported from getswarmai.app. On hover a button's content dissolves and
    reforms through a thick, real gaussian blur: the label blurs out where
    it stands and a fitting glyph blurs in, centred. Two content layers sit
    stacked in the same place inside the button, the REST face and the
@@ -738,6 +735,16 @@ html.nav-intro-done .nav__pill { animation: none; }
   margin-bottom: 30px;
   transition: color var(--dur-fast) var(--ease-out);
 }
+.hero__eyebrow {
+  display: inline-block;
+  font-family: "Inter Tight", var(--font-display);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  color: var(--text-tertiary);
+  margin-bottom: 30px;
+}
 .hero__kicker:hover { color: var(--accent-text); }
 .hero__kicker-mark {
   width: auto;
@@ -769,7 +776,7 @@ html.nav-intro-done .nav__pill { animation: none; }
 .hero__title.reveal:not(.is-settled) { will-change: opacity, transform; }
 .hero__mac { white-space: nowrap; }
 
-/* The charged word. Same choreography as "Supercharged" on getdroppy.app:
+/* The charged word. Same choreography as "Supercharged" on getswarmai.app:
    once the headline's reveal settles, a strike drops into the word from
    the top of the viewport (850ms), an arrival bloom pulses once (900ms)
    and a sheen keeps sweeping through the letters (3.2s, linear, forever).
@@ -1400,7 +1407,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   background: var(--bg-well);
   position: relative;
   overflow: hidden;
-  /* Centred, as the pricing card on getdroppy.app is. */
+  /* Centred, as the pricing card on getswarmai.app is. */
   text-align: center;
 }
 .free__app {
@@ -1473,6 +1480,77 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 .free__foot a { color: var(--text-tertiary); text-decoration: underline; text-underline-offset: 3px; }
 .free__foot a:hover { color: var(--text-primary); }
+
+/* ---------------------------------------------------------------------- */
+/* Blog                                                                   */
+/* ---------------------------------------------------------------------- */
+
+.blog__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: var(--gap-heading);
+}
+.blog__card {
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  background: var(--bg-well);
+  padding: 36px 32px;
+  transition: background var(--dur-fast) var(--ease-out);
+  text-align: left;
+}
+.blog__card:hover { background: var(--bg-well-raised); }
+.blog__card-date {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-quaternary);
+  letter-spacing: -0.01em;
+  margin-bottom: 14px;
+}
+.blog__card-title {
+  font-family: "Inter Tight", var(--font-display);
+  font-weight: 600;
+  font-size: 20px;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+.blog__card-excerpt {
+  font-size: 15px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+  margin-bottom: 20px;
+}
+.blog__card-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--glass-bg-strong);
+  color: var(--text-primary);
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.blog__card:hover .blog__card-arrow { background: var(--accent-soft); transform: translate(2px, -2px); }
+.blog__card-arrow svg { width: 14px; height: 14px; }
+.blog__more { margin-top: 28px; text-align: center; }
+.blog__more-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-tertiary);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.blog__more-link:hover { color: var(--text-primary); }
+@media (max-width: 760px) {
+  .blog__grid { grid-template-columns: 1fr; }
+  .blog__card { padding: 28px 24px; }
+}
 
 /* ---------------------------------------------------------------------- */
 /* FAQ accordion                                                          */

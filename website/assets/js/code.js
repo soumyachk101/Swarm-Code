@@ -25,7 +25,7 @@
     var ctx = canvas.getContext("2d", { alpha: true });
     if (!ctx) return;
 
-    /* Scroll-scrubbed, like the frame sequences behind getdroppy.app's
+    /* Scroll-scrubbed, like the frame sequences behind getswarmai.app's
        hero and outro: nothing moves while the page is still, and the
        digits stream down as the visitor scrolls. "pagetop" spends the
        first --scroll-span pixels of the page (the hero); "viewport" runs
@@ -288,6 +288,8 @@
     ["matrix", "Matrix", "Dark · Green"]
   ];
 
+  /* Theme screenshots are served from this CDN. Do not change unless you
+     mirror the assets elsewhere. */
   var THEME_BASE = "https://droppy-releases.jordylegrand.workers.dev/site-assets/swarmai/themes/";
 
   /* One big window, the real app in the chosen theme, and the 26 names under it. Cycles on
