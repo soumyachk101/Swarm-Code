@@ -882,6 +882,47 @@ extension Animation {
     static var softAppear: Animation { .smooth(duration: 0.32) }
 }
 
+/// A departing badge's face along its glide: `progress` runs from 0, in place, to 1, gone.
+/// The face holds through the first half of the flight and fades over the second, the way
+/// the sidebar's ghost slips out of the list's edge (see `RowGlideAnimator`); with Reduce
+/// Motion on it fades where it stands.
+private struct SettleGlideModifier: ViewModifier, Animatable {
+    var progress: Double
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let fade = reduceMotion ? progress : Self.smoothstep(0.45, 0.92, progress)
+        content
+            .opacity(1 - fade)
+            .offset(y: reduceMotion ? 0 : 22 * progress)
+            .scaleEffect(reduceMotion ? 1 : 1 - 0.04 * progress, anchor: .top)
+    }
+
+    private static func smoothstep(_ edge0: Double, _ edge1: Double, _ x: Double) -> Double {
+        let t = min(max((x - edge0) / (edge1 - edge0), 0), 1)
+        return t * t * (3 - 2 * t)
+    }
+}
+
+extension AnyTransition {
+    /// How a badge whose work is done leaves the timeline: the way a settled chat's row
+    /// leaves the sidebar. It glides down a little on the glide spring and fades out on the
+    /// way, gone before it would land. It arrives softly, like everything else.
+    static var settleGlide: AnyTransition {
+        .asymmetric(
+            insertion: .modifier(active: SoftAppearModifier(isVisible: false), identity: SoftAppearModifier(isVisible: true))
+                .animation(.softAppear),
+            removal: .modifier(active: SettleGlideModifier(progress: 1), identity: SettleGlideModifier(progress: 0))
+                .animation(.spring(Chrome.glideSpring))
+        )
+    }
+}
+
 // MARK: - Cards
 
 struct ChromeCard<Content: View>: View {

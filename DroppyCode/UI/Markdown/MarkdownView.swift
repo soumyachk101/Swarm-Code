@@ -44,6 +44,16 @@ struct MarkdownView: View, Equatable {
         return out
     }
 
+    /// The lead's delegation card leaves the reply the way a settled chat leaves the
+    /// sidebar once its heads are out (see `ThreadRuntime.holdSentDelegationBlock`); every
+    /// other block comes and goes with the soft appear.
+    private static func transition(for block: MarkdownBlock) -> AnyTransition {
+        if case .code(let language, _) = block, let info = language?.lowercased(), info == "hydra" || info == "hydra-sent" {
+            return .settleGlide
+        }
+        return .softAppear
+    }
+
     var body: some View {
         let blocks = Self.blocks(for: text, streaming: isStreaming)
         let last = blocks.count - 1
@@ -56,6 +66,7 @@ struct MarkdownView: View, Equatable {
                     case .block(let block):
                         MarkdownBlockView(block: block)
                             .equatable()
+                            .transition(Self.transition(for: block))
                     }
                 }
             }
@@ -69,7 +80,7 @@ struct MarkdownView: View, Equatable {
                         // Only the block still being written is streaming; the ones above it are
                         // settled and cache like any finished text.
                         .environment(\.markdownStreaming, isStreaming && index == last)
-                        .transition(.softAppear)
+                        .transition(Self.transition(for: block))
                 }
             }
             // Every block of a streaming reply veils what arrives (see `StreamVeil`), not only
