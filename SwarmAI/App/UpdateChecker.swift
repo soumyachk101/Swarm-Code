@@ -1,8 +1,9 @@
 import AppKit
 import Foundation
+import Security
 import UserNotifications
 
-/// A release version as GitLab tags it: `v1.2.3` or `1.2`. Anything with a prerelease suffix
+/// A release version as GitHub tags it: `v1.2.3` or `1.2`. Anything with a prerelease suffix
 /// (`-nightly.…`, `-beta.1`) is not a version the app offers, so it does not parse.
 struct AppVersion: Comparable, Hashable, CustomStringConvertible, Sendable {
     let components: [Int]
@@ -37,17 +38,185 @@ struct AppVersion: Comparable, Hashable, CustomStringConvertible, Sendable {
     }
 }
 
-/// A newer release on GitLab: what the About page describes and the installer downloads.
+/// A newer release on GitHub: what the About page describes and the installer downloads.
 struct AvailableUpdate: Codable, Equatable, Sendable {
     var version: String
     var tag: String
     var downloadURL: URL
+    var assetId: Int?
     var size: Int64?
-    /// The release description, Markdown as written on GitLab.
+    /// The release description, Markdown as written on GitHub.
     var notes: String
     var releasedAt: Date?
     /// The release page, for reading the notes in the browser.
     var pageURL: URL
+
+    var assetAPIURL: URL? {
+        guard let assetId else { return nil }
+        return URL(string: "https://api.github.com/repos/\(UpdateChecker.repoOwner)/\(UpdateChecker.repoName)/releases/assets/\(assetId)")
+    }
+
+    /// Ensures the link points to GitHub, fixing any legacy cached GitLab links.
+    var cleanPageURL: URL {
+        if pageURL.absoluteString.contains("gitlab") {
+            return UpdateChecker.releasesURL.appending(path: "tag/\(tag)")
+        }
+        return pageURL
+    }
+}
+
+/// Manages GitHub authentication token resolution and secure Keychain storage for UpdateChecker.
+enum GitHubAuth {
+    private static let service = "SwarmAI"
+    private static let account = "GitHub Update Token"
+    private static let fallbackKey = "github_token_custom"
+
+    static func customToken() -> String? {
+        guard !WebsiteCaptures.isEnabled else { return nil }
+        if let keychain = readKeychain(), !keychain.isEmpty { return keychain }
+        if let fallback = UserDefaults.standard.string(forKey: fallbackKey), !fallback.isEmpty { return fallback }
+        return nil
+    }
+
+    @discardableResult
+    static func setCustomToken(_ token: String) -> Bool {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            deleteKeychain()
+            UserDefaults.standard.removeObject(forKey: fallbackKey)
+            return true
+        }
+        let data = Data(trimmed.utf8)
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+        let attributes = query.merging([
+            kSecValueData as String: data,
+            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
+        ]) { _, new in new }
+        let ok = SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
+        if ok {
+            UserDefaults.standard.removeObject(forKey: fallbackKey)
+            return true
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: fallbackKey)
+            return false
+        }
+    }
+
+    /// Resolves token: Custom token > Environment variables > gh CLI > git credential fill
+    static func resolveToken() -> String? {
+        if let custom = customToken(), !custom.isEmpty {
+            return custom
+        }
+        if let env = ProcessInfo.processInfo.environment["GITHUB_TOKEN"] ?? ProcessInfo.processInfo.environment["GH_TOKEN"], !env.isEmpty {
+            return env
+        }
+        if let gh = resolveFromGHCLI(), !gh.isEmpty {
+            return gh
+        }
+        if let git = resolveFromGitCredential(), !git.isEmpty {
+            return git
+        }
+        return nil
+    }
+
+    /// Short label indicating where the active token came from (for Settings display).
+    static func tokenSourceDescription() -> String? {
+        if let custom = customToken(), !custom.isEmpty {
+            return "Custom token (Keychain)"
+        }
+        if let env = ProcessInfo.processInfo.environment["GITHUB_TOKEN"] ?? ProcessInfo.processInfo.environment["GH_TOKEN"], !env.isEmpty {
+            return "Environment variable"
+        }
+        if let gh = resolveFromGHCLI(), !gh.isEmpty {
+            return "GitHub CLI (gh)"
+        }
+        if let git = resolveFromGitCredential(), !git.isEmpty {
+            return "Git credentials"
+        }
+        return nil
+    }
+
+    private static func resolveFromGHCLI() -> String? {
+        let paths = ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"]
+        guard let exe = paths.first(where: { FileManager.default.fileExists(atPath: $0) }) else { return nil }
+        let proc = Process()
+        proc.executableURL = URL(filePath: exe)
+        proc.arguments = ["auth", "token"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = Pipe()
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+            if proc.terminationStatus == 0 {
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let str = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !str.isEmpty {
+                    return str
+                }
+            }
+        } catch {}
+        return nil
+    }
+
+    private static func resolveFromGitCredential() -> String? {
+        let proc = Process()
+        proc.executableURL = URL(filePath: "/usr/bin/git")
+        proc.arguments = ["credential", "fill"]
+        let inPipe = Pipe()
+        let outPipe = Pipe()
+        proc.standardInput = inPipe
+        proc.standardOutput = outPipe
+        proc.standardError = Pipe()
+        guard let inData = "protocol=https\nhost=github.com\n\n".data(using: .utf8) else { return nil }
+        do {
+            try proc.run()
+            try inPipe.fileHandleForWriting.write(contentsOf: inData)
+            try inPipe.fileHandleForWriting.close()
+            proc.waitUntilExit()
+            if proc.terminationStatus == 0 {
+                let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+                if let output = String(data: outData, encoding: .utf8) {
+                    for line in output.components(separatedBy: "\n") {
+                        if line.hasPrefix("password=") {
+                            let pass = String(line.dropFirst("password=".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !pass.isEmpty { return pass }
+                        }
+                    }
+                }
+            }
+        } catch {}
+        return nil
+    }
+
+    private static func readKeychain() -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+              let data = item as? Data,
+              let key = String(data: data, encoding: .utf8),
+              !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return key.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func deleteKeychain() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
 }
 
 /// Checks the app's GitLab releases for a newer version and remembers what it found.
@@ -63,12 +232,12 @@ struct AvailableUpdate: Codable, Equatable, Sendable {
 final class UpdateChecker {
     static let shared = UpdateChecker()
 
-    /// The project on GitHub. Public, so the API needs no token.
-    static let repoOwner = "soumyachk101"
-    static let repoName = "SwarmAI-V1"
-    static let projectURL = URL(string: "https://github.com/soumyachk101/SwarmAI-V1")!
-    static let releasesURL = URL(string: "https://github.com/soumyachk101/SwarmAI-V1/releases")!
-    private static let apiURL = URL(string: "https://api.github.com/repos/soumyachk101/SwarmAI-V1/releases?per_page=20")!
+    /// The project on GitHub.
+    nonisolated static let repoOwner = "soumyachk101"
+    nonisolated static let repoName = "SwarmAI-V1"
+    nonisolated static let projectURL = URL(string: "https://github.com/soumyachk101/SwarmAI-V1")!
+    nonisolated static let releasesURL = URL(string: "https://github.com/soumyachk101/SwarmAI-V1/releases")!
+    nonisolated static let apiURL = URL(string: "https://api.github.com/repos/soumyachk101/SwarmAI-V1/releases?per_page=20")!
 
     /// How often the background check runs, and how stale a check may be before the app
     /// coming to the front runs another.
@@ -107,11 +276,6 @@ final class UpdateChecker {
         configuration.urlCache = nil
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 30
-        var headers = ["User-Agent": "SwarmAI/\(AppInfo.version)", "Accept": "application/vnd.github+json"]
-        if let token = ProcessInfo.processInfo.environment["GITHUB_TOKEN"] ?? ProcessInfo.processInfo.environment["GH_TOKEN"] {
-            headers["Authorization"] = "Bearer \(token)"
-        }
-        configuration.httpAdditionalHeaders = headers
         return URLSession(configuration: configuration)
     }()
 
@@ -119,7 +283,11 @@ final class UpdateChecker {
         let defaults = UserDefaults.standard
         if let data = defaults.data(forKey: Keys.update),
            let saved = try? JSONDecoder().decode(AvailableUpdate.self, from: data) {
-            update = saved
+            if saved.pageURL.absoluteString.contains("gitlab") || saved.downloadURL.absoluteString.contains("gitlab") {
+                defaults.removeObject(forKey: Keys.update)
+            } else {
+                update = saved
+            }
         }
         lastCheckedAt = defaults.object(forKey: Keys.lastChecked) as? Date
         // `--preview-update 9.9.9` shows the update story without a newer release: the latest
@@ -192,9 +360,19 @@ final class UpdateChecker {
     }
 
     private func fetchReleases() async throws -> [GitHubRelease] {
-        let (data, response) = try await session.data(from: Self.apiURL)
+        var request = URLRequest(url: Self.apiURL)
+        request.setValue("SwarmAI/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        if let token = GitHubAuth.resolveToken(), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            throw UpdateError.badResponse((response as? HTTPURLResponse)?.statusCode ?? -1)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            if status == 404 && GitHubAuth.resolveToken() == nil {
+                throw UpdateError.needsToken
+            }
+            throw UpdateError.badResponse(status)
         }
         return try JSONDecoder().decode([GitHubRelease].self, from: data)
     }
@@ -213,6 +391,7 @@ final class UpdateChecker {
                 version: AppVersion.text(ofTag: release.tagName),
                 tag: release.tagName,
                 downloadURL: downloadURL,
+                assetId: asset.id,
                 size: asset.size,
                 notes: release.body ?? "",
                 releasedAt: release.publishedAt,
@@ -228,6 +407,10 @@ final class UpdateChecker {
     private func downloadSize(of url: URL) async -> Int64? {
         var request = URLRequest(url: url)
         request.httpMethod = "HEAD"
+        request.setValue("SwarmAI/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
+        if let token = GitHubAuth.resolveToken(), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         guard let (_, response) = try? await session.data(for: request),
               let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
               http.expectedContentLength > 0 else { return nil }
@@ -270,11 +453,13 @@ final class UpdateChecker {
 
 enum UpdateError: LocalizedError {
     case noRelease
+    case needsToken
     case badResponse(Int)
 
     var errorDescription: String? {
         switch self {
         case .noRelease: "No release with a disk image was found."
+        case .needsToken: "GitHub returned 404. For private repos, set a GitHub token in Settings."
         case .badResponse(let status): "GitHub answered with HTTP \(status)."
         }
     }
@@ -283,6 +468,7 @@ enum UpdateError: LocalizedError {
 /// The parts of a GitHub release the checker reads.
 struct GitHubRelease: Decodable, Sendable {
     struct Asset: Decodable, Sendable {
+        var id: Int
         var name: String
         var browserDownloadURL: String
         var size: Int64?
@@ -293,7 +479,7 @@ struct GitHubRelease: Decodable, Sendable {
         }
 
         private enum CodingKeys: String, CodingKey {
-            case name, size
+            case id, name, size
             case browserDownloadURL = "browser_download_url"
         }
     }

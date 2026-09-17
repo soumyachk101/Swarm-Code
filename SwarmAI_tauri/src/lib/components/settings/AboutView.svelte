@@ -31,8 +31,11 @@
 		updateMessage = '';
 
 		try {
+			const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('swarmai_github_token') || '') : '';
+			const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
+			if (token) headers['Authorization'] = `Bearer ${token}`;
 			const res = await fetch('https://api.github.com/repos/soumyachk101/SwarmAI-V1/releases/latest', {
-				headers: { Accept: 'application/vnd.github+json' }
+				headers
 			});
 			if (res.ok) {
 				const release = await res.json<{ tag_name: string }>();
@@ -44,6 +47,9 @@
 					updateStatus = 'up-to-date';
 					updateMessage = `You're on the latest version (${appVersion})`;
 				}
+			} else if (res.status === 404 && !token) {
+				updateStatus = 'error';
+				updateMessage = 'GitHub returned 404 (Private repo requires token)';
 			} else {
 				updateStatus = 'up-to-date';
 				updateMessage = `You're on the latest version (${appVersion})`;

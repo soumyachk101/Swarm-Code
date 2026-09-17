@@ -260,7 +260,7 @@ final class AppUpdater {
             defer { installTask = nil }
             progress.begin()
             do {
-                let image = try await download(update.downloadURL)
+                let image = try await download(update.downloadURL, assetURL: update.assetAPIURL)
                 progress.beginVerification()
                 let staged = try await stage(image: image, expectedVersion: update.version)
                 progress.beginStaging()
@@ -280,13 +280,13 @@ final class AppUpdater {
 
     // MARK: - Download
 
-    private func download(_ url: URL) async throws -> URL {
+    private func download(_ url: URL, assetURL: URL? = nil) async throws -> URL {
         let destination = FileManager.default.temporaryDirectory
             .appending(path: "SwarmAIUpdate-\(UUID().uuidString).dmg")
         let downloader = Downloader { fraction in
             Task { @MainActor in UpdateInstallProgress.shared.noteDownloadProgress(fraction) }
         }
-        try await downloader.download(url, to: destination)
+        try await downloader.download(url, assetURL: assetURL, to: destination)
         return destination
     }
 
@@ -459,7 +459,7 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
         self.onProgress = onProgress
     }
 
-    func download(_ url: URL, to destination: URL) async throws {
+    func download(_ url: URL, assetURL: URL? = nil, to destination: URL) async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 1800
@@ -467,8 +467,23 @@ private final class Downloader: NSObject, URLSessionDownloadDelegate, @unchecked
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
         self.destination = destination
-        var request = URLRequest(url: url)
+
+        let token = GitHubAuth.resolveToken()
+        let effectiveURL: URL
+        if let token, !token.isEmpty, let assetURL {
+            effectiveURL = assetURL
+        } else {
+            effectiveURL = url
+        }
+
+        var request = URLRequest(url: effectiveURL)
         request.setValue("SwarmAI/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
+        if let token, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            if effectiveURL == assetURL {
+                request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+            }
+        }
         _ = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<URL, Error>) in
             lock.withLock { self.continuation = continuation }
             session.downloadTask(with: request).resume()

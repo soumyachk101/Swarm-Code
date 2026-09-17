@@ -716,7 +716,7 @@ struct AboutSoftwareUpdateSection: View {
             }
             ChromeCard {
                 ChromeRow(title: "Signed and notarized disk image", detail: releaseDetail(update)) {
-                    Link(destination: update.pageURL) {
+                    Link(destination: update.cleanPageURL) {
                         HStack(spacing: 4) {
                             Text("Release notes")
                             Image(systemName: "arrow.up.right")
@@ -775,16 +775,58 @@ struct AboutSoftwareUpdateSection: View {
 /// The row on the app card that says when GitHub was last asked, and asks again.
 struct AboutUpdateCheckRow: View {
     private let checker = UpdateChecker.shared
+    @State private var tokenInput = GitHubAuth.customToken() ?? ""
+    @State private var showTokenSaved = false
 
     var body: some View {
-        ChromeRow(title: "Software update", detail: detail) {
-            Button(checker.isChecking ? "Checking…" : "Check now") {
-                Task { await checker.check() }
+        VStack(alignment: .leading, spacing: 0) {
+            ChromeRow(title: "Software update", detail: detail) {
+                Button(checker.isChecking ? "Checking…" : "Check now") {
+                    Task { await checker.check() }
+                }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .disabled(checker.isChecking)
             }
-            .buttonStyle(.glass)
-            .controlSize(.small)
-            .disabled(checker.isChecking)
+
+            ChromeRowDivider()
+
+            ChromeRow(title: "GitHub token", detail: tokenDetail) {
+                HStack(spacing: 8) {
+                    SecureField("Personal Access Token", text: $tokenInput)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 170)
+                        .onSubmit { saveToken() }
+
+                    Button(showTokenSaved ? "Saved" : "Save") {
+                        saveToken()
+                    }
+                    .buttonStyle(.glass)
+                    .controlSize(.small)
+                    .disabled(tokenInput.trimmingCharacters(in: .whitespacesAndNewlines) == (GitHubAuth.customToken() ?? ""))
+                }
+            }
         }
+    }
+
+    private func saveToken() {
+        GitHubAuth.setCustomToken(tokenInput)
+        showTokenSaved = true
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            showTokenSaved = false
+            await checker.check()
+        }
+    }
+
+    private var tokenDetail: String {
+        if let custom = GitHubAuth.customToken(), !custom.isEmpty {
+            return "Custom token saved in Keychain. Used for private releases."
+        }
+        if let desc = GitHubAuth.tokenSourceDescription() {
+            return "\(desc). Private releases accessible."
+        }
+        return "Required for private releases. Auto-detected if gh/git is signed in."
     }
 
     private var detail: String {
