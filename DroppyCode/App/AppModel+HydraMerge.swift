@@ -54,7 +54,19 @@ extension AppModel {
         // same checkout stays behind.
         let work = await hydraWork(of: leadID, runtime: runtime, checkout: checkout, git: git)
         let sorted = work.paths
-        guard !sorted.isEmpty else { return }
+        guard !sorted.isEmpty else {
+            // Work done outside this project's checkout was never this chat's to merge; the
+            // usual cause is a chat opened in one project while the request concerned
+            // another. Say so, and name the project that holds the files.
+            guard !work.outside.isEmpty else { return }
+            let owner = projects.first { project in
+                project.id != lead.projectID && work.outside.allSatisfy { TouchedPaths.relative($0, root: project.path) != nil }
+            }
+            let shown = work.outside.prefix(6).map { "`\($0)`" }.joined(separator: ", ") + (work.outside.count > 6 ? " and \(work.outside.count - 6) more" : "")
+            let advice = owner.map { "They belong to the project \($0.name) (`\($0.path)`): open a chat in that project and ask for the merge there." } ?? "They are not under this project's checkout (`\(checkout)`), so there is nothing here to merge; open a chat in the project that holds them."
+            note(leadID, "Hydra did not merge: the team's files are outside this project.", "\(work.outside.count == 1 ? "1 file was" : "\(work.outside.count) files were") changed outside `\(checkout)`: \(shown). \(advice)")
+            return
+        }
         // A head's landing can leave conflict markers behind (see `Git.apply`), and a lead
         // told not to look at git status may answer without settling them. Those markers
         // must never reach the remote: the job stays in the checkout until they are gone.
@@ -69,8 +81,18 @@ extension AppModel {
             let head = try await git.commitHash()
             runtime.hydraMergeStage = "Writing the commit"
             let tree = try await git.captureTree(paths: sorted)
-            // Everything the team did is committed already, or was merged before.
-            guard try await tree != git.treeHash(of: "HEAD") else { return }
+            // Everything the team did is committed already: taken along by another chat's
+            // merge from the same checkout, or committed by hand. The job is spent either
+            // way, so it is marked merged and the chat is told, rather than left wondering.
+            guard try await tree != git.treeHash(of: "HEAD") else {
+                runtime.markHydraMerged(work.turnIDs)
+                let mergedAt = Date.now
+                for headID in work.headIDs { updateHydraHead(headID) { $0.mergedAt = mergedAt } }
+                let target = await git.defaultBranch()
+                let shown = sorted.prefix(8).map { "`\($0)`" }.joined(separator: ", ") + (sorted.count > 8 ? " and \(sorted.count - 8) more" : "")
+                note(leadID, "Hydra found the team's work on `\(target)` already.", "\(shown) match HEAD: an earlier merge from this checkout, another chat's or one made by hand, took \(sorted.count == 1 ? "this file" : "these files") along. Nothing is left for this chat to merge.")
+                return
+            }
 
             let patch = (try? await git.diff(from: head, to: tree)) ?? ""
             // A whole job's patch is big and parsing it counts every line: off the main
@@ -159,6 +181,9 @@ extension AppModel {
             }
             if work.droppedMissing > 0 {
                 lines.append("\(work.droppedMissing) missing paths were left out.")
+            }
+            if work.siblingSkipped > 0 {
+                lines.append("\(work.siblingSkipped == 1 ? "1 file" : "\(work.siblingSkipped) files") another chat's team changed in this checkout \(work.siblingSkipped == 1 ? "was" : "were") left for that chat's merge.")
             }
             if ownBranch {
                 runtime.hydraMergeStage = "Bringing the checkout up to date"
@@ -284,7 +309,7 @@ extension AppModel {
     /// Paths outside the checkout are dropped rather than passed on: a lead writes to its
     /// own memory files, and `git add -A -- <path>` on one of those fails outright and
     /// takes the whole merge with it.
-    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], headIDs: [UUID], dropped: Int, droppedBuildOutputs: Int, droppedIgnored: Int, droppedMissing: Int, heads: [HydraMergeHead]) {
+    private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git) async -> (paths: [String], turnIDs: [UUID], headIDs: [UUID], outside: [String], droppedBuildOutputs: Int, droppedIgnored: Int, droppedMissing: Int, siblingSkipped: Int, heads: [HydraMergeHead]) {
         let turns = runtime.hydraUnmergedTurns
         var reported: [String] = turns.flatMap { $0.touchedPaths ?? [] }
         // A head counts until a merge has taken its work (see `HydraHeadInfo.mergedAt`).
@@ -335,12 +360,36 @@ extension AppModel {
             }
         }
 
+        // Files another chat's team put in this same checkout that no merge has taken
+        // yet: that chat's merge carries them, never this one's. Without this, the
+        // sweep below took a sibling's landed files along, and the sibling's own merge
+        // then found nothing left and said nothing.
+        let projectID = thread(leadID)?.projectID
+        let team = Set(hydraTeam(of: leadID).map(\.id))
+        var siblingPaths = Set<String>()
+        for other in threads where other.id != leadID && other.projectID == projectID && !team.contains(other.id) {
+            if other.isHydraHead {
+                guard let info = other.hydra, info.mergedAt == nil else { continue }
+                for file in info.landing?.files ?? [] {
+                    if let relative = TouchedPaths.relative(file.path, root: checkout) { siblingPaths.insert(relative) }
+                }
+            } else if let live = existingRuntime(for: other.id) {
+                for turn in live.hydraUnmergedTurns {
+                    for path in turn.touchedPaths ?? [] {
+                        if let relative = TouchedPaths.relative(path, root: checkout) { siblingPaths.insert(relative) }
+                    }
+                }
+            }
+        }
+        var siblingSkipped = 0
         if let base = turns.first?.baseCheckpoint,
            let alreadyDirty = try? await git.changedPaths(from: "HEAD", to: base),
            let now = try? await git.captureTree(),
            let changedSince = try? await git.changedPaths(from: base, to: now) {
             let theirs = Set(alreadyDirty)
-            paths.formUnion(changedSince.filter { !theirs.contains($0) })
+            let fresh = changedSince.filter { !theirs.contains($0) }
+            siblingSkipped = fresh.filter { siblingPaths.contains($0) && !paths.contains($0) }.count
+            paths.formUnion(fresh.filter { !siblingPaths.contains($0) || paths.contains($0) })
         }
 
         let buildOutputs = Set(paths.filter(TouchedPaths.isBuildOutput))
@@ -357,7 +406,7 @@ extension AppModel {
         let heads = headPaths.map { entry in
             HydraMergeHead(name: entry.name, index: entry.index, task: entry.task, files: entry.paths.filter { paths.contains($0) })
         }
-        return (paths.sorted(), turns.map(\.id), headIDs, outside.count, buildOutputs.count, ignored.count, missing.count, heads)
+        return (paths.sorted(), turns.map(\.id), headIDs, outside.sorted(), buildOutputs.count, ignored.count, missing.count, siblingSkipped, heads)
     }
 
     /// Brings the checkout's default branch up to the merge without touching the working

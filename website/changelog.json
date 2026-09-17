@@ -1,6 +1,33 @@
 {
-  "generated_at": "2026-09-16T23:24:00.876692+00:00",
+  "generated_at": "2026-09-17T00:05:45.026835+00:00",
   "releases": [
+    {
+      "version": "1.5.1",
+      "date": "2026-09-17",
+      "platform": "mac",
+      "summary": "Droppy Code 1.5.1 fixes Hydra merges from a shared checkout so each chat merges only what its own team changed and says so when there is nothing left to merge, lets you drag a chosen model all the way to the top of the list, and turns rows of toggles in Settings into picker tiles. Apple silicon, macOS 26 or later. Signed and notarized.",
+      "sections": [
+        {
+          "title": "Bug fixes",
+          "items": [
+            "Hydra's automatic merge no longer takes along files another chat's team landed in the same checkout: each chat's merge carries only its own team's work, and the other chat's merge then still has its files to land.",
+            "When a chat's work already sits on main (an earlier merge took it along, or it was committed by hand), Hydra says so in the chat and marks the heads merged, instead of ending without a word.",
+            "When the team's files lie outside the chat's project, Hydra names the project they belong to and asks you to open the chat there, instead of merging nothing silently.",
+            "Reordering your chosen models in Settings: a row no longer loses its drag or changes height mid-reorder, so it can be dragged all the way to the top of the list."
+          ]
+        },
+        {
+          "title": "Refinements",
+          "items": [
+            "Rows of related toggles in Settings became picker tiles with a small preview each: workspace, window and sidebar choices in General, the sidebar mode, and the Hydra head rows.",
+            "Every head named anywhere in a reply gets its dragon and colour, not only the one that opens the sentence, links included; the heads' reports popover shows each head on its own card with a green done mark.",
+            "Every badge and card in the conversation uses one pill style, with the same metrics throughout.",
+            "The card that lists what each head is being sent out to do stays on screen a moment once the heads are out, wearing the same wave the heads panel shows for a finished head, and then fades away, instead of vanishing the instant the briefs are written.",
+            "The lead is told that heads and the merge only see the chat's own project, so it says so and asks you to open the chat there rather than working in another repository unmerged."
+          ]
+        }
+      ]
+    },
     {
       "version": "1.5.0",
       "date": "2026-09-16",

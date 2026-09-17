@@ -655,6 +655,7 @@ private struct HydraReportPopover: View {
 struct HydraDelegationBlock: View {
     @Environment(\.chatZoom) private var zoom
     let json: String
+    var sent = false
 
     var body: some View {
         let tasks = Self.tasks(in: json)
@@ -671,8 +672,16 @@ struct HydraDelegationBlock: View {
                         .font(.chat(.callout, zoom: zoom))
                         .foregroundStyle(Chrome.secondaryText)
                 } else {
-                    Text(tasks.count == 1 ? "Sending out a head" : "Sending out \(tasks.count) heads")
+                    Text(sent ? (tasks.count == 1 ? "Sent out a head" : "Sent out \(tasks.count) heads") : (tasks.count == 1 ? "Sending out a head" : "Sending out \(tasks.count) heads"))
                         .font(.chat(.callout, weight: .medium, zoom: zoom))
+                        .contentTransition(.opacity)
+                    if sent {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.chat(.callout, weight: .medium, zoom: zoom))
+                            .foregroundStyle(.green)
+                            .transition(.scale.combined(with: .opacity))
+                            .accessibilityLabel("sent")
+                    }
                 }
             }
             if !tasks.isEmpty {
@@ -689,6 +698,16 @@ struct HydraDelegationBlock: View {
         .padding(.trailing, TimelineMetrics.pillTrailing)
         .padding(.vertical, TimelineMetrics.pillVertical)
         .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
+        .overlay {
+            // Out: one wave of the accent flows through the card, as through the heads panel.
+            if sent {
+                DotFieldSweep(tint: Chrome.accentNSColor)
+                    .clipShape(RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
+                    .transition(.opacity)
+            }
+        }
+        .animation(Chrome.panelSlide, value: sent)
+        .transition(.opacity)
         .accessibilityElement(children: .combine)
     }
 
