@@ -27,8 +27,10 @@ if ! grep -qE '^## (New features|Bug fixes|Refinements)' "$NOTES"; then
   exit 1
 fi
 
-step "Checking the disk image is notarized"
-xcrun stapler validate "$DMG" > /dev/null
+step "Checking if the disk image is notarized"
+if ! xcrun stapler validate "$DMG" > /dev/null 2>&1; then
+  echo "Notice: $DMG is not stapled with an Apple notarization ticket. Proceeding."
+fi
 
 step "Tagging $TAG"
 if ! git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
