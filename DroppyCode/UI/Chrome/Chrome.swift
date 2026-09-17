@@ -959,7 +959,10 @@ struct ChromeCard<Content: View>: View {
 
 struct ChromeSection<Content: View>: View {
     let title: String
+    /// Sits right after the title: an info button, a count.
     var accessory: AnyView? = nil
+    /// Sits at the header's far right: a control for the whole section, out of its cards.
+    var trailing: AnyView? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -969,6 +972,10 @@ struct ChromeSection<Content: View>: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.secondary)
                 if let accessory { accessory }
+                if let trailing {
+                    Spacer(minLength: 8)
+                    trailing
+                }
             }
             content
         }
