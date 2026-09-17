@@ -234,10 +234,10 @@ final class UpdateChecker {
 
     /// The project on GitHub.
     nonisolated static let repoOwner = "soumyachk101"
-    nonisolated static let repoName = "SwarmAI-V1"
-    nonisolated static let projectURL = URL(string: "https://github.com/soumyachk101/SwarmAI-V1")!
-    nonisolated static let releasesURL = URL(string: "https://github.com/soumyachk101/SwarmAI-V1/releases")!
-    nonisolated static let apiURL = URL(string: "https://api.github.com/repos/soumyachk101/SwarmAI-V1/releases?per_page=20")!
+    nonisolated static let repoName = "SwarmAI-Release"
+    nonisolated static let projectURL = URL(string: "https://github.com/soumyachk101/SwarmAI-Release")!
+    nonisolated static let releasesURL = URL(string: "https://github.com/soumyachk101/SwarmAI-Release/releases")!
+    nonisolated static let apiURL = URL(string: "https://api.github.com/repos/soumyachk101/SwarmAI-Release/releases?per_page=20")!
 
     /// How often the background check runs, and how stale a check may be before the app
     /// coming to the front runs another.
