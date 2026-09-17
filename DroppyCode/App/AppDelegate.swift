@@ -35,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func applicationWillTerminate(_ notification: Notification) {
         model?.saveBeforeQuit()
         TokenLedger.shared.flushLiveSpend()
+        // The MCP servers the hub started go with the app.
+        MCPHub.terminateAll()
     }
 
     nonisolated func userNotificationCenter(

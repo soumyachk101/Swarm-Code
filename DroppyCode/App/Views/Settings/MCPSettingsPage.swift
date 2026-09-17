@@ -34,13 +34,22 @@ struct MCPSettingsPage: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
+            MCPLeadCard()
             if !connected.isEmpty {
                 ChromeSection(title: "Connected") {
-                    ChromeCard {
-                        ForEach(Array(connected.enumerated()), id: \.element.id) { index, entry in
-                            if index > 0 { ChromeRowDivider() }
-                            MCPConnectedRow(entry: entry)
+                    VStack(alignment: .leading, spacing: 8) {
+                        ChromeCard {
+                            ForEach(Array(connected.enumerated()), id: \.element.id) { index, entry in
+                                if index > 0 { ChromeRowDivider() }
+                                MCPConnectedRow(entry: entry)
+                            }
                         }
+                        // What the connected servers cost: every switched-on tool rides
+                        // along in each turn's context, so the count is kept in view.
+                        Text(verbatim: costLine)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .padding(.horizontal, 4)
                     }
                 }
             }
@@ -55,7 +64,7 @@ struct MCPSettingsPage: View {
                 }
                 .animation(.spring(duration: 0.35), value: celebrating)
             }
-            Text("Connected servers are handed to Claude, Codex, Copilot, Cursor, OpenCode and Gemini when a thread starts. Keys stay in your Keychain.")
+            Text("Connected servers reach every provider when a thread starts: the CLIs at launch, the API models through Droppy Code itself.")
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.secondaryText)
         }
@@ -72,6 +81,18 @@ struct MCPSettingsPage: View {
         }
     }
 
+    /// Tools across the switched-on servers, and a rough token figure for their
+    /// definitions: about 80 tokens each for a name, a description and a schema.
+    private var costLine: String {
+        let enabled = connected.compactMap { model.mcp.connection(for: $0.id) }.filter(\.isEnabled)
+        let tools = enabled.reduce(0) { $0 + $1.tools.count }
+        guard !enabled.isEmpty, tools > 0 else { return "Switched-off servers add nothing to a turn." }
+        let servers = enabled.count == 1 ? "1 server" : "\(enabled.count) servers"
+        let rough = (tools * 80 + 50) / 100 * 100
+        let tokens = rough >= 1000 ? String(format: "%.1fk", Double(rough) / 1000) : "\(rough)"
+        return "\(tools) tools across \(servers) · roughly \(tokens) tokens on every turn. Switch a server off to leave its tools out."
+    }
+
     private static func matches(_ entry: MCPCatalogEntry, query: String) -> Bool {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return true }
@@ -80,6 +101,49 @@ struct MCPSettingsPage: View {
             || entry.summary.localizedCaseInsensitiveContains(trimmed)
             || entry.id.localizedCaseInsensitiveContains(trimmed)
             || entry.sampleTools.contains { $0.localizedCaseInsensitiveContains(trimmed) }
+    }
+}
+
+private struct MCPLeadCard: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: "checkmark.shield.fill")
+                .font(.system(size: 22))
+                .foregroundStyle(Chrome.accent)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Connected servers lead")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Chrome.primaryText)
+                Text("When you connect a server here, it is the only MCP server your threads use. Anything set up in a terminal or another app's config is left exactly as it is, and stays out of the way until you disconnect.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                // Stacked: three facts in one line ran past the pane and truncated the last.
+                VStack(alignment: .leading, spacing: 4) {
+                    fact(symbol: "lock.fill", text: "Keys stay in your Keychain")
+                    fact(symbol: "arrow.uturn.backward", text: "Disconnect to go back to your own setup")
+                    fact(symbol: "sparkles", text: "Every provider, whatever the model")
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Chrome.primaryText.opacity(0.05))
+        )
+    }
+
+    private func fact(symbol: String, text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .foregroundStyle(Chrome.accent)
+                .frame(width: 14)
+            Text(verbatim: text)
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(Chrome.secondaryText)
     }
 }
 
@@ -198,23 +262,20 @@ private struct MCPServerCard: View {
                 successView
             } else {
                 headerRow
+                // Every card keeps the same shape: two lines held for the summary whether
+                // it needs them or not, one line of tools, so the grid reads as a grid.
                 Text(verbatim: entry.summary)
                     .font(.system(size: 12))
                     .foregroundStyle(Chrome.secondaryText)
-                    .lineLimit(2)
+                    .lineLimit(2, reservesSpace: true)
                     .fixedSize(horizontal: false, vertical: true)
-                if entry.isOAuth {
-                    Text("Opens your browser to sign in.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.secondaryText)
-                }
-                if !entry.sampleTools.isEmpty {
-                    Text(verbatim: entry.sampleTools.joined(separator: " · "))
-                        .font(.system(size: 10.5, design: .monospaced))
-                        .foregroundStyle(Chrome.secondaryText.opacity(0.8))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
+                Text(verbatim: entry.sampleTools.isEmpty ? " " : entry.sampleTools.joined(separator: " · "))
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Chrome.secondaryText.opacity(0.8))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    // Clear of the info button in the corner.
+                    .padding(.trailing, 24)
                 if case .failed(let message) = state {
                     Text(verbatim: message)
                         .font(.system(size: 11))
@@ -227,11 +288,18 @@ private struct MCPServerCard: View {
             }
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // The cell fills its row: a card whose fields are open makes its neighbour as tall.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(Chrome.primaryText.opacity(0.05))
         )
+        .overlay(alignment: .bottomTrailing) {
+            if !celebrating {
+                MCPInfoButton(entry: entry)
+                    .padding(10)
+            }
+        }
         .animation(.spring(duration: 0.35), value: isExpanded)
     }
 
@@ -380,6 +448,207 @@ private struct MCPServerCard: View {
         .onAppear {
             guard !reduceMotion else { return }
             withAnimation(.spring(duration: 0.5, bounce: 0.4)) { successPopped = true }
+        }
+    }
+}
+
+/// The small `i` in a card's corner: hovering it opens the server's details, and so does a
+/// click. The popover stays while the pointer is on it, so its docs link can be reached.
+private struct MCPInfoButton: View {
+    let entry: MCPCatalogEntry
+
+    @State private var isPresented = false
+    @State private var isOverButton = false
+    @State private var isOverPopover = false
+    @State private var settle: Task<Void, Never>?
+
+    var body: some View {
+        Button {
+            settle?.cancel()
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Chrome.secondaryText.opacity(isOverButton || isPresented ? 1 : 0.55))
+                .frame(width: 22, height: 22)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .accessibilityLabel(Text("About \(entry.name)"))
+        .onHover { over in
+            isOverButton = over
+            reconsider()
+        }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            MCPInfoPopover(entry: entry)
+                .onHover { over in
+                    isOverPopover = over
+                    reconsider()
+                }
+                .presentedChrome()
+        }
+    }
+
+    /// Opens a beat after the pointer arrives, closes a beat after it has left both the
+    /// button and the popover: the gap between the two is crossed without it closing.
+    private func reconsider() {
+        settle?.cancel()
+        let wanted = isOverButton || isOverPopover
+        guard wanted != isPresented else { return }
+        settle = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(wanted ? 220 : 320))
+            guard !Task.isCancelled, (isOverButton || isOverPopover) == wanted else { return }
+            isPresented = wanted
+        }
+    }
+}
+
+/// A server's details: what it is, how it connects, what it needs, the tools it brings,
+/// and where its docs are.
+private struct MCPInfoPopover: View {
+    let entry: MCPCatalogEntry
+
+    private static let width: CGFloat = 340
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 10) {
+                MCPIcon(entry: entry, size: 28)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(verbatim: entry.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Chrome.primaryText)
+                    Text(verbatim: "\(entry.vendor) · \(entry.category.title)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+            }
+            Text(verbatim: entry.summary)
+                .font(.system(size: 12))
+                .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 8) {
+                detail("Connects", connection)
+                detail("Needs", needs)
+            }
+            if !entry.sampleTools.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Tools")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Chrome.secondaryText)
+                    FlowChips(entry.sampleTools)
+                }
+            }
+            if let url = URL(string: entry.docsURL) {
+                Link(destination: url) {
+                    HStack(spacing: 5) {
+                        Text("Read the docs")
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 9, weight: .bold))
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Chrome.accent)
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: Self.width, alignment: .leading)
+    }
+
+    private func detail(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(verbatim: label)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Chrome.secondaryText)
+                .frame(width: 58, alignment: .leading)
+            Text(verbatim: value)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var connection: String {
+        switch entry.transport {
+        case .stdio(let command, let args):
+            let package = args.first { !$0.hasPrefix("-") } ?? command
+            return "Runs on this Mac through \(command) (\(package))."
+        case .http(let url, _):
+            return "Remote server at \(Self.host(of: url))."
+        case .oauth(let url):
+            return "Remote server at \(Self.host(of: url)); signs in through your browser the first time."
+        }
+    }
+
+    private var needs: String {
+        let required = entry.fields.filter(\.isRequired).map(\.label)
+        let optional = entry.fields.filter { !$0.isRequired }.map(\.label)
+        if required.isEmpty && optional.isEmpty { return entry.isOAuth ? "An account to sign in with." : "Nothing, it works right away." }
+        var parts: [String] = []
+        if !required.isEmpty { parts.append(required.joined(separator: ", ")) }
+        if !optional.isEmpty { parts.append("optionally " + optional.joined(separator: ", ").lowercased()) }
+        return parts.joined(separator: "; ") + "."
+    }
+
+    private static func host(of url: String) -> String {
+        URL(string: url)?.host() ?? url
+    }
+}
+
+/// Monospaced chips wrapping onto as many lines as they need.
+private struct FlowChips: View {
+    let items: [String]
+
+    init(_ items: [String]) { self.items = items }
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(items, id: \.self) { item in
+                Text(verbatim: item)
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundStyle(Chrome.primaryText.opacity(0.85))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Chrome.overlay(0.08), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            }
+        }
+    }
+}
+
+/// Rows of subviews, each as wide as it needs, wrapping at the proposed width.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            maxX = max(maxX, x - spacing)
+        }
+        return CGSize(width: proposal.width ?? maxX, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x: CGFloat = bounds.minX, y: CGFloat = bounds.minY, rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX {
+                x = bounds.minX
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }

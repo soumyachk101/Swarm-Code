@@ -91,9 +91,9 @@ final class ClaudeSession: ProviderSession {
         if let model = configuration.model, model != "default" { arguments += ["--model", model] }
         if let effort = configuration.effort, !effort.isEmpty { arguments += ["--effort", effort] }
         if configuration.fastMode { arguments += ["--settings", #"{"fastMode":true}"#] }
-        // Connected MCP servers from Settings ride along at launch; no file means none.
-        // The user's own servers from their Claude settings keep working untouched.
-        if let mcpConfig = MCPProviderConfig.claudeConfigPath() { arguments += ["--mcp-config", mcpConfig] }
+        // Connected servers from Settings are the only MCP servers the session sees.
+        // --strict-mcp-config leaves the user's own Claude config files alone but out of this session; with none connected, the flag is not passed and Claude reads its own config as usual.
+        if let mcpConfig = MCPProviderConfig.claudeConfigPath() { arguments += ["--mcp-config", mcpConfig, "--strict-mcp-config"] }
         var environment = configuration.environment
         let options: Set<String> = configuration.hydra == nil ? [] : await Self.knownOptions(of: executable, environment: environment)
         if let hydra = configuration.hydra {

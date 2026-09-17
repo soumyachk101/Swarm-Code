@@ -8,17 +8,21 @@ struct HydraPopoverHeader: View {
     var captionColor: Color = Chrome.secondaryText
     var title: String? = nil
 
+    /// Sits at the header's trailing edge: a copy button, a link.
+    var accessory: AnyView? = nil
+
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            HydraGlyph(persona: persona, size: 24, status: status)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+        HStack(alignment: .top, spacing: 12) {
+            HydraGlyph(persona: persona, size: 28, status: status)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(persona.name)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(persona.color)
                     if let caption, !caption.isEmpty {
                         Text(caption)
-                            .font(.system(size: 11))
+                            .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(captionColor)
                             .monospacedDigit()
                             .lineLimit(1)
@@ -27,15 +31,21 @@ struct HydraPopoverHeader: View {
                 if let title, !title.isEmpty {
                     Text(title)
                         .font(.system(size: 12))
-                        .foregroundStyle(Chrome.primaryText)
+                        .foregroundStyle(Chrome.primaryText.opacity(0.85))
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer(minLength: 0)
+            if let accessory {
+                accessory
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        // A shade of its own, so the header reads as the panel's top and the report as its page.
+        .background(Chrome.overlay(0.035))
     }
 }
 
@@ -60,9 +70,13 @@ struct HydraHeadReportPopover: View {
                 status: head.status,
                 caption: Self.caption(for: head),
                 captionColor: Self.captionColor(for: head.status),
-                title: head.task
+                title: head.task,
+                accessory: blocks.isEmpty ? nil : AnyView(CopyButton(text: head.summary ?? ""))
             )
             Divider()
+            // Every block, not a lazy stack: the body is laid out whole to size the panel
+            // before it opens (see `PopoverScroll`), so a lazy stack only measured
+            // differently once shown and the panel cut its header off.
             PopoverScroll(maxHeight: 460, width: Self.width) {
                 Group {
                     if blocks.isEmpty {
@@ -70,7 +84,7 @@ struct HydraHeadReportPopover: View {
                             .font(.system(size: 12))
                             .foregroundStyle(Chrome.secondaryText)
                     } else {
-                        LazyVStack(alignment: .leading, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 10) {
                             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                                 MarkdownBlockView(block: block)
                                     .equatable()
@@ -82,7 +96,8 @@ struct HydraHeadReportPopover: View {
                         .textSelection(.enabled)
                     }
                 }
-                .padding(12)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -136,11 +151,11 @@ struct HydraBriefPopover: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HydraPopoverHeader(persona: persona, caption: "Brief", title: task)
+            HydraPopoverHeader(persona: persona, caption: "Brief", title: task, accessory: AnyView(CopyButton(text: text)))
             Divider()
             PopoverScroll(maxHeight: 460, width: Self.width) {
                 Group {
-                    LazyVStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                             MarkdownBlockView(block: block)
                                 .equatable()
@@ -151,7 +166,8 @@ struct HydraBriefPopover: View {
                     .environment(\.markdownDimmed, false)
                     .textSelection(.enabled)
                 }
-                .padding(12)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }

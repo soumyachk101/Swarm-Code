@@ -32,6 +32,7 @@ final class ACPSession: ProviderSession {
     private var sessionID: String?
     private var authMethods: [String] = []
     private var canLoadSessions = false
+    private var supportsHTTPMCP = false
     private var isReplaying = false
     private var isStopping = false
     private var runtimeMode: RuntimeMode
@@ -128,6 +129,7 @@ final class ACPSession: ProviderSession {
             "clientInfo": ["name": "droppy-code", "title": "Droppy Code", "version": .string(AppInfo.version)],
         ])
         canLoadSessions = initialized["agentCapabilities"]?["loadSession"]?.bool ?? false
+        supportsHTTPMCP = initialized["agentCapabilities"]?["mcpCapabilities"]?["http"]?.bool ?? false
         authMethods = (initialized["authMethods"]?.array ?? []).compactMap { $0["id"]?.string }
         if let state = initialized["_meta"]?["modelState"] { applyModels(state) }
 
@@ -249,7 +251,9 @@ final class ACPSession: ProviderSession {
     // MARK: - Session state
 
     private func openSession(_ connection: JSONRPCConnection) async throws -> JSONValue {
-        let base: [String: JSONValue] = ["cwd": .string(workingDirectory), "mcpServers": []]
+        // The connected servers ride into every new session through ACP's own field,
+        // HTTP ones directly where the agent says it speaks HTTP MCP, else through `mcp-remote`.
+        let base: [String: JSONValue] = ["cwd": .string(workingDirectory), "mcpServers": MCPProviderConfig.acpServers(allowsHTTP: supportsHTTPMCP)]
         if let resumeID = configuration.resumeID, canLoadSessions {
             var params = base
             params["sessionId"] = .string(resumeID)

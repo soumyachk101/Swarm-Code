@@ -135,6 +135,7 @@ enum PiCLI {
     /// asking anything. Plan mode and the final report block the tools outright.
     static let extensionSource: String = #"""
     import fs from "node:fs";
+    import { Type } from "typebox";
 
     const readOnly = new Set(["read", "grep", "find", "ls"]);
 
@@ -163,7 +164,26 @@ enum PiCLI {
       });
     }
 
-    export default function (pi) {
+    export default async function (pi) {
+      try {
+        const bridge = process.env.DROPPY_CODE_MCP_BRIDGE ? await import(process.env.DROPPY_CODE_MCP_BRIDGE) : null;
+        if (bridge) {
+          for (const tool of await bridge.loadMCPTools()) {
+            pi.registerTool({
+              name: "mcp__" + tool.server + "__" + tool.name,
+              label: tool.server + " · " + tool.name,
+              description: tool.description,
+              parameters: Type.Unsafe(tool.inputSchema),
+              async execute(toolCallId, params) {
+                const text = await tool.call(params);
+                return { content: [{ type: "text", text }], details: {} };
+              },
+            });
+          }
+        }
+      } catch (error) {
+        console.error("droppy mcp: " + (error instanceof Error ? error.message : String(error)));
+      }
       pi.on("before_agent_start", async (event, ctx) => {
         const gate = readGate();
         const extra = [];

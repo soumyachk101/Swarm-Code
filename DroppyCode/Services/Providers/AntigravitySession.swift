@@ -73,6 +73,9 @@ final class AntigravitySession: ProviderSession {
             "--print-timeout", "30m",
             "--add-dir", workingDirectory,
         ]
+        // Only the connected servers are allowed for the session, so the user's own stay out of it without being touched.
+        let connected = MCPProviderConfig.connectedIDs()
+        if !connected.isEmpty { arguments += ["--allowed-mcp-server-names"] + connected }
         let (resolvedModel, resolvedEffort) = Self.normalize(model: model, effort: effort)
         if let resolvedModel, !resolvedModel.isEmpty { arguments += ["--model", resolvedModel] }
         if let resolvedEffort, !resolvedEffort.isEmpty { arguments += ["--effort", resolvedEffort] }
