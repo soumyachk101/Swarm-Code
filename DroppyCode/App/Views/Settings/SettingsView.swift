@@ -302,6 +302,10 @@ private struct GeneralSettingsPage: View {
                         SettingsSwitch(isOn: $settings.showReasoning)
                     }
                     ChromeRowDivider()
+                    ChromeRow(title: "Chronological order", detail: "Replies and actions of a running turn interleave as they happen, instead of the steps gathering into the working line") {
+                        SettingsSwitch(isOn: $settings.chronologicalTimeline)
+                    }
+                    ChromeRowDivider()
                     ChromeRow(title: "Working line", detail: "A card with the turn's progress bar, or a plain line") {
                         ChromeVisualPicker(options: [(true, "Card"), (false, "Line")], selection: $settings.showsWorkingCard) { isCard in
                             WorkingLinePreview(isCard: isCard)
