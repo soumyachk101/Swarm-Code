@@ -222,6 +222,10 @@ struct VeiledText: View {
     /// in order: every head named anywhere in a paragraph renders decorated, inline in
     /// the same flowing `Text`, and only the prose runs veil.
     private let segments: [Segment]?
+    /// Where each prose run ends, in characters of the JOINED string's own clustering:
+    /// a grapheme that spans a join (a combining mark, a ZWJ emoji) is one character of
+    /// the join but two of the runs' own counts, so slicing by those traps past endIndex.
+    let proseEnds: [Int]
 
     @Environment(\.markdownVeiled) private var veiled
     @Environment(\.markdownDimmed) private var dimmed
@@ -230,20 +234,27 @@ struct VeiledText: View {
     init(_ attributed: AttributedString) {
         source = .attributed(attributed)
         segments = nil
+        proseEnds = []
     }
 
     init(segments: [Segment]) {
         var joined = AttributedString()
+        var ends: [Int] = []
         for segment in segments {
-            if case .prose(let a) = segment { joined.append(a) }
+            if case .prose(let a) = segment {
+                joined.append(a)
+                ends.append(joined.characters.count)
+            }
         }
         source = .attributed(joined)
         self.segments = segments
+        proseEnds = ends
     }
 
     init(verbatim string: String) {
         source = .plain(string)
         segments = nil
+        proseEnds = []
     }
 
     var body: some View {
@@ -297,13 +308,15 @@ struct VeiledText: View {
         if let segments {
             var out = Text(verbatim: "")
             var cursor = styled.startIndex
+            var prose = 0
             for segment in segments {
                 switch segment {
                 case .fixed(let t): out = out + t
-                case .prose(let a):
-                    let end = styled.characters.index(cursor, offsetBy: a.characters.count)
+                case .prose:
+                    let end = styled.characters.index(styled.startIndex, offsetBy: proseEnds[prose])
                     out = out + Text(AttributedString(styled[cursor..<end]))
                     cursor = end
+                    prose += 1
                 }
             }
             return out
