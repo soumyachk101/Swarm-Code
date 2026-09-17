@@ -46,8 +46,6 @@ final class ClaudeSession: ProviderSession {
     private var turnActive = false
     private var interruptRequested = false
     private var isStopping = false
-    /// Resolves the cumulative result-message totals into per-turn spend.
-    private var spendTracker = TokenSpendTracker()
     private static var knownOptions: [String: Set<String>] = [:]
 
     init(configuration: SessionConfiguration) {
@@ -543,9 +541,7 @@ final class ClaudeSession: ProviderSession {
         turnActive = false
         if let usage = Self.contextUsage(message) {
             onEvent?(.usage(usage))
-            // Result totals are cumulative for the session, so only the
-            // growth since the previous result is new spend.
-            let spend = spendTracker.spend(total: usage.usedTokens)
+            let spend = Self.turnSpend(message)
             if spend > 0 { TokenLedger.shared.record(spend: spend) }
         }
         for requestID in pendingTools.keys { onEvent?(.requestResolved(id: requestID)) }
@@ -735,6 +731,22 @@ final class ClaudeSession: ProviderSession {
         guard let content else { return "" }
         if let text = content.string { return text }
         return (content.array ?? []).compactMap { $0["text"]?.string }.joined(separator: "\n")
+    }
+
+    /// The tokens the turn sent and received across its API calls, cache reads
+    /// included, which is what Claude Code itself reports.
+    private static func turnSpend(_ message: JSONValue) -> Int {
+        guard let usage = message["usage"] else { return 0 }
+        func tokens(_ value: JSONValue?) -> Int {
+            (value?["input_tokens"]?.int ?? 0)
+                + (value?["cache_read_input_tokens"]?.int ?? 0)
+                + (value?["cache_creation_input_tokens"]?.int ?? 0)
+                + (value?["output_tokens"]?.int ?? 0)
+        }
+        if let iterations = usage["iterations"]?.array, !iterations.isEmpty {
+            return iterations.reduce(0) { $0 + tokens($1) }
+        }
+        return tokens(usage)
     }
 
     private static func contextUsage(_ message: JSONValue) -> ContextUsage? {

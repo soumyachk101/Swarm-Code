@@ -539,9 +539,12 @@ final class CodexSession: ProviderSession {
                 // The thread total only ever grows within a session, so its
                 // positive deltas are exact spend no matter how often this
                 // event fires. The per-update `last` value is the fallback
-                // for servers that omit the total.
+                // for servers that omit the total. On the first update of a
+                // resumed thread the total already holds its history, so the
+                // tracker starts from the total less the last request rather
+                // than from zero.
                 if let total = usage["total"]?["totalTokens"]?.int, total > 0 {
-                    let spend = spendTracker.spend(total: total)
+                    let spend = spendTracker.spend(total: total, before: max(0, total - used))
                     if spend > 0 { TokenLedger.shared.record(spend: spend) }
                 } else {
                     TokenLedger.shared.record(spend: used)
@@ -551,7 +554,7 @@ final class CodexSession: ProviderSession {
                 let total = usage["total"]?["totalTokens"]?.int ?? 0
                 if total > 0 {
                     var tracker = headSpend[head] ?? TokenSpendTracker()
-                    let spend = tracker.spend(total: total)
+                    let spend = tracker.spend(total: total, before: max(0, total - used))
                     headSpend[head] = tracker
                     if spend > 0 { TokenLedger.shared.record(spend: spend) }
                 } else {

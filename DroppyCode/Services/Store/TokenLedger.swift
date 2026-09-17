@@ -8,11 +8,15 @@ import Observation
 /// grow within a session, so the spend behind one event is the positive
 /// delta since the previous event. A drop (compaction, a fresh session on a
 /// reused object) reseeds the baseline without recording: the growth after
-/// it is new spend and gets counted from there.
+/// it is new spend and gets counted from there. The first call may pass
+/// `before`, the total the counter had before this session, which is not
+/// new spend.
 struct TokenSpendTracker {
     private var lastTotal = 0
+    private var seeded = false
 
-    mutating func spend(total: Int) -> Int {
+    mutating func spend(total: Int, before: Int = 0) -> Int {
+        if !seeded { seeded = true; lastTotal = max(0, min(total, before)) }
         defer { lastTotal = max(0, total) }
         return max(0, total - lastTotal)
     }
@@ -27,7 +31,8 @@ struct TokenSpendTracker {
 /// counters), so the ledger itself only ever adds. History comes from a
 /// one-time background tail scan of local Codex rollouts: only the last
 /// 128 KB of each file is read, looking for its final token_count event,
-/// so thousands of transcripts cost one seek each. Per-file fingerprints
+/// each file counting only its own growth, since a resumed thread carries
+/// its history into a new file, so thousands of transcripts cost one seek each. Per-file fingerprints
 /// (mtime plus size) keep later scans incremental, and files written after
 /// launch are skipped because live recording already owns them; counting
 /// both would double every active session. Claude history is live-only for
@@ -159,10 +164,17 @@ private enum CodexFingerprintStore {
     private static let legacyDefaultsKey = "droppycode.tokenActivity.codexFiles"
 
     private static var fileURL: URL {
-        Storage.root.appendingPathComponent("token-activity-codex.json")
+        Storage.root.appendingPathComponent("token-activity-codex-v2.json")
     }
 
     static func load() -> [String: CodexFileFingerprint] {
+        // The first shape counted a resumed thread's history once per file it
+        // was resumed in; the v2 file holds each file's own growth, so the
+        // old one is not migrated.
+        let oldURL = Storage.root.appendingPathComponent("token-activity-codex.json")
+        if FileManager.default.fileExists(atPath: oldURL.path) {
+            try? FileManager.default.removeItem(at: oldURL)
+        }
         if let data = try? Data(contentsOf: fileURL),
            let stored = try? JSONDecoder().decode([String: CodexFileFingerprint].self, from: data) {
             return stored
@@ -248,7 +260,52 @@ private enum TokenHistoryScanner {
         ]
     }
 
-    /// Reads the tail of one rollout and returns its session total with the
+    private static let headBytes = 8 * 1_048_576
+
+    /// The total the file inherited from the thread it resumed, which is the
+    /// total the first token_count already stood at before its own request.
+    private static func inheritedTotal(at url: URL) -> Int {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return 0 }
+        defer { try? handle.close() }
+        let chunkSize = 512 * 1024
+        let marker = Data("\"token_count\"".utf8)
+        var budget = headBytes
+        var buffer = Data()
+        while budget > 0 {
+            let want = min(chunkSize, budget)
+            guard let chunk = try? handle.read(upToCount: want), !chunk.isEmpty else { break }
+            budget -= chunk.count
+            buffer.append(chunk)
+            // One pass over the chunk: each line is a slice between newlines, and only a
+            // line carrying the marker is decoded. A resumed file replays its whole
+            // history before its first token_count, so the head can run to megabytes.
+            var start = buffer.startIndex
+            while let newline = buffer[start...].firstIndex(of: 0x0A) {
+                let lineData = buffer[start..<newline]
+                start = buffer.index(after: newline)
+                guard lineData.range(of: marker) != nil,
+                      let event = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                      let payload = event["payload"] as? [String: Any],
+                      let info = payload["info"] as? [String: Any],
+                      let total = info["total_token_usage"] as? [String: Any],
+                      let tokens = (total["total_tokens"] as? NSNumber)?.intValue ?? total["total_tokens"] as? Int,
+                      tokens > 0 else { continue }
+                let last: Int
+                if let lastUsage = info["last_token_usage"] as? [String: Any] {
+                    last = (lastUsage["total_tokens"] as? NSNumber)?.intValue ?? lastUsage["total_tokens"] as? Int ?? 0
+                } else {
+                    last = 0
+                }
+                return max(0, tokens - last)
+            }
+            buffer = Data(buffer[start...])
+            if chunk.count < want { break }
+        }
+        return 0
+    }
+
+    /// Reads the tail of one rollout and returns the file's own growth, its
+    /// final total less what it inherited from a resumed thread, with the
     /// event day, or nil when the tail holds no token_count event.
     private static func tailContribution(at url: URL) -> (tokens: Int, day: String)? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
@@ -282,7 +339,8 @@ private enum TokenHistoryScanner {
                 day = ""
             }
             guard !day.isEmpty else { continue }
-            return (tokens, day)
+            let own = tokens - inheritedTotal(at: url)
+            return (max(0, own), day)
         }
         return nil
     }
