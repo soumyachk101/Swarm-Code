@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 @testable import DroppyCode
 
@@ -98,6 +99,45 @@ import Testing
     #expect(numbers == [3, 9])
     window.close()
     other.close()
+}
+
+@Test @MainActor func switchingBackFindsTheThreadsColumnKept() async throws {
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    let app = AppModel()
+    let project = app.addProject(at: FileManager.default.temporaryDirectory)
+    let first = try #require(app.newThread(in: project, workspace: .local))
+    let second = try #require(app.newThread(in: project, workspace: .local))
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: .titled, backing: .buffered, defer: false)
+    window.isReleasedWhenClosed = false
+    let host = NSHostingView(rootView: DetailView().environment(app).environment(WindowLiveResize(window: window)))
+    host.frame = window.contentView!.bounds
+    window.contentView?.addSubview(host)
+    func columns() -> [FrameHostingView] {
+        var found: [FrameHostingView] = []
+        var pending: [NSView] = [host]
+        while let view = pending.popLast() {
+            if let column = view as? FrameHostingView { found.append(column) } else { pending += view.subviews }
+        }
+        return found
+    }
+    func select(_ id: UUID) {
+        app.selectedThreadID = id
+        host.layoutSubtreeIfNeeded()
+    }
+    select(second.id)
+    let secondColumn = try #require(columns().first)
+    #expect(columns().count == 1)
+    select(first.id)
+    #expect(columns().count == 2)
+    #expect(secondColumn.isHidden)
+    let firstColumn = try #require(columns().first { !$0.isHidden })
+    #expect(firstColumn !== secondColumn)
+    // Back to the second: its column is the one made before, shown again, not a new one.
+    select(second.id)
+    #expect(columns().count == 2)
+    #expect(!secondColumn.isHidden)
+    #expect(firstColumn.isHidden)
+    window.close()
 }
 
 @Test func revertTouchesOnlyTheThreadsOwnFiles() async throws {

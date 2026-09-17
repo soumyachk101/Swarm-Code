@@ -107,12 +107,48 @@ struct RootView: View {
     }
 }
 
+/// Whether the chat column a view sits in is the one on screen. The columns of the threads
+/// visited last stay built behind the selected one (see `ThreadColumns`), so a view that
+/// would react to appearing or disappearing reacts to this instead.
+extension EnvironmentValues {
+    @Entry var chatColumnIsShown = true
+}
+
 struct DetailView: View {
     @Environment(AppModel.self) private var model
+    @Environment(WindowLiveResize.self) private var liveResize
+    /// Threads whose columns are built behind the selection, ahead of a click on them.
+    @State private var prebuilt: [UUID] = []
+    @State private var hasPrebuiltTopRows = false
+    /// `kCGAnyInputEventType`, which Quartz leaves out of the Swift enum.
+    private static let anyInput = CGEventType(rawValue: ~0)!
 
     var body: some View {
         if let threadID = model.selectedThreadID, model.thread(threadID) != nil {
-            ChatView(runtime: model.runtime(for: threadID))
+            let running = Set(model.threads.compactMap { model.existingRuntime(for: $0.id)?.isRunning == true ? $0.id : nil })
+            ThreadColumns(threadID: threadID, prebuilt: prebuilt, running: running, model: model, liveResize: liveResize)
+                .onChange(of: threadID) { _, _ in prebuilt = [] }
+                .task(id: threadID) {
+                    // The neighbours, and at launch the sidebar's top rows, one at a time, once
+                    // the reader has settled on the thread and nothing streams in it: each is a
+                    // frame's worth of building.
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    var candidates = model.neighbors(of: threadID)
+                    if !hasPrebuiltTopRows {
+                        hasPrebuiltTopRows = true
+                        candidates += model.sidebarThreads.prefix(ThreadColumns.topRowsBuiltAtLaunch).map(\.id)
+                    }
+                    for id in candidates where !Task.isCancelled {
+                        // Never under the reader's hands: a build holds the main thread for a
+                        // frame or a few, which a keystroke would wait on.
+                        while !Task.isCancelled, CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: Self.anyInput) < 1 {
+                            try? await Task.sleep(for: .milliseconds(300))
+                        }
+                        guard !Task.isCancelled, !(model.existingRuntime(for: threadID)?.isRunning ?? false) else { return }
+                        if id != threadID, !prebuilt.contains(id) { prebuilt.append(id) }
+                        try? await Task.sleep(for: .milliseconds(400))
+                    }
+                }
         } else {
             Group {
                 if model.projects.isEmpty {
@@ -123,6 +159,129 @@ struct DetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .detailSheet()
+        }
+    }
+}
+
+/// The chat column, hosted on its own per thread. The columns of the threads visited last
+/// stay in the pane, hidden, so switching back to one is a change of visibility rather
+/// than a rebuild of the timeline, the composer and the panels: the rows of a long thread
+/// took a quarter of a second to build each time. Hosting each column apart also keeps
+/// every view tree small: SwiftUI walks a tree whole whenever a focusable view appears in
+/// it or the pointer moves over it. Hidden rather than detached, because a hosting view
+/// taken out of the window disappears to its views, and every task of the column starts
+/// over when it comes back.
+private struct ThreadColumns: NSViewRepresentable {
+    /// How many of the sidebar's top rows are built behind the first thread shown.
+    static let topRowsBuiltAtLaunch = 6
+
+    let threadID: UUID
+    let prebuilt: [UUID]
+    /// Threads with a turn under way. A hidden column of one goes: its rows would stream
+    /// unseen, at the same cost as on screen.
+    let running: Set<UUID>
+    let model: AppModel
+    let liveResize: WindowLiveResize
+
+    func makeNSView(context: Context) -> NSView {
+        NSView()
+    }
+
+    func updateNSView(_ pane: NSView, context: Context) {
+        let columns = context.coordinator
+        columns.show(threadID, in: pane, model: model, liveResize: liveResize)
+        columns.dropHidden(where: { running.contains($0) || model.thread($0) == nil || model.existingRuntime(for: $0) == nil })
+        columns.prebuild(prebuilt.filter { model.thread($0) != nil && !running.contains($0) }, in: pane, model: model, liveResize: liveResize)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    @MainActor final class Coordinator {
+        /// How many columns stay built behind the shown one.
+        private static let keptLimit = 8
+        private var columns: [UUID: FrameHostingView] = [:]
+        /// The threads with a column, the one to drop first at the front and the shown one
+        /// last. A column built ahead of a click goes in at the front: it is the first to
+        /// make room for the columns the reader has been to.
+        private var order: [UUID] = []
+        private var shown: UUID?
+        /// What was asked for ahead of a click, so a column dropped since is not built over
+        /// and over on every update.
+        private var requested: Set<UUID> = []
+        /// Columns dropped, kept until the switch that dropped them has been drawn: taking
+        /// a view tree down costs a frame's worth of time, better spent after the frame.
+        private var retired: [FrameHostingView] = []
+        private var retirement: Task<Void, Never>?
+
+        func show(_ id: UUID, in pane: NSView, model: AppModel, liveResize: WindowLiveResize) {
+            guard id != shown else { return }
+            if let shown, let previous = columns[shown] {
+                previous.isHidden = true
+                previous.rootView = Self.root(shown, isShown: false, model: model, liveResize: liveResize)
+            }
+            if let kept = columns[id] {
+                kept.rootView = Self.root(id, isShown: true, model: model, liveResize: liveResize)
+                kept.isHidden = false
+            } else {
+                make(id, isShown: true, in: pane, model: model, liveResize: liveResize)
+            }
+            shown = id
+            order.removeAll { $0 == id }
+            order.append(id)
+            while order.count > Self.keptLimit + 1 { drop(order[0]) }
+        }
+
+        /// Drops the hidden columns the test names; each is built afresh when its thread is
+        /// next selected.
+        func dropHidden(where goes: (UUID) -> Bool) {
+            for id in Array(columns.keys) where id != shown && goes(id) { drop(id) }
+        }
+
+        /// Builds the columns asked for, hidden and laid out at the pane's size, so a click
+        /// on one of the threads finds its rows made. Each is built once per request: one
+        /// dropped to make room for the columns visited since stays dropped.
+        func prebuild(_ ids: [UUID], in pane: NSView, model: AppModel, liveResize: WindowLiveResize) {
+            for id in ids where !requested.contains(id) && columns[id] == nil {
+                let started = ContinuousClock.now
+                make(id, isShown: false, in: pane, model: model, liveResize: liveResize).layoutSubtreeIfNeeded()
+                SwitchLatency.note("prebuilt \(model.thread(id)?.title.prefix(24) ?? "?") in \(started.duration(to: .now))")
+                order.insert(id, at: 0)
+                while order.count > Self.keptLimit + 1 { drop(order[0]) }
+            }
+            requested = Set(ids)
+        }
+
+        @discardableResult
+        private func make(_ id: UUID, isShown: Bool, in pane: NSView, model: AppModel, liveResize: WindowLiveResize) -> FrameHostingView {
+            let column = FrameHostingView(rootView: Self.root(id, isShown: isShown, model: model, liveResize: liveResize))
+            column.frame = pane.bounds
+            column.isHidden = !isShown
+            pane.addSubview(column)
+            columns[id] = column
+            return column
+        }
+
+        private static func root(_ id: UUID, isShown: Bool, model: AppModel, liveResize: WindowLiveResize) -> AnyView {
+            AnyView(
+                ChatView(runtime: model.runtime(for: id))
+                    .environment(\.chatColumnIsShown, isShown)
+                    .modifier(HostedEnvironment(model: model, liveResize: liveResize))
+            )
+        }
+
+        private func drop(_ id: UUID) {
+            order.removeAll { $0 == id }
+            guard let column = columns.removeValue(forKey: id) else { return }
+            retired.append(column)
+            retirement?.cancel()
+            retirement = Task { [weak self] in
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled, let self else { return }
+                for column in retired { column.removeFromSuperview() }
+                retired.removeAll()
+            }
         }
     }
 }
