@@ -2,7 +2,15 @@
 
 All notable changes to Droppy Code are documented here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are the release tags without the `v`.
 
-`scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections.
+`scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date.
+
+## [Unreleased]
+
+### Bug fixes
+- OpenCode models show their reasoning levels before a chat starts: the effort slider no longer says "This model has one reasoning level" for a model that has several until the first message is sent, and starting a chat no longer forgets the levels of every other OpenCode model. OpenCode reports the levels of the model a session is on, so the catalog now asks it for each model in turn, the way it already did for Cursor.
+
+### Refinements
+- The disk image opens to a styled drag-to-Applications window, with its own background and the app icon as the volume icon, the same installer window Droppy has.
 
 ## [1.5.4] - 2026-09-17
 

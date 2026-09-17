@@ -94,6 +94,9 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
     /// API-key providers talk to their cloud API directly instead of a local CLI.
     var isAPIKeyBased: Bool { self == .deepseek || self == .meta || self == .zai }
 
+    /// Driven over the Agent Client Protocol by `ACPSession`.
+    var usesACP: Bool { self == .cursor || self == .opencode || self == .grok || self == .devin }
+
     /// Providers with an API key field in Settings: the API-key providers, which need one,
     /// and Command Code, whose CLI takes a Studio key through `COMMAND_CODE_API_KEY` as an
     /// alternative to `cmd login`.

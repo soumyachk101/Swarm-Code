@@ -90,6 +90,24 @@ final class ProviderRegistry {
         return merged
     }
 
+    /// An ACP session reports the effort scale of the model it runs on, not of every
+    /// model it lists (Cursor and OpenCode send the current model's `thought_level`
+    /// alone; the catalog probe walked the rest), so a live row without a scale keeps
+    /// the scale, default and fast tier the catalog already holds for that id. Rows the
+    /// live list dropped go; rows it added come in as they are.
+    private static func mergedACPCatalog(_ live: [ModelOption], over cached: [ModelOption]) -> [ModelOption] {
+        guard !cached.isEmpty else { return live }
+        let known = Dictionary(cached.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return live.map { option in
+            guard option.efforts.isEmpty, let kept = known[option.id] else { return option }
+            var option = option
+            option.efforts = kept.efforts
+            if option.defaultEffort == nil { option.defaultEffort = kept.defaultEffort }
+            if option.fastTier == nil { option.fastTier = kept.fastTier }
+            return option
+        }
+    }
+
     private static func isStaleClaudeSeed(_ list: [ModelOption]) -> Bool {
         let earlierSeedIDs: Set<String> = ["default", "opus", "sonnet", "haiku"]
         return list.isEmpty || list.allSatisfy { earlierSeedIDs.contains($0.id) }
@@ -379,11 +397,14 @@ final class ProviderRegistry {
         // Copilot's seed is only its Auto row, and Command Code's a handful of its seventy
         // models, so the account's list is fetched on first use. Claude's seed is the four
         // names its CLI has always taken, so its handshake runs every launch: the CLI's own
-        // list follows its version.
+        // list follows its version. An OpenCode list cached before the probe walked the
+        // models for their reasoning levels holds a scale for one model at most, so it is
+        // probed again.
         let seeded = provider == .claude
             || (provider == .copilot && models(for: provider) == [Self.copilotAuto])
             || (provider == .commandcode && models(for: provider) == Self.commandcodeSeed)
             || (provider == .pi && models(for: provider) == Self.piSeed)
+            || (provider == .opencode && Self.lacksEffortWalk(models(for: provider)))
         guard force || seeded || models(for: provider).isEmpty else { return }
         loadingCatalogs.insert(provider)
         defer { loadingCatalogs.remove(provider) }
@@ -402,6 +423,12 @@ final class ProviderRegistry {
         case .deepseek, .meta, .zai: nil
         }
         if let list, !list.isEmpty { updateCatalog(list, for: provider) }
+    }
+
+    /// An OpenCode list cached before the catalog probe walked the models for their
+    /// reasoning levels holds a scale for the model the probe's session started on alone.
+    private static func lacksEffortWalk(_ list: [ModelOption]) -> Bool {
+        list.count(where: { !$0.efforts.isEmpty }) <= 1
     }
 
     private func loadClaudeCatalog(executable: URL, environment: [String: String]) async -> [ModelOption]? {
@@ -541,8 +568,13 @@ final class ProviderRegistry {
     func updateCatalog(_ list: [ModelOption], for provider: ProviderKind) {
         // Claude's live list refines the seed rather than replacing it: threads, pairs and
         // the chip name the seed's ids (`opus`, the Fable row), and a handshake that lists
-        // the models another way left them as raw ids with one reasoning level.
-        let list = provider == .claude ? Self.mergedClaudeCatalog(list) : list
+        // the models another way left them as raw ids with one reasoning level; an ACP session's
+        // list keeps the scales the probe walked, see `mergedACPCatalog`.
+        let list = switch provider {
+        case .claude: Self.mergedClaudeCatalog(list)
+        case _ where provider.usesACP: Self.mergedACPCatalog(list, over: catalogs[provider] ?? [])
+        default: list
+        }
         guard !list.isEmpty, list != catalogs[provider] else { return }
         catalogs[provider] = list
         guard !CaptureRun.isEnabled else { return }
