@@ -237,7 +237,7 @@ enum AppShortcut: String, CaseIterable, Identifiable {
         case .archiveThread: KeyChord(keyCode: 13, modifiers: .command)
         case .settleThread: KeyChord(keyCode: 1, modifiers: .command)
         case .commandPalette: KeyChord(keyCode: 40, modifiers: .command)
-        case .toggleSidebar: KeyChord(keyCode: 1, modifiers: [.control, .command])
+        case .toggleSidebar: KeyChord(keyCode: 11, modifiers: .command)
         case .toggleTerminal: KeyChord(keyCode: 38, modifiers: .command)
         case .toggleChanges: KeyChord(keyCode: 2, modifiers: .command)
         case .toggleActivityView: KeyChord(keyCode: 32, modifiers: [.option, .command])
