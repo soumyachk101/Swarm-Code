@@ -60,7 +60,7 @@ struct HydraSettingsPage: View {
                     ChromeRowDivider()
                     ChromeRow(
                         title: "Heads at once",
-                        detail: settings.hydraMaxHeads.map { "At most \($0) at a time; a pair with a lower cap keeps its own." } ?? "As many as the job asks for, eight at a time; a pair's own cap still counts."
+                        detail: settings.hydraMaxHeads.map { "At most \($0) heads in parallel." } ?? "As many heads as the job needs."
                     ) {
                         ChromeSegmentedPicker(
                             options: [ChromeSegmentedOption(value: Int?.none, title: "No cap", symbol: "infinity")]
