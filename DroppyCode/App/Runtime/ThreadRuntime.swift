@@ -448,7 +448,7 @@ final class ThreadRuntime {
     @ObservationIgnored private var currentProviderDiff: String?
     @ObservationIgnored private var currentProviderAnchor: String?
     @ObservationIgnored private var interruptWatchdog: Task<Void, Never>?
-    /// Working-tree snapshots taken as command tools start, by tool id, and
+    /// The tree each running command tool is diffed from, by tool id, and
     /// the diffs being settled as they finish (see `watchCommand`).
     @ObservationIgnored private var commandTrees: [String: Task<String?, Never>] = [:]
     @ObservationIgnored private var commandSettles: [String: Task<Void, Never>] = [:]
@@ -459,6 +459,10 @@ final class ThreadRuntime {
     /// While that count has not moved, nothing can have changed the working tree since, so
     /// the next command takes it as its own "before" and snapshots nothing.
     @ObservationIgnored private var settledTree: (tree: String, epoch: Int)?
+    /// The last tree any command of this turn finished capturing, whatever ran since: a
+    /// command starting later than that is diffed from it when no settled tree stands,
+    /// rather than from a snapshot started alongside it that the command could outrun.
+    @ObservationIgnored private var latestTree: String?
     /// Bumped by anything that could write a file: a command starting, a tool that edits.
     @ObservationIgnored private var treeEpoch = 0
     /// The row a turn's todo list lives on, so each update finds it without scanning the
@@ -1165,6 +1169,7 @@ final class ThreadRuntime {
         // works on after the lead's reply ends, and what it changed then belongs to the
         // next turn, which takes it up at its end (see `finishTurn`).
         settledTree = nil
+        latestTree = nil
         treeEpoch += 1
         // The checkpoint is several git processes over the whole checkout. It runs while
         // the session starts rather than in front of it, and both are waited for before a
@@ -3051,19 +3056,57 @@ final class ThreadRuntime {
 
     /// Agents that edit files from the shell (python heredocs, sed -i, patch)
     /// never report an edit, so a command's row gets its edits from the
-    /// working tree instead: a snapshot as it starts, another as it finishes,
-    /// and the diff between the two. Git-backed projects only.
+    /// working tree instead: a tree known to predate the command, another
+    /// captured as it finishes, and the diff between the two. Git-backed projects only.
+    ///
+    /// Nothing is captured as the command starts. The agent runs the command itself,
+    /// the moment its tool call arrives, and a heredoc is done in a blink while a
+    /// snapshot of a big checkout takes seconds: a snapshot started here raced the
+    /// command and, more often than not, already held its write. Before and after then
+    /// matched, the row got no edits, the turn counted no file, and the lead's merge had
+    /// nothing to take; a sibling chat's sweep landed the work under its own title
+    /// instead. The "before" is now always a tree that was complete before the command
+    /// began (see `treeBeforeCommand`).
     private func watchCommand(_ id: String, _ call: ToolCall) {
         // A command that cannot write needs no snapshots at all: reading the checkout is
         // most of what an agent runs, and each snapshot is seconds of git on a big tree.
-        guard commandTrees[id] == nil, ShellCommandKind.mayWriteFiles(call.title), let git = repositoryGit else { return }
-        if let settled = settledTree, settled.epoch == treeEpoch {
-            commandTrees[id] = Task<String?, Never> { settled.tree }
-        } else {
-            commandTrees[id] = captureTree(git)
-        }
+        guard commandTrees[id] == nil, ShellCommandKind.mayWriteFiles(call.title), repositoryGit != nil,
+              let before = treeBeforeCommand() else { return }
+        commandTrees[id] = Task<String?, Never> { before }
         settledTree = nil
         treeEpoch += 1
+    }
+
+    /// A tree-ish that stood complete before a command starting now: the tree the last
+    /// command left when nothing has run since, else the last snapshot any command in
+    /// this turn finished, else the turn's own start checkpoint, which the turn waited
+    /// for before its first word reached the model. Each is older than the command, so
+    /// a diff from it can only hold more than the command wrote, never less; what an
+    /// earlier tool of the turn already reported is taken back out as the row settles.
+    private func treeBeforeCommand() -> String? {
+        if let settled = settledTree, settled.epoch == treeEpoch { return settled.tree }
+        if let latestTree { return latestTree }
+        guard let currentTurnID, let turn = turns.first(where: { $0.id == currentTurnID }) else { return nil }
+        return turn.baseCheckpoint
+    }
+
+    /// Repository-relative paths that other rows of a turn already carry as edits, so a
+    /// command settling against an older tree does not show the turn's earlier work as
+    /// its own. A path the command also touched stays on the row that reported it first
+    /// and still counts for the turn.
+    private func attributedPaths(inTurnOf id: String, git: Git, repositoryRoot: URL) -> Set<String> {
+        guard let turnID = entryIndex[id]?.item.turnID else { return [] }
+        var paths = Set<String>()
+        for entry in entries where entry.id != id && entry.item.turnID == turnID {
+            guard case .tool(let call) = entry.item.content else { continue }
+            for edit in call.edits {
+                let trimmed = edit.path.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                let absolute = trimmed.hasPrefix("/") || trimmed.hasPrefix("~") ? trimmed : (git.directory.path as NSString).appendingPathComponent(trimmed)
+                if let relative = TouchedPaths.relative(absolute, root: repositoryRoot.path) { paths.insert(relative) }
+            }
+        }
+        return paths
     }
 
     private func settleCommand(_ id: String) {
@@ -3072,17 +3115,19 @@ final class ThreadRuntime {
         commandSettles[id] = Task { [weak self] in
             guard let base = await before.value, let self else { return }
             guard let after = await captureTree(git).value else { return }
+            latestTree = after
             // Nothing else started or ran alongside while the snapshot was taken, so it
             // still stands for the working tree and the next command starts from it.
             if treeEpoch == epoch, commandTrees.isEmpty, hydraCommandTrees.isEmpty { settledTree = (after, epoch) }
             guard base != after, let changed = try? await git.changedPaths(from: base, to: after) else { return }
+            let repository = repositoryRoot(for: git)
+            let attributed = attributedPaths(inTurnOf: id, git: git, repositoryRoot: await repository.value)
             // Only the files that are work: a head that builds in its copy leaves thousands of
             // compiler-cache records under build.noindex where the project's .gitignore missed
             // them, and a diff of all of those once put 7,632 edits and 7 MB on two rows, then
             // into the merge as strays. Listed first and diffed by name, they never get that far.
-            let real = changed.filter { !$0.isEmpty && !TouchedPaths.isBuildOutput($0) }
+            let real = changed.filter { !$0.isEmpty && !TouchedPaths.isBuildOutput($0) && !attributed.contains($0) }
             guard !real.isEmpty, let patch = try? await git.diff(from: base, to: after, paths: real), !patch.isEmpty else { return }
-            let repository = repositoryRoot(for: git)
             let edits = await Self.fileEdits(from: patch, repositoryRoot: repository.value)
             guard !edits.isEmpty, let entry = entryIndex[id], case .tool(var call) = entry.item.content else { return }
             // A provider that did report its edits keeps them.
@@ -3122,12 +3167,9 @@ final class ThreadRuntime {
     /// the turn's files rather than onto a row, because the row lives in the head's
     /// runtime and it is the lead's turn that a merge takes its files from.
     private func watchHydraCommand(_ key: String, _ call: ToolCall) {
-        guard hydraCommandTrees[key] == nil, ShellCommandKind.mayWriteFiles(call.title), let git = repositoryGit else { return }
-        if let settled = settledTree, settled.epoch == treeEpoch {
-            hydraCommandTrees[key] = Task<String?, Never> { settled.tree }
-        } else {
-            hydraCommandTrees[key] = captureTree(git)
-        }
+        guard hydraCommandTrees[key] == nil, ShellCommandKind.mayWriteFiles(call.title), repositoryGit != nil,
+              let before = treeBeforeCommand() else { return }
+        hydraCommandTrees[key] = Task<String?, Never> { before }
         settledTree = nil
         treeEpoch += 1
     }
@@ -3140,6 +3182,7 @@ final class ThreadRuntime {
         commandSettles[key] = Task { [weak self] in
             guard let base = await before.value, let self else { return }
             guard let after = await captureTree(git).value else { return }
+            latestTree = after
             if treeEpoch == epoch, commandTrees.isEmpty, hydraCommandTrees.isEmpty { settledTree = (after, epoch) }
             guard base != after, let paths = try? await git.changedPaths(from: base, to: after) else { return }
             hydraTouched.formUnion(paths.filter { !$0.isEmpty && !TouchedPaths.isBuildOutput($0) })
