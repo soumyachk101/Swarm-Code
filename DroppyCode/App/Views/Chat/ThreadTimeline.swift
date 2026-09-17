@@ -1788,7 +1788,8 @@ private struct DisplayBlockView: View, Equatable {
                         userEntries: split.userEntries,
                         content: split.content,
                         workingDirectory: context.workingDirectory,
-                        canUndo: context.canRewind
+                        canUndo: context.canRewind,
+                        chronological: context.chronological
                     )
                     .transition(.identity)
                 } else {
