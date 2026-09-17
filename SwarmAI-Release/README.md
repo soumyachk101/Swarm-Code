@@ -92,29 +92,58 @@ No remote access. No mobile apps. No cloud sync. No telemetry. No accounts. No w
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────┐
-│                   SwarmAI (SwiftUI)                       │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │              Liquid Glass Window                    │  │
-│  │  ┌──────────┐ ┌──────────┐ ┌────────────────────┐  │  │
-│  │  │ Sidebar  │ │  Chat    │ │  Detail Panel      │  │  │
-│  │  │ Projects │ │ Thread   │ │  Diff / Git        │  │  │
-│  │  │ & Search │ │ Stream   │ │  Terminal          │  │  │
-│  │  └──────────┘ └──────────┘ └────────────────────┘  │  │
-│  └────────────────────────────────────────────────────┘  │
-│  ┌────────────────────────────────────────────────────┐  │
-│  │  Theme Engine  │  Binary Field  │  Hydra Engine    │  │  │
-│  └────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
-         │                        │
-         ▼                        ▼
-  ┌──────────────┐      ┌──────────────┐
-  │ Your Mac     │      │ Your Agents  │
-  │ Swift/SwiftUI│      │ Codex, Claude│
-  │ No Electron  │      │ Cursor, etc  │
-  │ 1 dependency │      │ Your subs    │
-  └──────────────┘      └──────────────┘
+```mermaid
+graph TB
+    subgraph Mac["🖥️ Your Mac — Apple Silicon"]
+        direction TB
+        subgraph SwarmAI["🐝 SwarmAI — Native macOS App"]
+            direction LR
+            subgraph UI["🎨 Liquid Glass Interface"]
+                direction TB
+                Sidebar["📂 Sidebar\nProjects · Threads · Search"]
+                Chat["💬 Chat Thread\nStreaming · Diffs · Queue"]
+                Detail["📋 Detail Panel\nDiff · Git · Terminal"]
+                Palette["⌘ Palette\nModels · Actions"]
+            end
+            subgraph Engine["⚙️ Core Engine"]
+                ThemeEngine["🎨 Theme Engine\n26 tinted-glass themes"]
+                BinaryField["💡 Binary Field\nCanvas + Glow"]
+                HydraEngine["🐉 Hydra Engine\nParallel worktrees"]
+                GitEngine["🔀 Git Engine\nCheckpoints · Worktrees"]
+                TerminalEngine["🖥️ Terminal\nSwiftTerm PTY"]
+            end
+        end
+    end
+
+    subgraph Agents["🤖 Your Coding Agents"]
+        Codex["Codex CLI"]
+        Claude["Claude CLI"]
+        Cursor["Cursor CLI"]
+        OpenCode["OpenCode"]
+        Grok["Grok"]
+        Antigravity["Antigravity"]
+        DeepSeek["DeepSeek API"]
+        Meta["Meta API"]
+    end
+
+    UI --> Engine
+    Engine --> GitEngine
+    Engine --> TerminalEngine
+    Engine --> ThemeEngine
+    Engine --> BinaryField
+    Engine --> HydraEngine
+
+    Chat <--> Agents
+    HydraEngine <--> Agents
+
+    style Mac fill:#0b0e14,stroke:#4f9cff,stroke-width:2px,color:#e8edf5
+    style SwarmAI fill:#131823,stroke:#4f9cff,stroke-width:3px,color:#e8edf5
+    style UI fill:#1a2030,stroke:#4f9cff,stroke-width:1.5px,color:#e8edf5
+    style Engine fill:#1a2030,stroke:#4f9cff,stroke-width:1.5px,color:#e8edf5
+    style Agents fill:#131823,stroke:#fbbf24,stroke-width:2px,color:#e8edf5
+
+    class Sidebar,Chat,Detail,Palette,ThemeEngine,BinaryField,HydraEngine,GitEngine,TerminalEngine engineStyle
+    class Codex,Claude,Cursor,OpenCode,Grok,Antigravity,DeepSeek,Meta agentStyle
 ```
 
 ---
@@ -145,7 +174,7 @@ No remote access. No mobile apps. No cloud sync. No telemetry. No accounts. No w
 
 ### Install
 
-1. Download `SwarmAI-1.1.2.dmg` from the [Releases](https://github.com/soumyachk101/SwarmAI-Release/releases) page.
+1. Download `SwarmAI-1.1.3.dmg` from the [Releases](https://github.com/soumyachk101/SwarmAI-Release/releases) page.
 2. Double-click the `.dmg` file to open it.
 3. Drag **SwarmAI.app** into your `/Applications` folder.
 4. Launch from Applications or Spotlight.
@@ -160,6 +189,10 @@ No remote access. No mobile apps. No cloud sync. No telemetry. No accounts. No w
 ## Changelog
 
 See [CHANGELOG.md](CHANGELOG.md) for the full history.
+
+### v1.1.3
+- In-app update checker configured directly to the public SwarmAI-Release repository
+- Streamlined about settings links and release references
 
 ### v1.1.2
 - Model search and provider switching in running chats
