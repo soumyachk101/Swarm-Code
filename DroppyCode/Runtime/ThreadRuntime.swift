@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 
 /// One timeline row. A class, so a streaming row redraws without re-diffing the whole thread.
 @MainActor
@@ -507,6 +508,13 @@ final class ThreadRuntime {
             }
         }
         entries = loaded + entries
+        // A card left in its sent state by a quit mid-hold goes now: its heads went out long ago.
+        for entry in loaded {
+            guard case .assistant(var message) = entry.item.content, HydraPrompts.hasSentDelegationBlock(in: message.text) else { continue }
+            message.text = HydraPrompts.withoutDelegationBlock(message.text)
+            if message.text.isEmpty { message.text = "Sent out heads." }
+            entry.item.content = .assistant(message)
+        }
         for index in turns.indices where turns[index].status == .running {
             turns[index].status = .interrupted
         }
@@ -2441,11 +2449,11 @@ final class ThreadRuntime {
             scheduleSave()
             return refuseBlock(HydraPrompts.unreadableBlockMessage(reason: nil), dropped: "Its delegation block could not be read, and it had been told so already.")
         }
-        message.text = HydraPrompts.withoutDelegationBlock(message.text)
+        let stripped = HydraPrompts.withoutDelegationBlock(message.text)
         // An empty block is the lead saying it did the work itself: the block leaves the
         // reply, a one-line note says no heads went out, and no turn is spent on it.
         if delegations.isEmpty {
-            if message.text.isEmpty { message.text = "Done, with no heads." }
+            message.text = stripped.isEmpty ? "Done, with no heads." : stripped
             entry.item.content = .assistant(message)
             saveRevision += 1
             scheduleSave()
@@ -2455,14 +2463,15 @@ final class ThreadRuntime {
         // One request gets so many rounds of heads; past that the lead hears why none went
         // out and finishes by itself, so no request chains heads without end.
         guard hydraDelegationRounds < HydraPrompts.maxDelegationRounds else {
-            if message.text.isEmpty { message.text = "Asking for more heads." }
+            message.text = stripped.isEmpty ? "Asking for more heads." : stripped
             entry.item.content = .assistant(message)
             saveRevision += 1
             scheduleSave()
             return refuseBlock(HydraPrompts.heldBackMessage(count: delegations.count), dropped: "This request has had all \(HydraPrompts.maxDelegationRounds) of its rounds of heads, and the lead had been told so already.")
         }
         hydraDelegationRounds += 1
-        if message.text.isEmpty { message.text = "Sending out heads." }
+        // The card stays a moment in its sent state, then leaves the reply (see `holdSentDelegationBlock`).
+        message.text = HydraPrompts.markingDelegationBlockSent(message.text)
         entry.item.content = .assistant(message)
         saveRevision += 1
         let batchID = UUID()
@@ -2479,9 +2488,26 @@ final class ThreadRuntime {
                 """)
         }
         spawnWaitingHeads(launch: launch)
+        holdSentDelegationBlock(entry.id)
         settleBatches()
         scheduleSave()
         return hydraBatches.isEmpty && hydraWaiting.isEmpty ? .none : .headsOut
+    }
+
+    /// The delegation card keeps its place for `HydraPrompts.delegationSentHold` once the
+    /// heads are out, wearing its done wave, and then the block leaves the reply with a fade.
+    private func holdSentDelegationBlock(_ entryID: String) {
+        Task { [weak self] in
+            try? await Task.sleep(for: HydraPrompts.delegationSentHold)
+            guard let self, let entry = self.entryIndex[entryID],
+                  case .assistant(var message) = entry.item.content,
+                  HydraPrompts.hasSentDelegationBlock(in: message.text) else { return }
+            message.text = HydraPrompts.withoutDelegationBlock(message.text)
+            if message.text.isEmpty { message.text = "Sent out heads." }
+            withAnimation(.easeInOut(duration: 0.5)) { entry.item.content = .assistant(message) }
+            self.saveRevision += 1
+            self.scheduleSave()
+        }
     }
 
     /// Tells the lead, in a turn of its own, that the block its reply ended in sent no heads

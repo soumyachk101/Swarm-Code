@@ -421,6 +421,8 @@ enum HydraPrompts {
     /// slow model thinking for minutes between tool calls, and some never make an edit.
     private static let briefRule = "A brief is a numbered list of mechanical steps a head can start on at once. Each step names the file and a line anchor, the symbol, and the exact change: the code shape, the new name, the value. Never a question, never two alternatives, never verify by reasoning or read the file fully: a head spends minutes weighing what a brief leaves open, and some never make an edit. When you have not decided something, decide it before you write the brief, or keep that part for yourself. A head should be able to make its first edit within its first few tool calls."
 
+    private static let projectRule = "Heads and the merge only ever see this chat's project: the checkout your tools run in. If the request concerns files in another project or repository, say so in your first sentence and ask the user to open the chat in that project instead of working there yourself; anything changed outside this checkout is never merged and no head can reach it. Run your own checks in the checkout itself: never make a worktree or a copy of the project for them."
+
     /// What a lead is told when the setting has Droppy Code land the work: the merge is
     /// the app's, not the lead's, whatever else it has been told about merging, and asking
     /// for one is a job it finishes by replying.
@@ -466,6 +468,7 @@ enum HydraPrompts {
         - \(howToWait)
         - Give each head one self-contained task with the exact files, symbols and acceptance criteria it needs. Heads share the checkout but not your context, so write the task as if to a capable colleague who has read nothing yet.
         - \(briefRule)
+        - \(projectRule)
         - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself: never send out a head to verify, redo or finish another head's work.
         - Tell the user in one line which heads you sent out and what each one does. Droppy Code names the heads in roster order (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on): announce each head by its task and use exactly those names in that order, never invented ones. There is no head called Ives; the roster has Ivo.
         - While they work, prepare the integration rather than starting on their tasks: how the pieces fit together, and the one check you will run at the end.
@@ -619,7 +622,7 @@ enum HydraPrompts {
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. When a request is yours to do alone, do it and end with no block at all: an empty block sends no heads and is not needed. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. \(briefRule) A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre)\(whatHeadsCanDo) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "") \(reportStyleRule)
+        and stop there: do not wait, poll or verify anything after it. When a request is yours to do alone, do it and end with no block at all: an empty block sends no heads and is not needed. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. \(briefRule) \(projectRule) A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre)\(whatHeadsCanDo) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "") \(reportStyleRule)
         """
     }
 
@@ -668,7 +671,7 @@ enum HydraPrompts {
     /// The opening fence of a delegation block: three backticks, the word hydra in any
     /// case, and the end of that line.
     private static func delegationOpener(in text: String) -> Range<String.Index>? {
-        text.firstMatch(of: #/```[ \t]*hydra[ \t]*\r?\n/#.ignoresCase())?.range
+        text.firstMatch(of: #/```[ \t]*hydra(?:-sent)?[ \t]*\r?\n/#.ignoresCase())?.range
     }
 
     /// Every three backticks that open a line from `start` on, in order. A fence with an
@@ -744,6 +747,22 @@ enum HydraPrompts {
         var kept = text
         if let range = delegationBlockRange(in: text) { kept.removeSubrange(range) }
         return kept.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// How long the delegation card stays once its heads are out, wearing its done wave,
+    /// before it leaves the reply.
+    static let delegationSentHold: Duration = .seconds(3.2)
+
+    /// Whether the reply holds a delegation block already marked sent (see `markingDelegationBlockSent`).
+    static func hasSentDelegationBlock(in text: String) -> Bool {
+        text.contains(#/```[ \t]*hydra-sent[ \t]*\r?\n/#.ignoresCase())
+    }
+
+    /// The reply with its delegation block's info string turned from `hydra` into `hydra-sent`,
+    /// so the timeline draws the card in its done state for a moment before the block goes.
+    static func markingDelegationBlockSent(_ text: String) -> String {
+        guard let opener = delegationOpener(in: text), !hasSentDelegationBlock(in: text) else { return text }
+        return text.replacingCharacters(in: opener, with: "```hydra-sent\n")
     }
 
     /// What the lead hears when its block was there but could not be read: no heads went

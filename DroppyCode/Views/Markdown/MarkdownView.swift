@@ -233,8 +233,8 @@ struct MarkdownBlockView: View, Equatable {
         case .code(let language, let code):
             // The lead's delegation block (info string `hydra`) is a brief for the team, not
             // code: it reads as a card while it streams and whenever it stays in the reply.
-            if language?.lowercased() == "hydra" {
-                HydraDelegationBlock(json: code)
+            if let info = language?.lowercased(), info == "hydra" || info == "hydra-sent" {
+                HydraDelegationBlock(json: code, sent: info == "hydra-sent")
             } else {
                 CodeBlock(language: language, code: code)
             }
