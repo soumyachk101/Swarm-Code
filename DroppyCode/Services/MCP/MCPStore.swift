@@ -74,6 +74,13 @@ final class MCPStore {
         probes[entry.id]?.cancel()
         var connection = connections[entry.id] ?? MCPConnection(catalogID: entry.id)
         connection.isEnabled = true
+        // A sign-in belongs to one address: pointing the server elsewhere (another GitLab
+        // instance) drops the old token so the browser flow runs against the new one.
+        if entry.isOAuth, let draft = drafts[entry.id],
+           entry.oauthURL(values: connection.values) != entry.oauthURL(values: connection.values.merging(draft) { $1 }) {
+            MCPOAuth.signOut(serverID: entry.id)
+            MCPProxy.shared.unregister(serverID: entry.id)
+        }
         if let draft = drafts[entry.id] {
             for field in entry.fields {
                 guard let text = draft[field.key] else { continue }
@@ -151,7 +158,7 @@ final class MCPStore {
         let servers = enabledServers
         // The proxy's routes follow the enabled list: one per signed-in server.
         MCPProxy.shared.replaceAll(servers.compactMap { server in
-            guard let entry = MCPCatalog.entry(id: server.id), let remote = entry.oauthURL else { return nil }
+            guard let remote = server.oauthUpstream else { return nil }
             return (serverID: server.id, upstream: remote, headers: [:], usesOAuth: true)
         })
         MCPProviderConfig.writeAll(servers)
@@ -177,13 +184,14 @@ final class MCPStore {
                 // A server that signs in: the browser flow first (Droppy Code's own, with its
                 // branded page), then its route on the proxy, and only then the probe, which
                 // goes through that route like every provider will.
-                if let remote = entry.oauthURL {
+                let resolved = entry.resolve(values: storedValues(for: entry))
+                if let remote = resolved.oauthUpstream {
                     if !MCPOAuth.isSignedIn(serverID: entry.id) {
                         try await MCPOAuth.signIn(serverID: entry.id, serverName: entry.name, url: remote)
                     }
                     MCPProxy.shared.register(serverID: entry.id, upstream: remote, headers: [:], usesOAuth: true)
                 }
-                let result = try await MCPProbe.probe(entry.resolve(values: storedValues(for: entry)))
+                let result = try await MCPProbe.probe(resolved)
                 if var connection = connections[entry.id] {
                     connection.connectedAt = .now
                     connection.serverVersion = result.serverVersion

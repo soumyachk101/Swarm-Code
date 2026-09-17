@@ -93,7 +93,7 @@ struct MCPKeyPanelView: View {
             }
             HStack {
                 Spacer()
-                Button("Save and connect") {
+                Button(entry.isOAuth ? "Save and sign in" : "Save and connect") {
                     save()
                 }
                 .buttonStyle(.glassProminent)
