@@ -46,6 +46,13 @@ final class ClaudeSession: ProviderSession {
     private var turnActive = false
     private var interruptRequested = false
     private var isStopping = false
+    /// Set once the CLI has answered the initialize. Before that, a result or an exit is
+    /// the launch's failure, reported by `start()` throwing, never a turn's end.
+    private var isStarted = false
+    private var hasClosed = false
+    /// What the CLI said as it failed to launch: the `errors` of a result that came
+    /// before the initialize was answered, or the last of its stderr.
+    private var launchError: String?
     private static var knownOptions: [String: Set<String>] = [:]
 
     init(configuration: SessionConfiguration) {
@@ -141,6 +148,7 @@ final class ClaudeSession: ProviderSession {
             initialize["forwardSubagentText"] = true
         }
         let initialization = try await control(.object(initialize))
+        isStarted = true
         let models = Self.models(in: initialization)
         if !models.isEmpty { onEvent?(.models(models, current: configuration.model)) }
         let commands = SlashCommand.claudeCommands(initialization["commands"]?.array ?? [])
@@ -282,6 +290,7 @@ final class ClaudeSession: ProviderSession {
 
     private func control(_ request: JSONValue) async throws -> JSONValue {
         guard let process else { throw ProviderError.notRunning }
+        if hasClosed { throw ProviderError.failed(launchError ?? "Claude exited.") }
         controlCounter += 1
         let requestID = "droppy-code-\(controlCounter)"
         return try await withCheckedThrowingContinuation { continuation in
@@ -538,6 +547,15 @@ final class ClaudeSession: ProviderSession {
     }
 
     private func handleResult(_ message: JSONValue) {
+        // Before the initialize is answered, a result is the launch's failure, not a turn's:
+        // a `--resume` of a conversation the CLI no longer has answers with one
+        // (`error_during_execution`, no turns, its `errors` naming the session) and exits.
+        // `start()` throws it from `didClose`; nothing was sent that could end here.
+        guard isStarted else {
+            let errors = (message["errors"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
+            if !errors.isEmpty { launchError = errors }
+            return
+        }
         turnActive = false
         if let usage = Self.contextUsage(message) {
             onEvent?(.usage(usage))
@@ -637,16 +655,22 @@ final class ClaudeSession: ProviderSession {
     }
 
     private func didClose() {
+        hasClosed = true
+        let tail = process?.errorTail ?? ""
+        // The result's own error names the failure better than the stderr tail can.
+        let reason = launchError ?? TextCleanup.lastLines(tail)
+        launchError = reason
         let waiting = Array(pendingControl.values)
         pendingControl.removeAll()
-        let tail = process?.errorTail ?? ""
         for continuation in waiting {
-            continuation.resume(throwing: ProviderError.failed(TextCleanup.lastLines(tail) ?? "Claude exited."))
+            continuation.resume(throwing: ProviderError.failed(reason ?? "Claude exited."))
         }
         for requestID in pendingTools.keys { onEvent?(.requestResolved(id: requestID)) }
         pendingTools.removeAll()
         turnActive = false
-        guard !isStopping else { return }
+        // A launch that failed is reported by `start()` throwing; only a session that
+        // ran says it exited.
+        guard !isStopping, isStarted else { return }
         onEvent?(.exited(error: TextCleanup.lastLines(tail)))
     }
 
