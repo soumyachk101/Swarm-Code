@@ -62,6 +62,19 @@ final class TerminalSession: Identifiable {
         isRunning = false
     }
 
+    /// Whether the shell owns the foreground of its terminal: true at the prompt, false while
+    /// a job it started (vim, claude, less) has the terminal. Read from the kernel's view of
+    /// the shell, since the pty's master side answers no `tcgetpgrp` to a process it is not
+    /// the controlling terminal of.
+    nonisolated static func foregroundJobIsTheShell(_ shell: pid_t) -> Bool {
+        guard shell > 0 else { return false }
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, shell]
+        guard sysctl(&name, 4, &info, &size, nil, 0) == 0, size > 0 else { return false }
+        return info.kp_eproc.e_tpgid == info.kp_eproc.e_pgid
+    }
+
     fileprivate func processEnded() {
         isRunning = false
     }
