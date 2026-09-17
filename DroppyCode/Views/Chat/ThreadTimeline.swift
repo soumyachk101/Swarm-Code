@@ -453,7 +453,13 @@ struct ThreadTimeline: View, Equatable {
                 // with the reader's place anchored at the top that left the viewport hanging
                 // in empty space until they came back to the thread. Never a valid place to
                 // be, whether or not the reader was following, so it snaps to the end.
-                withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                // Deferred, like every scroll out of this handler: a scrollPosition write
+                // here is applied mid-update, and the applied scroll re-enters the handler
+                // in the same display pass — an uncapped loop that keeps dirtying the
+                // window until AppKit's display-cycle watchdog kills the app.
+                DispatchQueue.main.async {
+                    withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                }
             } else if historyLoadPending, new.contentHeight > old.contentHeight {
                 // The history landed above the viewport with the bottom held; growth
                 // anchors by the reader's position again from here.
@@ -465,7 +471,9 @@ struct ThreadTimeline: View, Equatable {
                 // the viewport stayed at the top of the newly tall content, on the oldest
                 // rows. A reader at the end is put back on the end.
                 if tracking.isPinnedToBottom, new.distanceFromBottom > 1 {
-                    withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                    DispatchQueue.main.async {
+                        withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                    }
                 }
             } else if scrolled {
                 // Only the reader's own scrolling decides whether the timeline follows new text.
@@ -482,7 +490,9 @@ struct ThreadTimeline: View, Equatable {
                 // fades in on its own. (Mid-resize this waits for the settle below: the
                 // anchor already holds the bottom edge each frame.)
                 guard !liveResize.isActive else { return }
-                withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                DispatchQueue.main.async {
+                    withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                }
             }
         }
         .task(id: runtime.threadID) {
