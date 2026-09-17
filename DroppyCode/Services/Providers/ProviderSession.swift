@@ -68,6 +68,10 @@ struct AgentSpawn: Sendable {
     /// The head's brief, when the provider says.
     var prompt: String?
     var model: String?
+    /// The head profile the spawn was routed to, when the provider's report names one:
+    /// Claude's and Copilot's agent definitions are one per profile, and Codex's spawn
+    /// call carries the profile's model and effort, which the session matches back.
+    var profile: String?
     /// Whether the spawning tool call returns before the head is done. A foreground head
     /// is finished by its tool result; a background one only by the provider saying so.
     var isBackground = true

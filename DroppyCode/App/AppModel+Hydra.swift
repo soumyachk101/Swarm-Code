@@ -292,7 +292,7 @@ extension AppModel {
     /// lead does.
     @discardableResult
     func spawnNativeHead(from parentID: UUID, spawn: AgentSpawn) -> ChatThread? {
-        guard let head = insertHydraHead(from: parentID, task: spawn.description, kind: .native, origin: .delegated, native: spawn, batchID: nil) else { return nil }
+        guard let head = insertHydraHead(from: parentID, task: spawn.description, kind: .native, origin: .delegated, native: spawn, batchID: nil, profile: spawn.profile) else { return nil }
         // The brief, when the provider has said what it is; otherwise the timeline starts
         // on the working line and the brief slots in above once it arrives.
         runtime(for: head.id).rehearseTurn(spawn.prompt)
