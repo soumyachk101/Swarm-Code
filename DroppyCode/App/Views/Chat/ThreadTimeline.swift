@@ -697,7 +697,7 @@ struct ThreadTimeline: View, Equatable {
     }
 
     /// The working line opening, which sits at the conversation's end by construction:
-    /// the reader asked to watch the stream, so the end is revealed and held even from
+    /// the reader asked to watch the stream, so the end is revealed and held even when
     /// away from it — `revealEnd`'s jump-button guard would swallow exactly this call,
     /// leaving the expanded thinking fixed while the reasoning streams past.
     private func followEnd() {

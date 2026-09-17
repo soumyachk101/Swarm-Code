@@ -57,7 +57,7 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 
 ## Release
 
-`scripts/release.sh` archives an Apple silicon build, signs it with Developer ID, notarizes and staples both the app and a disk image, and checks Gatekeeper. The disk image lands in `build.noindex/`, a folder Spotlight skips.
+`scripts/release.sh` archives an Apple silicon build, signs it with Developer ID, notarizes and staples both the app and a disk image, and checks Gatekeeper. The disk image lands in `build.noindex/`, a folder Spotlight skips. `scripts/package_dmg.sh` gives the disk image the same styled drag-to-Applications window as Droppy's; its background and baked window layout live in `release/dmg`, and the volume icon is the app's own.
 
 `scripts/publish_release.sh` then tags the version from `project.yml`, creates the GitLab release with the notes from the `## [<version>]` section of `CHANGELOG.md` (`### New features`, `### Bug fixes` and `### Refinements` bullets, which the app's About page reads into its cards) and points the latest-download permalink at the new disk image, which is what Settings › About and the website's download button resolve to.
 

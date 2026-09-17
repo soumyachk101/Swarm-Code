@@ -564,7 +564,7 @@ private struct HydraPairEditor: View {
                 .padding(.top, 1)
                 .padding(.bottom, 2)
             ForEach(Array(pair.headProfiles.enumerated()), id: \.element.id) { index, profile in
-                if index > 0 { Divider().padding(.horizontal, 14) }
+                if index > 0 { Divider().padding(.horizontal, 14).padding(.vertical, 6) }
                 headProfileRow(profile, pair: pair, registry: registry)
             }
             editorRow(pair.headProfiles.isEmpty ? "No profiles yet" : "Another profile",
@@ -659,7 +659,7 @@ private struct HydraPairEditor: View {
                     .font(.system(size: 12))
                     .frame(width: 150)
             }
-            editorRow("Provider", detail: "Runs this head on another provider than the pair's heads") {
+            editorRow("Provider", detail: "Runs this profile's heads on another provider") {
                 GlassPickerButton(
                     options: [(ProviderKind?.none, "Same as the pair")] + providers.map { (Optional($0), $0.displayName) },
                     selection: Binding(
@@ -718,7 +718,7 @@ private struct HydraPairEditor: View {
         }
         if let effort = profile.effort { parts.append(ModelOption.effortTitle(effort) + " effort") }
         if let provider = profile.provider { parts.append("on " + provider.displayName) }
-        return parts.isEmpty ? "Inherits the pair" : parts.joined(separator: " · ")
+        return parts.isEmpty ? "Same as the pair" : parts.joined(separator: " · ")
     }
 
     /// Writes one profile's fields through the pair's update, looked up by id: the editor

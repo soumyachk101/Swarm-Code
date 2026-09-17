@@ -100,11 +100,8 @@ notarize "$BUILD/DroppyCode.zip"
 xcrun stapler staple "$APP"
 
 step "Building the disk image"
-STAGING="$BUILD/dmg"
-mkdir -p "$STAGING"
-ditto "$APP" "$STAGING/$APP_NAME.app"
-ln -s /Applications "$STAGING/Applications"
-hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING" -ov -format UDZO "$DMG" > /dev/null
+# The styled window (background, baked .DS_Store, volume icon) lives in release/dmg, see release/dmg/README.md.
+"$ROOT/scripts/package_dmg.sh" --app "$APP" --output "$DMG"
 IDENTITY=$(security find-identity -v -p codesigning | sed -nE "s/.*\"(Developer ID Application: .*\($TEAM_ID\))\".*/\1/p" | head -1)
 codesign --sign "$IDENTITY" --timestamp "$DMG"
 
@@ -119,6 +116,6 @@ xcrun stapler validate "$DMG"
 
 step "Cleaning up"
 # Only the disk image stays, so Spotlight and Launchpad never list a second copy of the app.
-rm -rf "$ARCHIVE" "$EXPORT" "$STAGING" "$BUILD/DroppyCode.zip" "$BUILD/DerivedData"
+rm -rf "$ARCHIVE" "$EXPORT" "$BUILD/DroppyCode.zip" "$BUILD/DerivedData"
 
 printf '\nReady: %s\nPublish it with scripts/publish_release.sh once CHANGELOG.md has a ## [%s] section.\n' "$DMG" "$VERSION"

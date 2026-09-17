@@ -6,7 +6,12 @@ All notable changes to Droppy Code are documented here, newest first. The format
 
 ## [Unreleased]
 
+### New features
+- A pair can carry head profiles: purpose-named configurations ("quick", "deep", "visual" or any word) with their own provider, model or effort, edited in the pair's Head profiles section in Settings. The lead hears which profiles exist and routes each task to one by name in its delegation block; a task without a profile, or with a name the pair does not have, runs on the heads' shared model as before.
+- Chronological order, a switch in Settings › Conversation: a running turn's replies and tool runs stay in the order they arrived instead of the steps before the last tool call gathering into the working line. Off by default; finished turns keep their fold either way.
+
 ### Bug fixes
+- Opening the working line while scrolled up now follows the stream: the timeline pins to the end and keeps up with the reasoning as it arrives, instead of leaving the expanded thinking fixed while the text streams out of view below.
 - OpenCode models show their reasoning levels before a chat starts: the effort slider no longer says "This model has one reasoning level" for a model that has several until the first message is sent, and starting a chat no longer forgets the levels of every other OpenCode model. OpenCode reports the levels of the model a session is on, so the catalog now asks it for each model in turn, the way it already did for Cursor.
 
 ### Refinements

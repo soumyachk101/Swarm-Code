@@ -33,6 +33,13 @@ struct HydraHeadProfile: Codable, Hashable, Identifiable, Sendable {
         let on = [model, provider?.displayName].compactMap { $0 }.joined(separator: " on ")
         return on.isEmpty ? name : "\(name) (\(on))"
     }
+
+    /// Whether a delegation's `profile` names this one: case-insensitive, and blind to
+    /// the whitespace a name typed in Settings or written in a lead's JSON can carry.
+    func matches(_ name: String) -> Bool {
+        let wanted = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return self.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(wanted) == .orderedSame
+    }
 }
 
 /// A lead-and-heads pairing: which model runs the heads when a chat on this provider leads.
@@ -76,12 +83,6 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
         name = container.value(.name, default: nil)
         maxHeads = Self.clampedCap(container.value(.maxHeads, default: nil))
         headProfiles = container.value(.headProfiles, default: [])
-    }
-
-    /// The profile a delegation asked for, case-insensitive; nil when the name matches
-    /// none, and the head then runs on the shared worker fields like any unrouted one.
-    func profile(named name: String) -> HydraHeadProfile? {
-        headProfiles.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 
     /// The provider the heads run on: the lead's, unless the pair sends them elsewhere.
@@ -161,10 +162,10 @@ struct HydraLaunch: Hashable, Sendable {
         running < (maxHeads ?? Self.uncappedConcurrency)
     }
 
-    /// The profile a delegation asked for, case-insensitive; nil when the name matches
-    /// none, and the head then runs on the worker fields like any unrouted one.
+    /// The profile a delegation asked for; nil when the name matches none, and the head
+    /// then runs on the worker fields like any unrouted one.
     func profile(named name: String) -> HydraHeadProfile? {
-        headProfiles.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+        headProfiles.first { $0.matches(name) }
     }
 }
 
@@ -731,7 +732,7 @@ enum HydraPrompts {
         // A pair in advanced mode tunes some heads for a purpose: the lead hears which,
         // and routes a task to one by name. The profile's name is all the lead knows of
         // the purpose, so the wording keeps the routing on the name's own meaning.
-        let profileRule = profiles.isEmpty ? "" : " Some heads are tuned for a purpose: \(profiles.map(\.briefLabel).joined(separator: ", ")). Route a task to one with \"profile\", as in `{\"task\": \"...\", \"prompt\": \"...\", \"profile\": \"\(profiles[0].name)\"}`; a task that fits none of them goes without a profile and runs on the heads' shared model."
+        let profileRule = profiles.isEmpty ? "" : " Some heads are tuned for a purpose: \(profiles.map(\.briefLabel).joined(separator: ", ")). Route a task to one with \"profile\", as in `{\"task\": \"...\", \"prompt\": \"...\", \"profile\": \"\(profiles[0].name)\"}`; a task that fits none of them goes without a profile and runs on the heads' shared model, as does one whose profile names none of these."
         return """
         [Hydra is on] You lead \(team) ("heads"). Delegate first, work second: anything bigger than a single obvious change to a single file is a job for heads. Audits, reviews, a feature across several files, a refactor, "check everything", research across many files, several tasks in one message: in your first reply, look at the code only long enough to write good briefs, a minute and a handful of files rather than ten, and then send the heads out, all of them in that one block. Never spend minutes reading before you delegate, and never do inline what heads could be doing in parallel. Only a truly single-focus request, one file and one obvious change, is yours to do alone.         Finish your reply with one fenced block
 

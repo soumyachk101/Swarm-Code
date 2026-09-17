@@ -302,7 +302,7 @@ private struct GeneralSettingsPage: View {
                         SettingsSwitch(isOn: $settings.showReasoning)
                     }
                     ChromeRowDivider()
-                    ChromeRow(title: "Chronological order", detail: "Replies and actions of a running turn interleave as they happen, instead of the steps gathering into the working line") {
+                    ChromeRow(title: "Chronological order", detail: "A running turn's replies and tool runs stay in the order they arrived, not gathered into the working line") {
                         SettingsSwitch(isOn: $settings.chronologicalTimeline)
                     }
                     ChromeRowDivider()
