@@ -37,19 +37,11 @@ struct MCPSettingsPage: View {
             MCPLeadCard()
             if !connected.isEmpty {
                 ChromeSection(title: "Connected") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ChromeCard {
-                            ForEach(Array(connected.enumerated()), id: \.element.id) { index, entry in
-                                if index > 0 { ChromeRowDivider() }
-                                MCPConnectedRow(entry: entry)
-                            }
+                    ChromeCard {
+                        ForEach(Array(connected.enumerated()), id: \.element.id) { index, entry in
+                            if index > 0 { ChromeRowDivider() }
+                            MCPConnectedRow(entry: entry)
                         }
-                        // What the connected servers cost: every switched-on tool rides
-                        // along in each turn's context, so the count is kept in view.
-                        Text(verbatim: costLine)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .padding(.horizontal, 4)
                     }
                 }
             }
@@ -79,18 +71,6 @@ struct MCPSettingsPage: View {
                 }
             }
         }
-    }
-
-    /// Tools across the switched-on servers, and a rough token figure for their
-    /// definitions: about 80 tokens each for a name, a description and a schema.
-    private var costLine: String {
-        let enabled = connected.compactMap { model.mcp.connection(for: $0.id) }.filter(\.isEnabled)
-        let tools = enabled.reduce(0) { $0 + $1.tools.count }
-        guard !enabled.isEmpty, tools > 0 else { return "Switched-off servers add nothing to a turn." }
-        let servers = enabled.count == 1 ? "1 server" : "\(enabled.count) servers"
-        let rough = (tools * 80 + 50) / 100 * 100
-        let tokens = rough >= 1000 ? String(format: "%.1fk", Double(rough) / 1000) : "\(rough)"
-        return "\(tools) tools across \(servers) · roughly \(tokens) tokens on every turn. Switch a server off to leave its tools out."
     }
 
     private static func matches(_ entry: MCPCatalogEntry, query: String) -> Bool {
@@ -211,11 +191,17 @@ private struct MCPConnectedRow: View {
                     }
                 }
             }
+            // On the button, not the row: hung from the row it opened in the row's middle.
+            .popover(isPresented: $showTools, arrowEdge: .bottom) {
+                toolsPopover
+            }
         }
         .padding(.leading, 16)
         .padding(.trailing, Chrome.rowControlTrailingPadding)
         .padding(.vertical, 11)
-        .popover(isPresented: $showTools, arrowEdge: .bottom) {
+    }
+
+    private var toolsPopover: some View {
             PopoverMenu {
                 PopoverSectionHeader("\(entry.name) tools")
                 let tools = connection?.tools ?? []
@@ -238,7 +224,6 @@ private struct MCPConnectedRow: View {
                     .padding(.vertical, 3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-            }
         }
     }
 }
@@ -251,7 +236,6 @@ private struct MCPServerCard: View {
     let entry: MCPCatalogEntry
     var celebrating = false
 
-    @State private var isExpanded = false
     @State private var successPopped = false
 
     private var state: MCPConnectionState { model.mcp.state(for: entry.id) }
@@ -287,9 +271,6 @@ private struct MCPServerCard: View {
                         .foregroundStyle(Chrome.danger)
                         .lineLimit(2)
                 }
-                if isExpanded, entry.needsInput, !state.isConnected, !state.isConnecting {
-                    fieldList
-                }
             }
         }
         .padding(14)
@@ -305,7 +286,6 @@ private struct MCPServerCard: View {
                     .padding(10)
             }
         }
-        .animation(.spring(duration: 0.35), value: isExpanded)
     }
 
     private var headerRow: some View {
@@ -328,114 +308,34 @@ private struct MCPServerCard: View {
     private var action: some View {
         switch state {
         case .notConnected:
-            if entry.isOAuth {
-                Button("Sign in") { model.mcp.connect(entry) }
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
-            } else if entry.needsInput {
-                // Once the fields are open, the prominent button under them is the one to
-                // press; a second "Connect" up here read as two ways to do one thing.
-                if !isExpanded {
-                    Button("Connect") { isExpanded = true }
-                        .buttonStyle(.glass)
-                        .controlSize(.small)
-                }
-            } else {
-                Button("Connect") { model.mcp.connect(entry) }
-                    .buttonStyle(.glass)
-                    .controlSize(.small)
-            }
+            // Sign in for a server that signs in; Connect for the rest. A server that
+            // needs a key gets the floating key panel, which opens the page the key is
+            // made on and takes the paste (see `MCPKeyPanel`); the card stays clean.
+            Button(entry.isOAuth ? "Sign in" : "Connect") { begin() }
+                .buttonStyle(.glass)
+                .controlSize(.small)
         case .connecting:
             HStack(spacing: 6) {
                 WorkingSpinner(cellSize: 3)
-                Text(entry.isOAuth ? "Waiting for sign-in…" : "Connecting…")
+                Text(entry.isOAuth ? "Waiting" : "Connecting")
                     .font(.system(size: 11))
                     .foregroundStyle(Chrome.secondaryText)
+                    .fixedSize()
             }
         case .connected:
             EmptyView()
         case .failed:
-            Button("Try again") {
-                if entry.needsInput, !entry.isOAuth {
-                    isExpanded = true
-                }
-                model.mcp.connect(entry)
-            }
-            .buttonStyle(.glass)
-            .controlSize(.small)
-        }
-    }
-
-    private var fieldList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ForEach(entry.fields) { field in
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        fieldInput(field)
-                        if field.kind == .path {
-                            Button {
-                                pickPath(for: field)
-                            } label: {
-                                Image(systemName: "folder")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(Chrome.secondaryText)
-                                    .frame(width: 22, height: 22)
-                                    .contentShape(.rect)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Choose a folder or file")
-                        }
-                    }
-                    if let help = field.help, !help.isEmpty {
-                        Text(verbatim: help)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Chrome.secondaryText)
-                    }
-                }
-            }
-            Button("Connect") { model.mcp.connect(entry) }
-                .buttonStyle(.glassProminent)
+            Button("Try again") { begin() }
+                .buttonStyle(.glass)
                 .controlSize(.small)
-                .disabled(!model.mcp.canConnect(entry))
-            if let docsURL = URL(string: entry.docsURL) {
-                Link("Where do I get this?", destination: docsURL)
-                    .font(.system(size: 11))
-            }
         }
-        .padding(.top, 4)
     }
 
-    @ViewBuilder
-    private func fieldInput(_ field: MCPField) -> some View {
-        let binding = Binding(
-            get: { model.mcp.value(for: field, of: entry) },
-            set: { model.mcp.setDraft($0, for: field, of: entry) }
-        )
-        Group {
-            if field.kind == .secret {
-                SecureField(field.placeholder, text: binding, prompt: Text(verbatim: field.placeholder))
-            } else {
-                TextField(field.placeholder, text: binding, prompt: Text(verbatim: field.placeholder))
-            }
-        }
-        .textFieldStyle(.roundedBorder)
-        .font(.system(size: 12, design: .monospaced))
-        .frame(maxWidth: .infinity)
-    }
-
-    private func pickPath(for field: MCPField) {
-        let panel = NSOpenPanel()
-        let isDirectory = entry.id == "filesystem" && field.key == "root"
-        panel.canChooseDirectories = isDirectory
-        panel.canChooseFiles = !isDirectory
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        let current = model.mcp.value(for: field, of: entry)
-        if !current.isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: current)
-        }
-        if panel.runModal() == .OK, let url = panel.url {
-            model.mcp.setDraft(url.path(percentEncoded: false), for: field, of: entry)
+    private func begin() {
+        if entry.fields.isEmpty {
+            model.mcp.connect(entry)
+        } else {
+            MCPKeyPanel.shared.present(entry: entry, model: model)
         }
     }
 
