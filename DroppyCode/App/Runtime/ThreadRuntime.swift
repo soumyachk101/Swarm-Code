@@ -406,6 +406,10 @@ final class ThreadRuntime {
     /// closes long after it was let go used to end the turn that replaced it, take down
     /// the live session with it and leave its process running with nothing holding it.
     @ObservationIgnored private var sessionEpoch = 0
+    /// Whether `ensureSession` is waiting on a session's `start()`. A session that exits
+    /// then is reported by that throwing, and `ensureSession` starts over where it can,
+    /// so its exit event neither lets the session go nor fails the turn.
+    @ObservationIgnored private var isStartingSession = false
     /// The turn being finalized, claimed before the first suspension: a completion and an
     /// exit can both arrive for one turn, and the second must not finalize it again.
     @ObservationIgnored private var finishingTurnID: UUID?
@@ -1408,7 +1412,9 @@ final class ThreadRuntime {
         sessionSignature = signature
         let sessionID: String
         var started = false
+        isStartingSession = true
         defer {
+            isStartingSession = false
             if !started {
                 candidate.onEvent = nil
                 if session === candidate {
@@ -1420,10 +1426,18 @@ final class ThreadRuntime {
         }
         do {
             sessionID = try await candidate.start()
-        } catch where thread.providerSessionID != nil && thread.providerResumeAt == nil && allowNewSession && session === candidate && !Task.isCancelled {
+        } catch where allowNewSession && session === candidate && !Task.isCancelled && Self.startsOver(after: error, resuming: thread) {
             // The session that would not resume is let go of entirely, handler and all,
-            // before the one that starts over takes its place.
+            // before the one that starts over takes its place. A conversation the provider
+            // no longer has cannot be picked up at a rewind anchor either, so the anchor
+            // goes with it, and the chat is told its agent starts afresh.
             releaseSession(stop: true)
+            if Self.lostConversation(error) {
+                app.updateThread(threadID) { $0.providerResumeAt = nil }
+                if currentTurnID != nil {
+                    appendNotice(.warning, "\(thread.provider.displayName) no longer has this conversation. It starts a new one here, without the messages above.")
+                }
+            }
             candidate = makeSession(resumeID: nil)
             session = candidate
             sessionSignature = signature
@@ -1433,6 +1447,22 @@ final class ThreadRuntime {
         started = true
         app.updateThread(threadID) { $0.providerSessionID = sessionID }
         return candidate
+    }
+
+    /// Whether a session that would not resume the thread's conversation starts over
+    /// from nothing: always when the provider no longer has the conversation, and
+    /// otherwise only when no rewind anchor is lost with it.
+    private static func startsOver(after error: Error, resuming thread: ChatThread) -> Bool {
+        guard thread.providerSessionID != nil else { return false }
+        return lostConversation(error) || thread.providerResumeAt == nil
+    }
+
+    /// The provider's word for a conversation it no longer has: Claude Code's "No
+    /// conversation found with session ID", Command Code's own line.
+    private static func lostConversation(_ error: Error) -> Bool {
+        let text = error.localizedDescription
+        return text.localizedCaseInsensitiveContains("no conversation found")
+            || text.localizedCaseInsensitiveContains("no longer has this conversation")
     }
 
     /// The conversation before the current turn as plain exchanges, for an API session
@@ -1981,6 +2011,11 @@ final class ThreadRuntime {
             Task { await finishTurn(status: status, turnID: turnID) }
         case .exited(let error):
             flushDeltas()
+            // A session that exits while it starts is reported by its `start()` throwing:
+            // `ensureSession` starts over where it can, and otherwise the turn ends with
+            // that error. Letting the session go here broke the start-over, which needs
+            // the session it replaces still in place, and failed the turn before it.
+            if isStartingSession { break }
             releaseSession(stop: false)
             approvals.removeAll()
             questions.removeAll()
