@@ -12,8 +12,11 @@ struct RootView: View {
         let onlyFloats = model.settings.sidebarFloats && model.settings.sidebarOnlyFloats
         let floats = model.settings.sidebarFloats && (onlyFloats || !sidebar.isVisible)
         HStack(spacing: 0) {
+            // The rows are laid out at the sidebar's width once, and the slide moves the clip
+            // alone, so no row re-wraps per frame.
             SidebarView()
-                .frame(width: onlyFloats ? 0 : sidebar.renderedWidth)
+                .frame(width: sidebar.width)
+                .frame(width: onlyFloats ? 0 : sidebar.renderedWidth, alignment: .trailing)
                 .clipped()
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { sidebar.noteLaidOutWidth($0) }
                 .overlay(alignment: .trailing) {
@@ -201,6 +204,9 @@ private struct ThreadColumns: NSViewRepresentable {
     @MainActor final class Coordinator {
         /// How many columns stay built behind the shown one.
         private static let keptLimit = 8
+        /// Hidden columns keep the size they were built at and take the pane's size only
+        /// when shown: resizing every hidden column per frame during a sidebar slide or
+        /// live resize is what made them lag.
         private var columns: [UUID: FrameHostingView] = [:]
         /// The threads with a column, the one to drop first at the front and the shown one
         /// last. A column built ahead of a click goes in at the front: it is the first to
@@ -219,10 +225,13 @@ private struct ThreadColumns: NSViewRepresentable {
             guard id != shown else { return }
             if let shown, let previous = columns[shown] {
                 previous.isHidden = true
+                previous.autoresizingMask = []
                 previous.rootView = Self.root(shown, isShown: false, model: model, liveResize: liveResize)
             }
             if let kept = columns[id] {
                 kept.rootView = Self.root(id, isShown: true, model: model, liveResize: liveResize)
+                kept.frame = pane.bounds
+                kept.autoresizingMask = [.width, .height]
                 kept.isHidden = false
             } else {
                 make(id, isShown: true, in: pane, model: model, liveResize: liveResize)
@@ -258,6 +267,7 @@ private struct ThreadColumns: NSViewRepresentable {
             let column = FrameHostingView(rootView: Self.root(id, isShown: isShown, model: model, liveResize: liveResize))
             column.frame = pane.bounds
             column.isHidden = !isShown
+            column.autoresizingMask = isShown ? [.width, .height] : []
             pane.addSubview(column)
             columns[id] = column
             return column

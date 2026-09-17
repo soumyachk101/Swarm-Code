@@ -49,12 +49,19 @@ struct ThreadTimeline: View, Equatable {
     @State private var viewportHeight: CGFloat = 0
     /// The scroll view's width, for the stepped layout width during a live resize.
     @State private var paneWidth: CGFloat = 0
+    /// The pane's width when the sidebar's slide began; the rows wrap at the width it will end at from the first frame.
+    @State private var paneWidthAtSlideStart: CGFloat = 0
     /// While the window is being dragged the content wraps to a width that moves in
     /// steps this wide, so rows re-measure a few times over a drag instead of every
     /// frame; the exact width lands when the drag ends.
     private static let resizeStep: CGFloat = 12
     private var layoutWidth: CGFloat? {
         guard liveResize.isReshaping, paneWidth > 0 else { return nil }
+        // During the sidebar's slide the rows wrap once, at the pane's final width, and the pane
+        // clips them as it moves; a step per frame re-measured every row per frame.
+        if model.sidebar.isSliding, paneWidthAtSlideStart > 0 {
+            return min(820 + 40, max(Self.resizeStep, paneWidthAtSlideStart + model.sidebar.slideDelta))
+        }
         return min(820 + 40, (paneWidth / Self.resizeStep).rounded(.down) * Self.resizeStep)
     }
     /// Which edge stays put when the content's height changes. At the conversation's end
@@ -370,6 +377,11 @@ struct ThreadTimeline: View, Equatable {
         .onChange(of: liveResize.isReshaping) { _, active in
             guard !active else { return }
             settleAfterResize()
+        }
+        .onChange(of: model.sidebar.isSliding) { _, sliding in
+            if sliding {
+                paneWidthAtSlideStart = paneWidth
+            }
         }
         .onScrollPhaseChange { _, phase in
             // Fingers on the trackpad freeze the rows (no click can land then anyway); the
