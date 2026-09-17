@@ -111,6 +111,9 @@ struct MCPResolvedServer: Sendable, Hashable, Identifiable {
     /// Set for a remote streamable-HTTP server.
     var url: String?
     var headers: [String: String] = [:]
+    /// For an OAuth server, the remote address behind the proxy route in `url`, with the
+    /// user's field values filled in (an instance address, for one).
+    var oauthUpstream: String?
 
     var isRemote: Bool { url != nil }
 }
@@ -119,20 +122,35 @@ extension MCPCatalogEntry {
     /// The launchable form, with `{key}` placeholders replaced by the user's values (or the
     /// field's default). OAuth servers resolve to their route on the app's proxy.
 
-    /// The remote address an OAuth server is signed in to and proxied to.
-    var oauthURL: String? {
-        if case .oauth(let url) = transport { return url }
+    /// The remote address an OAuth server is signed in to and proxied to, with `{key}`
+    /// placeholders filled from `values` (or the field's default).
+    func oauthURL(values: [String: String] = [:]) -> String? {
+        if case .oauth(let url) = transport { return fill(url, values: values) }
         return nil
     }
-    func resolve(values: [String: String]) -> MCPResolvedServer {
-        func fill(_ text: String) -> String {
-            var out = text
-            for field in fields {
-                let value = values[field.key].flatMap { $0.isEmpty ? nil : $0 } ?? field.defaultValue ?? ""
-                out = out.replacingOccurrences(of: "{\(field.key)}", with: value)
+
+    /// `text` with every `{key}` replaced by the user's value for that field, or the field's
+    /// default when nothing was typed. A placeholder standing as the host of a URL takes a
+    /// host: a value pasted as `https://gitlab.example.com/` loses its scheme and slash.
+    func fill(_ text: String, values: [String: String]) -> String {
+        var out = text
+        for field in fields {
+            var value = values[field.key].flatMap { $0.isEmpty ? nil : $0 } ?? field.defaultValue ?? ""
+            let token = "{\(field.key)}"
+            if out.contains("://" + token) {
+                value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                for scheme in ["https://", "http://"] where value.lowercased().hasPrefix(scheme) {
+                    value = String(value.dropFirst(scheme.count))
+                }
+                while value.hasSuffix("/") { value.removeLast() }
             }
-            return out
+            out = out.replacingOccurrences(of: token, with: value)
         }
+        return out
+    }
+
+    func resolve(values: [String: String]) -> MCPResolvedServer {
+        func fill(_ text: String) -> String { self.fill(text, values: values) }
         var server = MCPResolvedServer(id: id, name: name)
         switch transport {
         case .stdio(let command, let args):
@@ -143,8 +161,9 @@ extension MCPCatalogEntry {
         case .http(let url, let headers):
             server.url = fill(url)
             server.headers = headers.mapValues(fill).filter { !$0.value.isEmpty }
-        case .oauth:
+        case .oauth(let url):
             server.url = MCPProxy.url(for: id)
+            server.oauthUpstream = fill(url)
         }
         return server
     }

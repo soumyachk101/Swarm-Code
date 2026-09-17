@@ -27,7 +27,10 @@ enum MCPCatalog {
             category: .developer,
             asset: "mcp-gitlab",
             colorValue: 0xFC6D26,
-            transport: .oauth(url: "https://gitlab.com/api/v4/mcp"),
+            transport: .oauth(url: "https://{instance}/api/v4/mcp"),
+            fields: [
+                MCPField(key: "instance", label: "GitLab address", placeholder: "gitlab.com", kind: .text, help: "gitlab.com, or your own instance's host", defaultValue: "gitlab.com", isRequired: false)
+            ],
             docsURL: "https://docs.gitlab.com/user/model_context_protocol/mcp_server/",
             sampleTools: ["list_merge_requests", "get_merge_request_diffs", "create_issue", "get_pipeline_jobs"]
         ),

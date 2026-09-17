@@ -495,7 +495,7 @@ private struct MCPInfoPopover: View {
         case .http(let url, _):
             return "Remote server at \(Self.host(of: url))."
         case .oauth(let url):
-            return "Remote server at \(Self.host(of: url)); signs in through your browser the first time."
+            return "Remote server at \(Self.host(of: entry.fill(url, values: [:]))); signs in through your browser the first time."
         }
     }
 
