@@ -8,18 +8,6 @@ struct AppAlert: Identifiable {
     var message: String
 }
 
-/// One value under its own observation. A view that reads a thread or project through
-/// its cell depends on that item alone, so a change to any other item never re-renders it.
-@MainActor
-@Observable
-final class ObservedValue<Value> {
-    var value: Value
-
-    init(_ value: Value) {
-        self.value = value
-    }
-}
-
 /// The app's library of projects and threads, plus everything that spans threads.
 @MainActor
 @Observable
@@ -949,7 +937,7 @@ final class AppModel {
     /// Closes a helper's panel: its turn stops, and it moves to the sidebar under the thread
     /// that spawned it, as a smaller row, so what it did stays a click away.
     func closeSubagent(_ id: UUID) {
-        guard let helper = thread(id) else { return }
+        guard thread(id) != nil else { return }
         if let runtime = existingRuntime(for: id) {
             // A running turn ends as interrupted and releases its session once it has
             // (see turnFinished); an idle one has nothing to wait for.

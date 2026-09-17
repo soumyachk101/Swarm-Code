@@ -85,9 +85,9 @@ struct ModelPreference: Codable, Hashable, Sendable {
 @MainActor
 @Observable
 final class AppSettings {
-    /// The per-chat Hydra default's key, shared with `ChatThread`, which seeds new
+    /// The per-chat Hydra default's key, owned by `ChatThread`, which seeds new
     /// threads from it before any settings object is in reach.
-    nonisolated static let hydraDefaultEnabledKey = "hydraDefaultEnabled"
+    nonisolated static let hydraDefaultEnabledKey = ChatThread.hydraDefaultKey
 
     private enum Key {
         static let defaultProvider = "defaultProvider"
@@ -869,3 +869,6 @@ final class AppSettings {
         }
     }
 }
+
+/// The registry's view of the settings; the methods are the ones above.
+extension AppSettings: ProviderSettings {}
