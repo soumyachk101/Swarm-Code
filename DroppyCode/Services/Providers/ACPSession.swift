@@ -276,11 +276,14 @@ final class ACPSession: ProviderSession {
         if let options = state["configOptions"]?.array { applyConfigOptions(options) }
     }
 
-    /// Cursor reports the effort scale of the current model only, so the catalog probe
-    /// walks the list: each model without a scale yet is made current in turn and its
-    /// scale read off the reply, and the model the session started on is put back.
+    /// Cursor and OpenCode report the effort scale of the current model only (the
+    /// `thought_level` config option in each reply), so the catalog probe walks the
+    /// list: each model without a scale yet is made current in turn and its scale
+    /// read off the reply, and the model the session started on is put back. Models
+    /// that arrived with a scale (Grok lists them in `_meta.reasoningEfforts`) are
+    /// skipped by the `where` filter.
     private func probeModelEfforts() async {
-        guard usesParameterizedModels, let modelConfigID else { return }
+        guard let modelConfigID else { return }
         let original = currentModel
         for model in models where model.efforts.isEmpty {
             await setConfigOption(modelConfigID, value: model.id)
@@ -332,13 +335,17 @@ final class ACPSession: ProviderSession {
             case "model":
                 modelConfigID = id
                 currentModel = current.map { usesParameterizedModels ? Self.baseModelID($0) : $0 } ?? currentModel
+                // One lookup per value: the walk over OpenCode's four hundred models replies
+                // four hundred times, and a linear search per value on each reply stalled the
+                // main actor.
+                let knownByID = Dictionary(models.map { (Self.baseModelID($0.id), $0) }, uniquingKeysWith: { first, _ in first })
                 let list = values.compactMap { value -> ModelOption? in
                     guard let rawID = value["value"]?.string else { return nil }
                     let valueID = usesParameterizedModels ? Self.baseModelID(rawID) : rawID
                     // A rebuilt list keeps what earlier passes learned about each model (its
                     // scale, its Fast tier): Cursor reports them for the current model only,
                     // one pass at a time.
-                    let known = models.first { Self.sameModel($0.id, valueID) }
+                    let known = knownByID[Self.baseModelID(valueID)]
                     var option = ModelOption(
                         id: valueID,
                         name: value["name"]?.string ?? valueID,
