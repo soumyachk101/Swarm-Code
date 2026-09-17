@@ -10,7 +10,7 @@ xcrun swiftc -parse-as-library -target arm64-apple-macos26.0 \
   -I "$PRODUCTS" -F "$FRAMEWORKS" -framework Testing \
   -load-plugin-library "$MACROS" \
   -Xlinker -rpath -Xlinker "$FRAMEWORKS" -Xlinker -rpath -Xlinker "$BINARY_DIR" \
-  "$BINARY_DIR/Droppy Code Dev.debug.dylib" Tests/AppIntegrationTests.swift Tests/RuntimeRegressionTests.swift Tests/CodexRevertTests.swift Tests/TextPerformanceTests.swift \
+  "$BINARY_DIR/Droppy Code Dev.debug.dylib" Tests/AppIntegrationTests.swift Tests/RuntimeRegressionTests.swift Tests/CodexRevertTests.swift Tests/TextPerformanceTests.swift Tests/StreamVeilRegressionTests.swift \
   -o build.noindex/app-integration-tests
 TEST_STORAGE="$(mktemp -d /tmp/droppy-integration.XXXXXX)"
 trap 'rm -rf "$TEST_STORAGE"' EXIT
