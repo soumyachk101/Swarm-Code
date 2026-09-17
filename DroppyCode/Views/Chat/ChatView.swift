@@ -33,6 +33,23 @@ struct ChatView: View {
     @State private var usageContentHeight: CGFloat?
     /// One grip held at a time, whichever panel it is on.
     @State private var panelResize = PanelResizeState()
+    /// Whether a panel is under the pointer right now, on any of the drag states above.
+    ///
+    /// While one is, the conversation stops answering hit tests. Every pointer move during
+    /// a drag is a hover event, and SwiftUI answers one by walking the responder tree and
+    /// rendering the view graph again — through the timeline, which is the largest tree in
+    /// the window. With several panels open that walk is what makes a drag stutter: a spin
+    /// report taken mid-drag spends 326 of 364 samples under NSHostingView.layout(), most
+    /// of it in ViewGraphRootValueUpdater.render, reached from
+    /// EventBindingManager.enqueueHoverUpdateIfNeeded.
+    ///
+    /// Nothing in the conversation needs to answer a hover while a panel is being moved,
+    /// so for the length of the drag it does not.
+    private var isMovingAPanel: Bool {
+        subagentDrag.position != nil || hydraDrag.position != nil
+            || poppedDrag.position != nil || usageDrag.position != nil
+            || autoDrags.values.contains { $0.position != nil }
+    }
     /// When the team's panel came on screen, and whether it is lingering past its heads.
     /// Heads that go out and fall at the door leave the panel within a frame or two of
     /// its arrival, and a panel that flashed on and straight off again read as a glitch:
@@ -91,6 +108,10 @@ struct ChatView: View {
                     && (paneSize == .zero || paneSize.width - scene.reserve.leading - scene.reserve.trailing >= 900)
             )
             .equatable()
+            // Hover costs a responder walk and a render of this whole tree; a panel being
+            // dragged sends one per pointer move and needs none of them (see
+            // `isMovingAPanel`).
+            .allowsHitTesting(!isMovingAPanel)
             // The timeline is the one part swapped per thread: the column around it (chrome
             // row, chat box, panels, git status, measured sizes) stays mounted, so a switch
             // re-lays out nothing else.
