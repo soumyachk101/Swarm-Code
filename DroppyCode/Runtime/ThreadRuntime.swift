@@ -593,6 +593,40 @@ final class ThreadRuntime {
         return app.runningHydraHeads(of: threadID) > app.runningDroppyHeads(of: threadID)
     }
 
+    /// Escape on a running turn: the turn is stopped and taken back. The conversation
+    /// rewinds to before it, the provider's context too (`revert`, the way editing a message
+    /// rewinds it: Claude resumes at the kept turn's last message, Codex rolls the turn
+    /// back), so the aborted exchange costs nothing next turn, and its message goes back
+    /// in the composer to be changed and sent again. Files stay as the turn left them. With
+    /// something already typed in the box, heads out on the turn (their reports belong
+    /// to it), or a rewind the provider refuses, the turn is only stopped and stays in
+    /// the thread.
+    func takeBackRunningTurn() {
+        guard draft.isEmpty, !hasWorkingHeads, let turnID = currentTurnID, let turn = turns.first(where: { $0.id == turnID }),
+              let itemID = turn.userItemID, let entry = entryIndex[itemID],
+              case .user(let message) = entry.item.content, !message.isFromHydra else {
+            interrupt()
+            return
+        }
+        interrupt()
+        Task {
+            // The interrupt lands asynchronously, and a rewind needs the turn finished; the
+            // watchdog ends a session that ignores it within eight seconds. Words typed
+            // into the box while the stop landed are the reader's, not the message's to
+            // overwrite: the stopped turn then stays in the thread.
+            for _ in 0..<200 where phase != .idle { try? await Task.sleep(for: .milliseconds(50)) }
+            guard phase == .idle, draft.isEmpty, turns.contains(where: { $0.id == turnID }) else { return }
+            do {
+                try await revert(to: turnID, restoreFiles: false)
+            } catch {
+                appendNotice(.error, "The stopped message was kept: \(error.localizedDescription)")
+                return
+            }
+            draft.text = message.text
+            draft.attachments = message.attachments
+        }
+    }
+
     var sentPrompts: [String] {
         entries.compactMap { entry in
             if case .user(let message) = entry.item.content, !message.isFromHydra, !message.isHydraBrief { return message.text }
@@ -1677,6 +1711,9 @@ final class ThreadRuntime {
         }
         entryIndex = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
         turns.removeSubrange(index...)
+        // The thread's status is its last remaining turn's, or none: with every turn gone
+        // it is unused again, so a new thread reuses it and ⌘W deletes it.
+        app.updateThread(threadID) { $0.lastStatus = turns.last?.status }
         saveRevision += 1
         usage = nil
         if let fileError { appendNotice(.error, fileError) }
