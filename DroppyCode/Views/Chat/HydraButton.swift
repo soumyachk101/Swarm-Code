@@ -125,7 +125,7 @@ struct HydraButton: View {
                 // The reply still streaming changed with this render, so it is read afresh;
                 // the finished ones before it have not, and their answers are kept.
                 let hasBlock = message.isStreaming
-                    ? HydraPrompts.hasDelegationBlock(in: message.text)
+                    ? hasDelegationBlockWhileStreaming(in: message.text, rowID: entry.id)
                     : hasDelegationBlock(in: message.text, rowID: entry.id)
                 if hasBlock { return true }
             default:
@@ -148,6 +148,28 @@ struct HydraButton: View {
         if let known = delegationChecks.value(for: rowID) { return known }
         let found = HydraPrompts.hasDelegationBlock(in: text)
         delegationChecks.insert(found, for: rowID)
+        return found
+    }
+
+    /// How far each streaming reply has been scanned for its opening fence, by row. The
+    /// reply grows by appending, so each render scans only what arrived since the last
+    /// one, with a few bytes of overlap for a fence split across two flushes; running the
+    /// fence regex over a reply of tens of kilobytes on every render was a whole reply's
+    /// worth of text on the main thread per token. A row found to hold a block stays found.
+    @MainActor private static var streamingScans: [String: (scanned: Int, found: Bool)] = [:]
+
+    @MainActor
+    private static func hasDelegationBlockWhileStreaming(in text: String, rowID: String) -> Bool {
+        if let known = streamingScans[rowID], known.found { return true }
+        let scanned = streamingScans[rowID]?.scanned ?? 0
+        let count = text.utf8.count
+        if count == scanned { return false }
+        // A reply rewritten shorter is read from the start again.
+        let from = count < scanned ? 0 : max(0, scanned - 32)
+        let start = text.utf8.index(text.utf8.startIndex, offsetBy: from)
+        let found = HydraPrompts.hasDelegationOpener(in: text[start...])
+        if streamingScans.count > 64 { streamingScans.removeAll(keepingCapacity: true) }
+        streamingScans[rowID] = (count, found)
         return found
     }
 

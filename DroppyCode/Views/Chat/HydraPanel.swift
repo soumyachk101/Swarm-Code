@@ -259,7 +259,9 @@ private struct HydraHeadsButton: View {
         .accessibilityAction { isPresented.toggle() }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             PopoverMenu {
-                PopoverSectionHeader(running == 0 ? "Heads" : (running == 1 ? "1 head working" : "\(running) heads working"))
+                let waiting = runtime.hydraWaitingCount
+                let header = running == 0 ? "Heads" : (running == 1 ? "1 head working" : "\(running) heads working")
+                PopoverSectionHeader(waiting > 0 ? header + (waiting == 1 ? ", 1 waiting" : ", \(waiting) waiting") : header)
                 ForEach(heads) { head in
                     HydraHeadRow(head: head, isOnStage: head.id == runtime.hydraSelectedHeadID) {
                         runtime.hydraSelectedHeadID = head.id
