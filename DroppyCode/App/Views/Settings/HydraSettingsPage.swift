@@ -288,6 +288,7 @@ private struct HydraPairRow: View {
     /// say nothing: a pair with no effort chosen and no cap has one short line.
     private func summary(registry: ProviderRegistry) -> String {
         var parts = [HydraPairSummary.providers(pair)]
+        if pair.customName != nil { parts.insert(HydraPairSummary.modelsTitle(pair, registry: registry), at: 0) }
         if let efforts = HydraPairSummary.efforts(pair) { parts.append(efforts) }
         if let cap = pair.maxHeads {
             parts.append(cap == 1 ? "One head at a time" : "Up to \(cap) heads")
@@ -341,6 +342,16 @@ private struct HydraPairEditor: View {
                     .padding(.horizontal, 14)
                     .padding(.top, 14)
                     .padding(.bottom, 6)
+                editorRow("Name", detail: "Stands in for the models in the picker and the composer") {
+                    TextField("", text: Binding(
+                        get: { pair.name ?? "" },
+                        set: { text in model.updateHydraPair(pairID) { $0.name = text.isEmpty ? nil : text } }
+                    ), prompt: Text(HydraPairSummary.modelsTitle(pair, registry: registry)))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+                    .frame(width: 150)
+                }
+                Divider().padding(.horizontal, 14).padding(.vertical, 6)
                 editorRow("Lead provider") {
                     GlassPickerButton(
                         options: providers.map { ($0, $0.displayName) },

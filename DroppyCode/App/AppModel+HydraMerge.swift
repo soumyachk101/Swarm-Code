@@ -35,10 +35,12 @@ extension AppModel {
         runtime.isHydraMerging = true
         runtime.hydraMergeStartedAt = .now
         runtime.hydraMergeNoteID = UUID().uuidString
-        runtime.hydraMergeStage = "Gathering the team's files"
+        runtime.hydraMergeStage = HydraMergeStage.gathering.words
+        runtime.hydraMergeStep = .gathering
         defer {
             runtime.isHydraMerging = false
             runtime.hydraMergeStage = nil
+            runtime.hydraMergeStep = nil
             runtime.hydraMergeStartedAt = nil
             runtime.hydraMergeNoteID = nil
         }
@@ -115,6 +117,8 @@ extension AppModel {
     private func mergeHydraProject(of leadID: UUID, lead: ChatThread, project: Project, checkout: String, work: HydraWork, runtime: ThreadRuntime, several: Bool) async -> HydraProjectMerge {
         func stage(_ name: String) -> String { several ? "\(project.name): \(name)" : name }
         func title(_ name: String) -> String { several ? "\(project.name): \(name)" : name }
+        // The words carry the project's name with several projects, the step is the dot on the pill's track.
+        func advance(_ step: HydraMergeStage) { runtime.hydraMergeStage = stage(step.words); runtime.hydraMergeStep = step }
 
         let git = Git(checkout)
         guard await git.isRepository(), await git.hasCommits() else { return .failed }
@@ -140,7 +144,7 @@ extension AppModel {
 
         do {
             let head = try await git.commitHash()
-            runtime.hydraMergeStage = stage("Writing the commit")
+            advance(.committing)
             let tree = try await git.captureTree(paths: sorted)
             // Everything the team did is committed already: taken along by another chat's
             // merge from the same checkout, or committed by hand. The job is spent either
@@ -151,7 +155,7 @@ extension AppModel {
             // A whole job's patch is big and parsing it counts every line: off the main
             // actor, so the chat stays live while the work goes out.
             let files = await Task.detached(priority: .utility) { DiffParser.parse(patch) }.value
-            runtime.hydraMergeStage = stage("Writing the commit message")
+            advance(.describing)
             let message = await commitMessage(for: lead, files: files, patch: patch, directory: checkout)
             let subject = TextCleanup.singleLine(message, limit: 72)
 
@@ -180,11 +184,11 @@ extension AppModel {
                 // tree already has the content.
                 try await git.resetIndex(paths: sorted)
             }
-            runtime.hydraMergeStage = stage("Pushing the branch")
+            advance(.pushing)
             try await git.pushBranch(branch)
 
             let body = mergeRequestBody(for: lead, files: files, runtime: runtime)
-            runtime.hydraMergeStage = stage("Opening the merge request")
+            advance(.opening)
             let requestURL: URL?
             do {
                 requestURL = try await hydraCreateMergeRequest(git: git, title: subject, body: body, source: branch, target: target)
@@ -197,7 +201,7 @@ extension AppModel {
                 note(leadID, title("Hydra pushed \(branch) but could not open a merge request."), "Open one for `\(branch)` into `\(target)` and merge it from there.")
                 return .failed
             }
-            runtime.hydraMergeStage = stage("Merging")
+            advance(.merging)
             do {
                 try await git.mergePullRequest(link)
             } catch {
@@ -222,12 +226,12 @@ extension AppModel {
             // was this merge's to take, and every line about it read as if something
             // had gone wrong.
             if ownBranch {
-                runtime.hydraMergeStage = stage("Bringing the checkout up to date")
+                advance(.syncing)
                 let synced = await syncDefaultBranch(git, from: head, target: target, ownPaths: sorted)
                 lines.append(synced ? "The checkout is up to date." : "The checkout was left as it was: `\(target)` moved on in other ways meanwhile, or the team's files changed again; `git pull` when it suits you.")
             } else if lead.worktreePath != nil {
                 // The lead worked in a worktree: the project's own checkout follows when it can.
-                runtime.hydraMergeStage = stage("Bringing the checkout up to date")
+                advance(.syncing)
                 let main = Git(project.path)
                 if await main.status()?.branch == target, await main.dirtyPaths().isEmpty, !(await main.hasOperationInProgress()) {
                     if (try? await main.pullFastForward()) != nil { lines.append("The project checkout is up to date.") }

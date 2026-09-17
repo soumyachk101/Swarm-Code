@@ -297,6 +297,9 @@ final class ThreadRuntime {
     /// What the merge is doing right now, in words, for the timeline: gathering the
     /// team's files, writing the commit, pushing, opening the merge request, merging.
     var hydraMergeStage: String?
+    /// The stage under way, for the pill's track of dots (see `HydraMergeStage`); nil
+    /// while no merge runs.
+    var hydraMergeStep: HydraMergeStage?
     /// When the merge under way began, so the timeline can show how long it has been at it.
     var hydraMergeStartedAt: Date?
     /// The id the merge's outcome note will land under, chosen when the merge starts. The

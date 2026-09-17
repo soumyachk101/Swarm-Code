@@ -59,18 +59,20 @@ struct ModelEffortButton: View {
     var body: some View {
         let registry = model.providers
         let current = registry.model(thread.model, for: thread.provider)
-        // The pair this chat leads with, while Hydra is on: the chip wears its mark, so a
-        // chat that leads a team says so without opening anything.
+        // The pair this chat leads with, while Hydra is on: the chip wears the fused
+        // mark of lead and heads, so a chat that leads a team says so without opening anything.
         let pair = model.hydraIsOn(thread) ? model.hydraPair(for: thread) : nil
         Button {
             isPresented.toggle()
         } label: {
             HStack(spacing: 5) {
-                ProviderIcon(provider: thread.provider, size: 14)
-                if pair != nil {
-                    HydraMarkImage()
-                        .foregroundStyle(Chrome.primaryText.opacity(0.85))
-                        .frame(width: 12, height: 12)
+                if let pair {
+                    // In a pair the chip wears the two of them as one mark: the lead's icon fused
+                    // with the heads', the way the slider's track runs one colour into the other.
+                    HydraFusedPairIcon(lead: pair.provider, heads: model.hydraHeadsProvider(of: pair), size: 15)
+                        .id(pair.id)
+                } else {
+                    ProviderIcon(provider: thread.provider, size: 14)
                 }
                 if thread.fastMode, current?.supportsFast == true {
                     Image(systemName: "bolt.fill")
@@ -83,8 +85,9 @@ struct ModelEffortButton: View {
                     // effort" resized the chip under the popover's own arrow. The open
                     // state reads from the chip style's active look instead. The name is
                     // the one flexible part of the row, so inside the fixed width below it
-                    // is what gets cut; the effort and the marks keep their size.
-                    Text(verbatim: current?.chipName ?? thread.model ?? thread.provider.displayName)
+                    // is what gets cut; the effort and the marks keep their size. A pair
+                    // the user named goes by that name here, in place of the lead's model.
+                    Text(verbatim: pair?.customName ?? current?.chipName ?? thread.model ?? thread.provider.displayName)
                         .foregroundStyle(Chrome.primaryText)
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -356,15 +359,17 @@ struct ModelList: View {
     }
 
     /// The line under a pair's title: the providers, and the efforts when any is set. The
-    /// title already names the models, so this never repeats them.
+    /// title names the models, so this never repeats them, unless the user named the pair:
+    /// then the title is that name and the models come first here.
     private func detail(for pair: HydraPair) -> String {
-        [HydraPairSummary.providers(pair), HydraPairSummary.efforts(pair)].compactMap { $0 }.joined(separator: " · ")
+        let models = pair.customName == nil ? nil : HydraPairSummary.modelsTitle(pair, registry: model.providers)
+        return [models, HydraPairSummary.providers(pair), HydraPairSummary.efforts(pair)].compactMap { $0 }.joined(separator: " · ")
     }
 }
 
-/// One Hydra pair in the model picker: the Hydra mark, who leads whom, and the provider
-/// with the heads' model under it; a pair whose heads run on another provider shows both
-/// providers' marks, lead then heads. Tapping it puts the chat in the pair.
+/// One Hydra pair in the model picker: the fused mark of lead and heads, who leads
+/// whom, and the provider with the heads' model under it. Tapping it puts the chat in
+/// the pair.
 private struct HydraPairListRow: View {
     let pair: HydraPair
     let title: String
@@ -379,9 +384,7 @@ private struct HydraPairListRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                HydraMarkImage()
-                    .foregroundStyle(Chrome.primaryText)
-                    .frame(width: 14, height: 14)
+                HydraFusedPairIcon(lead: pair.provider, heads: pair.headsProvider, size: 16, animates: false)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: title)
@@ -394,11 +397,6 @@ private struct HydraPairListRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 12)
-                if pair.sendsHeadsElsewhere {
-                    HydraPairMark(lead: pair.provider, heads: pair.headsProvider, leadSize: 13)
-                    .foregroundStyle(Chrome.secondaryText)
-                    .accessibilityHidden(true)
-                }
                 Image(systemName: "checkmark")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)

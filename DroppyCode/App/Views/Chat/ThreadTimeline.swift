@@ -92,7 +92,10 @@ struct ThreadTimeline: View, Equatable {
             hydraMergeID: runtime.isHydraMerging ? (runtime.hydraMergeNoteID ?? "hydra-merging") : nil,
             workingHeads: heads.compactMap { $0.hydra?.status == .running ? $0.hydra?.index : nil }
         )
-        let hydraMentionPersonas = blockCache.mentionPersonas(for: heads)
+        // Every head the chat ever sent out, not only those still in the panel: a head that
+        // finished and left for the sidebar is still named in the prose above, and keeps its
+        // glyph and colour there rather than falling back to plain text as it clears.
+        let hydraMentionPersonas = blockCache.mentionPersonas(for: model.children(of: runtime.threadID).filter(\.isHydraHead))
         // A history still being read off the main thread is not an empty thread: the
         // prompt for a new one would flash for the frames before it lands.
         if runtime.isLoadingHistory {
@@ -1632,8 +1635,8 @@ final class TimelineBlockCache {
         return tail
     }
 
-    /// The personas the composer can mention, by the heads' roster indices. Memoized on
-    /// them, so the list is built when a head comes or goes and not on every pass.
+    /// The personas the prose may name, by the heads' roster indices. Memoized on them,
+    /// so the list is built when a head comes or goes and not on every pass.
     func mentionPersonas(for heads: [ChatThread]) -> [HydraPersona] {
         let indices = heads.map { $0.hydra?.index }
         if indices == personaHeads { return personas }
