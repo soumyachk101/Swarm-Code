@@ -291,7 +291,8 @@ struct ThreadTimeline: View, Equatable {
                     ForEach(visible) { block in
                         let context = RowContext(
                             workingDirectory: workingDirectory,
-                            canRewind: block.turnID.map(rewindable.contains) ?? false
+                            canRewind: block.turnID.map(rewindable.contains) ?? false,
+                            chronological: model.settings.chronologicalTimeline
                         )
                         DisplayBlockView(block: block, runtime: runtime, context: context)
                             .equatable()
@@ -1719,6 +1720,9 @@ struct RowContext: Equatable {
     var workingDirectory: String?
     /// Whether the block's turn can be reverted right now.
     var canRewind: Bool
+    /// Whether the running turn's rows render in arrival order instead of gathering the
+    /// steps before the last tool call into the working line (`chronologicalTimeline`).
+    var chronological: Bool
 }
 
 private struct DisplayBlockView: View, Equatable {
@@ -1810,7 +1814,9 @@ private struct TurnRunningBlock: View {
             heads = groups.removeLast()
         }
         var liveWork: [TimelineEntry] = []
-        if showsWorking, let lastWork = groups.lastIndex(where: { if case .work = $0 { return true } else { return false } }) {
+        // Chronological on: every group stays a row in arrival order and the working line
+        // carries nothing; off, the steps before the last tool call move into the line.
+        if !context.chronological, showsWorking, let lastWork = groups.lastIndex(where: { if case .work = $0 { return true } else { return false } }) {
             // Everything up to the last tool run is the turn's work: the runs themselves and
             // the replies between them. The prompt, a steer, a notice or a plan stay rows.
             var rows: [TimelineGroup] = []

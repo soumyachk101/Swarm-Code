@@ -100,6 +100,7 @@ final class AppSettings {
         static let threadFinishAction = "threadFinishAction"
         static let settleSound = "settleSound"
         static let showReasoning = "showReasoning"
+        static let chronologicalTimeline = "chronologicalTimeline"
         static let showsWorkingCard = "showsWorkingCard"
         static let chatZoom = "chatZoom"
         static let sidebarActivityView = "sidebarActivityView"
@@ -199,6 +200,13 @@ final class AppSettings {
 
     var showReasoning: Bool {
         didSet { defaults.set(showReasoning, forKey: Key.showReasoning) }
+    }
+
+    /// The running turn's rows in arrival order — replies and tool runs interleaved as
+    /// they happened — instead of every step before the last tool call drawn into the
+    /// working line.
+    var chronologicalTimeline: Bool {
+        didSet { defaults.set(chronologicalTimeline, forKey: Key.chronologicalTimeline) }
     }
     /// The running turn's line as the head panel's progress card (the task, the stave bar
     /// of the turn's steps, the time); off, it is the one-line badge with the words and the time.
@@ -644,6 +652,7 @@ final class AppSettings {
         threadFinishAction = ThreadFinishAction(rawValue: defaults.string(forKey: Key.threadFinishAction) ?? "") ?? .settle
         settleSound = defaults.object(forKey: Key.settleSound) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
+        chronologicalTimeline = defaults.object(forKey: Key.chronologicalTimeline) as? Bool ?? false
         showsWorkingCard = defaults.object(forKey: Key.showsWorkingCard) as? Bool ?? true
         chatZoom = ChatZoom.clamped(defaults.object(forKey: Key.chatZoom) as? Int ?? ChatZoom.defaultIndex)
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
