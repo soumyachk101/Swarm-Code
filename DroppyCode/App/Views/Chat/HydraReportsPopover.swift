@@ -203,53 +203,69 @@ struct HydraReportDigest {
 
 /// The digest of a heads' report batch in the popover its pill opens, laid out like a
 /// native popover: a header that stays put, then one plain card per head with its
-/// outcome, its files and its report, scrolling under it. The blocks parse off the
-/// main thread as the popover opens, so opening costs the blocks on screen.
+/// outcome, its files and its report, scrolling under it. Everything the first layout
+/// shows is ready before it: the digest, and one head's report (which reads whole) as
+/// blocks the pill warmed or a cold tap parses now; with several heads the reports
+/// start collapsed and warm in the background. `PopoverScroll` lays the cards out once
+/// at the popover's width, so it opens at its final size instead of growing.
 struct HydraReportsPopover: View {
     let title: String
     let text: String
     let personas: [HydraPersona]
+    private let digest: HydraReportDigest
 
-    @State private var digest: HydraReportDigest?
-    @State private var expanded: Set<String> = []
-    @State private var blocks: [String: [MarkdownBlock]] = [:]
+    @State private var expanded: Set<String>
+    @State private var blocks: [String: [MarkdownBlock]]
+
+    /// The popover's width; the cards are measured at it.
+    private static let width: CGFloat = 460
+
+    @MainActor
+    init(title: String, text: String, personas: [HydraPersona]) {
+        self.title = title
+        self.text = text
+        self.personas = personas
+        let parsed = HydraReportDigest.parse(text)
+        digest = parsed
+        // One head's report reads whole; several start collapsed to their files.
+        if parsed.heads.count == 1, let head = parsed.heads.first {
+            _expanded = State(initialValue: [head.name])
+            _blocks = State(initialValue: [head.name: MarkdownView.blocks(for: head.body)])
+        } else {
+            _expanded = State(initialValue: [])
+            _blocks = State(initialValue: [:])
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            PopoverScroll(maxHeight: 520) {
+            PopoverScroll(maxHeight: 520, width: Self.width) {
                 VStack(alignment: .leading, spacing: 8) {
-                    if let digest {
-                        ForEach(Array(digest.heads.enumerated()), id: \.element.id) { index, head in
-                            headCard(head, index: index, collapsible: digest.heads.count > 1)
-                        }
-                    } else {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 40)
+                    ForEach(Array(digest.heads.enumerated()), id: \.element.id) { index, head in
+                        headCard(head, index: index, collapsible: digest.heads.count > 1)
                     }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(width: 460)
+        .frame(width: Self.width)
         // The popover reads at its own size, not the conversation's zoom.
         .environment(\.chatZoom, 1)
         .task(id: text) {
-            let parsed = HydraReportDigest.parse(text)
-            digest = parsed
-            try? await MarkdownView.warm(parsed.heads.map(\.body))
+            // The reports not on screen yet parse off the main thread, so opening a card
+            // finds its blocks ready.
+            let missing = digest.heads.filter { blocks[$0.name] == nil }
+            guard !missing.isEmpty else { return }
+            try? await MarkdownView.warm(missing.map(\.body))
             guard !Task.isCancelled else { return }
-            var warmed: [String: [MarkdownBlock]] = [:]
-            for head in parsed.heads {
+            var warmed = blocks
+            for head in missing {
                 warmed[head.name] = MarkdownView.blocks(for: head.body)
             }
             blocks = warmed
-            // One head's report reads whole; several start collapsed to their files.
-            expanded = parsed.heads.count == 1 ? Set(parsed.heads.map(\.name)) : []
         }
     }
 
@@ -268,13 +284,11 @@ struct HydraReportsPopover: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)
                     .lineLimit(2)
-                if let digest {
-                    Text(Self.totalsLine(for: digest))
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.secondaryText)
-                        .monospacedDigit()
-                }
-                if let intro = digest?.intro, let sentence = Self.stillAtWorkSentence(in: intro) {
+                Text(Self.totalsLine(for: digest))
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .monospacedDigit()
+                if let intro = digest.intro, let sentence = Self.stillAtWorkSentence(in: intro) {
                     Text(sentence)
                         .font(.system(size: 11))
                         .foregroundStyle(Chrome.secondaryText)

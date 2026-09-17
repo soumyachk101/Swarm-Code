@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Renders the onboarding tour's captures from the real app, then imports them as assets.
 
-The app runs once in its tour capture mode (see DroppyCode/Support/TourCaptures.swift):
+The app runs once in its tour capture mode (see DroppyCode/App/Captures/TourCaptures.swift):
 it opens the real window with mock data over a curated gradient backdrop, photographs
 each tour scene as a 16:10 still into build.noindex/tour-captures, and quits. This
 script then resizes every still to exactly 1320x824 and writes it into the tour
@@ -42,7 +42,7 @@ SCENES = ["welcome", "hydra", "pairs", "slider", "threads", "recipes", "panels"]
 CONTENTS = {"info": {"author": "xcode", "version": 1}}
 
 # App window size in points for each still, matching the stage sizes in
-# DroppyCode/Support/TourCaptures.swift (and TourCaptures+Hydra.swift). Every
+# DroppyCode/App/Captures/TourCaptures.swift (and TourCaptures+Hydra.swift). Every
 # still is a 16:10 rect around the window: the frame grown by 72 pt on every
 # side, then widened/heightened to 1.6. The popover scenes (tour-pairs,
 # tour-slider, tour-recipes, web-hero) photograph the window unioned with the open popover

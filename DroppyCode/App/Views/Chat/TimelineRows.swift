@@ -316,10 +316,12 @@ struct HydraReportRow: View {
         .padding(.vertical, TimelineMetrics.pillVertical)
         .background(.tint.opacity(0.1), in: RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
         // The report parses off the main thread as the pill appears, so the tap that
-        // opens it finds the blocks ready rather than parsing the whole batch first.
+        // opens it finds the blocks ready rather than parsing the whole batch first. A
+        // heads' report is read one head at a time, so it is each head's body that warms.
         .task(id: body) {
             guard !details.isEmpty else { return }
-            try? await MarkdownView.warm([body])
+            let texts = personas.isEmpty ? [body] : HydraReportDigest.parse(body).heads.map(\.body)
+            try? await MarkdownView.warm(texts)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.trailing, 96)
@@ -603,46 +605,42 @@ struct HydraBriefRow: View {
 /// A head's report in the popover its pill opens: the markdown at reading width, scrolling
 /// past the panel's height rather than pushing the timeline apart.
 ///
-/// A batch of reports runs to tens of thousands of characters, and a popover cannot open
-/// before its content has laid out: the blocks are parsed off the main thread (the pill
-/// warms them as it appears, so a tap usually finds them cached) and built lazily, so
-/// opening costs the blocks on screen rather than the whole report.
+/// A batch of reports runs to tens of thousands of characters. The blocks are in place
+/// before the popover's first layout (the pill parses them off the main thread as it
+/// appears, so a tap finds them cached; a cold tap parses now), and `PopoverScroll`
+/// lays them out once at the popover's width, so it opens at its final size instead of
+/// growing after it is shown. They are built lazily, so opening costs the blocks on
+/// screen rather than the whole report.
 private struct HydraReportPopover: View {
     let text: String
     var width: CGFloat = 460
+    private let blocks: [MarkdownBlock]
 
-    @State private var blocks: [MarkdownBlock]?
+    @MainActor
+    init(text: String, width: CGFloat = 460) {
+        self.text = text
+        self.width = width
+        blocks = MarkdownView.blocks(for: text)
+    }
 
     var body: some View {
-        PopoverScroll(maxHeight: 460) {
-            if let blocks {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
-                        MarkdownBlockView(block: block)
-                            .equatable()
-                    }
+        PopoverScroll(maxHeight: 460, width: width) {
+            LazyVStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                    MarkdownBlockView(block: block)
+                        .equatable()
                 }
-                // The note reads at the popover's own compact size, not the chat's.
-                .font(.system(size: 12))
-                .environment(\.markdownPointSize, 12)
-                .environment(\.markdownDimmed, false)
-                .environment(\.chatZoom, 1)
-                .textSelection(.enabled)
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                ProgressView()
-                    .controlSize(.small)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 40)
             }
+            // The note reads at the popover's own compact size, not the chat's.
+            .font(.system(size: 12))
+            .environment(\.markdownPointSize, 12)
+            .environment(\.markdownDimmed, false)
+            .environment(\.chatZoom, 1)
+            .textSelection(.enabled)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(width: width)
-        .task(id: text) {
-            try? await MarkdownView.warm([text])
-            guard !Task.isCancelled else { return }
-            blocks = MarkdownView.blocks(for: text)
-        }
     }
 }
 
