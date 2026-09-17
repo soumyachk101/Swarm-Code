@@ -7,4 +7,8 @@ export default {
  compilerOptions: {
  runes: true,
  },
+ onwarn: (warning, handler) => {
+ if (warning.code.startsWith('a11y_') || warning.code === 'css_unused_selector') return;
+ handler(warning);
+ },
 };

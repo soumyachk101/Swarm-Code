@@ -188,7 +188,7 @@
 					{disabled}
 					rows={1}
 					class="composer-textarea"
-				/>
+				></textarea>
 
 				<div class="composer-actions">
 					<button
@@ -226,26 +226,32 @@
 						</svg>
 					</button>
 
-					<button
-						class="send-btn"
-						class:active={messageText.trim().length > 0}
-						onclick={handleSubmit}
-						disabled={!thread || !messageText.trim() || isSubmitting || $isGenerating}
-						title="Send (⌘+Enter)"
-					>
-						{#if $isGenerating}
-							<button class="stop-btn" onclick={() => stopGeneration()}>
-								<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-									<rect x="6" y="6" width="12" height="12" rx="2"/>
-								</svg>
-							</button>
-						{:else}
+					{#if $isGenerating}
+						<button
+							class="send-btn stop-btn"
+							onclick={() => stopGeneration()}
+							type="button"
+							title="Stop generating"
+						>
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+								<rect x="6" y="6" width="12" height="12" rx="2"/>
+							</svg>
+						</button>
+					{:else}
+						<button
+							class="send-btn"
+							class:active={messageText.trim().length > 0}
+							onclick={handleSubmit}
+							disabled={!thread || !messageText.trim() || isSubmitting}
+							type="button"
+							title="Send (⌘+Enter)"
+						>
 							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 								<path d="M22 2L11 13"/>
 								<path d="M22 2l-7 20-4-9-9-4 20-7z"/>
 							</svg>
-						{/if}
-					</button>
+						</button>
+					{/if}
 				</div>
 			</div>
 
