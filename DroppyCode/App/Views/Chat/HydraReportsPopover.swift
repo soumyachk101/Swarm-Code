@@ -207,12 +207,14 @@ struct HydraReportDigest {
 /// shows is ready before it: the digest, and one head's report (which reads whole) as
 /// blocks the pill warmed or a cold tap parses now; with several heads the reports
 /// start collapsed and warm in the background. `PopoverScroll` lays the cards out once
-/// at the popover's width, so it opens at its final size instead of growing.
+/// at the popover's width, so it opens at its final size instead of growing. With one
+/// head the header carries the head and its task, and the card is just its files and report.
 struct HydraReportsPopover: View {
     let title: String
     let text: String
     let personas: [HydraPersona]
     private let digest: HydraReportDigest
+    private var single: HydraReportDigest.Head? { digest.heads.count == 1 ? digest.heads.first : nil }
 
     @State private var expanded: Set<String>
     @State private var blocks: [String: [MarkdownBlock]]
@@ -241,13 +243,14 @@ struct HydraReportsPopover: View {
         VStack(spacing: 0) {
             header
             Divider()
+            let collapsible = digest.heads.count > 1
             PopoverScroll(maxHeight: 520, width: Self.width) {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(digest.heads.enumerated()), id: \.element.id) { index, head in
-                        headCard(head, index: index, collapsible: digest.heads.count > 1)
+                        headCard(head, index: index, collapsible: collapsible)
                     }
                 }
-                .padding(10)
+                .padding(collapsible ? 10 : 0)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -272,22 +275,68 @@ struct HydraReportsPopover: View {
     // MARK: Header
 
     /// Who reported, and the one sentence saying who is still at work, if anyone is.
+    /// With one head the header carries the head itself: its name, outcome, files and task.
+    @ViewBuilder
     private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            HStack(spacing: -6) {
-                ForEach(personas, id: \.self) { persona in
-                    HydraGlyph(persona: persona, size: 22)
+        if let head = single {
+            singleHeader(head)
+        } else {
+            HStack(alignment: .center, spacing: 10) {
+                HStack(spacing: -6) {
+                    ForEach(personas, id: \.self) { persona in
+                        HydraGlyph(persona: persona, size: 22)
+                    }
                 }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(Self.cleanedTitle(title, names: personas.map(\.name)))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Chrome.primaryText)
+                        .lineLimit(2)
+                    Text(Self.totalsLine(for: digest))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .monospacedDigit()
+                    if let intro = digest.intro, let sentence = Self.stillAtWorkSentence(in: intro) {
+                        Text(sentence)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .lineLimit(2)
+                    }
+                }
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+        }
+    }
+
+    private func singleHeader(_ head: HydraReportDigest.Head) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            HydraGlyph(persona: persona(for: head), size: 24, status: Self.status(head.outcome))
             VStack(alignment: .leading, spacing: 2) {
-                Text(Self.cleanedTitle(title, names: personas.map(\.name)))
-                    .font(.system(size: 13, weight: .semibold))
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(head.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(persona(for: head).color)
+                    Text(Self.outcomeCaption(for: head))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Self.outcomeColor(for: head.outcome))
+                        .monospacedDigit()
+                    if let files = Self.filesLine(for: head) {
+                        Text("· " + files)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .monospacedDigit()
+                            .lineLimit(1)
+                    }
+                }
+                let task = Self.withoutNamePrefix(Self.cleanedTitle(head.task, names: [head.name]), name: head.name)
+                Text(task.isEmpty ? Self.cleanedTitle(title, names: [head.name]) : task)
+                    .font(.system(size: 12))
                     .foregroundStyle(Chrome.primaryText)
-                    .lineLimit(2)
-                Text(Self.totalsLine(for: digest))
-                    .font(.system(size: 11))
-                    .foregroundStyle(Chrome.secondaryText)
-                    .monospacedDigit()
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
                 if let intro = digest.intro, let sentence = Self.stillAtWorkSentence(in: intro) {
                     Text(sentence)
                         .font(.system(size: 11))
@@ -300,6 +349,39 @@ struct HydraReportsPopover: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
+    }
+
+    private static func outcomeCaption(for head: HydraReportDigest.Head) -> String {
+        let base: String
+        switch head.outcome {
+        case .done: base = "Finished"
+        case .failed: base = "Failed"
+        case .stopped: base = "Stopped"
+        }
+        guard let effort = head.effort, !effort.isEmpty else { return base }
+        return base + " · " + effort
+    }
+
+    private static func outcomeColor(for outcome: HydraReportDigest.Outcome) -> Color {
+        switch outcome {
+        case .failed: return Chrome.danger
+        case .stopped: return Chrome.warning
+        case .done: return Chrome.secondaryText
+        }
+    }
+
+    private static func filesLine(for head: HydraReportDigest.Head) -> String? {
+        let files: [HydraReportDigest.LandedFile]
+        switch head.landing {
+        case .landed(let f): files = f
+        case .notLanded(let f, _): files = f
+        default: return nil
+        }
+        guard !files.isEmpty else { return nil }
+        let f = files.count
+        let a = files.reduce(0) { $0 + $1.additions }
+        let d = files.reduce(0) { $0 + $1.deletions }
+        return "\(f) file" + (f == 1 ? "" : "s") + " · +\(a) −\(d)"
     }
 
     /// The title with a head's name said once: a lead that writes "Juno: Juno: streaming
@@ -378,38 +460,42 @@ struct HydraReportsPopover: View {
     /// several heads the name row is the toggle that opens and closes the report.
     private func headCard(_ head: HydraReportDigest.Head, index: Int, collapsible: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if collapsible, hasReport(head) {
-                Button {
-                    withAnimation(Chrome.panelSlide) {
-                        if expanded.contains(head.name) {
-                            expanded.remove(head.name)
-                        } else {
-                            expanded.insert(head.name)
+            if collapsible {
+                if hasReport(head) {
+                    Button {
+                        withAnimation(Chrome.panelSlide) {
+                            if expanded.contains(head.name) {
+                                expanded.remove(head.name)
+                            } else {
+                                expanded.insert(head.name)
+                            }
                         }
+                    } label: {
+                        HStack(alignment: .center, spacing: 6) {
+                            nameRow(head)
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Chrome.secondaryText)
+                                .rotationEffect(.degrees(expanded.contains(head.name) ? 90 : 0))
+                        }
+                        .contentShape(.rect)
                     }
-                } label: {
-                    HStack(alignment: .center, spacing: 6) {
-                        nameRow(head)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .rotationEffect(.degrees(expanded.contains(head.name) ? 90 : 0))
-                    }
-                    .contentShape(.rect)
+                    .buttonStyle(.plain)
+                } else {
+                    nameRow(head)
                 }
-                .buttonStyle(.plain)
-            } else {
-                nameRow(head)
             }
-            // The name is on the row above, so the task drops any lead of its own.
-            let task = Self.withoutNamePrefix(Self.cleanedTitle(head.task, names: [head.name]), name: head.name)
-            if !task.isEmpty {
-                Text(task)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Chrome.primaryText)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
+            if collapsible {
+                // The name is on the row above, so the task drops any lead of its own.
+                let task = Self.withoutNamePrefix(Self.cleanedTitle(head.task, names: [head.name]), name: head.name)
+                if !task.isEmpty {
+                    Text(task)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Chrome.primaryText)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             landingRows(head.landing)
             if !collapsible || expanded.contains(head.name) {
@@ -417,7 +503,11 @@ struct HydraReportsPopover: View {
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Chrome.overlay(0.05)))
+        .background {
+            if collapsible {
+                RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Chrome.overlay(0.05))
+            }
+        }
     }
 
     /// The head's name and, beside it, its outcome as a seal or caption plus its effort.
