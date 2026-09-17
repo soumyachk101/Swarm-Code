@@ -3050,7 +3050,13 @@ final class ThreadRuntime {
             // Nothing else started or ran alongside while the snapshot was taken, so it
             // still stands for the working tree and the next command starts from it.
             if treeEpoch == epoch, commandTrees.isEmpty, hydraCommandTrees.isEmpty { settledTree = (after, epoch) }
-            guard base != after, let patch = try? await git.diff(from: base, to: after), !patch.isEmpty else { return }
+            guard base != after, let changed = try? await git.changedPaths(from: base, to: after) else { return }
+            // Only the files that are work: a head that builds in its copy leaves thousands of
+            // compiler-cache records under build.noindex where the project's .gitignore missed
+            // them, and a diff of all of those once put 7,632 edits and 7 MB on two rows, then
+            // into the merge as strays. Listed first and diffed by name, they never get that far.
+            let real = changed.filter { !$0.isEmpty && !TouchedPaths.isBuildOutput($0) }
+            guard !real.isEmpty, let patch = try? await git.diff(from: base, to: after, paths: real), !patch.isEmpty else { return }
             let repository = repositoryRoot(for: git)
             let edits = await Self.fileEdits(from: patch, repositoryRoot: repository.value)
             guard !edits.isEmpty, let entry = entryIndex[id], case .tool(var call) = entry.item.content else { return }
@@ -3111,7 +3117,7 @@ final class ThreadRuntime {
             guard let after = await captureTree(git).value else { return }
             if treeEpoch == epoch, commandTrees.isEmpty, hydraCommandTrees.isEmpty { settledTree = (after, epoch) }
             guard base != after, let paths = try? await git.changedPaths(from: base, to: after) else { return }
-            hydraTouched.formUnion(paths.filter { !$0.isEmpty })
+            hydraTouched.formUnion(paths.filter { !$0.isEmpty && !TouchedPaths.isBuildOutput($0) })
         }
     }
 

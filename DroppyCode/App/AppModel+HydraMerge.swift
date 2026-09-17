@@ -99,10 +99,17 @@ extension AppModel {
     }
 
     /// A path no sidebar project could ever hold: a head's copy of a checkout under the
-    /// worktrees folder, or the temporary folders a head drops a throwaway script into.
+    /// worktrees folder, the temporary folders a head drops a throwaway script into,
+    /// `~/Library`, and the dot-folders under home where agents keep their own state
+    /// (`~/.claude`, `~/.codex`, `~/.droppy-code-dev`): a lead writing its memory files
+    /// is not leaving work behind.
     private static func isScratchPath(_ path: String) -> Bool {
         let full = ((path as NSString).expandingTildeInPath as NSString).standardizingPath
-        let roots = [Storage.worktreesDirectory.path, NSTemporaryDirectory(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"]
+        let home = (LoginEnvironment.homeDirectory as NSString).standardizingPath
+        var roots = [Storage.worktreesDirectory.path, NSTemporaryDirectory(), "/tmp", "/private/tmp", "/var/folders", "/private/var/folders"]
+        roots.append((home as NSString).appendingPathComponent("Library"))
+        let underHome = home.hasSuffix("/") ? home : home + "/"
+        if full.hasPrefix(underHome), full.dropFirst(underHome.count).first == "." { return true }
         return roots.contains { root in
             let root = (root as NSString).standardizingPath
             let prefix = root.hasSuffix("/") ? root : root + "/"
@@ -409,9 +416,26 @@ extension AppModel {
             headPaths.append((HydraRoster.persona(at: info.index).name, info.index, TextCleanup.singleLine(info.task, limit: 120), own))
         }
 
+        // The lead's own tool edits, from its timeline: a lead works in any sidebar project
+        // too, and a path it wrote outside its checkout is that project's share of the merge.
+        // Its turns' `touchedPaths` hold only what lies inside the checkout.
+        let unmerged = Set(turns.map(\.id))
+        for entry in runtime.entries where entry.item.turnID.map(unmerged.contains) == true {
+            guard case .tool(let call) = entry.item.content else { continue }
+            for edit in call.edits {
+                let trimmed = edit.path.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+                if trimmed.hasPrefix("/") || trimmed.hasPrefix("~") || trimmed.contains("://") {
+                    reported.append(trimmed)
+                } else {
+                    reported.append((leadCheckout as NSString).appendingPathComponent(trimmed))
+                }
+            }
+        }
+
         var paths = Set<String>()
         var outside = Set<String>()
-        for path in reported where !path.isEmpty {
+        for path in reported where !path.isEmpty && !TouchedPaths.isBuildOutput(path) {
             if let relative = TouchedPaths.relative(path, root: checkout) {
                 paths.insert(relative)
             } else {

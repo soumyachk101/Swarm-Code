@@ -530,21 +530,39 @@ struct Git: Sendable {
         return path
     }
 
+    /// Paths per `git diff` call when a caller names many: well under the argument limit.
+    private static let diffPathChunk = 400
+
     /// The patch between two trees or refs. `binary` puts whole binary blobs in it, so a
     /// picture a head added applies elsewhere. Over `paths` alone when given: a diff of a
     /// tree that holds build output runs to hundreds of megabytes, so the caller names
     /// the files it wants rather than cutting the rest out afterwards.
     func diff(from: String, to: String, binary: Bool = false, paths: [String]? = nil) async throws -> String {
         // `diff` takes no pathspec file, so the paths go on the command line, and as
-        // plain names: a `?` or `[` in one is a character, not a pattern.
+        // plain names: a `?` or `[` in one is a character, not a pattern. Long lists go in
+        // chunks: a command that touched thousands of files would otherwise blow the
+        // argument limit, and one diff per chunk joins into the same patch.
         var arguments = paths == nil ? [] : ["--literal-pathspecs"]
         arguments += ["diff", "--no-ext-diff", "-M"]
         if binary { arguments.append("--binary") }
         arguments += [from, to]
-        if let paths { arguments += ["--"] + paths }
-        let result = try await run(arguments, timeout: 300)
-        try Self.check(result)
-        return result.output
+        guard let paths, paths.count > Self.diffPathChunk else {
+            if let paths { arguments += ["--"] + paths }
+            let result = try await run(arguments, timeout: 300)
+            try Self.check(result)
+            return result.output
+        }
+        var output = ""
+        var start = 0
+        while start < paths.count {
+            let chunk = Array(paths[start..<min(start + Self.diffPathChunk, paths.count)])
+            let result = try await run(arguments + ["--"] + chunk, timeout: 300)
+            try Self.check(result)
+            if !output.isEmpty, !output.hasSuffix("\n") { output += "\n" }
+            output += result.output
+            start += chunk.count
+        }
+        return output
     }
 
     /// What undoing a thread's file changes would touch: of `paths` (the files its agent
