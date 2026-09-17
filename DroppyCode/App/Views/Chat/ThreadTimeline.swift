@@ -262,6 +262,7 @@ struct ThreadTimeline: View, Equatable {
         }
         // This evaluation's own state behind the rows' reveal (see `revealEnd`).
         revealBox.action = revealEnd
+        revealBox.follow = followEnd
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 Spacer(minLength: 0)
@@ -691,6 +692,14 @@ struct ThreadTimeline: View, Equatable {
     /// where they are.
     private func revealEnd() {
         guard !scrollState.showsJumpButton else { return }
+        followEnd()
+    }
+
+    /// The working line opening, which sits at the conversation's end by construction:
+    /// the reader asked to watch the stream, so the end is revealed and held even from
+    /// away from it — `revealEnd`'s jump-button guard would swallow exactly this call,
+    /// leaving the expanded thinking fixed while the reasoning streams past.
+    private func followEnd() {
         tracking.isPinnedToBottom = true
         anchorsBottomOnGrowth = true
         position.scrollTo(edge: .bottom)
@@ -1951,7 +1960,7 @@ private struct WorkingIndicator: View {
                 guard canExpand else { return }
                 withAnimation(.snappy(duration: 0.24)) {
                     isExpanded.toggle()
-                    if isExpanded { revealBox?.action() }
+                    if isExpanded { revealBox?.follow() }
                 }
             } label: {
                 VStack(alignment: .leading, spacing: 10) {
@@ -2051,6 +2060,9 @@ final class TimelineScrollState {
 @MainActor
 final class TimelineRevealBox: Equatable {
     var action: () -> Void = {}
+    /// The reveal for an opening that means "follow the stream" (the working line):
+    /// reveals even with the jump button up, where `action` holds back (see `followEnd`).
+    var follow: () -> Void = {}
 
     nonisolated static func == (lhs: TimelineRevealBox, rhs: TimelineRevealBox) -> Bool {
         lhs === rhs
