@@ -5,13 +5,10 @@
 #   scripts/publish_release.sh [path/to/Droppy-Code-1.2.3.dmg]
 #
 # The version is project.yml's MARKETING_VERSION; the disk image defaults to
-# the one scripts/release.sh leaves in build.noindex. The notes come from
-# ReleaseNotes/<version>.md, written as "## New features", "## Bug fixes" and
-# "## Refinements" headings with a bullet per change: the app reads those
-# three sections into its cards. The tag goes on HEAD, or on RELEASE_REF when
+# the one scripts/release.sh leaves in build.noindex. The notes are the ## [<version>] section of CHANGELOG.md, written as "### New features", "### Bug fixes" and "### Refinements" headings with a bullet per change; scripts/build_changelog.py --section extracts it with the headings promoted to "## ", which is what the app reads into its cards. The tag goes on HEAD, or on RELEASE_REF when
 # the version bump has landed on main from elsewhere. Needs glab signed in as
 # a maintainer.
-# The site's changelog is rebuilt from ReleaseNotes and deployed here too.
+# The site's changelog is rebuilt from CHANGELOG.md and deployed here too.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,7 +17,8 @@ ENCODED_PROJECT="${PROJECT//\//%2F}"
 VERSION=$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -1)
 TAG="v$VERSION"
 DMG="${1:-build.noindex/Droppy-Code-$VERSION.dmg}"
-NOTES="ReleaseNotes/$VERSION.md"
+NOTES="$(mktemp -t droppy-code-notes)"
+python3 scripts/build_changelog.py --section "$VERSION" > "$NOTES" || { echo "No ## [$VERSION] section in CHANGELOG.md. Add one before publishing."; exit 1; }
 # Every release links its image under this path, so GitLab's
 # /-/releases/permalink/latest/downloads/Droppy-Code.dmg is always the newest.
 ASSET_PATH="/Droppy-Code.dmg"

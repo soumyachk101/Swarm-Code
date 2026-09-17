@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rebuilds the site's changelog from ReleaseNotes and deploys the site.
+# Rebuilds the site's changelog from CHANGELOG.md and deploys the site.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

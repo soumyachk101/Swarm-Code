@@ -447,8 +447,6 @@ private struct FinishedHeadPill: View {
         case .stopped: "\(head.persona.name) was stopped"
         default: "\(head.persona.name) finished working"
         }
-        let summary = head.summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let text = "## \(head.persona.name): \(head.task)\n" + (summary.isEmpty ? "No report yet." : summary)
         Button {
             isShowingReport.toggle()
         } label: {
@@ -472,7 +470,7 @@ private struct FinishedHeadPill: View {
         .buttonStyle(.plain)
         .help("Show the report")
         .popover(isPresented: $isShowingReport, arrowEdge: .bottom) {
-            HydraReportPopover(text: text)
+            HydraHeadReportPopover(head: head)
                 .presentedChrome()
         }
         .accessibilityElement(children: .combine)
@@ -587,7 +585,7 @@ struct HydraBriefRow: View {
             .focusable(false)
             .help("Show the brief")
             .popover(isPresented: $isShowingBrief, arrowEdge: .bottom) {
-                HydraReportPopover(text: message.text, width: 520)
+                HydraBriefPopover(persona: persona, task: runtime.thread?.hydra?.task, text: message.text)
                     .presentedChrome()
             }
             .accessibilityLabel(Text(title))
@@ -645,10 +643,11 @@ private struct HydraReportPopover: View {
 }
 
 /// The lead's delegation block, the fenced `hydra` JSON at the end of its reply, as the
-/// card it stands for: the mark, how many heads are going out and the task each one gets.
-/// Never the JSON itself. The card reads the block as it streams and lists each head as
-/// its brief closes; while nothing has closed yet, or when the block cannot be read,
-/// it says the briefs are being written and nothing more.
+/// card it stands for: the mark, "Summoning heads", and under them one row per head with
+/// the glyph of the head being summoned, its task, and the project it goes to when that
+/// is not the chat's own. Never the JSON itself. The card reads the block as it streams
+/// and adds each head as its brief closes; while nothing has closed yet, or when the
+/// block cannot be read, it says the heads are being summoned and nothing more.
 struct HydraDelegationBlock: View {
     @Environment(\.chatZoom) private var zoom
     let json: String
@@ -656,47 +655,39 @@ struct HydraDelegationBlock: View {
 
     var body: some View {
         let reading = Self.reading(of: json)
-        let tasks = reading.delegations.map(\.task)
-        // The mark and the title share a line; the tasks run under both, flush with the
-        // mark, so the list reads from the card's own left edge.
-        VStack(alignment: .leading, spacing: 4) {
+        let delegations = reading.delegations
+        let streaming = !reading.isComplete && !sent
+        // The mark and the title share a line; the heads run under both, each glyph in
+        // the mark's column, so the list reads from the card's own left edge.
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .center, spacing: TimelineMetrics.iconSpacing) {
                 HydraMarkImage()
                     .foregroundStyle(Chrome.secondaryText)
                     .frame(width: 16, height: 16)
                     .accessibilityHidden(true)
-                if tasks.isEmpty {
-                    Text("Writing the heads' briefs…")
-                        .font(.chat(.callout, zoom: zoom))
-                        .foregroundStyle(Chrome.secondaryText)
-                } else if !reading.isComplete && !sent {
-                    Text("Sending out heads as their briefs finish")
+                Text(verbatim: Self.title(for: delegations, streaming: streaming, sent: sent))
+                    .font(.chat(.callout, weight: .medium, zoom: zoom))
+                    .contentTransition(.opacity)
+                if sent {
+                    Image(systemName: "checkmark.circle.fill")
                         .font(.chat(.callout, weight: .medium, zoom: zoom))
-                        .contentTransition(.opacity)
-                } else {
-                    Text(sent ? (tasks.count == 1 ? "Sent out a head" : "Sent out \(tasks.count) heads") : (tasks.count == 1 ? "Sending out a head" : "Sending out \(tasks.count) heads"))
-                        .font(.chat(.callout, weight: .medium, zoom: zoom))
-                        .contentTransition(.opacity)
-                    if sent {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.chat(.callout, weight: .medium, zoom: zoom))
-                            .foregroundStyle(.green)
-                            .transition(.scale.combined(with: .opacity))
-                            .accessibilityLabel("sent")
-                    }
+                        .foregroundStyle(.green)
+                        .transition(.scale.combined(with: .opacity))
+                        .accessibilityLabel("sent")
                 }
             }
-            if !tasks.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(tasks.enumerated()), id: \.offset) { _, task in
-                        Text(verbatim: "· " + task)
-                            .font(.chat(.caption, zoom: zoom))
-                            .foregroundStyle(Chrome.secondaryText)
+            if !delegations.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(Array(delegations.enumerated()), id: \.offset) { _, delegation in
+                        headRow(delegation)
                     }
-                    if !reading.isComplete && !sent {
-                        Text("Writing the next brief…")
-                            .font(.chat(.caption, zoom: zoom))
-                            .foregroundStyle(Chrome.secondaryText)
+                    if streaming {
+                        HStack(alignment: .center, spacing: TimelineMetrics.iconSpacing) {
+                            Color.clear.frame(width: 16, height: 16)
+                            Text("Writing the next brief…")
+                                .font(.chat(.caption, zoom: zoom))
+                                .foregroundStyle(Chrome.secondaryText)
+                        }
                     }
                 }
             }
@@ -714,9 +705,68 @@ struct HydraDelegationBlock: View {
             }
         }
         .animation(Chrome.panelSlide, value: sent)
-        .animation(Chrome.panelSlide, value: tasks.count)
+        .animation(Chrome.panelSlide, value: delegations.count)
         .transition(.opacity)
         .accessibilityElement(children: .combine)
+    }
+
+    /// One head on its way: the glyph of the head the lead named (the mark when it named
+    /// none), its task, and the project it goes to when the brief sends it elsewhere.
+    private func headRow(_ delegation: HydraDelegation) -> some View {
+        HStack(alignment: .center, spacing: TimelineMetrics.iconSpacing) {
+            if let persona = Self.persona(named: delegation.name) {
+                HydraGlyph(persona: persona, size: 16)
+                    .accessibilityLabel(Text(persona.name))
+            } else {
+                HydraMarkImage()
+                    .foregroundStyle(Chrome.secondaryText)
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
+            }
+            Text(verbatim: delegation.task)
+                .font(.chat(.caption, zoom: zoom))
+                .foregroundStyle(Chrome.primaryText.opacity(0.75))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if let project = Self.projectName(delegation.project) {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.right")
+                        .accessibilityHidden(true)
+                    Text(verbatim: project)
+                }
+                .font(.chat(.caption2, weight: .medium, zoom: zoom))
+                .foregroundStyle(Chrome.secondaryText)
+                .lineLimit(1)
+                .padding(.leading, 2)
+                .accessibilityLabel(Text("in \(project)"))
+            }
+        }
+        .transition(.opacity)
+    }
+
+    /// "Summoning heads" while the briefs still stream; once the block has closed, how many
+    /// are going (or went) out, the one head by name when the lead named it.
+    private static func title(for delegations: [HydraDelegation], streaming: Bool, sent: Bool) -> String {
+        if streaming || delegations.isEmpty { return "Summoning heads" }
+        let verb = sent ? "Summoned" : "Summoning"
+        if delegations.count == 1 {
+            if let persona = persona(named: delegations[0].name) { return "\(verb) \(persona.name)" }
+            return "\(verb) a head"
+        }
+        return "\(verb) \(delegations.count) heads"
+    }
+
+    /// The roster persona the lead announced for an entry, when it is a roster name.
+    private static func persona(named name: String?) -> HydraPersona? {
+        guard let name, let index = HydraRoster.index(named: name) else { return nil }
+        return HydraRoster.persona(at: index)
+    }
+
+    /// A project the brief names, as its name: a path reads as its last folder.
+    private static func projectName(_ project: String?) -> String? {
+        guard let project = project?.trimmingCharacters(in: .whitespacesAndNewlines), !project.isEmpty else { return nil }
+        let name = project.contains("/") ? (project as NSString).lastPathComponent : project
+        return name.isEmpty ? project : name
     }
 
     /// The block read as far as it has streamed, by source: the reader is a single linear

@@ -121,4 +121,4 @@ step "Cleaning up"
 # Only the disk image stays, so Spotlight and Launchpad never list a second copy of the app.
 rm -rf "$ARCHIVE" "$EXPORT" "$STAGING" "$BUILD/DroppyCode.zip" "$BUILD/DerivedData"
 
-printf '\nReady: %s\nPublish it with scripts/publish_release.sh once ReleaseNotes/%s.md is written.\n' "$DMG" "$VERSION"
+printf '\nReady: %s\nPublish it with scripts/publish_release.sh once CHANGELOG.md has a ## [%s] section.\n' "$DMG" "$VERSION"
