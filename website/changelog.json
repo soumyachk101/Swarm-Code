@@ -1,6 +1,26 @@
 {
-  "generated_at": "2026-09-17T15:10:12.200363+00:00",
+  "generated_at": "2026-09-17T15:30:00+00:00",
   "releases": [
+    {
+      "version": "1.5.6",
+      "date": "2026-09-17",
+      "platform": "mac",
+      "summary": "Droppy Code 1.5.6 stops a new chat from being told its agent had lost a conversation that never was, and draws the uncapped Heads at once choice as an infinity sign. Apple silicon, macOS 26 or later. Signed and notarized.",
+      "sections": [
+        {
+          "title": "Bug fixes",
+          "items": [
+            "A first message no longer opens with \"Claude no longer has this conversation. It starts a new one here\": the session started while the message was being typed was resumed as a conversation the CLI had never written whenever a setting changed the launch in between (effort, fast mode, the heads' provider coming online, a heads cap). A session's ID now reaches the chat with its first message, and a session replaced before then is followed by one that starts fresh, with no resume attempt and no warning."
+          ]
+        },
+        {
+          "title": "Refinements",
+          "items": [
+            "The Heads at once row on the Hydra page shows the uncapped choice as an infinity sign instead of the word Off; it reads as \"No cap\" to VoiceOver, the wording a pair's own editor uses."
+          ]
+        }
+      ]
+    },
     {
       "version": "1.5.5",
       "date": "2026-09-17",

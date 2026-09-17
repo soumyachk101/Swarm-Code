@@ -399,6 +399,13 @@ final class ThreadRuntime {
     @ObservationIgnored private var session: (any ProviderSession)?
     /// A session being started ahead of the first message (`warmSession`).
     @ObservationIgnored private var warmup: Task<Void, Never>?
+    /// The session's ID while no message has gone through it. The provider has nothing
+    /// to resume under such an ID: a session warmed while the first message was typed and
+    /// replaced before it went (a setting changed the launch) was resumed as "no
+    /// conversation found", and the chat was told its agent had lost a conversation that
+    /// never was. So the ID reaches the thread with the first message, and a session
+    /// replaced before then is followed by one that starts fresh.
+    @ObservationIgnored private var unsentSessionID: String?
     @ObservationIgnored private var lastFlushAt = ContinuousClock.now - .seconds(1)
     @ObservationIgnored private var sessionSignature: SessionSignature?
     /// Which session the runtime is listening to. Every session made carries the count it
@@ -1220,6 +1227,11 @@ final class ThreadRuntime {
                 isFinalReport: isFinalReport,
                 command: command
             ))
+            // The session has a conversation the provider can resume from here on.
+            if let unsentSessionID {
+                self.unsentSessionID = nil
+                app.updateThread(threadID) { $0.providerSessionID = unsentSessionID }
+            }
             if let command { app.providers.recordCommand(command.name, for: thread.provider) }
             if isFirstTurn { generateTitle(from: text) }
         } catch {
@@ -1445,8 +1457,20 @@ final class ThreadRuntime {
         }
         guard session === candidate, !Task.isCancelled else { throw CancellationError() }
         started = true
-        app.updateThread(threadID) { $0.providerSessionID = sessionID }
+        recordSessionID(sessionID)
         return candidate
+    }
+
+    /// Puts the session's ID on the thread, or holds it back while no message has gone
+    /// through the session (`unsentSessionID`). A thread whose conversation the session
+    /// picked up takes the ID at once: a provider may hand out a new one for it.
+    private func recordSessionID(_ sessionID: String) {
+        guard let app else { return }
+        if app.thread(threadID)?.providerSessionID == nil {
+            unsentSessionID = sessionID
+        } else {
+            app.updateThread(threadID) { $0.providerSessionID = sessionID }
+        }
     }
 
     /// Whether a session that would not resume the thread's conversation starts over
@@ -1906,6 +1930,7 @@ final class ThreadRuntime {
     private func releaseSession(stop: Bool) {
         sessionEpoch += 1
         sessionSignature = nil
+        unsentSessionID = nil
         guard let old = session else { return }
         session = nil
         if stop { old.stop() }
@@ -1936,7 +1961,7 @@ final class ThreadRuntime {
     private func handle(_ event: ProviderEvent) {
         switch event {
         case .sessionReady(let sessionID):
-            app?.updateThread(threadID) { $0.providerSessionID = sessionID }
+            recordSessionID(sessionID)
         case .turnStarted(let providerTurnID):
             phase = .running
             if let currentTurnID, let providerTurnID {

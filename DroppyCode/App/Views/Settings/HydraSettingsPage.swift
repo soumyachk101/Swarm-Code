@@ -62,7 +62,11 @@ struct HydraSettingsPage: View {
                         title: "Heads at once",
                         detail: settings.hydraMaxHeads.map { "At most \($0) at a time; a pair with a lower cap keeps its own." } ?? "As many as the job asks for, eight at a time; a pair's own cap still counts."
                     ) {
-                        ChromeSegmentedPicker(options: [(Int?.none, "Off")] + HydraPair.maxHeadsRange.map { (Optional($0), String($0)) }, selection: $settings.hydraMaxHeads)
+                        ChromeSegmentedPicker(
+                            options: [ChromeSegmentedOption(value: Int?.none, title: "No cap", symbol: "infinity")]
+                                + HydraPair.maxHeadsRange.map { ChromeSegmentedOption(value: Optional($0), title: String($0)) },
+                            selection: $settings.hydraMaxHeads
+                        )
                     }
                     ChromeRowDivider()
                     toggleRow("Clear finished heads", detail: "A finished head moves from the panel to the sidebar.", isOn: $settings.hydraAutoClearFinished)
