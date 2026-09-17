@@ -1,21 +1,36 @@
 import Foundation
 import Network
+import Synchronization
 
 final class MCPProxy: @unchecked Sendable {
     static let shared = MCPProxy()
 
-    static let port: UInt16 = {
-        let file = MCPPaths.directory.appendingPathComponent("proxy-port")
-        if let text = try? String(contentsOf: file, encoding: .utf8) {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let saved = UInt16(trimmed), saved != 0 {
-                return saved
-            }
+    /// The proxy's port, kept in the library so the provider configs written on one launch
+    /// still point at it on the next. Re-picked when the saved port cannot be bound: the
+    /// Dev build runs over a mirror of the release library, so both would otherwise ask for
+    /// the same one, and the second to launch would answer nothing.
+    static var port: UInt16 { portBox.withLock { $0 } }
+
+    private static let portBox = Mutex<UInt16>(loadPort())
+    private static let portFile = MCPPaths.directory.appendingPathComponent("proxy-port")
+
+    private static func loadPort() -> UInt16 {
+        if let text = try? String(contentsOf: portFile, encoding: .utf8),
+           let saved = UInt16(text.trimmingCharacters(in: .whitespacesAndNewlines)), saved != 0 {
+            return saved
         }
-        let picked = MCPProxy.pickFreePort()
-        try? "\(picked)".write(to: file, atomically: true, encoding: .utf8)
+        let picked = pickFreePort()
+        try? "\(picked)".write(to: portFile, atomically: true, encoding: .utf8)
         return picked
-    }()
+    }
+
+    /// Moves to a fresh port after the saved one refused to bind, and remembers it.
+    private static func repickPort() -> UInt16 {
+        let picked = pickFreePort()
+        portBox.withLock { $0 = picked }
+        try? "\(picked)".write(to: portFile, atomically: true, encoding: .utf8)
+        return picked
+    }
 
     static func url(for serverID: String) -> String {
         "http://127.0.0.1:\(port)/mcp/\(serverID)"
@@ -72,13 +87,22 @@ final class MCPProxy: @unchecked Sendable {
         }
         running = true
         lock.unlock()
-        let endpointPort = NWEndpoint.Port(rawValue: Self.port) ?? 0
+        listen(on: Self.port, canRepick: true)
+    }
+
+    /// Binds the loopback listener. The port rides in the required local endpoint alone:
+    /// naming it a second time through `NWListener(using:on:)` is rejected outright
+    /// (EINVAL), which left the proxy silent and every OAuth server unreachable. A port
+    /// already taken (another copy of the app) fails only once the listener starts, so
+    /// that case moves to a fresh port and tries again, once.
+    private func listen(on port: UInt16, canRepick: Bool) {
+        guard let endpointPort = NWEndpoint.Port(rawValue: port) else { return }
         let parameters = NWParameters.tcp
         parameters.requiredInterfaceType = .loopback
         parameters.allowLocalEndpointReuse = true
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: endpointPort)
-        guard let listener = try? NWListener(using: parameters, on: endpointPort) else {
-            print("MCPProxy: could not listen on \(Self.port)")
+        guard let listener = try? NWListener(using: parameters) else {
+            print("MCPProxy: could not listen on \(port)")
             lock.lock()
             running = false
             lock.unlock()
@@ -87,10 +111,26 @@ final class MCPProxy: @unchecked Sendable {
         lock.lock()
         self.listener = listener
         lock.unlock()
-        let port = Self.port
-        listener.stateUpdateHandler = { state in
-            if case .ready = state {
+        listener.stateUpdateHandler = { [weak self] state in
+            switch state {
+            case .ready:
                 print("MCPProxy: listening on \(port)")
+            case .failed(let error):
+                print("MCPProxy: listener on \(port) failed: \(error)")
+                guard let self else { return }
+                listener.cancel()
+                self.lock.lock()
+                if self.listener === listener { self.listener = nil }
+                self.lock.unlock()
+                if canRepick {
+                    self.listen(on: Self.repickPort(), canRepick: false)
+                } else {
+                    self.lock.lock()
+                    self.running = false
+                    self.lock.unlock()
+                }
+            default:
+                break
             }
         }
         listener.newConnectionHandler = { [weak self] connection in
@@ -113,25 +153,25 @@ final class MCPProxy: @unchecked Sendable {
         }
     }
 
+    /// A loopback port nobody holds, from the kernel: bind port 0, read back what it gave,
+    /// let it go. A listener asked for an ephemeral port instead fails with EINVAL on
+    /// current macOS, which is how every launch used to end up on the same fallback.
     private static func pickFreePort() -> UInt16 {
-        guard let probe = try? NWListener(using: .tcp, on: 0) else { return 48123 }
-        let done = DispatchSemaphore(value: 0)
-        probe.stateUpdateHandler = { state in
-            switch state {
-            case .ready, .failed, .cancelled:
-                done.signal()
-            default:
-                break
-            }
+        let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0)
+        guard socket >= 0 else { return 48123 }
+        defer { close(socket) }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let bound = withUnsafeMutablePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(socket, $0, length) == 0 && getsockname(socket, $0, &length) == 0 }
         }
-        probe.start(queue: .global())
-        _ = done.wait(timeout: .now() + 5)
-        let picked = probe.port?.rawValue ?? 0
-        probe.cancel()
-        if picked == 0 {
-            return 48123
-        }
-        return picked
+        guard bound else { return 48123 }
+        let picked = UInt16(bigEndian: address.sin_port)
+        return picked == 0 ? 48123 : picked
     }
 
     private func accept(_ connection: NWConnection) {
