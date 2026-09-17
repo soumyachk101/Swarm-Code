@@ -48,6 +48,7 @@ final class ClaudeSession: ProviderSession {
     private var isStopping = false
     /// Resolves the cumulative result-message totals into per-turn spend.
     private var spendTracker = TokenSpendTracker()
+    private static var knownOptions: [String: Set<String>] = [:]
 
     init(configuration: SessionConfiguration) {
         self.configuration = configuration
@@ -59,6 +60,19 @@ final class ClaudeSession: ProviderSession {
     var isRunning: Bool { process?.isRunning ?? false }
 
     private var workingDirectory: String { configuration.workingDirectory.path }
+
+    /// The newer CLI options are only passed when `--help` lists them, so an older
+    /// Claude Code that does not know them yet still launches. Read once per executable;
+    /// a probe that fails is not remembered, so the next launch asks again.
+    private static func knownOptions(of executable: URL, environment: [String: String]) async -> Set<String> {
+        if let cached = knownOptions[executable.path] { return cached }
+        guard let result = try? await Shell.run(executable, ["--help"], environment: environment, timeout: 20) else { return [] }
+        let help = TextCleanup.stripANSI(result.output + result.errorOutput)
+        let found = ["--system-prompt-snapshot", "--forward-subagent-text"].filter { help.contains($0) }
+        let options = Set(found)
+        knownOptions[executable.path] = options
+        return options
+    }
 
     func start() async throws -> String {
         guard let executable = configuration.executable else { throw ProviderError.notInstalled(configuration.provider) }
@@ -73,6 +87,7 @@ final class ClaudeSession: ProviderSession {
         if let effort = configuration.effort, !effort.isEmpty { arguments += ["--effort", effort] }
         if configuration.fastMode { arguments += ["--settings", #"{"fastMode":true}"#] }
         var environment = configuration.environment
+        let options: Set<String> = configuration.hydra == nil ? [] : await Self.knownOptions(of: executable, environment: environment)
         if let hydra = configuration.hydra {
             // The system prompt is rendered fresh rather than replayed from the
             // conversation's first request, so switching Hydra on for an existing chat
@@ -82,20 +97,18 @@ final class ClaudeSession: ProviderSession {
                 arguments += [
                     "--agents", HydraPrompts.claudeAgents(hydra).compactString,
                     "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads, projects: hydra.projects),
-                    "--system-prompt-snapshot", "off",
-                    "--forward-subagent-text",
                 ]
+                if options.contains("--system-prompt-snapshot") { arguments += ["--system-prompt-snapshot", "off"] }
+                if options.contains("--forward-subagent-text") { arguments.append("--forward-subagent-text") }
                 // Uncapped, the CLI keeps its own limit on heads at once.
                 if let cap = hydra.maxHeads { environment["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] = String(cap) }
             } else {
                 // The heads run on another provider, as threads Droppy Code starts: the
                 // lead asks for them with the delegation block, and its own agent tool goes,
                 // since a head it spawned itself would run on its own model.
-                arguments += [
-                    "--append-system-prompt", HydraPrompts.fallbackPolicy(hydra),
-                    "--system-prompt-snapshot", "off",
-                    "--disallowedTools", "Agent", "Task",
-                ]
+                arguments += ["--append-system-prompt", HydraPrompts.fallbackPolicy(hydra)]
+                if options.contains("--system-prompt-snapshot") { arguments += ["--system-prompt-snapshot", "off"] }
+                arguments += ["--disallowedTools", "Agent", "Task"]
             }
         }
         if let resumeID = configuration.resumeID {

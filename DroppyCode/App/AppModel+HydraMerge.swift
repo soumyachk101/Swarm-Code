@@ -128,13 +128,8 @@ extension AppModel {
             let tree = try await git.captureTree(paths: sorted)
             // Everything the team did is committed already: taken along by another chat's
             // merge from the same checkout, or committed by hand. The job is spent either
-            // way, so the chat is told, rather than left wondering.
-            guard try await tree != git.treeHash(of: "HEAD") else {
-                let target = await git.defaultBranch()
-                let shown = sorted.prefix(8).map { "`\($0)`" }.joined(separator: ", ") + (sorted.count > 8 ? " and \(sorted.count - 8) more" : "")
-                note(leadID, title("Hydra found the team's work on `\(target)` already."), "\(shown) match HEAD: an earlier merge from this checkout, another chat's or one made by hand, took \(sorted.count == 1 ? "this file" : "these files") along. Nothing is left for this chat to merge.")
-                return .alreadyOnMain
-            }
+            // way, and there is nothing to tell: the work is where it was meant to go.
+            guard try await tree != git.treeHash(of: "HEAD") else { return .alreadyOnMain }
 
             let patch = (try? await git.diff(from: head, to: tree)) ?? ""
             // A whole job's patch is big and parsing it counts every line: off the main
