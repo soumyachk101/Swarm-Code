@@ -17,99 +17,6 @@ private struct HydraPatch: Sendable {
     var after: String
 }
 
-private enum HydraPatchFilter {
-    struct Result: Sendable {
-        var text: String
-        var droppedBuildOutputFiles: Int
-    }
-
-    static func removingBuildOutput(from patch: String) -> Result {
-        let lines = patch.split(separator: "\n", omittingEmptySubsequences: false)
-        var sections: [[Substring]] = []
-        var current: [Substring] = []
-
-        for line in lines {
-            if line.hasPrefix("diff --git ") {
-                if !current.isEmpty { sections.append(current) }
-                current = [line]
-            } else if !current.isEmpty {
-                current.append(line)
-            }
-        }
-        if !current.isEmpty { sections.append(current) }
-
-        guard !sections.isEmpty else { return Result(text: patch, droppedBuildOutputFiles: 0) }
-
-        var kept: [[Substring]] = []
-        var droppedBuildOutputFiles = 0
-        for section in sections {
-            if let path = bPath(in: String(section[0])), TouchedPaths.isBuildOutput(path) {
-                droppedBuildOutputFiles += 1
-            } else {
-                kept.append(section)
-            }
-        }
-
-        // The patch's closing newline belonged to whichever section came last; when that
-        // one was dropped the kept text has none, and `git apply` wants one.
-        var text = kept.map { $0.joined(separator: "\n") }.joined(separator: "\n")
-        if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
-        return Result(text: text, droppedBuildOutputFiles: droppedBuildOutputFiles)
-    }
-
-    private static func bPath(in header: String) -> String? {
-        let prefix = "diff --git "
-        guard header.hasPrefix(prefix) else { return nil }
-        var index = header.index(header.startIndex, offsetBy: prefix.count)
-        guard readPath(from: header, index: &index) != nil,
-              let bPath = readPath(from: header, index: &index), bPath.hasPrefix("b/") else { return nil }
-        return String(bPath.dropFirst(2))
-    }
-
-    private static func readPath(from line: String, index: inout String.Index) -> String? {
-        while index < line.endIndex, line[index].isWhitespace {
-            index = line.index(after: index)
-        }
-        guard index < line.endIndex else { return nil }
-
-        if line[index] == "\"" {
-            index = line.index(after: index)
-            var path = ""
-            while index < line.endIndex {
-                let character = line[index]
-                index = line.index(after: index)
-                if character == "\"" { return path }
-                if character == "\\", index < line.endIndex {
-                    let escaped = line[index]
-                    index = line.index(after: index)
-                    let decoded: String
-                    switch escaped {
-                    case "a": decoded = "\u{7}"
-                    case "b": decoded = "\u{8}"
-                    case "t": decoded = "\t"
-                    case "n": decoded = "\n"
-                    case "v": decoded = "\u{b}"
-                    case "f": decoded = "\u{c}"
-                    case "r": decoded = "\r"
-                    case "\\", "\"": decoded = String(escaped)
-                    default: decoded = String(escaped)
-                    }
-                    path.append(decoded)
-                } else {
-                    path.append(character)
-                }
-            }
-            return nil
-        }
-
-        let start = index
-        while index < line.endIndex, !line[index].isWhitespace {
-            index = line.index(after: index)
-        }
-        return String(line[start..<index])
-    }
-}
-
 /// One capture of a checkout's working tree, shared by the heads sent out together.
 /// Capturing means `git add -A` and `write-tree` over the whole project, seconds on a big
 /// repository, and the heads of one delegation block ask for it within milliseconds of
@@ -700,23 +607,37 @@ extension AppModel {
         let copyGit = Git(copy)
         let after = try await copyGit.captureTree()
         guard after != base else { return nil }
-        let text = try await copyGit.diff(from: base, to: after, binary: true)
+        let work = try await Self.hydraWork(in: copyGit, from: base, to: after)
+        guard !work.paths.isEmpty else { return nil }
+        let text = try await copyGit.diff(from: base, to: after, binary: true, paths: work.paths)
         guard !text.isEmpty else { return nil }
         // A binary patch runs to megabytes, and parsing it counts every line: off the
         // main actor, so the chat keeps streaming while a head lands.
         return await Task.detached(priority: .utility) {
-            let filtered = HydraPatchFilter.removingBuildOutput(from: text)
-            guard !filtered.text.isEmpty else { return nil }
-            let files = DiffParser.parse(filtered.text).map {
+            let files = DiffParser.parse(text).map {
                 HydraLanding.File(path: $0.path, additions: $0.additions, deletions: $0.deletions)
             }
             return HydraPatch(
-                text: filtered.text,
+                text: text,
                 files: files,
-                droppedBuildOutputFiles: filtered.droppedBuildOutputFiles,
+                droppedBuildOutputFiles: work.droppedBuildOutputFiles,
                 after: after
             )
         }.value
+    }
+
+    /// The files a head changed in its copy between two trees that are its work: build
+    /// output and tool caches (see `TouchedPaths.isBuildOutput`) are left out, and
+    /// counted. They are cut from the list before any patch is made rather than from the
+    /// patch afterwards: a copy that built the app holds hundreds of megabytes of them
+    /// where the project's .gitignore missed them, which was minutes of git, and as much
+    /// memory, for a patch of a few source files. A Command Code head writes its taste
+    /// file into its copy on every run, so without this every one of them "changed
+    /// something".
+    private static func hydraWork(in copyGit: Git, from base: String, to after: String) async throws -> (paths: [String], droppedBuildOutputFiles: Int) {
+        let changed = try await copyGit.changedPaths(from: base, to: after)
+        let paths = changed.filter { !TouchedPaths.isBuildOutput($0) }
+        return (paths, changed.count - paths.count)
     }
 
     /// Waits for the lead's checkout to be a safe place to write: the lead is not in the
@@ -890,8 +811,13 @@ extension AppModel {
     /// the lead where it went. Nothing to keep where the copy holds no changes of its own.
     private func keepHydraCopyAsPatch(_ id: UUID, name: String, copy: String, base: String) async {
         let copyGit = Git(copy)
+        // A copy that differs from its base only by build output, or by the cache the
+        // head's own tool wrote there, holds no work of the head's: nothing to keep, and
+        // nothing to tell the lead. Sixteen heads cleared together once put sixteen of
+        // these notes into the lead's chat over five minutes, for 4 GB of build output.
         guard let after = try? await copyGit.captureTree(), after != base,
-              let patch = try? await copyGit.diff(from: base, to: after, binary: true), !patch.isEmpty else { return }
+              let work = try? await Self.hydraWork(in: copyGit, from: base, to: after), !work.paths.isEmpty,
+              let patch = try? await copyGit.diff(from: base, to: after, binary: true, paths: work.paths), !patch.isEmpty else { return }
         let slug = name.replacingOccurrences(of: " ", with: "-").lowercased()
         let url = Storage.patchesDirectory.appendingPathComponent("\(slug)-\(id.uuidString.lowercased().prefix(8))-unlanded.patch")
         guard (try? patch.write(to: url, atomically: true, encoding: .utf8)) != nil else { return }

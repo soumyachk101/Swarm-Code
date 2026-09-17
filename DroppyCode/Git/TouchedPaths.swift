@@ -33,7 +33,9 @@ enum TouchedPaths {
     /// build once left 2,700 compiler cache records under `DroppyCode.xcodeproj/-Xcc`
     /// in its copy, and every one rode along into the lead's checkout and the merge.
     /// Only names that are unmistakably caches count; a source folder called `build`
-    /// or `dist` stays the project's business.
+    /// or `dist` stays the project's business. `.commandcode` is the folder Command Code
+    /// writes its taste file into, in every checkout it runs in: a head's tool state,
+    /// not its work, and it rode along into two repositories' history before it was listed.
     nonisolated static func isBuildOutput(_ path: String) -> Bool {
         let components = path.split(separator: "/", omittingEmptySubsequences: true)
         return components.contains { component in
@@ -46,6 +48,7 @@ enum TouchedPaths {
     private static let buildOutputNames: Set<String> = [
         "-Xcc", "DerivedData", ".build", "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
         ".ruff_cache", "xcuserdata", ".swiftpm", "ModuleCache", ".gradle", ".turbo", ".parcel-cache",
+        ".commandcode",
     ]
 
     /// Whether a diff file is one of the touched paths, allowing for a path reported relative to a subfolder.
