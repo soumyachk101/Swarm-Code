@@ -614,7 +614,7 @@ private struct HydraReportPopover: View {
     @State private var blocks: [MarkdownBlock]?
 
     var body: some View {
-        ScrollView {
+        PopoverScroll(maxHeight: 460) {
             if let blocks {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
@@ -637,9 +637,7 @@ private struct HydraReportPopover: View {
                     .padding(.vertical, 40)
             }
         }
-        .scrollBounceBehavior(.basedOnSize)
         .frame(width: width)
-        .frame(idealHeight: 320, maxHeight: 460)
         .task(id: text) {
             try? await MarkdownView.warm([text])
             guard !Task.isCancelled else { return }
@@ -1719,7 +1717,7 @@ struct HydraHeadStepsPopover: View {
             let text = (head.summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             return text.isEmpty ? nil : text
         }
-        ScrollView {
+        PopoverScroll(maxHeight: Self.maxHeight) {
             VStack(alignment: .leading, spacing: 16) {
                 if let hydra {
                     header(hydra)
@@ -1758,7 +1756,6 @@ struct HydraHeadStepsPopover: View {
             .frame(width: Self.width, alignment: .leading)
         }
         .frame(width: Self.width)
-        .frame(maxHeight: Self.maxHeight)
     }
 
     /// The head's glyph and name, with where it stands on the trailing side.
@@ -2096,14 +2093,10 @@ struct PlanCard: View {
                             Spacer()
                             CopyButton(text: plan.markdown)
                         }
-                        ScrollView {
+                        PopoverScroll(maxHeight: 420) {
                             MarkdownView(text: plan.markdown, isStreaming: plan.state == .drafting).equatable()
                                 .padding(.horizontal, 16)
                         }
-                        .scrollBounceBehavior(.basedOnSize)
-                        // An ideal height as well as the cap: a popover sizes to its content's
-                        // ideal, and a scroll view offered nothing collapses (see HydraReportPopover).
-                        .frame(idealHeight: 320, maxHeight: 420)
                         if plan.state == .proposed {
                             // The controls stay where they are while the thread is busy, greyed
                             // rather than gone: a plan whose buttons vanish mid-turn reads as a

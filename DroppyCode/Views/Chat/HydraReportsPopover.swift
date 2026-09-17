@@ -218,7 +218,7 @@ struct HydraReportsPopover: View {
         VStack(spacing: 0) {
             header
             Divider()
-            ScrollView {
+            PopoverScroll(maxHeight: 520) {
                 VStack(alignment: .leading, spacing: 8) {
                     if let digest {
                         ForEach(Array(digest.heads.enumerated()), id: \.element.id) { index, head in
@@ -234,8 +234,6 @@ struct HydraReportsPopover: View {
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .frame(maxHeight: 520)
         }
         .frame(width: 460)
         // The popover reads at its own size, not the conversation's zoom.

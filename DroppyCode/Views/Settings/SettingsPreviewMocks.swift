@@ -41,6 +41,46 @@ private struct MockDot: View {
     }
 }
 
+/// A tiny app window.
+private struct MockWindow<Content: View>: View {
+    var width: CGFloat
+    var height: CGFloat
+    var toolbarButton: Bool = false
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Chrome.overlay(0.08))
+            .frame(width: width, height: height)
+            .overlay(alignment: .top) {
+                VStack(spacing: 0) {
+                    Rectangle().fill(Chrome.overlay(0.10)).frame(height: 8)
+                        .overlay(alignment: .leading) {
+                            if toolbarButton {
+                                RoundedRectangle(cornerRadius: 1, style: .continuous).fill(Chrome.primaryText.opacity(0.45))
+                                    .frame(width: 7, height: 4).padding(.leading, 4)
+                            }
+                        }
+                    content()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+}
+
+/// A floating panel over a mock window.
+private struct MockPanel<Content: View>: View {
+    var width: CGFloat
+    var height: CGFloat
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Chrome.overlay(0.24))
+            .frame(width: width, height: height)
+            .overlay(alignment: .topLeading) { content().padding(4) }
+    }
+}
+
 struct WorkspacePreview: View {
     let mode: WorkspaceMode
     var body: some View {
@@ -127,52 +167,46 @@ struct ThreadFinishPreview: View {
 struct SidebarModePreview: View {
     enum Style { case column, floating, panelOnly }
     let style: Style
-    private var chatLines: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            MockLine(width: 30, opacity: 0.28)
-            MockLine(width: 22, opacity: 0.28)
-            MockLine(width: 26, opacity: 0.28)
-        }
-    }
     var body: some View {
-        Group {
+        MockWindow(width: 62, height: 40, toolbarButton: style != .panelOnly) {
             switch style {
             case .column:
                 HStack(spacing: 0) {
-                    Chrome.overlay(0.10)
-                        .frame(width: 34)
+                    Rectangle().fill(Chrome.overlay(0.14)).frame(width: 20)
                         .frame(maxHeight: .infinity)
                         .overlay(alignment: .topLeading) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                MockRow(width: 20)
-                                MockRow(width: 16)
-                                MockRow(width: 18)
+                            VStack(alignment: .leading, spacing: 3) {
+                                MockRow(width: 12)
+                                MockRow(width: 9)
+                                MockRow(width: 11)
                             }
-                            .padding(6)
+                            .padding(4)
                         }
-                    chatLines
-                        .padding(.leading, 8)
+                    VStack(alignment: .leading, spacing: 4) {
+                        MockLine(width: 26, opacity: 0.28)
+                        MockLine(width: 18, opacity: 0.28)
+                        MockLine(width: 22, opacity: 0.28)
+                    }
+                    .padding(5)
                 }
             case .floating, .panelOnly:
                 ZStack(alignment: .topLeading) {
-                    chatLines
-                        .padding(.leading, 14).padding(.top, 12)
-                    RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Chrome.overlay(0.18))
-                        .frame(width: 30, height: 30)
-                        .overlay(alignment: .topLeading) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                MockRow(width: 18)
-                                MockRow(width: 14)
-                                MockRow(width: 16)
-                            }
-                            .padding(5)
-                        }
-                        .offset(x: 6, y: style == .floating ? 13 : 9)
-                    if style == .floating {
-                        RoundedRectangle(cornerRadius: 2, style: .continuous).fill(Chrome.primaryText.opacity(0.35))
-                            .frame(width: 9, height: 6)
-                            .offset(x: 6, y: 4)
+                    VStack(alignment: .leading, spacing: 4) {
+                        MockLine(width: 40, opacity: 0.28)
+                        MockLine(width: 30, opacity: 0.28)
+                        MockLine(width: 36, opacity: 0.28)
                     }
+                    .padding(5)
+                    // Three 5pt rows and the panel's padding: 27pt, so the panel is 28 tall
+                    // and sits 2pt under the strip to stay inside the 32pt content area.
+                    MockPanel(width: 24, height: 28) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            MockRow(width: 11)
+                            MockRow(width: 8)
+                            MockRow(width: 10)
+                        }
+                    }
+                    .offset(x: 3, y: 2)
                 }
             }
         }
@@ -231,43 +265,62 @@ struct HeadPanelPreview: View {
 struct HeadsPlacementPreview: View {
     let popped: Bool
     var body: some View {
-        Group {
+        MockWindow(width: 88, height: 40) {
             if !popped {
-                RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Chrome.overlay(0.10))
-                    .frame(width: 60, height: 36)
-                    .overlay(alignment: .topLeading) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            MockLine(width: 40, opacity: 0.28)
-                            MockLine(width: 30, opacity: 0.28)
-                            RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Chrome.overlay(0.18))
-                                .frame(width: 44, height: 9)
-                                .overlay(alignment: .leading) {
-                                    MockDot(size: 3).padding(.leading, 3)
-                                }
-                        }
-                        .padding(5)
+                ZStack(alignment: .topTrailing) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        MockLine(width: 34, opacity: 0.28)
+                        MockLine(width: 26, opacity: 0.28)
+                        MockLine(width: 30, opacity: 0.28)
                     }
+                    .padding(5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    // Three 5pt rows and the padding come to 27pt: 28 tall, 2pt under the strip.
+                    MockPanel(width: 28, height: 28) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 2) { MockDot(size: 3); MockRow(width: 12, opacity: 0.45) }
+                            HStack(spacing: 2) { MockDot(size: 3); MockRow(width: 12, opacity: 0.45) }
+                            HStack(spacing: 2) { MockDot(size: 3); MockRow(width: 12, opacity: 0.45) }
+                        }
+                    }
+                    .offset(x: -3, y: 2)
+                }
             } else {
-                HStack(spacing: 4) {
-                    RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Chrome.overlay(0.18))
-                        .frame(width: 16, height: 36)
-                        .overlay(alignment: .top) {
-                            MockDot(size: 3).padding(.top, 4)
-                        }
-                    RoundedRectangle(cornerRadius: 4, style: .continuous).fill(Chrome.overlay(0.10))
-                        .frame(width: 40, height: 36)
-                        .overlay(alignment: .topLeading) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                MockLine(width: 28, opacity: 0.28)
-                                MockLine(width: 20, opacity: 0.28)
-                            }
-                            .padding(5)
-                        }
-                    RoundedRectangle(cornerRadius: 3, style: .continuous).fill(Chrome.overlay(0.18))
-                        .frame(width: 16, height: 36)
-                        .overlay(alignment: .top) {
-                            MockDot(size: 3).padding(.top, 4)
-                        }
+                // The team's panel (its heads' marks) top right, a head's own panel (its mark
+                // and bar) in each other corner, the chat between them. The panels hang off the
+                // whole content area, so the stack fills it; two 12pt panels and their 3pt
+                // margins share the 32pt under the strip.
+                ZStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        MockLine(width: 26, opacity: 0.28)
+                        MockLine(width: 20, opacity: 0.28)
+                        MockLine(width: 24, opacity: 0.28)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .topTrailing) {
+                    MockPanel(width: 22, height: 12) {
+                        HStack(spacing: 2) { MockDot(size: 3); MockDot(size: 3); MockDot(size: 3) }
+                    }
+                    .offset(x: -3, y: 3)
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    MockPanel(width: 22, height: 12) {
+                        HStack(spacing: 2) { MockDot(size: 3); Capsule().fill(Chrome.accent).frame(width: 10, height: 2) }
+                    }
+                    .offset(x: -3, y: -3)
+                }
+                .overlay(alignment: .topLeading) {
+                    MockPanel(width: 22, height: 12) {
+                        HStack(spacing: 2) { MockDot(size: 3); Capsule().fill(Chrome.accent).frame(width: 10, height: 2) }
+                    }
+                    .offset(x: 3, y: 3)
+                }
+                .overlay(alignment: .bottomLeading) {
+                    MockPanel(width: 22, height: 12) {
+                        HStack(spacing: 2) { MockDot(size: 3); Capsule().fill(Chrome.accent).frame(width: 10, height: 2) }
+                    }
+                    .offset(x: 3, y: -3)
                 }
             }
         }

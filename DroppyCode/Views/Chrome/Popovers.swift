@@ -37,6 +37,29 @@ extension NSPopover {
     }
 }
 
+/// A popover's scrolling body, as tall as its content up to `maxHeight` and scrolling
+/// past that. A popover opens at its content's ideal size, and a scroll view offered
+/// nothing collapses to a few rows; a fixed ideal height opens short content on empty
+/// space and long content cut off. So the content's own height, read as it lays out,
+/// sets the frame: the popover grows as the content arrives (a report parsed off the
+/// main thread starts as a spinner) and never past the cap.
+struct PopoverScroll<Content: View>: View {
+    var maxHeight: CGFloat = 460
+    /// What the popover opens at before the content has laid out.
+    var minHeight: CGFloat = 80
+    @ViewBuilder var content: () -> Content
+    @State private var contentHeight: CGFloat = 0
+
+    var body: some View {
+        ScrollView {
+            content()
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { contentHeight = $0 }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(height: min(max(contentHeight, minHeight), maxHeight))
+    }
+}
+
 /// The native popover every chrome and composer button opens, in place of a pull-down menu.
 struct PopoverMenu<Content: View>: View {
     var maxHeight: CGFloat = 460

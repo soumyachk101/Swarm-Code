@@ -27,11 +27,13 @@ struct PlanLimitsView: View {
                     LimitRow(window: window)
                         .padding(.top, 14)
                 }
-                if !limits.windows.isEmpty {
-                    Divider()
-                        .padding(.top, 14)
-                }
+                // The rule sits between the windows and the banked resets, so only where
+                // both are there: a plan with no resets to bank used to end on a line to nothing.
                 if let credits = limits.resetCredits {
+                    if !limits.windows.isEmpty {
+                        Divider()
+                            .padding(.top, 14)
+                    }
                     BankedResetsView(provider: provider, credits: credits)
                         .padding(.top, 14)
                 }
