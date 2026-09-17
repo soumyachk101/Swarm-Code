@@ -265,7 +265,8 @@ struct SidebarView: View {
                     pendingArchiveID = nil
                     withAnimation(Chrome.panelSlide) { model.archive(threadID) }
                 },
-                onDelete: { confirmDeletion(of: threadID, removeWorktree: false) }
+                onDelete: { confirmDeletion(of: threadID, removeWorktree: false) },
+                onDismiss: { pendingArchiveID = nil }
             )
             .onAppear { isDeletePopoverShown = true }
             .onDisappear {
@@ -806,31 +807,68 @@ struct SidebarView: View {
     }
 }
 
-/// The shortcut's question: Archive on the right, lit and answered by Return, Delete on
-/// the left. A click away asks nothing.
+/// The shortcut's question: the thread by name, with Delete beside Archive under it.
+/// Return archives and Escape asks nothing. Archive takes focus as the popover opens,
+/// which makes the popover key; when that is late or lost and the keys land on the chat
+/// window behind it instead, the monitor answers them, so Return never goes on to the
+/// composer.
 private struct ArchiveThreadPopover: View {
     let thread: ChatThread
     let onArchive: () -> Void
     let onDelete: () -> Void
+    let onDismiss: () -> Void
+
+    @FocusState private var isFocused: Bool
+    @State private var keyMonitor: Any?
 
     var body: some View {
         PopoverMenu {
-            PopoverSectionHeader("Archive this thread?")
-            PopoverNote("“\(thread.title)” leaves the list and stays in Archived. Delete removes it and its history; files in your project stay as they are.")
-            HStack(spacing: 8) {
-                Button("Delete", role: .destructive, action: onDelete)
+            VStack(alignment: .leading, spacing: 9) {
+                Text("Archive \(Text(verbatim: "\u{201C}\(thread.title)\u{201D}").fontWeight(.semibold))?")
+                    .font(.system(size: 12))
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 6) {
+                    Spacer(minLength: 0)
+                    Button(action: onDelete) {
+                        Text("Delete").foregroundStyle(.red)
+                    }
                     .buttonStyle(.glass)
-                    .tint(.red)
-                Spacer(minLength: 8)
-                Button("Archive", action: onArchive)
-                    .buttonStyle(.glassProminent)
-                    .keyboardShortcut(.defaultAction)
+                    .help("Remove the thread and its history")
+                    Button("Archive", action: onArchive)
+                        .buttonStyle(.glassProminent)
+                        .keyboardShortcut(.defaultAction)
+                        .focusable()
+                        .focused($isFocused)
+                        .focusEffectDisabled()
+                        .help("Move it to Archived (Return)")
+                }
+                .controlSize(.small)
             }
-            .controlSize(.small)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
         }
-        .frame(width: 300)
+        .frame(width: 272)
+        .onAppear {
+            isFocused = true
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                guard event.window is ThreadWindow,
+                      event.modifierFlags.intersection(KeyChord.allowedModifiers).isEmpty else { return event }
+                switch event.keyCode {
+                case 36, 76: onArchive() // Return, keypad Enter
+                case 53: onDismiss() // Escape
+                default: return event
+                }
+                return nil
+            }
+        }
+        .onDisappear {
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            keyMonitor = nil
+        }
     }
 }
 

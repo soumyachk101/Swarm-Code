@@ -32,6 +32,8 @@ import Testing
     #expect(await settled(true))
     app.settleSelectedThread()
     #expect(await settled(false))
+    // Something typed in it: the shortcut asks rather than deleting an empty thread.
+    app.runtime(for: thread.id).draft.text = "kept"
     app.askToArchiveSelectedThread()
     #expect(app.archiveRequest?.threadID == thread.id)
     let deadline = ContinuousClock.now + .seconds(4)
@@ -39,6 +41,21 @@ import Testing
         try await Task.sleep(for: .milliseconds(10))
     }
     #expect(app.thread(thread.id)?.isArchived == true)
+    #expect(app.archiveRequest == nil)
+}
+
+@Test @MainActor func archiveShortcutDeletesAnEmptyThreadOutright() async throws {
+    let app = AppModel()
+    let project = app.addProject(at: FileManager.default.temporaryDirectory)
+    let thread = try #require(app.newThread(in: project, workspace: .local))
+    let runtime = app.runtime(for: thread.id)
+    let deadline = ContinuousClock.now + .seconds(4)
+    while runtime.isLoadingHistory, ContinuousClock.now < deadline {
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    #expect(!runtime.isLoadingHistory)
+    app.askToArchiveSelectedThread()
+    #expect(app.thread(thread.id) == nil)
     #expect(app.archiveRequest == nil)
 }
 

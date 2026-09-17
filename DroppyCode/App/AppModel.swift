@@ -781,6 +781,13 @@ final class AppModel {
     /// Archive the answer Return gives and Delete beside it.
     func askToArchiveSelectedThread() {
         guard let id = selectedThreadID, thread(id) != nil else { return }
+        // Nothing in it, nothing typed for it: there is nothing to keep, so it goes the way
+        // an empty tab does, with no question. A history still being read is not "nothing".
+        if let runtime = existingRuntime(for: id), !runtime.isLoadingHistory, runtime.turns.isEmpty,
+           runtime.draft.isEmpty, runtime.followUps.isEmpty, !runtime.isRunning {
+            withAnimation(Chrome.panelSlide) { delete(id) }
+            return
+        }
         let request = ArchiveRequest(threadID: id)
         archiveRequest = request
         Task {
