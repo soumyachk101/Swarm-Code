@@ -60,10 +60,15 @@ final class StreamVeil {
         }
         if characters != previous {
             let prefix = Self.commonPrefix(previous, characters)
+            // A rewrite shorter than a chunk's start (a delegation block leaving the reply,
+            // say) drops that chunk whole: a range built with its upper bound below its
+            // lower one traps.
             chunks = chunks.compactMap { chunk in
+                let upper = min(chunk.range.upperBound, prefix)
+                guard upper > chunk.range.lowerBound else { return nil }
                 var kept = chunk
-                kept.range = chunk.range.lowerBound..<min(chunk.range.upperBound, prefix)
-                return kept.range.isEmpty ? nil : kept
+                kept.range = chunk.range.lowerBound..<upper
+                return kept
             }
             if characters.count > prefix {
                 if let lastAppend {

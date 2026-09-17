@@ -48,6 +48,10 @@ struct ChatView: View {
     @State private var hydraShownSince: Date?
     @State private var hydraLingers = false
     @State private var hydraLingerTask: Task<Void, Never>?
+    /// The thread the scene was last laid out for. A body pass on a different thread is a
+    /// switch: panels and reserves snap to the new thread's layout rather than glide from
+    /// the old one's, and the Hydra panel's linger is dropped rather than carried across.
+    @State private var sceneThreadID: UUID?
 
     private static let hydraMinimumPresence: TimeInterval = 1.6
 
@@ -70,6 +74,7 @@ struct ChatView: View {
         // whether the panel is held on a beat after its heads leave.
         let hydraPresent = !members.heads.isEmpty && scene.isMeasured
         let holds = panelsHeld
+        let switching = sceneThreadID != runtime.threadID
         VStack(spacing: 0) {
             ThreadTimeline(
                 runtime: runtime,
@@ -97,7 +102,7 @@ struct ChatView: View {
             // The room the docked panels take from either side; the conversation and the
             // box centre in the rest, so they stay lined up with each other (see
             // `ReserveSlide` for how they get there without laying out on every frame).
-            .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !holds))
+            .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !holds && !switching))
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ComposerArea(runtime: runtime, workingDirectory: workingDirectory)
                     .overlay(alignment: .top) {
@@ -115,7 +120,7 @@ struct ChatView: View {
                         guard newValue > oldValue + 0.5, !liveResize.isActive, oldValue > 0 else { return }
                         scrollState.jumpToLatest()
                     }
-                    .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !holds, animatesWidth: true))
+                    .modifier(ReserveSlide(reserve: scene.reserve, slides: scene.isMeasured && !liveResize.isActive && !holds && !switching, animatesWidth: true))
             }
             .overlay(alignment: .top) {
                 PaneTopVeil(model: scrollChrome)
@@ -137,13 +142,16 @@ struct ChatView: View {
                         subagentPanel(subagent, scene: scene, project: project)
                     }
                 }
-                .animation(Chrome.panelSlide, value: scene.subagent?.id)
+                .animation(switching ? nil : Chrome.panelSlide, value: scene.subagent?.id)
             }
             .overlay(alignment: .topLeading) {
                 let showsHydraPanel = scene.showsHydra
                 ZStack(alignment: .topLeading) {
                     if showsHydraPanel {
                         hydraPanel(scene: scene, workingDirectory: workingDirectory, project: project)
+                            // Two threads with a team panel each: the panel is replaced,
+                            // never one thread's heads morphed into the other's.
+                            .id(runtime.threadID)
                     }
                 }
                 // Toggled from the Hydra button, dismissed, or its heads gone, the panel
@@ -151,10 +159,16 @@ struct ChatView: View {
                 // that shows it, so it can never leave in a frame under some other
                 // transaction. The room the chat makes for it is animated by
                 // `ReserveSlide` on its own, so nothing here reaches the column.
-                .animation(Chrome.panelSlide, value: showsHydraPanel)
-                .onChange(of: hydraPresent) { _, shows in
+                .animation(switching ? nil : Chrome.panelSlide, value: showsHydraPanel)
+                .onChange(of: HydraPresence(threadID: runtime.threadID, present: hydraPresent)) { old, new in
                     hydraLingerTask?.cancel()
-                    if shows {
+                    // A switch: whatever the last thread's panel was doing stays with it.
+                    if old.threadID != new.threadID {
+                        hydraLingers = false
+                        hydraShownSince = new.present ? .now : nil
+                        return
+                    }
+                    if new.present {
                         hydraShownSince = .now
                         hydraLingers = false
                         return
@@ -189,7 +203,7 @@ struct ChatView: View {
                         poppedPanel(popped, scene: scene, workingDirectory: workingDirectory, project: project)
                     }
                 }
-                .animation(Chrome.panelSlide, value: scene.popped?.id)
+                .animation(switching ? nil : Chrome.panelSlide, value: scene.popped?.id)
             }
             .overlay(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {
@@ -197,7 +211,7 @@ struct ChatView: View {
                         autoPoppedPanel(auto, scene: scene, workingDirectory: workingDirectory, project: project)
                     }
                 }
-                .animation(Chrome.panelSlide, value: scene.autoPopped.map(\.id))
+                .animation(switching ? nil : Chrome.panelSlide, value: scene.autoPopped.map(\.id))
             }
             .overlay(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {
@@ -205,7 +219,7 @@ struct ChatView: View {
                         usagePanel(usage, scene: scene)
                     }
                 }
-                .animation(Chrome.panelSlide, value: scene.usage)
+                .animation(switching ? nil : Chrome.panelSlide, value: scene.usage)
             }
             .onGeometryChange(for: CGSize.self, of: { $0.size }) { paneSize = $0 }
             // Free-floating panels are kept inside the pane while it shrinks, with no
@@ -254,7 +268,7 @@ struct ChatView: View {
         // the chrome keeps room for, and doubles the title against itself.
         .transition(.identity)
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { columnHeight = $0 }
-        .animation(Chrome.panelSlide, value: runtime.isTerminalVisible)
+        .animation(switching ? nil : Chrome.panelSlide, value: runtime.isTerminalVisible)
         // A merge or pull request link in this chat can hand its request to a helper, which
         // opens in the panel and lands it on the same provider and model as this thread.
         .environment(\.mergeRequestTarget, MergeRequestTarget(chatID: runtime.threadID) { link in
@@ -271,6 +285,9 @@ struct ChatView: View {
         // (`columnHeight`, `paneSize`, `composerAreaHeight`) are the pane's, not the
         // thread's, and stay.
         .onChange(of: runtime.threadID) {
+            sceneThreadID = runtime.threadID
+            hydraLingerTask?.cancel()
+            hydraLingers = false
             scrollChrome = ChromeScrollModel()
             scrollState = TimelineScrollState()
             subagentDrag = PanelDragState()
@@ -281,6 +298,7 @@ struct ChatView: View {
             autoDrags = [:]
             panelResize = PanelResizeState()
         }
+        .onAppear { sceneThreadID = runtime.threadID }
     }
 
     // MARK: - Floating panels
@@ -681,6 +699,12 @@ struct ChatView: View {
 /// costs nothing per frame. The slide is keyed to a change in the room, never to a
 /// measurement: a pane measured for the first time lays out in place, and a window resize
 /// or a panel's width grip moves things at once, as they should (`slides` is off then).
+/// What the Hydra linger watches: the team panel's presence, and which thread it is on.
+private struct HydraPresence: Equatable {
+    let threadID: UUID
+    let present: Bool
+}
+
 private struct ReserveSlide: ViewModifier {
     let reserve: PanelReserve
     let slides: Bool
