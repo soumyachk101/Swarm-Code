@@ -8,8 +8,9 @@ enum MCPTransport: Sendable, Hashable {
     case stdio(command: String, args: [String])
     /// A remote streamable-HTTP server. Header values may contain `{field}` placeholders.
     case http(url: String, headers: [String: String])
-    /// A remote server behind OAuth: reached as a local `npx -y mcp-remote <url>` process,
-    /// which opens the browser for sign-in on first use and keeps the token in `~/.mcp-auth`.
+    /// A remote server behind OAuth. Droppy Code signs the user in itself (`MCPOAuth`) and
+    /// every provider reaches the server through the app's local proxy (`MCPProxy`), which
+    /// adds a fresh token to each request, so no token ever sits in a config file.
     case oauth(url: String)
 }
 
@@ -83,6 +84,10 @@ struct MCPCatalogEntry: Sendable, Hashable, Identifiable {
     var docsURL: String
     /// Three or four tools the user can expect, for the card's fine print.
     var sampleTools: [String] = []
+    /// The page where the key or token is made, opened for the user as the key panel
+    /// appears (see `MCPKeyPanel`). Nil for servers that need a path or a connection
+    /// string rather than something from a website.
+    var keysURL: String? = nil
 
     var color: Color { Color(rgb: colorValue) }
 
@@ -112,7 +117,13 @@ struct MCPResolvedServer: Sendable, Hashable, Identifiable {
 
 extension MCPCatalogEntry {
     /// The launchable form, with `{key}` placeholders replaced by the user's values (or the
-    /// field's default). OAuth servers resolve to an `mcp-remote` process.
+    /// field's default). OAuth servers resolve to their route on the app's proxy.
+
+    /// The remote address an OAuth server is signed in to and proxied to.
+    var oauthURL: String? {
+        if case .oauth(let url) = transport { return url }
+        return nil
+    }
     func resolve(values: [String: String]) -> MCPResolvedServer {
         func fill(_ text: String) -> String {
             var out = text
@@ -132,9 +143,8 @@ extension MCPCatalogEntry {
         case .http(let url, let headers):
             server.url = fill(url)
             server.headers = headers.mapValues(fill).filter { !$0.value.isEmpty }
-        case .oauth(let url):
-            server.command = "npx"
-            server.args = ["-y", "mcp-remote", url]
+        case .oauth:
+            server.url = MCPProxy.url(for: id)
         }
         return server
     }
