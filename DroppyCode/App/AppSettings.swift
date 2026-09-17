@@ -138,6 +138,7 @@ final class AppSettings {
         static let hydraShowsHeadDetails = "hydraShowsHeadDetails"
         static let hydraAutoPopsHeads = "hydraAutoPopsHeads"
         static let hydraTempersHeadEffort = "hydraTempersHeadEffort"
+        static let hydraMaxHeads = "hydraMaxHeads"
         static let showsUsagePanel = "showsUsagePanel"
         static let sidebarFloats = "sidebarFloats"
         static let sidebarOnlyFloats = "sidebarOnlyFloats"
@@ -525,6 +526,18 @@ final class AppSettings {
         didSet { defaults.set(hydraIsolateHeads, forKey: Key.hydraIsolateHeads) }
     }
 
+    /// The cap on heads at work at once for every chat, set on the Hydra page; nil is
+    /// off. A pair's own cap still counts where it is lower.
+    var hydraMaxHeads: Int? {
+        didSet {
+            if let hydraMaxHeads {
+                defaults.set(hydraMaxHeads, forKey: Key.hydraMaxHeads)
+            } else {
+                defaults.removeObject(forKey: Key.hydraMaxHeads)
+            }
+        }
+    }
+
     /// Once the lead has finished and every head is back, the team's work goes out as a
     /// merge request and lands, and the checkout is brought up to date. Off unless asked.
     var hydraAutoMerge: Bool {
@@ -697,6 +710,7 @@ final class AppSettings {
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
         hydraAlwaysHeads = defaults.object(forKey: Key.hydraAlwaysHeads) as? Bool ?? false
         hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
+        hydraMaxHeads = HydraPair.clampedCap(defaults.object(forKey: Key.hydraMaxHeads) as? Int)
         hydraAutoMerge = defaults.object(forKey: Key.hydraAutoMerge) as? Bool ?? false
         hydraReviewHeads = defaults.object(forKey: Key.hydraReviewHeads) as? Bool ?? false
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
