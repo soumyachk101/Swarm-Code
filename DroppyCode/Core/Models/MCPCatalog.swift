@@ -20,6 +20,18 @@ enum MCPCatalog {
             keysURL: "https://github.com/settings/personal-access-tokens/new"
         ),
         MCPCatalogEntry(
+            id: "gitlab",
+            name: "GitLab",
+            vendor: "GitLab",
+            summary: "Issues, merge requests, pipelines and code across your projects",
+            category: .developer,
+            asset: "mcp-gitlab",
+            colorValue: 0xFC6D26,
+            transport: .oauth(url: "https://gitlab.com/api/v4/mcp"),
+            docsURL: "https://docs.gitlab.com/user/model_context_protocol/mcp_server/",
+            sampleTools: ["list_merge_requests", "get_merge_request_diffs", "create_issue", "get_pipeline_jobs"]
+        ),
+        MCPCatalogEntry(
             id: "playwright",
             name: "Playwright",
             vendor: "Microsoft",
