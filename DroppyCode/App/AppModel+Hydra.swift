@@ -409,8 +409,11 @@ extension AppModel {
         } else {
             head.title = "\(persona.name) · \(TextCleanup.singleLine(task, limit: 60))"
         }
+        // A routed head wears its profile in the title: "Hank · audit the parser · deep".
+        if let routed { head.title += " · \(routed.name)" }
         head.hasCustomTitle = true
         var info = HydraHeadInfo(index: index, task: task, kind: kind, origin: origin)
+        info.profile = routed?.name
         info.nativeID = native?.id
         info.nativeTaskID = native?.taskID
         info.toolUseID = native?.toolUseID

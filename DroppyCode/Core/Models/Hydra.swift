@@ -320,6 +320,9 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
     var toolUseID: String?
     /// The delegation a Droppy-run head belongs to: its report waits for the others.
     var batchID: UUID?
+    /// The head profile the delegation routed this head to, when the pair has profiles:
+    /// shown with the head and consulted again if the head is steered on.
+    var profile: String?
     /// Whether Droppy Code can stop this head where it runs.
     var canStop = true
     /// A native head whose spawning tool call returned at once: only the provider's own
@@ -369,6 +372,7 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
         nativeTaskID = container.value(.nativeTaskID, default: nil)
         toolUseID = container.value(.toolUseID, default: nil)
         batchID = container.value(.batchID, default: nil)
+        profile = container.value(.profile, default: nil)
         // Droppy Code owns a Droppy-run head's turn, so it can always stop one; only a
         // native head depends on the provider having said so.
         canStop = container.value(.canStop, default: kind == .droppy)

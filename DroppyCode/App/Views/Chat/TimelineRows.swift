@@ -2466,8 +2466,24 @@ struct TurnFinishedBlock: View {
     /// Whether the turn can be reverted right now. Decided by the timeline, which reads
     /// the provider and the turn list once for every row.
     let canUndo: Bool
+    /// Whether the timeline reads chronologically (`chronologicalTimeline`): the turn
+    /// opens on its full steps in arrival order and the chevron folds to the answer,
+    /// rather than opening to the steps from the folded answer.
+    let chronological: Bool
 
-    @State private var isExpanded = false
+    @State private var isExpanded: Bool
+
+    init(runtime: ThreadRuntime, turnID: UUID, summary: TurnSummary, userEntries: [TimelineEntry], content: [TimelineEntry], workingDirectory: String?, canUndo: Bool, chronological: Bool) {
+        self.runtime = runtime
+        self.turnID = turnID
+        self.summary = summary
+        self.userEntries = userEntries
+        self.content = content
+        self.workingDirectory = workingDirectory
+        self.canUndo = canUndo
+        self.chronological = chronological
+        _isExpanded = State(initialValue: chronological)
+    }
     @Environment(\.revealTimelineEnd) private var revealBox
     /// What the body last derived from the turn, keyed on its entries' identities and the
     /// fold: an evaluation with the same key reads it back instead of walking the turn
