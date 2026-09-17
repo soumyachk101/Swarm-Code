@@ -97,9 +97,17 @@ struct HydraLaunch: Hashable, Sendable {
     /// is wrong itself, rather than trusting the reports or sending out a head to check.
     var reviewsHeads = false
 
+    /// How many Droppy-run heads may work at once for a pair with no cap of its own. The
+    /// tasks past it wait their turn (`ThreadRuntime.spawnWaitingHeads`) and go out as
+    /// heads finish, so a lead may still ask for as many as the job needs. Twenty-one heads
+    /// at once each streaming into the app, each on its own copy of the checkout and its
+    /// own CLI, kept the main thread and the GPU busy past the point of answering, and
+    /// the app had to be force quit.
+    static let uncappedConcurrency = 8
+
     /// Whether one more head may go out with `running` already at work.
     func hasRoom(running: Int) -> Bool {
-        maxHeads.map { running < $0 } ?? true
+        running < (maxHeads ?? Self.uncappedConcurrency)
     }
 }
 
@@ -703,6 +711,13 @@ enum HydraPrompts {
 
     /// Whether the reply has a delegation block at all, readable or not.
     static func hasDelegationBlock(in text: String) -> Bool { delegationBlockRange(in: text) != nil }
+
+    /// The same test over a tail of a reply still streaming: a block is there once its
+    /// opening fence is, so a reader that has scanned the text up to some point only
+    /// needs to scan what arrived since (see `HydraButton`).
+    static func hasDelegationOpener(in tail: Substring) -> Bool {
+        tail.firstMatch(of: #/```[ \t]*hydra(?:-sent)?[ \t]*\r?\n/#.ignoresCase()) != nil
+    }
 
     /// The delegation block at the end of a reply, if the lead wrote one. The body up to
     /// the last fence is tried first; when that does not parse, a prompt has most likely

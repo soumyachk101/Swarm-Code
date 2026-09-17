@@ -721,6 +721,11 @@ struct HydraDelegationBlock: View {
     /// JSON is whole and holds at least one head.
     @MainActor
     private static func tasks(in json: String) -> [String] {
+        // A block still streaming ends mid-value on nearly every flush; hashing it for the
+        // cache and parsing it to failure cost a whole block's worth of text per render.
+        // The block is a JSON array (or one object), so until its last non-blank character
+        // closes one there is nothing to read.
+        guard let last = json.last(where: { !$0.isWhitespace }), last == "]" || last == "}" else { return [] }
         if let cached = taskCache.value(for: json) { return cached }
         guard let parsed = JSONValue.parse(json) else { return [] }
         let entries: [JSONValue] = parsed.array ?? (parsed.object == nil ? [] : [parsed])

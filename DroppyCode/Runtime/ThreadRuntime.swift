@@ -263,7 +263,12 @@ final class ThreadRuntime {
     /// Delegations still in flight: the heads of each batch report together.
     @ObservationIgnored private var hydraBatches: [UUID: HydraBatch] = [:]
     /// Delegated tasks past the pair's limit, sent out as heads finish.
-    @ObservationIgnored private var hydraWaiting: [(delegation: HydraDelegation, batchID: UUID)] = []
+    @ObservationIgnored private var hydraWaiting: [(delegation: HydraDelegation, batchID: UUID)] = [] {
+        didSet { hydraWaitingCount = hydraWaiting.count }
+    }
+    /// How many delegated tasks wait for a head to finish before they go out, for the
+    /// heads popover to say so: a team held to the cap is not a team that lost its tail.
+    private(set) var hydraWaitingCount = 0
     /// How many times heads have gone out for the user's current request; a message of
     /// the user's own starts the count over.
     @ObservationIgnored private var hydraDelegationRounds = 0
@@ -2620,12 +2625,19 @@ final class ThreadRuntime {
         // row's content is a value-typed enum behind an observed property.
         // The first delta after a lull shows at once, so the first token of a reply never
         // waits out the window; the ones behind it coalesce, one flush per pacing delay.
-        if ContinuousClock.now - lastFlushAt >= Self.flushWindow {
+        // A head shares the screen with every other head streaming at the same time, and
+        // each flush re-lays the panel: with twenty heads talking at once the main thread
+        // never caught up and the app froze. Heads pace themselves by how many are
+        // streaming (see `StreamLoad`); the lead's own reply keeps its pace.
+        let isHead = thread?.hydra != nil
+        if isHead { StreamLoad.shared.noteStreaming(self) }
+        if ContinuousClock.now - lastFlushAt >= (isHead ? StreamLoad.shared.headFlushWindow : Self.flushWindow) {
             flushDeltas()
             return
         }
         flushTask = Task { [weak self] in
-            let delay = Self.flushDelay(for: self?.pendingFlushLength(), scrolling: ScrollActivity.shared.isScrolling)
+            var delay = Self.flushDelay(for: self?.pendingFlushLength(), scrolling: ScrollActivity.shared.isScrolling)
+            if isHead { delay = max(delay, StreamLoad.shared.headFlushDelayMilliseconds) }
             try? await Task.sleep(for: .milliseconds(delay))
             self?.flushDeltas()
         }
@@ -2671,6 +2683,45 @@ final class ThreadRuntime {
     }
 
     private static let flushWindow: Duration = .milliseconds(45)
+
+    /// How many runtimes are streaming onto the screen right now, so a head's flushes
+    /// slow down as more heads talk at once. One head flushes at its own pace; with N
+    /// heads streaming, each waits about N times `headFlushBudget`, which keeps the
+    /// whole team to roughly one panel re-layout every `headFlushBudget` regardless of
+    /// how many heads went out. A runtime that has not flushed for two seconds no longer
+    /// counts, so a head that went quiet stops slowing the others.
+    @MainActor
+    final class StreamLoad {
+        static let shared = StreamLoad()
+        /// The interval the whole team of heads shares, in milliseconds.
+        private static let headFlushBudget = 70
+        private static let stale: Duration = .seconds(2)
+        private var lastSeen: [ObjectIdentifier: ContinuousClock.Instant] = [:]
+
+        func noteStreaming(_ runtime: ThreadRuntime) {
+            lastSeen[ObjectIdentifier(runtime)] = .now
+        }
+
+        func forget(_ runtime: ThreadRuntime) {
+            lastSeen[ObjectIdentifier(runtime)] = nil
+        }
+
+        /// Runtimes that flushed within the last two seconds.
+        var streamingCount: Int {
+            let now = ContinuousClock.now
+            lastSeen = lastSeen.filter { now - $0.value < Self.stale }
+            return lastSeen.count
+        }
+
+        /// The least a head waits between two flushes while `streamingCount` heads talk.
+        var headFlushDelayMilliseconds: Int {
+            max(45, streamingCount * Self.headFlushBudget)
+        }
+
+        var headFlushWindow: Duration {
+            .milliseconds(headFlushDelayMilliseconds)
+        }
+    }
 
     private func flushDeltas(scheduleSave: Bool = true) {
         flushTask?.cancel()

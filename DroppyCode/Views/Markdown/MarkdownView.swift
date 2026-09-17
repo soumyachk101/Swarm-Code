@@ -43,13 +43,16 @@ struct MarkdownView: View, Equatable {
     /// flushes never parse, and a flush parses only the block the new text extends. A few
     /// slots, so a lead and the heads in its panel streaming together keep theirs.
     @MainActor private static var streamingParses: [(text: String, parse: MarkdownParser.Parse)] = []
-    private static let streamingSlots = 4
+    /// Enough for a lead and a whole team of heads streaming in its panel at once. With
+    /// four slots, twenty heads evicted each other's parse on every flush and every
+    /// render parsed its reply from the start again, on the main thread.
+    private static let streamingSlots = 48
 
     @MainActor
     static func blocks(for text: String, streaming: Bool = false) -> [MarkdownBlock] {
         if streaming {
-            if let parse = streamingParses.last(where: { $0.text == text }) { return parse.parse.blocks }
-            let slot = streamingParses.lastIndex { text.utf8.starts(with: $0.text.utf8) }
+            if let parse = streamingParses.last(where: { $0.text.utf8.count == text.utf8.count && $0.text == text }) { return parse.parse.blocks }
+            let slot = streamingParses.lastIndex { extends($0.text, to: text) }
             let parsed = MarkdownParser.parse(text, extending: slot.map { streamingParses[$0] })
             if let slot { streamingParses.remove(at: slot) } else if streamingParses.count == streamingSlots { streamingParses.removeFirst() }
             streamingParses.append((text, parsed))
@@ -65,6 +68,25 @@ struct MarkdownView: View, Equatable {
         }
         blockCache.insert(parsed, for: text)
         return parsed
+    }
+
+    /// Whether `text` is `earlier` with more streamed onto its end. A streamed reply only
+    /// ever grows, so the head and the tail of the earlier text are compared where they
+    /// sit in the new one, rather than every byte of a reply that runs to tens of
+    /// kilobytes on every render.
+    private static func extends(_ earlier: String, to text: String) -> Bool {
+        let earlierCount = earlier.utf8.count
+        let count = text.utf8.count
+        guard earlierCount > 0, earlierCount < count else { return false }
+        let probe = 64
+        if earlierCount <= probe * 2 { return text.utf8.starts(with: earlier.utf8) }
+        let earlierBytes = earlier.utf8
+        let bytes = text.utf8
+        if !bytes.prefix(probe).elementsEqual(earlierBytes.prefix(probe)) { return false }
+        let earlierTail = earlierBytes.suffix(probe)
+        let tailStart = bytes.index(bytes.startIndex, offsetBy: earlierCount - probe)
+        let tailEnd = bytes.index(tailStart, offsetBy: probe)
+        return bytes[tailStart..<tailEnd].elementsEqual(earlierTail)
     }
 
     /// Mirrors the parser's fence test for the open-fence walk.

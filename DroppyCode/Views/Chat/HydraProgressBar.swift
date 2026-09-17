@@ -28,6 +28,9 @@ struct HydraProgressBar: View {
     @State private var width: CGFloat = 0
     /// The head is done and its last stave has risen: nothing left to animate.
     @State private var isSettled = false
+    /// A stave arrived within the last `rise` seconds and is still growing, the one time
+    /// a bar without the sweep needs the display's clock.
+    @State private var isRising = false
     /// The stave under the pointer, whose steps the card names.
     @State private var hoveredIndex: Int?
     /// The last events, staves and counts, so an evaluation where nothing changed
@@ -47,6 +50,12 @@ struct HydraProgressBar: View {
     /// The rest between two passes, so the bar mostly stands still.
     private static let sweepRest: TimeInterval = 3.4
     private static let cardWidth: CGFloat = 260
+    /// How many bars sweep at once. Every sweeping bar is a canvas redrawn on the clock
+    /// and a render pass on the GPU; with twenty heads out at once those passes alone
+    /// saturated the main thread and the GPU queue and froze the app. The first few
+    /// running heads keep the sweep, the rest stand still between staves, and a bar
+    /// takes a slot as soon as one frees up.
+    static let sweepSlots = 3
     /// How many of a stave's steps the card lists before "and N more": few enough that
     /// the card clears the strip of a compact panel, where the bar sits under the task.
     private static let cardLines = 4
@@ -101,14 +110,18 @@ struct HydraProgressBar: View {
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let isRunning = status == .running
         let elapsed = RelativeTime.duration((isRunning ? Date.now : finishedAt ?? .now).timeIntervalSince(startedAt))
+        let sweeps = isRunning && !reduceMotion && SweepBudget.shared.sweeps(ObjectIdentifier(runtime))
+        // The clock runs only while something moves: a stave rising, or the sweep on the
+        // bars that hold one of its slots. A bar standing still is drawn once per change.
+        let needsClock = !reduceMotion && !isSettled && (sweeps || isRising)
         VStack(alignment: .leading, spacing: 6) {
-            // The display's clock drives the rise and the sweep at thirty frames a second,
-            // enough for a sweep this soft; it keeps going while the reader scrolls, so a
-            // head at work never looks stalled. With reduced motion, or once the head is
-            // done and settled, the canvas is drawn only when the steps change.
+            // The display's clock drives the rise and the sweep at twenty-four frames a
+            // second, enough for a sweep this soft; it keeps going while the reader
+            // scrolls, so a head at work never looks stalled. With reduced motion, or once
+            // the head is done and settled, the canvas is drawn only when the steps change.
             // Held still while the reader scrolls anywhere (see `ScrollActivity`): a fold
             // gliding the timeline gets its frames, the staves catch up when it lands.
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || isSettled || ScrollActivity.shared.isScrolling)) { context in
+            TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: !needsClock || ScrollActivity.shared.isScrolling)) { context in
                 Canvas { graphics, size in
                     Self.draw(
                         staves,
@@ -117,7 +130,7 @@ struct HydraProgressBar: View {
                         capacity: capacity,
                         at: context.date,
                         rising: !reduceMotion,
-                        sweeping: isRunning && !reduceMotion,
+                        sweeping: sweeps,
                         status: status,
                         tint: tint,
                         hovered: hoveredIndex
@@ -158,6 +171,21 @@ struct HydraProgressBar: View {
             guard (try? await Task.sleep(for: .seconds(Self.rise + 0.1))) != nil else { return }
             isSettled = true
         }
+        // A new stave keeps the clock for its rise, then lets it go.
+        .task(id: events.count) {
+            guard !events.isEmpty, !reduceMotion else { return }
+            isRising = true
+            guard (try? await Task.sleep(for: .seconds(Self.rise + 0.1))) != nil else { return }
+            isRising = false
+        }
+        // A running bar asks for a sweep slot; it gives the slot back when it stops or
+        // leaves the screen, and the next bar in line takes it.
+        .task(id: isRunning) {
+            let id = ObjectIdentifier(runtime)
+            guard isRunning else { SweepBudget.shared.leave(id); return }
+            SweepBudget.shared.join(id)
+        }
+        .onDisappear { SweepBudget.shared.leave(ObjectIdentifier(runtime)) }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(verbatim: "\(counts.sentence), \(elapsed)\(isRunning ? " so far" : "")"))
     }
@@ -208,7 +236,7 @@ struct HydraProgressBar: View {
 
     /// One thing the head did, as the bar shows it.
     private struct Stave {
-        enum Kind {
+        enum Kind: Hashable {
             /// A read, a search, the web, an MCP tool, a helper: looking, not changing.
             case lookup
             case command
@@ -330,6 +358,14 @@ struct HydraProgressBar: View {
     ) {
         let bottom = size.height
         var filled = Path()
+        // One fill per colour, not per stave: every fill resolves its colour through
+        // AppKit's dynamic colour system, and a hundred staves at thirty frames a second
+        // on twenty bars was a large share of the main thread. The staves of a kind go
+        // into one path and are filled together; only the last stave of a head that
+        // failed or was stopped, and the one under the pointer, are filled on their own.
+        var byKind: [Stave.Kind: Path] = [:]
+        var ending: (path: Path, color: Color)?
+        var hoveredPath: Path?
         for (index, stave) in staves.enumerated() {
             var factor: CGFloat = 1
             if rising {
@@ -346,18 +382,23 @@ struct HydraProgressBar: View {
             let path = Path(roundedRect: rect, cornerRadius: staveWidth / 2)
             // The last stave is where a head that failed or was stopped ended.
             let isLast = index == staves.count - 1
-            let color: Color = if isLast, status == .failed {
-                Chrome.danger
+            if isLast, status == .failed {
+                ending = (path, Chrome.danger)
             } else if isLast, status == .stopped {
-                Chrome.secondaryText
+                ending = (path, Chrome.secondaryText)
             } else {
-                color(for: stave.kind, tint: tint)
+                byKind[stave.kind, default: Path()].addPath(path)
             }
-            context.fill(path, with: .color(color))
             // The stave under the pointer lifts towards white, so the card reads as its.
-            if index == hovered { context.fill(path, with: .color(.white.opacity(0.4))) }
+            if index == hovered { hoveredPath = path }
             filled.addPath(path)
         }
+        for kind in [Stave.Kind.lookup, .command, .edit, .reply] {
+            guard let path = byKind[kind] else { continue }
+            context.fill(path, with: .color(color(for: kind, tint: tint)))
+        }
+        if let ending { context.fill(ending.path, with: .color(ending.color)) }
+        if let hoveredPath { context.fill(hoveredPath, with: .color(.white.opacity(0.4))) }
 
         if staves.count < capacity {
             let height = bottom * 0.45
@@ -524,5 +565,29 @@ private struct ProgressCardSurface: ViewModifier {
         } else {
             content.glassEffect(.regular, in: shape)
         }
+    }
+}
+
+/// Which bars sweep: the first `HydraProgressBar.sweepSlots` running bars to ask, in the
+/// order they asked. Observed, so a bar next in line redraws with the sweep the moment a
+/// slot frees up, and a bar losing its slot stops its clock on the same change.
+@MainActor
+@Observable
+final class SweepBudget {
+    static let shared = SweepBudget()
+    private(set) var sweepers: [ObjectIdentifier] = []
+
+    func join(_ id: ObjectIdentifier) {
+        guard !sweepers.contains(id) else { return }
+        sweepers.append(id)
+    }
+
+    func leave(_ id: ObjectIdentifier) {
+        guard let index = sweepers.firstIndex(of: id) else { return }
+        sweepers.remove(at: index)
+    }
+
+    func sweeps(_ id: ObjectIdentifier) -> Bool {
+        sweepers.prefix(HydraProgressBar.sweepSlots).contains(id)
     }
 }
