@@ -34,11 +34,19 @@ struct HydraHeadProfile: Codable, Hashable, Identifiable, Sendable {
         return on.isEmpty ? name : "\(name) (\(on))"
     }
 
+    /// The name as it appears in agent names ("Deep Work" gives "deep-work"), so the
+    /// profile a native spawn names can be matched back whatever the spacing or case.
+    var agentSlug: String {
+        String(name.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" })
+    }
+
     /// Whether a delegation's `profile` names this one: case-insensitive, and blind to
-    /// the whitespace a name typed in Settings or written in a lead's JSON can carry.
+    /// the whitespace a name typed in Settings or written in a lead's JSON can carry. An
+    /// agent slug ("deep-work" from a spawned agent's name) matches the same way.
     func matches(_ name: String) -> Bool {
         let wanted = name.trimmingCharacters(in: .whitespacesAndNewlines)
         return self.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(wanted) == .orderedSame
+            || agentSlug == wanted
     }
 }
 
@@ -489,6 +497,31 @@ enum HydraPrompts {
     static let workerAgentName = "droppy-worker"
     static let scoutAgentName = "droppy-scout"
 
+    /// The agent name a profile's worker variant is registered under on the native
+    /// providers ("droppy-worker-deep"): the lead routes a task to the profile by
+    /// spawning exactly it.
+    static func workerAgentName(for profile: HydraHeadProfile) -> String {
+        "\(workerAgentName)-\(profile.agentSlug)"
+    }
+
+    /// The profile an agent name routes to ("droppy-worker-deep" gives "deep"), slug
+    /// included; the base worker and scout names, and anything else, route nowhere.
+    static func profileName(forAgentName agentName: String?) -> String? {
+        guard let agentName, agentName.hasPrefix("\(workerAgentName)-") else { return nil }
+        return String(agentName.dropFirst(workerAgentName.count + 1))
+    }
+
+    /// The profiles a native lead can route to: only ones running on the heads' own
+    /// provider (a profile that sends heads elsewhere is Droppy-run's business, the
+    /// lead's agent tools cannot spawn it) and tuning something (one with neither model
+    /// nor effort is the shared head under another name).
+    static func nativeRoutableProfiles(of launch: HydraLaunch) -> [HydraHeadProfile] {
+        launch.headProfiles.filter {
+            ($0.provider == nil || $0.provider == launch.headsProvider)
+                && ($0.model != nil || $0.effort != nil)
+        }
+    }
+
     /// Where a Droppy-run head works: a copy of the checkout made for it, or the checkout
     /// itself when the project cannot be copied (no git, no commits yet) or the user
     /// prefers it so.
@@ -558,18 +591,45 @@ enum HydraPrompts {
 
     /// Appended to the lead's system prompt on providers that run heads natively: when to
     /// delegate, how to split the work and what to do with the reports.
-    static func policy(for provider: ProviderKind, maxHeads: Int?, autoMerges: Bool = false, reviewsHeads: Bool = false, projects: [HydraProjectRef] = []) -> String {
+    static func policy(for provider: ProviderKind, _ launch: HydraLaunch) -> String {
+        let maxHeads = launch.maxHeads
+        let autoMerges = launch.autoMerges
+        let reviewsHeads = launch.reviewsHeads
+        let projects = launch.projects
+        // The pair's routable profiles, in the words the lead routes with: on Claude and
+        // Copilot the profile's agent variant, on Codex the model and effort to pass.
+        let profiles = nativeRoutableProfiles(of: launch)
+        let profileRule: String
+        if profiles.isEmpty {
+            profileRule = ""
+        } else {
+            switch provider {
+            case .claude, .copilot:
+                let variants = profiles.map { "`\(workerAgentName(for: $0))` for \($0.name)" }.joined(separator: ", ")
+                profileRule = " Some heads are tuned for a purpose: route the task to \(variants) instead of the plain `\(workerAgentName)` when the work belongs to that purpose."
+            case .codex:
+                let routes = profiles.map { profile -> String in
+                    var parts: [String] = []
+                    if let model = profile.model { parts.append("`model` = \(model)") }
+                    if let effort = profile.effort { parts.append("`reasoning_effort` = \(effort)") }
+                    return "\(profile.name) (pass \(parts.joined(separator: " and ")))"
+                }.joined(separator: ", ")
+                profileRule = " Some heads are tuned for a purpose: route the task by passing the profile's own knobs in `spawn_agent` — \(routes) — when the work belongs to that purpose."
+            default:
+                profileRule = ""
+            }
+        }
         let howToSpawn: String
         let howToWait: String
         switch provider {
         case .claude:
-            howToSpawn = "Two agent types are yours: `\(workerAgentName)` (edits files, runs commands, verifies) and `\(scoutAgentName)` (read-only research). Spawn them with the Agent tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads."
+            howToSpawn = "Two agent types are yours: `\(workerAgentName)` (edits files, runs commands, verifies) and `\(scoutAgentName)` (read-only research). Spawn them with the Agent tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads.\(profileRule)"
             howToWait = "Launch every head for a job in one message so they run in parallel, in the foreground" + (maxHeads.map { ", and run at most \($0) at once." } ?? ".")
         case .codex:
-            howToSpawn = "Spawn heads with `spawn_agent`: the `worker` agent for anything that edits files or runs commands, the `explorer` agent for read-only research."
+            howToSpawn = "Spawn heads with `spawn_agent`: the `worker` agent for anything that edits files or runs commands, the `explorer` agent for read-only research.\(profileRule)"
             howToWait = "Spawn every head for a job before waiting, so they run in parallel, and collect them with `wait_agent`; never leave a head running when you answer." + (maxHeads.map { " Run at most \($0) at once." } ?? "")
         case .copilot:
-            howToSpawn = "Two agents are yours: `\(workerAgentName)` (edits files, runs commands, verifies) and `\(scoutAgentName)` (read-only research). Start them with the task tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads."
+            howToSpawn = "Two agents are yours: `\(workerAgentName)` (edits files, runs commands, verifies) and `\(scoutAgentName)` (read-only research). Start them with the task tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads.\(profileRule)"
             howToWait = "Start every head for a job at once so they run in parallel" + (maxHeads.map { ", and run at most \($0) at a time." } ?? ".")
         default:
             howToSpawn = ""
@@ -635,7 +695,17 @@ enum HydraPrompts {
             worker["effort"] = .string(effort)
             scout["effort"] = .string(effort)
         }
-        return ["\(workerAgentName)": .object(worker), "\(scoutAgentName)": .object(scout)]
+        var agents: [String: JSONValue] = ["\(workerAgentName)": .object(worker), "\(scoutAgentName)": .object(scout)]
+        // One worker variant per routable profile: the lead routes a task to the profile
+        // by spawning the variant, whose model and effort are the profile's own.
+        for profile in nativeRoutableProfiles(of: launch) {
+            var variant = worker
+            variant["description"] = .string("Hydra head that implements one delegated task, tuned as the '\(profile.name)' profile. Prefer it for work that belongs to '\(profile.name)' over the plain \(workerAgentName).")
+            if let model = profile.model, model != "default" { variant["model"] = .string(model) }
+            if let effort = profile.effort, !effort.isEmpty { variant["effort"] = .string(effort) }
+            agents[workerAgentName(for: profile)] = .object(variant)
+        }
+        return .object(agents)
     }
 
     /// Copilot's `customAgents`: the same two heads, in the CLI's own shape.
@@ -653,14 +723,15 @@ enum HydraPrompts {
             if let effort = launch.workerEffort, !effort.isEmpty { object["reasoningEffort"] = .string(effort) }
             return .object(object)
         }
-        return [
-            agent(
-                name: workerAgentName,
-                display: "Hydra worker",
-                description: "Hydra head that implements one delegated task: edits files, runs commands, verifies. Use when a request splits into independent pieces.",
-                prompt: workerPrompt,
-                tools: nil
-            ),
+        let worker = agent(
+            name: workerAgentName,
+            display: "Hydra worker",
+            description: "Hydra head that implements one delegated task: edits files, runs commands, verifies. Use when a request splits into independent pieces.",
+            prompt: workerPrompt,
+            tools: nil
+        )
+        var agents = [
+            worker,
             // The scout's prompt keeps it read-only; the CLI's tool names are not pinned
             // here, since a name it does not know could refuse the whole session.
             agent(
@@ -671,16 +742,34 @@ enum HydraPrompts {
                 tools: nil
             ),
         ]
+        // One worker variant per routable profile, as on Claude: the lead routes a task
+        // to the profile by starting the variant.
+        for profile in nativeRoutableProfiles(of: launch) {
+            guard case .object(var variant) = worker else { continue }
+            variant["name"] = .string(workerAgentName(for: profile))
+            variant["displayName"] = .string("Hydra worker · \(profile.name)")
+            variant["description"] = .string("Hydra head that implements one delegated task, tuned as the '\(profile.name)' profile. Prefer it for work that belongs to '\(profile.name)' over the plain \(workerAgentName).")
+            if let model = profile.model, model != "auto" { variant["model"] = .string(model) }
+            if let effort = profile.effort, !effort.isEmpty { variant["reasoningEffort"] = .string(effort) }
+            agents.append(.object(variant))
+        }
+        return agents
     }
 
     /// Codex's config overrides for the thread: the heads' model and effort, and how many
-    /// may run at once; uncapped, Codex keeps its own limit.
+    /// may run at once; uncapped, Codex keeps its own limit. With profiles to route to,
+    /// the spawn tool's model and effort knobs are exposed, so the lead can pass the
+    /// profile's own when it spawns the head (the session matches them back).
     static func codexConfig(_ launch: HydraLaunch) -> [String: JSONValue] {
         var agents: [String: JSONValue] = [:]
         if let cap = launch.maxHeads { agents["max_concurrent_threads_per_session"] = .int(cap) }
         if let model = launch.workerModel, !model.isEmpty { agents["default_subagent_model"] = .string(model) }
         if let effort = launch.workerEffort, !effort.isEmpty { agents["default_subagent_reasoning_effort"] = .string(effort) }
-        return ["agents": .object(agents), "features": ["multi_agent": true]]
+        var features: [String: JSONValue] = ["multi_agent": true]
+        if !nativeRoutableProfiles(of: launch).isEmpty {
+            features["multi_agent_v2"] = .object(["expose_spawn_agent_model_overrides": true])
+        }
+        return ["agents": .object(agents), "features": .object(features)]
     }
 
     // MARK: - Droppy-run heads

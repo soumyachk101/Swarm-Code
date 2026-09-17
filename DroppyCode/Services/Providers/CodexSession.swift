@@ -211,7 +211,7 @@ final class CodexSession: ProviderSession {
         if let hydra = configuration.hydra {
             if hydra.runsNatively {
                 params["config"] = .object(HydraPrompts.codexConfig(hydra))
-                params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads, projects: hydra.projects))
+                params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, hydra))
             } else {
                 // Heads on another provider are Droppy-run: the lead asks for them with the
                 // delegation block, and Codex's own agents are switched off for the thread,
@@ -680,10 +680,19 @@ final class CodexSession: ProviderSession {
             // A spawn names the heads it reached; the brief is the best task line when it
             // carries one, and a spawn without one still registers its heads.
             guard item["tool"]?.string == "spawnAgent" else { return }
+            // A spawn made with a profile's own model and effort routes the head to that
+            // profile (the knobs `codexConfig` exposes); exactly one match is
+            // authoritative, none or several leave the head unrouted.
+            let itemModel = item["model"]?.string
+            let itemEffort = item["reasoningEffort"]?.string
+            let routed = configuration.hydra.flatMap { hydra -> String? in
+                let matches = HydraPrompts.nativeRoutableProfiles(of: hydra).filter { $0.model == itemModel && $0.effort == itemEffort }
+                return matches.count == 1 ? matches[0].name : nil
+            }
             let prompt = item["prompt"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             for receiver in (item["receiverThreadIds"]?.array ?? []).compactMap(\.string) {
                 if !headThreads.contains(receiver) { headThreads.insert(receiver) }
-                onEvent?(.agentStarted(AgentSpawn(id: receiver, taskID: nil, toolUseID: item["id"]?.string, description: prompt.isEmpty ? "Head" : TextCleanup.singleLine(prompt, limit: 80), prompt: prompt.nilIfEmpty, model: item["model"]?.string)))
+                onEvent?(.agentStarted(AgentSpawn(id: receiver, taskID: nil, toolUseID: item["id"]?.string, description: prompt.isEmpty ? "Head" : TextCleanup.singleLine(prompt, limit: 80), prompt: prompt.nilIfEmpty, model: item["model"]?.string, profile: routed)))
             }
         case "subAgentActivity":
             guard let agentThread = item["agentThreadId"]?.string else { return }

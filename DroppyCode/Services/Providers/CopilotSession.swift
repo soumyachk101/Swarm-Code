@@ -134,7 +134,7 @@ final class CopilotSession: ProviderSession {
         if let hydra = configuration.hydra {
             if hydra.runsNatively {
                 params["customAgents"] = .array(HydraPrompts.copilotAgents(hydra))
-                params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads, projects: hydra.projects))]
+                params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, hydra))]
             } else {
                 // Heads on another provider are Droppy-run: the lead asks for them with the
                 // delegation block, and no agents of the CLI's own are defined.
@@ -557,7 +557,8 @@ final class CopilotSession: ProviderSession {
                 toolUseID: data["toolCallId"]?.string,
                 description: brief?.description ?? data["agentDisplayName"]?.string ?? data["agentName"]?.string ?? "Subagent",
                 prompt: brief?.prompt,
-                model: data["model"]?.string
+                model: data["model"]?.string,
+                profile: HydraPrompts.profileName(forAgentName: data["agentName"]?.string)
             )))
         case "subagent.completed":
             guard let agentID, configuration.hydra != nil else { break }

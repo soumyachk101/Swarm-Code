@@ -101,7 +101,7 @@ final class ClaudeSession: ProviderSession {
                 // The heads and the lead's brief.
                 arguments += [
                     "--agents", HydraPrompts.claudeAgents(hydra).compactString,
-                    "--append-system-prompt", HydraPrompts.policy(for: .claude, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads, projects: hydra.projects),
+                    "--append-system-prompt", HydraPrompts.policy(for: .claude, hydra),
                 ]
                 if options.contains("--system-prompt-snapshot") { arguments += ["--system-prompt-snapshot", "off"] }
                 if options.contains("--forward-subagent-text") { arguments.append("--forward-subagent-text") }
@@ -427,6 +427,7 @@ final class ClaudeSession: ProviderSession {
             description: message["description"]?.string ?? "Subagent",
             prompt: message["prompt"]?.string,
             model: nil,
+            profile: HydraPrompts.profileName(forAgentName: message["subagent_type"]?.string),
             isBackground: message["is_backgrounded"]?.bool ?? false
         )))
     }
