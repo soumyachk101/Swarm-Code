@@ -25,6 +25,8 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
     var workerEffort: String?
     /// How many heads may work at once; nil puts no cap on them, as with no pair at all.
     var maxHeads: Int?
+    /// The name the user gave the pair, shown wherever the pair is named in place of its models; nil or blank is none.
+    var name: String?
 
     static let maxHeadsRange = 1...8
 
@@ -42,6 +44,7 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
         workerProvider = container.value(.workerProvider, default: nil)
         workerModel = container.value(.workerModel, default: nil)
         workerEffort = container.value(.workerEffort, default: nil)
+        name = container.value(.name, default: nil)
         maxHeads = Self.clampedCap(container.value(.maxHeads, default: nil))
     }
 
@@ -50,6 +53,12 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
 
     /// Whether the heads run on another provider than the lead.
     var sendsHeadsElsewhere: Bool { workerProvider.map { $0 != provider } ?? false }
+
+    /// The user's name for the pair, trimmed, or nil when there is none.
+    var customName: String? {
+        let trimmed = (name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
     /// A cap kept inside the range, or none.
     static func clampedCap(_ cap: Int?) -> Int? {
@@ -372,6 +381,32 @@ struct HydraDelegation: Hashable, Sendable {
     /// project's name or path, or a repository's absolute path); nil keeps it in the
     /// chat's own project.
     var project: String?
+}
+
+/// The stages a Hydra merge walks through, in this order, one dot each on the merging
+/// pill's track. With several projects the merge runs the stages after the first once per
+/// project, so the track starts over with the project's name on the words.
+enum HydraMergeStage: Int, CaseIterable, Sendable {
+    case gathering
+    case committing
+    case describing
+    case pushing
+    case opening
+    case merging
+    case syncing
+
+    /// The stage in words, as the pill and the sidebar show it.
+    var words: String {
+        switch self {
+        case .gathering: "Gathering the team's files"
+        case .committing: "Writing the commit"
+        case .describing: "Writing the commit message"
+        case .pushing: "Pushing the branch"
+        case .opening: "Opening the merge request"
+        case .merging: "Merging"
+        case .syncing: "Bringing the checkout up to date"
+        }
+    }
 }
 
 /// A project the lead may send heads to: its name in the sidebar and its folder.
