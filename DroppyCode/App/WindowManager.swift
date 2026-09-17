@@ -101,7 +101,7 @@ final class WindowManager {
         WindowChrome.configure(window)
 
         let liveResize = WindowLiveResize(window: window)
-        let hosting = WindowHostingView(rootView: AnyView(HostedRoot(model: model, liveResize: liveResize, content: content())))
+        let hosting = FrameHostingView(rootView: AnyView(HostedRoot(model: model, liveResize: liveResize, content: content())))
         hosting.frame = frame
         let container = NSView(frame: frame)
         container.addSubview(hosting)
@@ -147,11 +147,8 @@ private struct HostedRoot<Content: View>: View {
 
     var body: some View {
         content
-            .environment(model)
-            .environment(liveResize)
-            .buttonBorderShape(.capsule)
+            .modifier(HostedEnvironment(model: model, liveResize: liveResize))
             .preferredColorScheme(model.settings.theme.spec.scheme)
-            .modifier(ThemeTint(theme: model.settings.theme))
             .onChange(of: model.settings.theme, initial: true) { _, theme in
                 NSApp.appearance = switch theme.spec.scheme {
                 case nil: nil
@@ -160,6 +157,21 @@ private struct HostedRoot<Content: View>: View {
                 @unknown default: nil
                 }
             }
+    }
+}
+
+/// The environment every hosted view tree starts from: a window's root, and a chat column
+/// hosted on its own inside the main window (see `ThreadColumns`).
+struct HostedEnvironment: ViewModifier {
+    let model: AppModel
+    let liveResize: WindowLiveResize
+
+    func body(content: Content) -> some View {
+        content
+            .environment(model)
+            .environment(liveResize)
+            .buttonBorderShape(.capsule)
+            .modifier(ThemeTint(theme: model.settings.theme))
     }
 }
 
@@ -177,8 +189,9 @@ private struct ThemeTint: ViewModifier {
     }
 }
 
-/// Lets the window frame define the hosting view's size instead of the content hugging it.
-private final class WindowHostingView: NSHostingView<AnyView> {
+/// Lets the frame it is given define the hosting view's size instead of the content
+/// hugging it: a window's content view, or a chat column filling the detail pane.
+final class FrameHostingView: NSHostingView<AnyView> {
     required init(rootView: AnyView) {
         super.init(rootView: rootView)
         sizingOptions = []
@@ -196,4 +209,11 @@ private final class WindowHostingView: NSHostingView<AnyView> {
     /// navigable item, and AppKit asks on every display cycle while content scrolls
     /// under the title bar to work out the window's drag region.
     override var acceptsFirstResponder: Bool { true }
+
+    /// A hidden chat column keeps its buttons' shortcuts to itself: AppKit offers a chord to
+    /// hidden views too, and a Return meant for the shown column's card must not land on
+    /// one behind it.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        !isHidden && super.performKeyEquivalent(with: event)
+    }
 }

@@ -84,6 +84,7 @@ final class AppModel {
             if oldValue != selectedThreadID {
                 if let oldValue { selectionCells[oldValue]?.value = false }
                 if let selectedThreadID { selectionCell(selectedThreadID).value = true }
+                SwitchLatency.noteSwitch(to: selectedThreadID.flatMap(thread)?.title ?? "none")
             }
             if let selectedThreadID {
                 // A helper or head under the selected thread is on screen with it, so
@@ -422,13 +423,19 @@ final class AppModel {
     /// The rows either side of the selection within the thread's project, for the
     /// arrow keys and the next click.
     private func warmNeighbors(of id: UUID?) {
-        guard let id, let thread = thread(id), let project = project(thread.projectID) else { return }
+        warmDocuments(neighbors(of: id))
+    }
+
+    /// The rows either side of a thread within its project: what the arrow keys and the
+    /// next click are most likely to open.
+    func neighbors(of id: UUID?) -> [UUID] {
+        guard let id, let thread = thread(id), let project = project(thread.projectID) else { return [] }
         let order = threads(in: project)
-        guard let index = order.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = order.firstIndex(where: { $0.id == id }) else { return [] }
         var neighbors: [UUID] = []
         if index > 0 { neighbors.append(order[index - 1].id) }
         if index + 1 < order.count { neighbors.append(order[index + 1].id) }
-        warmDocuments(neighbors)
+        return neighbors
     }
 
     /// A thread left alone for ten minutes gives its agent process back, and its history

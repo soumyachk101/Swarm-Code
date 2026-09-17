@@ -12,6 +12,7 @@ struct DroppyCodeApp: App {
         LegacyMigration.run()
         // A frozen main thread gets its stacks written to ~/Library/Logs/Droppy Code.
         HangWatchdog.start()
+        SwitchLatency.start()
     }
 
     var body: some Scene {

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ComposerArea: View {
+    @Environment(\.chatColumnIsShown) private var isColumnShown
     let runtime: ThreadRuntime
     /// The folder the thread works in, for the `@` file index. Read once by the chat and
     /// handed down, so the composer never observes the project itself.
@@ -45,6 +46,7 @@ struct ComposerArea: View {
                     diffPopover.reopen(runtime: runtime)
                 }
                 .onDisappear { diffPopover.close() }
+                .onChange(of: isColumnShown) { _, shown in if !shown { diffPopover.close() } }
             }
         }
         .frame(maxWidth: 820)
@@ -111,6 +113,7 @@ private struct ChangeStatsRefresh: View {
 
 struct ComposerView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.chatColumnIsShown) private var isColumnShown
     /// Plain reference: the pill itself never binds the draft, so a keystroke only
     /// reaches the text column and the send button's draft reader below.
     let runtime: ThreadRuntime
@@ -193,6 +196,11 @@ struct ComposerView: View {
         }
         .onDisappear { controller.hideSuggestions() }
         .onChange(of: runtime.threadID) { _, _ in controller.hideSuggestions() }
+        // The column shown again takes the keyboard back, as it did when it first appeared;
+        // one going behind another drops its list.
+        .onChange(of: isColumnShown) { _, shown in
+            if shown { if takesFocusOnAppear { controller.focus() } } else { controller.hideSuggestions() }
+        }
         .task(id: commandKey) { await loadCommands() }
         .onChange(of: model.providers.commands[commandKey]) { _, _ in
             if controller.hasFocus { cursorMoved(to: controller.cursorLocation) }
