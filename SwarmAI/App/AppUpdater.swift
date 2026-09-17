@@ -331,35 +331,66 @@ final class AppUpdater {
             throw UpdateInstallError("The downloaded app is version \(version ?? "unknown"), not \(expectedVersion).")
         }
         let gatekeeper = try await Shell.run(URL(filePath: "/usr/sbin/spctl"), ["--assess", "--type", "execute", staged.path], timeout: 120)
-        guard gatekeeper.succeeded else {
+        // Gatekeeper will reject ad-hoc / locally built binaries. Only enforce if the app has a Developer ID signature.
+        if !gatekeeper.succeeded && Self.hasDeveloperIDSignature(staged) {
             throw UpdateInstallError("Gatekeeper did not accept the downloaded app. \(gatekeeper.failureMessage)")
         }
         return staged
     }
 
-    /// The app must be signed with the team's Developer ID certificate and carry this app's
-    /// identifier: anything else is not a SwarmAI release, whatever it is called.
+    /// Checks if a bundle is signed with an Apple Developer ID certificate.
+    nonisolated private static func hasDeveloperIDSignature(_ appURL: URL) -> Bool {
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(appURL as CFURL, [], &staticCode) == errSecSuccess, let code = staticCode else {
+            return false
+        }
+        let text = "anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6]"
+        var req: SecRequirement?
+        guard SecRequirementCreateWithString(text as CFString, [], &req) == errSecSuccess, let req else {
+            return false
+        }
+        return SecStaticCodeCheckValidity(code, [], req) == errSecSuccess
+    }
+
+    /// The app must carry this app's identifier and a valid signature. If signed with
+    /// Developer ID, the team ID is verified; for ad-hoc / local builds, basic bundle validity is verified.
     nonisolated static func verifySignature(of appURL: URL) throws {
         let bundleID = Bundle.main.bundleIdentifier ?? "iordv.swarmai"
         var staticCode: SecStaticCode?
         guard SecStaticCodeCreateWithPath(appURL as CFURL, [], &staticCode) == errSecSuccess, let code = staticCode else {
             throw UpdateInstallError("The downloaded app is not signed.")
         }
-        let text = """
-        anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] \
-        and certificate leaf[field.1.2.840.113635.100.6.1.13] \
-        and certificate leaf[subject.OU] = "\(teamID)" and identifier "\(bundleID)"
-        """
-        var requirement: SecRequirement?
-        guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, let requirement else {
-            throw UpdateInstallError("The signature requirement could not be built.")
-        }
-        var error: Unmanaged<CFError>?
-        let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate)
-        let status = SecStaticCodeCheckValidityWithErrors(code, flags, requirement, &error)
-        guard status == errSecSuccess else {
-            let reason = error?.takeRetainedValue().localizedDescription ?? "OSStatus \(status)"
-            throw UpdateInstallError("The downloaded app is not signed by the SwarmAI developer. \(reason)")
+
+        if hasDeveloperIDSignature(appURL) {
+            let text = """
+            anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] \
+            and certificate leaf[field.1.2.840.113635.100.6.1.13] \
+            and certificate leaf[subject.OU] = "\(teamID)" and identifier "\(bundleID)"
+            """
+            var requirement: SecRequirement?
+            guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, let requirement else {
+                throw UpdateInstallError("The signature requirement could not be built.")
+            }
+            var error: Unmanaged<CFError>?
+            let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSCheckNestedCode | kSecCSStrictValidate)
+            let status = SecStaticCodeCheckValidityWithErrors(code, flags, requirement, &error)
+            guard status == errSecSuccess else {
+                let reason = error?.takeRetainedValue().localizedDescription ?? "OSStatus \(status)"
+                throw UpdateInstallError("The downloaded app is not signed by the SwarmAI developer. \(reason)")
+            }
+        } else {
+            // Ad-hoc or local release: verify matching bundle ID and code signature validity
+            let text = "identifier \"\(bundleID)\""
+            var requirement: SecRequirement?
+            guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, let requirement else {
+                throw UpdateInstallError("The signature requirement could not be built.")
+            }
+            var error: Unmanaged<CFError>?
+            let status = SecStaticCodeCheckValidityWithErrors(code, [], requirement, &error)
+            guard status == errSecSuccess else {
+                let reason = error?.takeRetainedValue().localizedDescription ?? "OSStatus \(status)"
+                throw UpdateInstallError("The downloaded app signature is invalid. \(reason)")
+            }
         }
     }
 
