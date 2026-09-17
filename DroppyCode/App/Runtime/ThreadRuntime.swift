@@ -1843,9 +1843,14 @@ final class ThreadRuntime {
         let selectedTurns = selection.map { id in turns.filter { $0.id == id } } ?? turns
         guard !selectedTurns.isEmpty else { return [] }
         let selectedIDs = Set(selectedTurns.map(\.id))
+        // The agent's writes to its own notes and settings, a scratch file in /tmp, a
+        // stray write into a head's copy: none of it is the chat's work, and a memory
+        // note it saved showed on the turn's card as "Edited 1 file" in a chat that had
+        // changed nothing. A file in another sidebar project is work, and stays.
+        let projectRoots = app.projects.map(\.path)
         let edits = entries.flatMap { entry -> [FileEdit] in
             guard let id = entry.turnID, selectedIDs.contains(id), case .tool(let call) = entry.item.content else { return [] }
-            return call.edits
+            return call.edits.filter { Self.isProjectFile($0.path, root: root, projects: projectRoots) }
         }
         // Only the files this chat's turns reported count. A turn without a record (one cut off
         // by a crash) contributes nothing rather than lifting the filter: the snapshot spans the
@@ -1866,6 +1871,12 @@ final class ThreadRuntime {
         }
         cacheDiff(task, selection: selection)
         return await task.value
+    }
+
+    /// Whether a path an agent reported editing lies in the chat's checkout or in another
+    /// sidebar project: the files a turn's card and diff can speak for.
+    private static func isProjectFile(_ path: String, root: String, projects: [String]) -> Bool {
+        TouchedPaths.relative(path, root: root) != nil || projects.contains { TouchedPaths.relative(path, root: $0) != nil }
     }
 
     @concurrent
