@@ -339,6 +339,22 @@ enum MCPCatalog {
             sampleTools: ["create_customer", "list_customers", "create_payment_link", "retrieve_balance"]
         ),
         MCPCatalogEntry(
+            id: "resend",
+            name: "Resend",
+            vendor: "Resend",
+            summary: "Sends email and manages contacts, broadcasts and domains",
+            category: .work,
+            asset: "mcp-resend",
+            colorValue: 0x000000,
+            isMonochrome: true,
+            transport: .http(url: "https://mcp.resend.com/mcp", headers: ["Authorization": "Bearer {key}"]),
+            fields: [
+                MCPField(key: "key", label: "API key", placeholder: "re_…", kind: .secret, help: "resend.com/api-keys")
+            ],
+            docsURL: "https://github.com/resend/resend-mcp",
+            sampleTools: ["send_email", "list_contacts", "create_broadcast", "list_domains"]
+        ),
+        MCPCatalogEntry(
             id: "postgres",
             name: "PostgreSQL",
             vendor: "PostgreSQL",
