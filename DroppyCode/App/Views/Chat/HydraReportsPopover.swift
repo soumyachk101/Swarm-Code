@@ -462,13 +462,14 @@ struct HydraReportsPopover: View {
         VStack(alignment: .leading, spacing: 8) {
             if collapsible {
                 if hasReport(head) {
+                    // No animation, like the diff inspector's file cards: the popover takes
+                    // its height from the content, and an animated toggle feeds it a new
+                    // height every frame, which AppKit animates again on top.
                     Button {
-                        withAnimation(Chrome.panelSlide) {
-                            if expanded.contains(head.name) {
-                                expanded.remove(head.name)
-                            } else {
-                                expanded.insert(head.name)
-                            }
+                        if expanded.contains(head.name) {
+                            expanded.remove(head.name)
+                        } else {
+                            expanded.insert(head.name)
                         }
                     } label: {
                         HStack(alignment: .center, spacing: 6) {
@@ -628,7 +629,9 @@ struct HydraReportsPopover: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.secondaryText)
         } else if let headBlocks = blocks[head.name] {
-            LazyVStack(alignment: .leading, spacing: 8) {
+            // Eager: a lazy stack reports an estimated height until its rows exist, and
+            // the popover would resize a second time once they do.
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(Array(headBlocks.enumerated()), id: \.offset) { _, block in
                     MarkdownBlockView(block: block)
                         .equatable()
