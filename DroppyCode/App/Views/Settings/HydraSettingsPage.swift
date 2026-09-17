@@ -317,9 +317,15 @@ private struct HydraPairIcons: View {
 
 /// The pair's settings: provider, lead model and effort, the heads' provider, model and
 /// effort, and how many heads go out at once. Every choice writes straight to the pair.
+/// The head profiles at the end are the pair's advanced mode: purpose-named overrides
+/// of the shared heads' choices, so an empty list leaves the pair as it always was.
 private struct HydraPairEditor: View {
     @Environment(AppModel.self) private var model
     let pairID: UUID
+
+    /// The profile rows the user has opened; keyed by profile id so a redraw from a
+    /// write (a renamed profile, say) never collapses the row being edited.
+    @State private var expandedProfiles: Set<UUID> = []
 
     var body: some View {
         if let pair = model.settings.hydraPair(pairID) {
@@ -470,7 +476,9 @@ private struct HydraPairEditor: View {
                         )
                     )
                 }
-                ForEach(pair.sendsHeadsElsewhere ? [pair.provider, pair.headsProvider] : [pair.provider], id: \.self) { provider in
+                Divider().padding(.horizontal, 14).padding(.vertical, 6)
+                headProfilesSection(pair: pair, registry: registry)
+                ForEach(Self.catalogProviders(pair), id: \.self) { provider in
                     if registry.models(for: provider).isEmpty {
                         Text(registry.loadingCatalogs.contains(provider) ? "Loading \(provider.displayName)'s models…" : "No models loaded for \(provider.displayName) yet.")
                             .font(.system(size: 11))
@@ -482,9 +490,10 @@ private struct HydraPairEditor: View {
                 Spacer(minLength: 12)
             }
             .padding(.bottom, 4)
-            .task(id: [pair.provider, pair.headsProvider]) {
-                await registry.loadCatalog(pair.provider)
-                await registry.loadCatalog(pair.headsProvider)
+            .task(id: Self.catalogProviders(pair)) {
+                for provider in Self.catalogProviders(pair) {
+                    await registry.loadCatalog(provider)
+                }
             }
         }
     }
@@ -525,5 +534,210 @@ private struct HydraPairEditor: View {
             for effort in option.efforts where !seen.contains(effort) { seen.append(effort) }
         }
         return seen
+    }
+
+    /// The providers whose catalogs the editor shows: the lead's, the heads', and any a
+    /// profile names, each once and in that order, so the pickers and the loading notes
+    /// cover a head routed to another provider.
+    private static func catalogProviders(_ pair: HydraPair) -> [ProviderKind] {
+        var providers = pair.sendsHeadsElsewhere ? [pair.provider, pair.headsProvider] : [pair.provider]
+        for provider in pair.headProfiles.compactMap(\.provider) where !providers.contains(provider) {
+            providers.append(provider)
+        }
+        return providers
+    }
+
+    /// The pair's advanced mode, below its shared heads' choices: purpose-named profiles
+    /// the lead routes a head to ("quick", "deep"). With none, the pair behaves as it
+    /// always did, so the section reads as optional rather than as a missing step.
+    private func headProfilesSection(pair: HydraPair, registry: ProviderRegistry) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Head profiles")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Chrome.primaryText)
+                .padding(.horizontal, 14)
+            Text("Advanced: the lead can send a head out for a purpose by name; that head runs on the profile's own provider, model and effort, inheriting the pair's where a field is unset.")
+                .font(.system(size: 11))
+                .foregroundStyle(Chrome.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 14)
+                .padding(.top, 1)
+                .padding(.bottom, 2)
+            ForEach(Array(pair.headProfiles.enumerated()), id: \.element.id) { index, profile in
+                if index > 0 { Divider().padding(.horizontal, 14) }
+                headProfileRow(profile, pair: pair, registry: registry)
+            }
+            editorRow(pair.headProfiles.isEmpty ? "No profiles yet" : "Another profile",
+                      detail: pair.headProfiles.isEmpty ? "Every head runs on the pair's choices above." : nil) {
+                Button {
+                    let profile = HydraHeadProfile(name: Self.suggestedProfileName(in: pair))
+                    withAnimation(Chrome.panelSlide) {
+                        model.updateHydraPair(pairID) { $0.headProfiles.append(profile) }
+                        // A profile exists to be tuned, so its row opens as it lands.
+                        expandedProfiles.insert(profile.id)
+                    }
+                } label: {
+                    Label("Add profile", systemImage: "plus")
+                }
+                .buttonStyle(.glass)
+            }
+        }
+    }
+
+    /// One profile: its name and what it overrides, opening to its editor on a click, the
+    /// same shape as the pair's own row in the list.
+    private func headProfileRow(_ profile: HydraHeadProfile, pair: HydraPair, registry: ProviderRegistry) -> some View {
+        let isExpanded = expandedProfiles.contains(profile.id)
+        // The provider every picker below filters by: the profile's, or the pair's heads
+        // provider when the profile inherits.
+        let provider = profile.provider ?? pair.headsProvider
+        let options = registry.models(for: provider)
+        let efforts = registry.model(profile.model, for: provider)?.efforts ?? Self.allEfforts(options)
+        return VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Button {
+                    withAnimation(Chrome.panelSlide) {
+                        if isExpanded { expandedProfiles.remove(profile.id) } else { expandedProfiles.insert(profile.id) }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(verbatim: profile.name.isEmpty ? "Unnamed" : profile.name)
+                                .font(.system(size: 13))
+                                .foregroundStyle(profile.name.isEmpty ? Chrome.secondaryText : Chrome.primaryText)
+                            Text(verbatim: profileSummary(profile, pair: pair, registry: registry))
+                                .font(.system(size: 11))
+                                .foregroundStyle(Chrome.secondaryText)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    withAnimation(Chrome.panelSlide) {
+                        model.updateHydraPair(pairID) { $0.headProfiles.removeAll { $0.id == profile.id } }
+                        expandedProfiles.remove(profile.id)
+                    }
+                } label: {
+                    Image(systemName: "minus.circle")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .frame(width: 24, height: 24)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help("Remove this profile")
+                .accessibilityLabel(Text("Remove this profile"))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            if isExpanded {
+                headProfileEditor(profile, provider: provider, options: options, efforts: efforts, registry: registry)
+                    .padding(.bottom, 4)
+            }
+        }
+    }
+
+    /// A profile's fields, each nil reading as "inherit the pair". Provider and model
+    /// changes clear what depended on them, as the pair's own pickers do: a model id or
+    /// effort of the old provider's would name nothing on the new one.
+    private func headProfileEditor(_ profile: HydraHeadProfile, provider: ProviderKind, options: [ModelOption], efforts: [String], registry: ProviderRegistry) -> some View {
+        let providers = ProviderKind.allCases.filter { model.settings.isEnabled($0) && (registry.status($0).isInstalled || $0 == profile.provider) }
+        return VStack(spacing: 0) {
+            editorRow("Name", detail: "The word the lead routes to this profile") {
+                TextField("", text: Binding(
+                    get: { profile.name },
+                    set: { name in updateProfile(profile.id) { $0.name = name } }
+                ), prompt: Text("quick"))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12))
+                    .frame(width: 150)
+            }
+            editorRow("Provider", detail: "Runs this head on another provider than the pair's heads") {
+                GlassPickerButton(
+                    options: [(ProviderKind?.none, "Same as the pair")] + providers.map { (Optional($0), $0.displayName) },
+                    selection: Binding(
+                        get: { profile.provider },
+                        set: { chosen in
+                            updateProfile(profile.id) {
+                                guard $0.provider != chosen else { return }
+                                $0.provider = chosen
+                                $0.model = nil
+                                $0.effort = nil
+                            }
+                            Task { await registry.loadCatalog(chosen ?? provider) }
+                        }
+                    ),
+                    asset: { ($0 ?? provider).iconName }
+                )
+            }
+            editorRow("Model") {
+                GlassPickerButton(
+                    options: [(String?.none, "Pair's model")] + options.map { (Optional($0.id), $0.shortName) },
+                    selection: Binding(
+                        get: { profile.model },
+                        set: { id in
+                            updateProfile(profile.id) {
+                                $0.model = id
+                                if let effort = $0.effort, let option = registry.model(id, for: provider), !option.efforts.contains(effort) {
+                                    $0.effort = nil
+                                }
+                            }
+                        }
+                    ),
+                    maxWidth: 190
+                )
+            }
+            if !efforts.isEmpty {
+                editorRow("Effort") {
+                    effortPicker(
+                        efforts: efforts,
+                        inherit: "Pair's effort",
+                        selection: Binding(
+                            get: { profile.effort },
+                            set: { effort in updateProfile(profile.id) { $0.effort = effort } }
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    /// The row's second line: only the fields the profile sets ("Opus 5 · High effort ·
+    /// on Antigravity"), since unset ones inherit; a profile that sets nothing says so.
+    private func profileSummary(_ profile: HydraHeadProfile, pair: HydraPair, registry: ProviderRegistry) -> String {
+        var parts: [String] = []
+        if let model = profile.model {
+            parts.append(registry.model(model, for: profile.provider ?? pair.headsProvider)?.shortName ?? model)
+        }
+        if let effort = profile.effort { parts.append(ModelOption.effortTitle(effort) + " effort") }
+        if let provider = profile.provider { parts.append("on " + provider.displayName) }
+        return parts.isEmpty ? "Inherits the pair" : parts.joined(separator: " · ")
+    }
+
+    /// Writes one profile's fields through the pair's update, looked up by id: the editor
+    /// redraws from the stored pair on every write, so the value a row was built with
+    /// would go stale mid-edit.
+    private func updateProfile(_ id: UUID, _ change: (inout HydraHeadProfile) -> Void) {
+        model.updateHydraPair(pairID) { pair in
+            guard let index = pair.headProfiles.firstIndex(where: { $0.id == id }) else { return }
+            change(&pair.headProfiles[index])
+        }
+    }
+
+    /// The name a new profile starts with: the first unused of the purpose words, then
+    /// "Profile 1", "Profile 2" and so on.
+    private static func suggestedProfileName(in pair: HydraPair) -> String {
+        let taken = Set(pair.headProfiles.map { $0.name.lowercased() })
+        for name in ["quick", "deep", "visual"] where !taken.contains(name) { return name }
+        var number = 1
+        while taken.contains("profile \(number)") { number += 1 }
+        return "Profile \(number)"
     }
 }

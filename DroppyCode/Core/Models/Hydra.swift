@@ -10,6 +10,31 @@ import SwiftUI
 // heads, say): then they are Droppy-run whatever the lead's provider, and the lead asks for
 // them the way the other providers do.
 
+/// A purpose-tuned head configuration on a pair ("quick", "deep"): the lead routes a
+/// delegation to it by name and that head runs on the profile's model and effort instead
+/// of the pair's shared worker fields. A nil field inherits the pair's: no provider keeps
+/// the head on the pair's heads provider, no model or effort takes the pair's own.
+struct HydraHeadProfile: Codable, Hashable, Identifiable, Sendable {
+    var id: UUID
+    /// The name the lead writes in a delegation's `profile` field; free-form, so the
+    /// name itself carries the purpose ("quick", "visual", "docs").
+    var name: String
+    var provider: ProviderKind?
+    var model: String?
+    var effort: String?
+
+    init(name: String) {
+        id = UUID()
+        self.name = name
+    }
+
+    /// The profile in words for the lead's brief: "deep (claude-opus-5 on Anthropic)".
+    var briefLabel: String {
+        let on = [model, provider?.displayName].compactMap { $0 }.joined(separator: " on ")
+        return on.isEmpty ? name : "\(name) (\(on))"
+    }
+}
+
 /// A lead-and-heads pairing: which model runs the heads when a chat on this provider leads.
 /// `orchestratorModel` nil means any model on the provider; a nil worker field means the
 /// heads inherit the chat's own model or effort. `workerProvider` nil keeps the heads on
@@ -27,12 +52,16 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
     var maxHeads: Int?
     /// The name the user gave the pair, shown wherever the pair is named in place of its models; nil or blank is none.
     var name: String?
+    /// The purpose-tuned heads of the pair's advanced mode; empty, every head runs on the
+    /// shared worker fields above, as before.
+    var headProfiles: [HydraHeadProfile]
 
     static let maxHeadsRange = 1...8
 
     init(provider: ProviderKind) {
         id = UUID()
         self.provider = provider
+        headProfiles = []
     }
 
     init(from decoder: Decoder) throws {
@@ -46,6 +75,13 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
         workerEffort = container.value(.workerEffort, default: nil)
         name = container.value(.name, default: nil)
         maxHeads = Self.clampedCap(container.value(.maxHeads, default: nil))
+        headProfiles = container.value(.headProfiles, default: [])
+    }
+
+    /// The profile a delegation asked for, case-insensitive; nil when the name matches
+    /// none, and the head then runs on the shared worker fields like any unrouted one.
+    func profile(named name: String) -> HydraHeadProfile? {
+        headProfiles.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 
     /// The provider the heads run on: the lead's, unless the pair sends them elsewhere.
@@ -96,6 +132,9 @@ struct HydraLaunch: Hashable, Sendable {
     /// The pair's cap on heads at work at once; nil, with no pair or an uncapped one,
     /// lets as many out as the work asks for.
     var maxHeads: Int?
+    /// The pair's purpose-tuned heads (its advanced mode): a delegation naming one runs
+    /// on that profile's model and effort. Empty, every head takes the worker fields.
+    var headProfiles: [HydraHeadProfile] = []
     /// Whether Droppy-run heads get copies of the checkout of their own.
     var isolatesHeads = true
     /// Whether Droppy Code lands the team's finished work itself (see
@@ -120,6 +159,12 @@ struct HydraLaunch: Hashable, Sendable {
     /// Whether one more head may go out with `running` already at work.
     func hasRoom(running: Int) -> Bool {
         running < (maxHeads ?? Self.uncappedConcurrency)
+    }
+
+    /// The profile a delegation asked for, case-insensitive; nil when the name matches
+    /// none, and the head then runs on the worker fields like any unrouted one.
+    func profile(named name: String) -> HydraHeadProfile? {
+        headProfiles.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
     }
 }
 
@@ -381,6 +426,9 @@ struct HydraDelegation: Hashable, Sendable {
     /// project's name or path, or a repository's absolute path); nil keeps it in the
     /// chat's own project.
     var project: String?
+    /// The head profile the lead routed the task to (`"profile"` in the block); nil runs
+    /// the head on the pair's shared worker model and effort.
+    var profile: String?
 }
 
 /// The stages a Hydra merge walks through, in this order, one dot each on the merging
@@ -665,7 +713,7 @@ enum HydraPrompts {
     /// The standing rules for a lead on a provider that runs no heads of its own: when to
     /// delegate, how, and what the reports mean. An API session keeps this in its system
     /// prompt, once; a CLI session gets it in front of every message.
-    static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, reviewsHeads: Bool = false, heads: String? = nil, projects: [HydraProjectRef] = []) -> String {
+    static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, reviewsHeads: Bool = false, heads: String? = nil, projects: [HydraProjectRef] = [], profiles: [HydraHeadProfile] = []) -> String {
         let whereHeadsWork = isolated
             ? "Each head works in a copy of its project of its own and Droppy Code lands its changes in that project's checkout when it reports"
             : "The heads work in your checkout"
@@ -680,6 +728,10 @@ enum HydraPrompts {
         // Whatever the provider, a head can read, edit and run: on the API providers the
         // app gives it those tools itself, so no head is ever a text-only researcher.
         let whatHeadsCanDo = " Every head, whatever its provider, can read files, edit files and run commands in its copy, with no permission prompts to wait on; brief it to do the work, not just to describe it."
+        // A pair in advanced mode tunes some heads for a purpose: the lead hears which,
+        // and routes a task to one by name. The profile's name is all the lead knows of
+        // the purpose, so the wording keeps the routing on the name's own meaning.
+        let profileRule = profiles.isEmpty ? "" : " Some heads are tuned for a purpose: \(profiles.map(\.briefLabel).joined(separator: ", ")). Route a task to one with \"profile\", as in `{\"task\": \"...\", \"prompt\": \"...\", \"profile\": \"\(profiles[0].name)\"}`; a task that fits none of them goes without a profile and runs on the heads' shared model."
         return """
         [Hydra is on] You lead \(team) ("heads"). Delegate first, work second: anything bigger than a single obvious change to a single file is a job for heads. Audits, reviews, a feature across several files, a refactor, "check everything", research across many files, several tasks in one message: in your first reply, look at the code only long enough to write good briefs, a minute and a handful of files rather than ten, and then send the heads out, all of them in that one block. Never spend minutes reading before you delegate, and never do inline what heads could be doing in parallel. Only a truly single-focus request, one file and one obvious change, is yours to do alone.         Finish your reply with one fenced block
 
@@ -687,7 +739,7 @@ enum HydraPrompts {
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. When a request is yours to do alone, do it and end with no block at all: an empty block sends no heads and is not needed. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. An entry for work in another project carries `"project"` with that project's name or path, as in `{"task": "...", "prompt": "...", "project": "gaze-site"}`. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. Each entry goes out to a head the moment its closing brace streams, before the block is finished, so write the entries in the order the heads should start and complete one entry before beginning the next. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. \(briefRule) \(projectRule(projects)) A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre)\(whatHeadsCanDo) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "") \(reportStyleRule)
+        and stop there: do not wait, poll or verify anything after it. When a request is yours to do alone, do it and end with no block at all: an empty block sends no heads and is not needed. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. An entry for work in another project carries `"project"` with that project's name or path, as in `{"task": "...", "prompt": "...", "project": "gaze-site"}`. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone.\(profileRule) Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. Each entry goes out to a head the moment its closing brace streams, before the block is finished, so write the entries in the order the heads should start and complete one entry before beginning the next. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. \(briefRule) \(projectRule(projects)) A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre)\(whatHeadsCanDo) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "") \(reportStyleRule)
         """
     }
 
@@ -695,7 +747,7 @@ enum HydraPrompts {
     /// providers, and the providers with heads of their own whose pair sends the heads out
     /// on another provider.
     static func fallbackPolicy(_ launch: HydraLaunch) -> String {
-        fallbackPolicy(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, reviewsHeads: launch.reviewsHeads, heads: launch.headsLabel, projects: launch.projects)
+        fallbackPolicy(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, reviewsHeads: launch.reviewsHeads, heads: launch.headsLabel, projects: launch.projects, profiles: launch.headProfiles)
     }
 
     /// In front of the user's own message: the team so far, when there is one.
