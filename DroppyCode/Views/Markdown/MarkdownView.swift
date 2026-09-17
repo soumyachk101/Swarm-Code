@@ -1,6 +1,11 @@
 import AppKit
 import SwiftUI
 
+enum MarkdownSegment: Equatable {
+    case prose([MarkdownBlock])
+    case block(MarkdownBlock)
+}
+
 struct MarkdownView: View, Equatable {
     let text: String
     static let warmCandidateLimit = 96
@@ -9,6 +14,7 @@ struct MarkdownView: View, Equatable {
     /// would otherwise take a cache entry away from a finished message that scrolling back
     /// through the thread will ask for again.
     var isStreaming = false
+    @Environment(\.markdownProseRuns) private var proseRuns
 
     /// Equal text renders equally, so finished replies are skipped entirely while a
     /// new reply streams or the timeline rebuilds around them.
@@ -16,24 +22,62 @@ struct MarkdownView: View, Equatable {
         lhs.text == rhs.text && lhs.isStreaming == rhs.isStreaming
     }
 
+    static func segments(_ blocks: [MarkdownBlock]) -> [MarkdownSegment] {
+        var out: [MarkdownSegment] = []
+        var run: [MarkdownBlock] = []
+        func close() {
+            if !run.isEmpty {
+                out.append(.prose(run))
+                run = []
+            }
+        }
+        for block in blocks {
+            switch block {
+            case .heading, .paragraph, .list, .quote:
+                run.append(block)
+            case .code, .table, .rule:
+                close()
+                out.append(.block(block))
+            }
+        }
+        close()
+        return out
+    }
+
     var body: some View {
         let blocks = Self.blocks(for: text, streaming: isStreaming)
         let last = blocks.count - 1
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
-                MarkdownBlockView(block: block)
-                    .equatable()
-                    // Only the block still being written is streaming; the ones above it are
-                    // settled and cache like any finished text.
-                    .environment(\.markdownStreaming, isStreaming && index == last)
-                    .transition(.softAppear)
+        if !isStreaming && proseRuns {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(Self.segments(blocks).enumerated()), id: \.offset) { _, segment in
+                    switch segment {
+                    case .prose(let run):
+                        ProseRunView(blocks: run)
+                    case .block(let block):
+                        MarkdownBlockView(block: block)
+                            .equatable()
+                    }
+                }
             }
+            .environment(\.markdownVeiled, isStreaming)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
+                    MarkdownBlockView(block: block)
+                        .equatable()
+                        // Only the block still being written is streaming; the ones above it are
+                        // settled and cache like any finished text.
+                        .environment(\.markdownStreaming, isStreaming && index == last)
+                        .transition(.softAppear)
+                }
+            }
+            // Every block of a streaming reply veils what arrives (see `StreamVeil`), not only
+            // the last: a paragraph that just closed keeps dissolving its tail instead of
+            // snapping the moment the next block starts.
+            .environment(\.markdownVeiled, isStreaming)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // Every block of a streaming reply veils what arrives (see `StreamVeil`), not only
-        // the last: a paragraph that just closed keeps dissolving its tail instead of
-        // snapping the moment the next block starts.
-        .environment(\.markdownVeiled, isStreaming)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Parsed blocks by source. Rows are rebuilt as they scroll into view, but a finished
@@ -621,6 +665,10 @@ private struct MarkdownBlockSelectionKey: EnvironmentKey {
     static let defaultValue = true
 }
 
+private struct MarkdownProseRunsKey: EnvironmentKey {
+    static let defaultValue = true
+}
+
 extension EnvironmentValues {
     var markdownPointSize: CGFloat {
         get { self[MarkdownPointSizeKey.self] }
@@ -637,6 +685,10 @@ extension EnvironmentValues {
     var markdownBlockSelection: Bool {
         get { self[MarkdownBlockSelectionKey.self] }
         set { self[MarkdownBlockSelectionKey.self] = newValue }
+    }
+    var markdownProseRuns: Bool {
+        get { self[MarkdownProseRunsKey.self] }
+        set { self[MarkdownProseRunsKey.self] = newValue }
     }
 }
 
@@ -836,7 +888,7 @@ struct InlineText: View {
 
     /// Static so the `.task` above keeps only the paragraph's source and the refresh
     /// binding, never the whole view value (and its styled text) after it goes away.
-    private static func fetchFavicons(source: String, streaming: Bool, revision: Binding<Int>) async {
+    static func fetchFavicons(source: String, streaming: Bool, revision: Binding<Int>) async {
         let hosts = await MainActor.run { RichLink.linkHosts(for: source, streaming: streaming) }
         var changed = false
         for host in hosts where FaviconCache.cached(host: host) == nil {

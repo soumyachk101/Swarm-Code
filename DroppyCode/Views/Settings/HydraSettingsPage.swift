@@ -68,9 +68,9 @@ struct HydraSettingsPage: View {
                     ChromeRowDivider()
                     ChromeRow(
                         title: "Heads' panels",
-                        detail: "Popped out, each head after the first gets a panel of its own beside the chat while there is room, left and right until each side is full; the usage panel keeps its spot."
+                        detail: settings.hydraAutoPopsHeads ? "Each head after the first gets a panel of its own beside the chat while there is room, left and right until each side is full; the usage panel keeps its spot." : "One panel over the chat lists every head."
                     ) {
-                        ChromeVisualPicker(options: [(false, "In the chat"), (true, "Popped out")], selection: $settings.hydraAutoPopsHeads) { popped in
+                        ChromeVisualPicker(options: [(false, "One panel"), (true, "A panel each")], selection: $settings.hydraAutoPopsHeads) { popped in
                             HeadsPlacementPreview(popped: popped)
                         }
                     }
