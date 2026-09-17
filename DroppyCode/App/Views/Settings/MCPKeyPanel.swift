@@ -51,8 +51,11 @@ final class MCPKeyPanel {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
-        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
-        panel.standardWindowButton(.zoomButton)?.isHidden = true
+        // No traffic lights: the panel closes from its own xmark and on Escape, and the
+        // close button sat over the content in a corner that has no title bar to hold it.
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            panel.standardWindowButton(button)?.isHidden = true
+        }
         self.panel = panel
         return panel
     }
