@@ -340,9 +340,10 @@ struct ComposerView: View {
         case .down:
             return recall(older: false)
         case .escape:
-            // Stop first; with nothing running, the panels go the way ⌘J and ⌘D take them.
+            // A running turn is stopped and taken back, its words returning to the box; with
+            // nothing running, the panels go the way ⌘J and ⌘D take them.
             if runtime.isRunning {
-                runtime.interrupt()
+                runtime.takeBackRunningTurn()
             } else if runtime.isTerminalVisible {
                 runtime.isTerminalVisible = false
             } else if runtime.isDiffVisible {
