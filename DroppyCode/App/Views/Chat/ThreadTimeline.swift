@@ -1546,12 +1546,9 @@ enum DisplayBlock: Identifiable, Equatable {
                 runs.append((turnID, index..<(index + 1)))
             }
         }
-        // While a turn runs and no reply has started, the working line ends its block. The
-        // moment the reply it is waiting on arrives, the line goes and the reply takes its
-        // place. A turn that has taken a step keeps its line for as long as it runs, above
-        // whatever streams after the last step: the line is where the turn's steps live
-        // (see `TurnRunningBlock`), and the steps do not leave the box because words follow.
-        let waiting = isRunning && entries.last?.kind != .assistant
+        // An arriving message is not proof of a final answer. Keep the work container
+        // until the turn ends, including before its first tool call and while prose streams.
+        let waiting = isRunning
         var blocks = Array(kept)
         blocks.reserveCapacity(kept.count + runs.count + 3)
         var stableCount = blocks.count
@@ -1562,9 +1559,7 @@ enum DisplayBlock: Identifiable, Equatable {
                 // Thinking lives behind the working line's chevron, never as a row of its own.
                 let rows = entries[run.range].filter { $0.kind != .turnEnd && $0.kind != .reasoning }
                 let summary = meta.summaryByTurn[turnID]
-                let hasSteps = isRunning && isLast && summary == nil
-                    && entries[run.range].contains { $0.kind == .tool && !TimelineGroup.isHead($0) }
-                let showsWorking = isLast && summary == nil && (waiting || hasSteps)
+                let showsWorking = isLast && summary == nil && waiting
                 // Named by the turn and the run's first row: a note filed under no turn
                 // landing mid-turn splits the turn into two runs, and two blocks under one
                 // id left the second, the running tail, undrawn.
@@ -1846,8 +1841,7 @@ struct RowContext: Equatable {
     var workingDirectory: String?
     /// Whether the block's turn can be reverted right now.
     var canRewind: Bool
-    /// Whether the running turn's rows render in arrival order instead of gathering the
-    /// steps before the last tool call into the working line (`chronologicalTimeline`).
+    /// Whether the working line opens with all steps in arrival order (`chronologicalTimeline`).
     var chronological: Bool
 }
 
@@ -1913,17 +1907,9 @@ private struct DisplayBlockView: View, Equatable {
     }
 }
 
-/// A turn while it runs (or one that ended without its marker, the app having quit under
-/// it): its prompt and anything sent to steer it as rows of their own in order, each
-/// arriving like a row of the stack, then the working line, then the reply since its last
-/// step, which streams below the card and which the card takes back when a tool call
-/// follows. The working line carries the turn's work so far, every tool
-/// run and the prose between runs (its summary beside the spinner, the steps behind the
-/// chevron), the same way the folded turn keeps them behind its chevron once it is over
-/// (see `TurnFinishedBlock.Derived`): what follows the last tool call is the answer taking
-/// shape and stays out as rows; what came before it is work, and never sits above the
-/// box made for it. Words that turn out to be narration (a tool call follows them) move
-/// into the line, so the timeline reads the same running and folded.
+/// A running turn keeps every assistant message and tool step in its work container.
+/// Only the finished turn chooses a final answer; predicting one from the last tool call
+/// lets narration escape the card until another call arrives to take it back.
 private struct TurnRunningBlock: View {
     let runtime: ThreadRuntime
     let entries: [TimelineEntry]
@@ -1932,14 +1918,6 @@ private struct TurnRunningBlock: View {
     /// The partition as last built, keyed on the entries' identities: grouping is by kind
     /// only, so it changes when a row comes or goes and never while one streams.
     @State private var groupCache = TurnGroupCache()
-
-    /// The tail's own arrival and departure. It arrives like every other row; when a tool
-    /// call turns it into narration the card above takes the words back, so they leave in
-    /// one short move rather than blinking out.
-    private static let tailTransition: AnyTransition = .asymmetric(
-        insertion: .modifier(active: SoftAppearModifier(isVisible: false), identity: SoftAppearModifier(isVisible: true)).animation(.softAppear),
-        removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .top)).animation(.easeOut(duration: 0.18))
-    )
 
     var body: some View {
         var groups = groupCache.groups(for: entries)
@@ -1950,37 +1928,19 @@ private struct TurnRunningBlock: View {
             heads = groups.removeLast()
         }
         var liveWork: [TimelineEntry] = []
-        // The reply since the last step is the tail: it renders below the working line, so
-        // the card sits above what the agent is saying right now, the way the folded turn
-        // reads. Everything else the fold leaves stays a row above the card.
-        var trail: [TimelineGroup] = []
-        // Chronological on: every group stays a row in arrival order and the working line
-        // carries nothing; off, the steps before the last tool call move into the line.
-        if !context.chronological, showsWorking {
-            // The last tool run, or none: a turn whose first words are still coming has no
-            // run for them to be work of, and with no run the partition was skipped whole,
-            // so those words sat as a row where the working line was about to appear — above
-            // it, and outside the box that takes them back the moment the first call lands.
-            // Through -1 every reply is the tail instead: the words stream below the line
-            // from the first one, the same place the line keeps an answer that turns out to
-            // be an answer.
-            let lastWork = groups.lastIndex(where: { if case .work = $0 { return true } else { return false } }) ?? -1
-            // Everything up to the last tool run is the turn's work: the runs themselves and
-            // the replies between them. The prompt, a steer, a notice or a plan stay rows.
+        do {
+            // Chronological mode changes how the card opens, never where prose belongs.
+            // The prompt, a steer, a notice or a plan stay rows of their own.
             var rows: [TimelineGroup] = []
             rows.reserveCapacity(groups.count)
-            for (index, group) in groups.enumerated() {
+            for group in groups {
                 switch group {
-                case .work(_, let entries, _) where index <= lastWork:
+                case .work(_, let entries, _):
                     liveWork.append(contentsOf: entries)
-                case .single(let entry) where index < lastWork && entry.kind == .assistant:
+                case .single(let entry) where entry.kind == .assistant:
                     liveWork.append(entry)
                 default:
-                    if index > lastWork, case .single(let entry) = group, entry.kind == .assistant {
-                        trail.append(group)
-                    } else {
-                        rows.append(group)
-                    }
+                    rows.append(group)
                 }
             }
             groups = rows
@@ -1998,14 +1958,15 @@ private struct TurnRunningBlock: View {
                     .equatable()
                     .transition(ThreadTimeline.rowTransition)
             }
-            if showsWorking {
-                WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
+            if showsWorking || !liveWork.isEmpty {
+                WorkingBlockView(
+                    runtime: runtime,
+                    liveWork: liveWork,
+                    workingDirectory: context.workingDirectory,
+                    chronological: context.chronological,
+                    earlierEntries: showsWorking ? nil : entries
+                )
                     .transition(ThreadTimeline.rowTransition)
-            }
-            ForEach(trail) { group in
-                TurnRow(group: group, runtime: runtime, context: context)
-                    .equatable()
-                    .transition(Self.tailTransition)
             }
         }
     }
@@ -2093,6 +2054,8 @@ private struct WorkingIndicator: View {
     let turnEntries: [TimelineEntry]
     /// The card with the bar (see `AppSettings.showsWorkingCard`); off, the one-line badge.
     let showsCard: Bool
+    var finishedAt: Date?
+    var chronological = false
     var workingDirectory: String?
     @Environment(\.chatZoom) private var zoom
     @Environment(\.revealTimelineEnd) private var revealBox
@@ -2108,7 +2071,9 @@ private struct WorkingIndicator: View {
     var body: some View {
         let elapsed = now.timeIntervalSince(startedAt)
         let word = WorkingWords.word(seed: seed, elapsedSeconds: Int64(max(0, elapsed)))
-        let label = liveWork.isEmpty ? "\(word)…" : WorkGroupSummary.text(for: liveWork)
+        let isRunning = finishedAt == nil
+        let hasTools = liveWork.contains { $0.kind == .tool }
+        let label = hasTools ? WorkGroupSummary.text(for: liveWork) : (isRunning ? "\(word)…" : "Earlier steps")
         let canExpand = !thinkingSteps.isEmpty || !liveWork.isEmpty
         VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             Button {
@@ -2127,9 +2092,9 @@ private struct WorkingIndicator: View {
             } label: {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        HydraWorkingTitle(text: label, isRunning: true, alignment: .leading)
+                        HydraWorkingTitle(text: label, isRunning: isRunning, alignment: .leading)
                             .frame(maxWidth: showsCard ? .infinity : nil, alignment: .leading)
-                        HydraElapsedTime(startedAt: startedAt, finishedAt: nil, isRunning: true)
+                        HydraElapsedTime(startedAt: startedAt, finishedAt: finishedAt, isRunning: isRunning)
                         // The chevron only once there is something to open: an empty slot
                         // held for it left the time short of the card's edge, as if misaligned.
                         // The card's `canExpand` animation glides the time over when it comes.
@@ -2143,7 +2108,7 @@ private struct WorkingIndicator: View {
                     }
                     // The bar is the card's; the badge is the line above alone, hugging its words.
                     if showsCard {
-                        HydraProgressBar(runtime: runtime, startedAt: startedAt, finishedAt: nil, status: .running, tint: Chrome.accent, entries: turnEntries)
+                        HydraProgressBar(runtime: runtime, startedAt: startedAt, finishedAt: finishedAt, status: isRunning ? .running : .stopped, tint: Chrome.accent, entries: turnEntries)
                     }
                 }
                 // The badge is a pill like the others in the column; the card keeps an even
@@ -2152,10 +2117,6 @@ private struct WorkingIndicator: View {
                 .padding(.trailing, showsCard ? 14 : TimelineMetrics.pillTrailing)
                 .padding(.vertical, showsCard ? 11 : TimelineMetrics.pillVertical)
                 .frame(width: showsCard ? Self.cardWidth : nil)
-                .background {
-                    RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous)
-                        .fill(.quaternary.opacity(0.32))
-                }
                 .contentShape(RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
                 .geometryGroup()
             }
@@ -2182,14 +2143,24 @@ private struct WorkingIndicator: View {
                             .transition(.softAppear)
                     }
                 }
+                .padding(.horizontal, 14)
+                .padding(.bottom, 11)
             }
+        }
+        .background {
+            RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous)
+                .fill(.quaternary.opacity(0.32))
         }
         .animation(Self.change, value: label)
         .animation(Self.change, value: canExpand)
         .font(.chat(.callout, zoom: zoom))
-        .task(id: FrontMonitor.shared.isVisible) {
+        .onChange(of: chronological, initial: true) { _, chronological in
+            isExpanded = chronological
+            showsAllSteps = chronological
+        }
+        .task(id: FrontMonitor.shared.isVisible && isRunning) {
             // The elapsed-time label ticks only while someone can see it.
-            guard FrontMonitor.shared.isVisible else { return }
+            guard FrontMonitor.shared.isVisible, isRunning else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 now = .now
@@ -2265,17 +2236,23 @@ private struct WorkingBlockView: View {
     /// The tool run in progress, shown on the working line instead of as a group.
     let liveWork: [TimelineEntry]
     let workingDirectory: String?
+    var chronological = false
+    /// A previous segment split off by a Hydra note, or a turn without an end marker.
+    /// Its prose still belongs in a card, with no live clock or progress animation.
+    var earlierEntries: [TimelineEntry]?
 
     var body: some View {
-        let turnEntries = Self.turnEntries(of: runtime)
+        let turnEntries = earlierEntries ?? Self.turnEntries(of: runtime)
         WorkingIndicator(
             runtime: runtime,
-            startedAt: runtime.turnStartedAt ?? .now,
+            startedAt: earlierEntries?.first?.item.date ?? runtime.turnStartedAt ?? .now,
             seed: WorkingWords.seed(runtime.threadID.uuidString),
-            thinkingSteps: model.settings.showReasoning ? thinking : [],
+            thinkingSteps: earlierEntries == nil && model.settings.showReasoning ? thinking : [],
             liveWork: liveWork,
             turnEntries: turnEntries,
             showsCard: model.settings.showsWorkingCard,
+            finishedAt: earlierEntries?.last?.item.date,
+            chronological: chronological,
             workingDirectory: workingDirectory
         )
     }
