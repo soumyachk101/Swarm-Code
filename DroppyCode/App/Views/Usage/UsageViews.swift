@@ -42,26 +42,31 @@ struct PlanLimitsView: View {
                 // sits at the foot of the block, small and quiet, with the one tap that fixes
                 // it beside it.
                 if let problem = limits.problem {
-                    HStack(alignment: .center, spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Chrome.warning)
-                        Text(verbatim: problem)
-                            .font(.system(size: 11))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 8)
-                        if !provider.isAPIKeyBased {
-                            Button(model.providers.signingIn == provider ? "Signing in…" : "Sign in again") {
-                                Task { await model.providers.signIn(provider) }
-                            }
-                            .buttonStyle(.glass)
-                            .controlSize(.small)
-                            .disabled(model.providers.signingIn != nil)
+                    if provider.isAPIKeyBased {
+                        HStack(alignment: .center, spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Chrome.warning)
+                            Text(verbatim: problem)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Chrome.secondaryText)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
                         }
+                        .padding(.top, 14)
+                    } else {
+                        HStack(spacing: 8) {
+                            Text(verbatim: "Click here to login again")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Chrome.secondaryText)
+                            Spacer(minLength: 8)
+                            Button("Login") { Workspace.openTerminal(running: provider.loginCommand) }
+                                .buttonStyle(.glass)
+                                .controlSize(.small)
+                        }
+                        .padding(.top, 14)
                     }
-                    .padding(.top, 14)
                 }
             } else if !isLoading {
                 Text(verbatim: "\(provider.displayName) did not report plan limits.")

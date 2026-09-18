@@ -46,6 +46,14 @@ final class ProviderRegistry {
 
     @ObservationIgnored private let settings: any ProviderSettings
     @ObservationIgnored private let cacheKey = "providerModelCatalogs"
+    // When the provider last delivered a list, persisted under `catalogDatesKey`.
+    @ObservationIgnored private let catalogDatesKey = "providerModelCatalogDates"
+    @ObservationIgnored private var catalogFetchedAt: [ProviderKind: Date] = [:]
+
+    /// A list read within this window is served as it is; an older one, or one cached by an
+    /// earlier build that stored no date, is read again on the next ask, so a model the
+    /// account gained on a new plan appears without hunting for the Refresh button.
+    private static let catalogFreshness: TimeInterval = 6 * 3600
     private(set) var planLimits: [ProviderKind: PlanLimits] = [:]
     private(set) var loadingLimits: Set<ProviderKind> = []
     /// The banked reset being spent right now: its credit id, or "codex" for one the app-server listed only by count.
@@ -165,6 +173,13 @@ final class ProviderRegistry {
                 }
             }
         }
+        if !CaptureRun.isEnabled,
+           let data = UserDefaults.standard.data(forKey: catalogDatesKey),
+           let raw = try? JSONDecoder().decode([String: Double].self, from: data) {
+            for (key, seconds) in raw {
+                if let provider = ProviderKind(rawValue: key) { catalogFetchedAt[provider] = Date(timeIntervalSince1970: seconds) }
+            }
+        }
         if Self.isStaleClaudeSeed(catalogs[.claude] ?? []) { catalogs[.claude] = Self.claudeSeed }
         if catalogs[.deepseek]?.isEmpty ?? true { catalogs[.deepseek] = Self.deepseekSeed }
         if catalogs[.meta]?.isEmpty ?? true { catalogs[.meta] = Self.metaSeed }
@@ -281,6 +296,7 @@ final class ProviderRegistry {
         if let result, result.succeeded {
             await refresh(provider)
             refreshPlanLimits(provider, force: true)
+            await loadCatalog(provider, force: true)
             return nil
         }
         let output = result.map { TextCleanup.stripANSI($0.output + $0.errorOutput) } ?? ""
@@ -443,12 +459,13 @@ final class ProviderRegistry {
         // list follows its version. An OpenCode list cached before the probe walked the
         // models for their reasoning levels holds a scale for one model at most, so it is
         // probed again.
-        let seeded = provider == .claude
+        let seeded = provider == .claude || provider == .codex
             || (provider == .copilot && models(for: provider) == [Self.copilotAuto])
             || (provider == .commandcode && models(for: provider) == Self.commandcodeSeed)
             || (provider == .pi && models(for: provider) == Self.piSeed)
             || (provider == .opencode && Self.lacksEffortWalk(models(for: provider)))
-        guard force || seeded || models(for: provider).isEmpty else { return }
+        let stale = catalogFetchedAt[provider].map { Date.now.timeIntervalSince($0) > Self.catalogFreshness } ?? !(models(for: provider).isEmpty)
+        guard force || seeded || stale || models(for: provider).isEmpty else { return }
         loadingCatalogs.insert(provider)
         defer { loadingCatalogs.remove(provider) }
         await LoginEnvironment.load()
@@ -466,6 +483,8 @@ final class ProviderRegistry {
         }
         if let list, !list.isEmpty {
             updateCatalog(list, for: provider)
+            catalogFetchedAt[provider] = .now
+            storeCatalogDates()
             // Only a delivered catalog closes the attempt: a probe that came back with
             // nothing (a cold CLI losing to its handshake timeout, say) is tried again
             // on the next ask rather than leaving the provider empty for the whole run.
@@ -506,7 +525,20 @@ final class ProviderRegistry {
         case .zai: try? await ZaiAPI.listModels(apiKey: apiKey)
         default: nil
         }
-        if let list, !list.isEmpty { updateCatalog(list, for: provider) }
+        if let list, !list.isEmpty {
+            updateCatalog(list, for: provider)
+            catalogFetchedAt[provider] = .now
+            storeCatalogDates()
+        }
+    }
+
+    /// Persists when each provider last delivered a list, so a build that launches later
+    /// can tell a fresh catalog from one cached before the account gained a model.
+    private func storeCatalogDates() {
+        guard !CaptureRun.isEnabled else { return }
+        let raw = Dictionary(catalogFetchedAt.map { ($0.key.rawValue, $0.value.timeIntervalSince1970) }, uniquingKeysWith: { first, _ in first })
+        guard let data = try? JSONEncoder().encode(raw) else { return }
+        UserDefaults.standard.set(data, forKey: catalogDatesKey)
     }
 
     /// Reads the provider's plan limits, at most once a minute after a successful read unless forced.
@@ -738,7 +770,36 @@ final class ProviderRegistry {
             return await CommandCodeAPI.authStatus(executable: executable, environment: environment)
         case .pi:
             return await PiCLI.authStatus(executable: executable, environment: environment)
-        case .opencode, .grok, .deepseek, .meta, .zai:
+        case .opencode:
+            guard let result = try? await Shell.run(executable, ["auth", "list"], environment: environment, timeout: 20) else { return .unknown }
+            let text = TextCleanup.stripANSI(result.output + result.errorOutput)
+            let credentialText = text.components(separatedBy: "\n").prefix { !$0.contains("Environment") }.joined(separator: "\n")
+            let creds = credentialText.components(separatedBy: "\n").compactMap { line -> String? in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard trimmed.hasPrefix("\u{25CF}") else { return nil }
+                return trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+            }
+            if let name = creds.first {
+                var credential = name
+                for suffix in [" api", " oauth"] where credential.lowercased().hasSuffix(suffix) {
+                    credential = String(credential.dropLast(suffix.count))
+                }
+                return .signedIn(credential.isEmpty ? nil : credential)
+            }
+            return result.succeeded ? .signedOut : .unknown
+        case .grok:
+            let url = URL(fileURLWithPath: (LoginEnvironment.homeDirectory as NSString).appendingPathComponent(".grok/auth.json"))
+            guard let data = try? Data(contentsOf: url), let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .unknown }
+            guard !root.isEmpty else { return .signedOut }
+            let entries = root.values.compactMap { $0 as? [String: Any] }
+            if let email = entries.lazy.compactMap({ $0["email"] as? String }).first(where: { !$0.isEmpty }) {
+                return .signedIn(email)
+            }
+            if let name = entries.lazy.compactMap({ $0["first_name"] as? String }).first(where: { !$0.isEmpty }) {
+                return .signedIn(name)
+            }
+            return .signedIn(nil)
+        case .deepseek, .meta, .zai:
             return .unknown
         }
     }

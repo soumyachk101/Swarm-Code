@@ -737,18 +737,13 @@ private struct ProviderSettingsSection: View {
                         }
                     } else if showsSignIn {
                         ChromeRowDivider()
-                        ChromeRow(title: "Sign in", detail: status.auth == .signedOut ? "Run this command in Terminal, or sign in here." : "The app has not read an account yet. Sign in to connect one.") {
-                            HStack(spacing: 8) {
-                                CopyCommandButton(command: provider.loginCommand)
-                                Button {
-                                    Task { await model.providers.signIn(provider) }
-                                } label: {
-                                    Text(verbatim: model.providers.signingIn == provider ? "Signing in…" : "Sign in")
-                                        .frame(height: Chrome.rowButtonLabelHeight)
-                                }
-                                .buttonStyle(.glass)
-                                .disabled(model.providers.signingIn != nil)
+                        ChromeRow(title: "Sign in", detail: "Click here to login again.") {
+                            Button {
+                                Workspace.openTerminal(running: provider.loginCommand)
+                            } label: {
+                                Text(verbatim: "Login").frame(height: Chrome.rowButtonLabelHeight)
                             }
+                            .buttonStyle(.glass)
                         }
                     }
                 }
