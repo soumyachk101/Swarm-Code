@@ -296,13 +296,19 @@ struct SidebarView: View {
         let removeWorktree: Bool
     }
 
-    /// How a row enters and leaves the list. A settled thread's row arrives on the list's
-    /// own motion: its space opens, the rows below make room and the count rolls in one
-    /// pass, so the arrival must not wait out the handover delay that covers a reopen's
+    /// How a row enters and leaves the list. A settled thread's row, the Settled header and
+    /// the gaps ride the list's own motion: they change in the same pass the space opens and
+    /// the count rolls, so none of them waits out the handover delay that covers a reopen's
     /// ghost. Every other row keeps that delay.
     private func rowTransition(_ item: SidebarItem) -> AnyTransition {
-        if case .thread(let thread, _, _, _, _) = item.kind, thread.isSettled { return .opacity }
-        return .sidebarRow
+        switch item.kind {
+        case .thread(let thread, _, _, _, _):
+            return thread.isSettled ? .opacity : .sidebarRow
+        case .settledHeader(_, _), .gap(_):
+            return .opacity
+        default:
+            return .sidebarRow
+        }
     }
 
     @ViewBuilder
@@ -1309,7 +1315,6 @@ private struct SidebarHelperRow: View, Equatable {
         // A helper goes out of sight the moment its parent's ghost takes off, so it never
         // lingers under the rows closing up.
         let isHidden = RowGlideAnimator.shared.isHiding(thread.parentThreadID ?? thread.id)
-        let isLeaving = RowGlideAnimator.shared.isLeaving(thread.parentThreadID ?? thread.id)
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         HStack(spacing: 0) {
             HelperConnector(endsHere: isLast, action: onFold)
@@ -1372,11 +1377,7 @@ private struct SidebarHelperRow: View, Equatable {
             }
             .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
         }
-        // A helper goes out of sight the moment its parent's ghost takes off, so it never
-        // lingers under the rows closing up; on a settle it fades out with its parent's row.
-        .opacity(isHidden || isLeaving ? 0 : 1)
-        .scaleEffect(isLeaving ? SidebarThreadRow.leaveScale : 1)
-        .animation(isLeaving ? SidebarThreadRow.leave : nil, value: isLeaving)
+        .opacity(isHidden ? 0 : 1)
     }
 
     /// The ellipsis popover's items. Kept on the instance: a popover is not an AppKit menu.
@@ -1410,7 +1411,6 @@ private struct HeadCardsRow: View {
 
     var body: some View {
         let heads = SidebarView.orderedHeads(headSnapshots.map { model.thread($0.id) ?? $0 })
-        let isLeaving = RowGlideAnimator.shared.isLeaving(parentSnapshot.id)
         let capped = heads.count > 12
         let visible = showsAllHeads ? heads : Array(heads.prefix(12))
         // The glyphs' room: the row's width less the connector's column and the card's
@@ -1509,9 +1509,7 @@ private struct HeadCardsRow: View {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
         // A helper goes out of sight the moment its parent's ghost takes off, so it never
         // lingers under the rows closing up.
-        .opacity((RowGlideAnimator.shared.isHiding(parentSnapshot.id) || isLeaving) ? 0 : 1)
-        .scaleEffect(isLeaving ? SidebarThreadRow.leaveScale : 1)
-        .animation(isLeaving ? SidebarThreadRow.leave : nil, value: isLeaving)
+        .opacity(RowGlideAnimator.shared.isHiding(parentSnapshot.id) ? 0 : 1)
         .animation(Chrome.panelSlide, value: heads.map(\.id))
     }
 
@@ -1552,7 +1550,6 @@ private struct HelperStubRow: View {
         // A helper goes out of sight the moment its parent's ghost takes off, so it never
         // lingers under the rows closing up.
         let isHidden = RowGlideAnimator.shared.isHiding(parentSnapshot.id)
-        let isLeaving = RowGlideAnimator.shared.isLeaving(parentSnapshot.id)
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         Button(action: action) {
             HStack(spacing: 0) {
@@ -1587,11 +1584,7 @@ private struct HelperStubRow: View {
         }
         .help(count == 1 ? "Show the \(noun)" : "Show \(count) \(noun)s")
         .accessibilityLabel(Text(count == 1 ? "1 folded \(noun)" : "\(count) folded \(noun)s"))
-        // A helper goes out of sight the moment its parent's ghost takes off, so it never
-        // lingers under the rows closing up; on a settle it fades out with its parent's row.
-        .opacity(isHidden || isLeaving ? 0 : 1)
-        .scaleEffect(isLeaving ? SidebarThreadRow.leaveScale : 1)
-        .animation(isLeaving ? SidebarThreadRow.leave : nil, value: isLeaving)
+        .opacity(isHidden ? 0 : 1)
     }
 }
 
@@ -1689,9 +1682,6 @@ private struct SidebarThreadRow: View, Equatable {
     @State private var isMenuPresented = false
     /// The check was just clicked: it pops green as the row takes off.
     @State private var isSettling = false
-    /// The row is on its way out after a settle: it fades and shrinks in place a beat after
-    /// the check pops, and the list closes up once it is gone (see `settle`).
-    @State private var isLeaving = false
     @State private var windowFrame = FrameHolder()
 
     var body: some View {
@@ -1815,11 +1805,6 @@ private struct SidebarThreadRow: View, Equatable {
         // showing eases in over the 0.12 s handover window in which the ghost still covers
         // the row (see `RowGlideAnimator`).
         .animation(isHidden ? nil : .easeOut(duration: 0.12), value: isHidden)
-        // A settling row leaves in place: a short fade with a slight shrink, so it is gone
-        // before the rows below close up over its space.
-        .opacity(isLeaving ? 0 : 1)
-        .scaleEffect(isLeaving ? Self.leaveScale : 1)
-        .animation(Self.leave, value: isLeaving)
         // Lifted: a touch larger with a shadow, over an opaque fill so the rows sliding
         // underneath never show through. The queue's rows lift the same way.
         .background {
@@ -1894,36 +1879,14 @@ private struct SidebarThreadRow: View, Equatable {
 
     // MARK: Settling
 
-    /// The row's exit on a settle: a quick ease-out, a beat after the check's pop so the
-    /// pop reads first. Reduce Motion keeps the fade and drops the shrink.
-    fileprivate static let leaveDelay: TimeInterval = 0.06
-    fileprivate static let leaveDuration: TimeInterval = 0.16
-    fileprivate static var leave: Animation { .easeOut(duration: leaveDuration).delay(leaveDelay) }
-    fileprivate static var leaveScale: CGFloat { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0.97 }
-
-    /// The check pops green and the note sounds on the click; the row fades and shrinks
-    /// away in place right behind the pop, and the thread settles once it is gone, so the
-    /// rows below close up over an empty space with the list's own motion. Nothing flies:
-    /// the row never chases a landing frame, so the exit is the same every time, wherever
-    /// the settled rows are (folded away, or below the fold of the list).
+    /// The row's exit on a settle: the check pops and the thread changes in the same pass, so
+    /// the space closes, the rows below make room and the Settled header's count rolls as one
+    /// motion. The row itself leaves on the list's removal fade (see `AnyTransition.sidebarRow`).
     private func settle() {
         guard !isSettling, !thread.isSettled else { return }
         if model.settings.settleSound { SettleChime.play() }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.45)) { isSettling = true }
-        isLeaving = true
-        let id = thread.id
-        let model = model
-        RowGlideAnimator.shared.beginLeaving(id)
-        // The thread changes once the row is out of sight; the list's removal fade then
-        // takes an already invisible row, and only the closing up shows.
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(Self.leaveDelay + Self.leaveDuration))
-            withAnimation(Chrome.panelSlide) { model.settle(id, sounds: false) }
-            // The thread's rows are off the list by now: clearing the flag lets them
-            // show again if the thread is reopened.
-            try? await Task.sleep(for: .seconds(0.5))
-            RowGlideAnimator.shared.endLeaving(id)
-        }
+        withAnimation(Chrome.panelSlide) { model.settle(thread.id, sounds: false) }
     }
 
     private func reopen() {
@@ -2376,15 +2339,15 @@ private struct SettledHeader: View {
                     .animation(Chrome.panelSlide, value: collapsed)
                 Text(verbatim: "Settled")
                     .font(.system(size: 12, weight: .semibold))
-                // Bound straight to the list's count: it changes in the pass that opens the
-                // settled row's space, so the roll runs on that same transaction as the list.
+                // Bound straight to the list's count and carrying no animation of its own: the
+                // roll rides the same transaction the thread's change was committed in, so the
+                // number and the rows move on one curve.
                 Text(verbatim: "\(count)")
                     .font(.system(size: 12))
                     .monospacedDigit()
                     .opacity(0.8)
                     .fixedSize()
                     .contentTransition(.numericText(value: Double(count)))
-                    .animation(Chrome.panelSlide, value: count)
                 Spacer(minLength: 4)
             }
             .foregroundStyle(Chrome.secondaryText)
