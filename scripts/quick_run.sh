@@ -24,8 +24,8 @@ step() { printf '\n==> %s\n' "$1"; }
 
 step "Building $APP_NAME (Debug)"
 xcodebuild \
-  -project SwarmAI.xcodeproj \
-  -scheme SwarmAI \
+  -project SwarmCode.xcodeproj \
+  -scheme SwarmCode \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED" \

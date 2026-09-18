@@ -68,9 +68,9 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 | `SwarmCode/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
 | `SwarmCode/Support` | Process I/O, JSON-RPC and the login shell environment |
 | `website` | The marketing site, a static page published by Netlify (`netlify.toml`) |
-| `SwarmAI-Release` | Release notes for each version |
-| `SwarmAI_tauri` | Tauri-based cross-platform desktop port (Rust + Svelte 5) |
-| `SwarmAI_Mobile` | Mobile frontend (Svelte 5 + Tauri) |
+| `SwarmCode-Release` | Release notes for each version |
+| `SwarmCode_tauri` | Tauri-based cross-platform desktop port (Rust + Svelte 5) |
+| `SwarmCode_Mobile` | Mobile frontend (Svelte 5 + Tauri) |
 
 ## Made by Soumya Chakraborty
 

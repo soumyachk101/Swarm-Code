@@ -1,4 +1,4 @@
-name: SwarmAI
+name: SwarmCode
 options:
   bundleIdPrefix: iordv
   deploymentTarget:
@@ -19,7 +19,7 @@ settings:
     DEVELOPMENT_TEAM: NARHG44L48
     MACOSX_DEPLOYMENT_TARGET: "26.0"
 targets:
-  SwarmAI:
+  SwarmCode:
     type: application
     platform: macOS
     sources:
@@ -38,7 +38,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: "Swarm Code"
-        PRODUCT_MODULE_NAME: SwarmAI
+        PRODUCT_MODULE_NAME: SwarmCode
         PRODUCT_BUNDLE_IDENTIFIER: iordv.swarmai
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: "Swarm Code"

@@ -41,8 +41,8 @@ step "Archiving $APP_NAME $VERSION"
 rm -rf "$BUILD"
 mkdir -p "$BUILD"
 if ! xcodebuild archive \
-  -project SwarmAI.xcodeproj \
-  -scheme SwarmAI \
+  -project SwarmCode.xcodeproj \
+  -scheme SwarmCode \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -archivePath "$ARCHIVE" \

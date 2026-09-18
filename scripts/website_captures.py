@@ -59,10 +59,9 @@ def step(title):
 
 
 def build():
-    step("Building SwarmAI (Debug)")
-    subprocess.run(["xcodegen", "generate", "--quiet"], cwd=ROOT, check=True)
+    step("Building Swarm Code (Debug)")
     result = subprocess.run([
-        "xcodebuild", "-project", "SwarmAI.xcodeproj", "-scheme", "SwarmAI", "-configuration", "Debug",
+        "xcodebuild", "-project", "SwarmCode.xcodeproj", "-scheme", "SwarmCode", "-configuration", "Debug",
         "-destination", "platform=macOS", "-derivedDataPath", str(DERIVED), "-skipPackagePluginValidation", "build",
     ], cwd=ROOT, capture_output=True, text=True)
     if result.returncode != 0:
