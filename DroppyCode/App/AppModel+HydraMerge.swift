@@ -27,6 +27,26 @@ private enum HydraProjectMerge {
 extension AppModel {
     typealias HydraWork = (paths: [String], turnIDs: [UUID], headIDs: [UUID], outside: [String], heads: [HydraMergeHead])
 
+    /// Whether any chat's team work is on its way to the remote right now.
+    var isAnyHydraMergeRunning: Bool { liveRuntimes.contains { $0.isHydraMerging } }
+
+    /// Merges the last run left unfinished: a lead chat with the auto-merge on, no turn
+    /// running, no head still out, and finished turns whose work never went out. The
+    /// merge itself finds the files and lets a job that changed nothing be.
+    func resumeHydraMerges() async {
+        guard settings.hydraAutoMerge else { return }
+        let cutoff = Date.now.addingTimeInterval(-3 * 24 * 3600)
+        let leads = threads.filter { !$0.isArchived && hydraIsOn($0) && $0.updatedAt > cutoff }
+        for lead in leads {
+            let runtime = self.runtime(for: lead.id)
+            await runtime.ensureLoaded()
+            guard runtime.phase == .idle, !runtime.isHydraMerging, runningHydraHeads(of: lead.id) == 0 else { continue }
+            let finished = runtime.hydraUnmergedTurns.filter { $0.status == .completed }
+            guard !finished.isEmpty, runtime.turns.last?.status == .completed else { continue }
+            await autoMergeHydraWork(of: lead.id)
+        }
+    }
+
     /// Lands a lead's finished work, when the setting says so. Runs once per finished job;
     /// what happened lands in the lead's timeline as a note from Hydra.
     func autoMergeHydraWork(of leadID: UUID) async {

@@ -1211,7 +1211,7 @@ final class ThreadRuntime {
             // the note on its team in front of a message; every other CLI gets the policy
             // in front of every message, having nowhere else to keep it.
             if let launch = app.hydraLaunch(for: thread) {
-                let merge = launch.autoMerges ? HydraPrompts.mergeStatus(merges: hydraMerges, unmergedFiles: hydraUnmergedFileCount) : nil
+                let merge = launch.autoMerges ? HydraPrompts.mergeStatus(merges: hydraMerges, unmergedFiles: app.hydraUnmergedFileCount(of: threadID)) : nil
                 if !launch.runsNatively {
                     let team = HydraPrompts.teamStatus(app.hydraTeam(of: threadID).compactMap(\.hydra))
                     let canDelegate = hydraDelegationRounds < HydraPrompts.maxDelegationRounds
