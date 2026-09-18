@@ -43,6 +43,7 @@ struct SessionConfiguration: Sendable {
     /// The thread is a Hydra head that Droppy Code runs: the session paces it, so a head
     /// that keeps reading without ever changing anything is told to act.
     var isHydraHead = false
+    var antiSlopEnabled = true
 }
 
 /// One exchange of a conversation, for replaying it into a session that starts over.

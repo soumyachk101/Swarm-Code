@@ -131,16 +131,29 @@ final class CopilotSession: ProviderSession {
         ]
         if let model, !model.isEmpty { params["model"] = .string(model) }
         if let effort, !effort.isEmpty { params["reasoningEffort"] = .string(effort) }
+        // The native or fallback Hydra policy, when Hydra is on: the system message below
+        // is assembled fresh, once, with the anti-slop guidance alongside it.
+        var hydraPolicy: String?
         if let hydra = configuration.hydra {
             if hydra.runsNatively {
                 params["customAgents"] = .array(HydraPrompts.copilotAgents(hydra))
-                params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, hydra))]
+                hydraPolicy = HydraPrompts.policy(for: .copilot, hydra)
             } else {
                 // Heads on another provider are Droppy-run: the lead asks for them with the
                 // delegation block, and no agents of the CLI's own are defined.
-                params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.fallbackPolicy(hydra))]
+                hydraPolicy = HydraPrompts.fallbackPolicy(hydra)
             }
         }
+        // Exactly one appended system message for every session, Hydra or not. The off
+        // notice goes out too, so a resumed thread cannot keep earlier guidance alive.
+        params["systemMessage"] = [
+            "mode": "append",
+            "content": .string(
+                [hydraPolicy, AntiSlopPolicy.instructions(enabled: configuration.antiSlopEnabled)]
+                    .compactMap { $0 }
+                    .joined(separator: "\n\n")
+            ),
+        ]
         return params
     }
 

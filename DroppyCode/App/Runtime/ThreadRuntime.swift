@@ -181,6 +181,10 @@ final class ThreadRuntime {
         }
     }
     private(set) var usage: ContextUsage?
+    /// Forwarded context from another thread, kept with the thread's history rather than
+    /// as a message: the source's prompt goes out ahead of the first ordinary message
+    /// (see `startTurn`), and never becomes part of the user's own message or draft.
+    private(set) var continuation: ThreadContinuation?
     private(set) var phase: RuntimePhase = .idle
     private(set) var isReverting = false
     private(set) var approvals: [ApprovalRequest] = []
@@ -419,6 +423,16 @@ final class ThreadRuntime {
     @ObservationIgnored private var unsentSessionID: String?
     @ObservationIgnored private var lastFlushAt = ContinuousClock.now - .seconds(1)
     @ObservationIgnored private var sessionSignature: SessionSignature?
+    /// Whether the anti-slop policy has already gone out as a fallback prefix on this
+    /// session. The providers that cannot keep it in a system prompt get it once, with
+    /// the first turn that carries text; a restarted, retried or explicitly compacted
+    /// session takes it again (see `releaseSession`, `compact`).
+    @ObservationIgnored private var antiSlopFallbackSent = false
+    /// Whether the forwarded continuation has already gone out as a prefix on this
+    /// session. Delivered once, with the first ordinary message that goes through the
+    /// session; a restarted, retried or explicitly compacted session takes it again
+    /// (see `releaseSession`, `compact`).
+    @ObservationIgnored private var continuationSent = false
     /// Which session the runtime is listening to. Every session made carries the count it
     /// was made under, and its events are dropped once the count has moved on: a CLI that
     /// closes long after it was let go used to end the turn that replaced it, take down
@@ -500,6 +514,9 @@ final class ThreadRuntime {
         /// Providers that run heads natively define them at launch, so the team restarts
         /// the session when Hydra is switched or its pair changes.
         var hydra: HydraLaunch?
+        /// The anti-slop policy travels with the session, so flipping the setting
+        /// restarts it and the policy in force is the one the session was made with.
+        var antiSlopEnabled: Bool
     }
 
     enum DeltaKind {
@@ -534,6 +551,7 @@ final class ThreadRuntime {
     private func install(_ document: ThreadDocument) {
         turns = document.turns + turns
         usage = usage ?? document.usage
+        continuation = document.continuation ?? continuation
         followUps = document.followUps.filter { !$0.isEmpty } + followUps
         hydraMerges = document.hydraMerges + hydraMerges
         // Thinking with no text is nothing to show or keep: Claude Code redacts its
@@ -604,6 +622,18 @@ final class ThreadRuntime {
     /// Anything that continues the history (a new turn) waits for it first.
     func ensureLoaded() async {
         if let historyLoad { await historyLoad.value }
+    }
+
+    /// Installs context only while the destination has no conversation of its own.
+    func installContinuation(_ value: ThreadContinuation) async -> Bool {
+        await ensureLoaded()
+        guard let thread, turns.isEmpty, entries.isEmpty, thread.providerSessionID == nil else { return false }
+        // Selecting the new row can warm a session before the snapshot is installed.
+        releaseSession(stop: true)
+        continuation = value
+        saveRevision += 1
+        saveNow()
+        return true
     }
 
     var isRunning: Bool { phase != .idle }
@@ -1260,6 +1290,28 @@ final class ThreadRuntime {
                     prompt = HydraPrompts.delegationRequest(launch) + prompt
                 }
             }
+            // Leave slash commands at the start of the input; deliver guidance with the next ordinary message.
+            var injectedAntiSlopPolicy = false
+            let antiSlopEpoch = sessionEpoch
+            if !Self.keepsHydraPolicyInSystemPrompt(thread.provider),
+               SlashCommand.name(in: text) == nil,
+               !antiSlopFallbackSent {
+                let instructions = AntiSlopPolicy.instructions(enabled: sessionSignature?.antiSlopEnabled ?? app.settings.antiSlopEnabled)
+                if !instructions.isEmpty {
+                    prompt = instructions + "\n\n" + prompt
+                    injectedAntiSlopPolicy = true
+                }
+            }
+            // Forwarded context from the source thread precedes the first ordinary
+            // message, after the prompt the user's own words built. A slash command
+            // consumes no ordinary prompt, so it neither carries the snapshot nor
+            // spends the one delivery.
+            var injectedContinuation = false
+            let continuationEpoch = sessionEpoch
+            if let continuation, !continuationSent, SlashCommand.name(in: text) == nil {
+                prompt = continuation.prompt + "\n\n" + prompt
+                injectedContinuation = true
+            }
             phase = .running
             try await session.send(TurnInput(
                 text: prompt,
@@ -1273,6 +1325,13 @@ final class ThreadRuntime {
                 isFinalReport: isFinalReport,
                 command: command
             ))
+            // Failed sends and replaced sessions must leave delivery pending.
+            if injectedAntiSlopPolicy, sessionEpoch == antiSlopEpoch {
+                antiSlopFallbackSent = true
+            }
+            if injectedContinuation, sessionEpoch == continuationEpoch {
+                continuationSent = true
+            }
             // The session has a conversation the provider can resume from here on.
             if let unsentSessionID {
                 self.unsentSessionID = nil
@@ -1357,7 +1416,8 @@ final class ThreadRuntime {
             launchFast: thread.provider == .claude ? thread.fastMode : nil,
             launchModel: thread.provider == .antigravity ? thread.model : nil,
             launchInteraction: thread.provider == .antigravity ? thread.interactionMode : nil,
-            hydra: hydra
+            hydra: hydra,
+            antiSlopEnabled: app.settings.antiSlopEnabled
         )
         if let session, session.isRunning, sessionSignature == signature { return session }
         // A message sent right after launch waits for the login shell, where a CLI installed
@@ -1387,7 +1447,8 @@ final class ThreadRuntime {
                     apiKey: app.settings.apiKey(for: thread.provider),
                     hydra: hydra,
                     transcript: apiTranscript(),
-                    isHydraHead: thread.hydra?.kind == .droppy
+                    isHydraHead: thread.hydra?.kind == .droppy,
+                    antiSlopEnabled: signature.antiSlopEnabled
                 )
                 let created: any ProviderSession = switch thread.provider {
                 case .deepseek: DeepSeekSession(configuration: configuration)
@@ -1446,7 +1507,8 @@ final class ThreadRuntime {
                 fastMode: thread.fastMode,
                 runtimeMode: thread.runtimeMode,
                 interactionMode: thread.interactionMode,
-                hydra: hydra
+                hydra: hydra,
+                antiSlopEnabled: signature.antiSlopEnabled
             )
             let created: any ProviderSession = switch thread.provider {
             case .codex: CodexSession(configuration: configuration)
@@ -1647,6 +1709,11 @@ final class ThreadRuntime {
         Task {
             do {
                 try await session.compact()
+                // Compaction replaces the session's history with a summary, and the
+                // fallback prefix went with it: the next turn carries the policy again,
+                // and the forwarded context along with it.
+                antiSlopFallbackSent = false
+                continuationSent = false
             } catch {
                 appendNotice(.warning, error.localizedDescription)
             }
@@ -1976,6 +2043,12 @@ final class ThreadRuntime {
         sessionEpoch += 1
         sessionSignature = nil
         unsentSessionID = nil
+        // A new session has a new history: whatever the fallback prefix did in the old
+        // one, it has to go out again, and a forwarded context needs a new session to
+        // land in. Reset before any early return, so a session that was never made still
+        // leaves the next one to deliver both.
+        antiSlopFallbackSent = false
+        continuationSent = false
         guard let old = session else { return }
         session = nil
         if stop { old.stop() }
@@ -3460,6 +3533,7 @@ final class ThreadRuntime {
         document.items = entries.map(\.item)
         document.turns = turns
         document.usage = usage
+        document.continuation = continuation
         document.followUps = followUps
         document.hydraMerges = hydraMerges
         return document

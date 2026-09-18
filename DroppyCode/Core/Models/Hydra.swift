@@ -156,6 +156,8 @@ struct HydraLaunch: Hashable, Sendable {
     /// The projects in the sidebar, the chat's own first: the lead may send a head to any
     /// of them by name, and its work lands and merges there.
     var projects: [HydraProjectRef] = []
+    /// Whether the providers' native head definitions carry the anti-slop instructions.
+    var antiSlopEnabled = true
 
     /// How many Droppy-run heads may work at once for a pair with no cap of its own. The
     /// tasks past it wait their turn (`ThreadRuntime.spawnWaitingHeads`) and go out as
@@ -585,17 +587,17 @@ enum HydraPrompts {
     - If something blocks you, stop and say so instead of guessing or working around it.
     """
 
-    private static let howToReport = "Reply with a short report the lead can act on: what you did, the files you changed, how you checked it, and anything the lead must know. No preamble, no logs. Report within one reply; a head that cannot finish says what is done and what is not, instead of continuing to think."
+    private static let howToReport = "Report the result, changed files and material blockers once. No preamble or logs. State unfinished work plainly. The lead handles validation."
 
     /// What a lead is told about the shape of a brief: numbered mechanical steps with the
     /// file, the line, the symbol and the exact change, nothing left open. A brief that
     /// offers alternatives or asks the head to read and reason first leaves a head on a
     /// slow model thinking for minutes between tool calls, and some never make an edit.
-    private static let briefRule = "A brief is a numbered list of mechanical steps a head can start on at once. Each step names the file and a line anchor, the symbol, and the exact change: the code shape, the new name, the value. Never a question, never two alternatives, never verify by reasoning or read the file fully: a head spends minutes weighing what a brief leaves open, and some never make an edit. When you have not decided something, decide it before you write the brief, or keep that part for yourself. A head should be able to make its first edit within its first few tool calls."
+    private static let briefRule = "Write each brief as numbered, executable steps naming the file, symbol or line anchor, and exact change. Resolve design choices first; ask no questions and offer no alternatives. Give enough context to begin editing within a few tool calls."
 
     /// A lead may not put a check in a brief: every check is the lead's own. The rule
     /// says so in words the lead cannot mistake for its own.
-    private static let verificationRule = "A brief never asks for a build, a test, a lint, a type check or any other check of the work, in any wording: you run every check yourself, in this chat's checkout, once the heads are back. Never write 'check that it builds', 'run the tests', 'prove it compiles' or 'make sure nothing else broke' in a brief, and never ask a head to report that something passed."
+    private static let verificationRule = "Heads edit or research and report; they never build, test, lint or verify. Do not assign checks or request pass reports. Run required validation yourself in the checkout after the heads return."
 
     /// Where heads work and where their work lands: this chat's project unless an entry
     /// names another, any project in the sidebar or any repository on the Mac, with the
@@ -611,17 +613,17 @@ enum HydraPrompts {
     /// What a lead is told when the setting has Droppy Code land the work: the merge is
     /// the app's, not the lead's, whatever else it has been told about merging, and asking
     /// for one is a job it finishes by replying.
-    private static let autoMergeRule = "Droppy Code merges your finished work itself: the moment you answer and every head is back, the files the team changed go out as a merge request on a branch of their own, it is merged, and the checkout is brought up to date. So never commit, push, make a branch, or open or merge a merge request yourself, and never send out a head to, whatever the project's guidelines or the user's standing instructions say about merging. Every message from the user opens with a [Hydra] note that carries the merge state: what already merged (with its merge request link), how many files are still unmerged, or why the last merge failed. When the user asks you to merge, or asks whether the work is done or merged, answer from that note and nothing else: if it says the work already went out, say so with the merge request link and stop; if it says files are still unmerged, say they land by themselves the moment you finish this answer, and stop; if it says the last merge failed or left files outside every project, repeat the reason and what the user must do about it. Never say a merge is coming when the note says nothing is pending, and never claim the work merged when the note does not say so."
+    private static let autoMergeRule = "Droppy Code handles branches, commits and merge requests after all heads return and you finish. Never run or delegate those operations. For merge/status questions, use only the current [Hydra] note: if merged, give its link; if files remain, say they land when your answer ends; if merging failed or files are outside every project, give the stated reason and required user action. If nothing is pending, promise no merge. Never claim a merge without the note confirming it."
 
     /// What a lead is told when the setting has it check the heads' work: a quick read of
     /// every file a report names, with the fixes made by the lead itself, so the check
     /// never turns into another round of heads checking heads.
-    private static let reviewRule = "Before you finish, read each file a report names as changed, check the change does what the brief asked, fits the code around it and breaks nothing that calls it, and run the narrowest check that proves it builds. Correct what is wrong yourself, right there in the file, and say plainly in your answer what you changed yourself and why. Never send out a head to do this check or the corrections; a head that got it badly wrong may be sent out again with a sharper brief, but small fixes are yours."
+    private static let reviewRule = "Read every changed file named in the reports and its affected callers. Correct integration issues yourself, run the narrowest required build in the checkout, and disclose your corrections. Never delegate this review."
 
     /// How the lead tells the user what the heads did: one short human sentence per
     /// head, head's name first, everyday words for what changed for the user, file
     /// details on one short second line only, no audit-speak, no icons.
-    private static let reportStyleRule = "When you answer the user, open each head's part with one short plain sentence that names the head first and says in everyday words what changed for the user (for example: Otto fixed the timeline crash so replies no longer jump). Keep file details to one short second line, never in the opener. Never write stilted audit-speak like Audited Otto and Nova or both do what the briefs asked, and add no icons or glyphs: the interface already draws each head."
+    private static let reportStyleRule = "For each head, give one plain sentence starting with its name and describing the user-visible result. Add file details only when useful. Omit repeated summaries, audit jargon and decorative symbols."
 
     /// Appended to the lead's system prompt on providers that run heads natively: when to
     /// delegate, how to split the work and what to do with the reports.
@@ -684,7 +686,7 @@ enum HydraPrompts {
         - \(projectRule(projects))
         - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself: never send out a head to verify, redo or finish another head's work.
         - Tell the user in one line which heads you sent out and what each one does. Droppy Code names the heads in roster order (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on): announce each head by its task and use exactly those names in that order, never invented ones. There is no head called Ives; the roster has Ivo.
-        - While they work, prepare the integration rather than starting on their tasks: how the pieces fit together, and the one check you will run at the end.
+        - After delegating, yield until reports arrive.
         - Heads go out through the tools above, never through a fenced hydra block: that is the delegation format for providers without agent tools of their own. If you end a reply with one anyway, Droppy Code still sends those heads out as threads of their own, but your turn ends there and their reports come back as a later message.
 
         When they report back:
@@ -711,14 +713,15 @@ enum HydraPrompts {
 
     /// Claude's `--agents` definitions: the two heads on the pair's model and effort.
     static func claudeAgents(_ launch: HydraLaunch) -> JSONValue {
+        let antiSlop = AntiSlopPolicy.instructions(enabled: launch.antiSlopEnabled)
         var worker: [String: JSONValue] = [
             "description": "Hydra head that implements one delegated task: edits files, runs commands. Use proactively when a request splits into independent pieces or touches several parts of the codebase.",
-            "prompt": .string(workerPrompt),
+            "prompt": .string(workerPrompt + "\n\n" + antiSlop),
             "background": false,
         ]
         var scout: [String: JSONValue] = [
             "description": "Hydra head for read-only research: finds files, reads code, gathers facts and reports back. Use proactively when a job needs many files or sources read.",
-            "prompt": .string(scoutPrompt),
+            "prompt": .string(scoutPrompt + "\n\n" + antiSlop),
             "tools": ["Read", "Grep", "Glob", "WebFetch", "WebSearch"],
             "background": false,
         ]
@@ -745,6 +748,7 @@ enum HydraPrompts {
 
     /// Copilot's `customAgents`: the same two heads, in the CLI's own shape.
     static func copilotAgents(_ launch: HydraLaunch) -> [JSONValue] {
+        let antiSlop = AntiSlopPolicy.instructions(enabled: launch.antiSlopEnabled)
         func agent(name: String, display: String, description: String, prompt: String, tools: [String]?) -> JSONValue {
             var object: [String: JSONValue] = [
                 "name": .string(name),
@@ -762,7 +766,7 @@ enum HydraPrompts {
             name: workerAgentName,
             display: "Hydra worker",
             description: "Hydra head that implements one delegated task: edits files, runs commands. Use when a request splits into independent pieces.",
-            prompt: workerPrompt,
+            prompt: workerPrompt + "\n\n" + antiSlop,
             tools: nil
         )
         var agents = [
@@ -773,7 +777,7 @@ enum HydraPrompts {
                 name: scoutAgentName,
                 display: "Hydra scout",
                 description: "Hydra head for read-only research: finds files, reads code and reports back. Use when a job needs many files or sources read.",
-                prompt: scoutPrompt,
+                prompt: scoutPrompt + "\n\n" + antiSlop,
                 tools: nil
             ),
         ]
@@ -1114,7 +1118,7 @@ enum HydraPrompts {
         }
         if kept.count == prompt.split(separator: "\n", omittingEmptySubsequences: false).count { return prompt }
         return kept.joined(separator: "\n")
-            + "\nThe lead has been told never to put a build or a check in your brief, so those steps were left out. Do not build, test, lint or verify anything: make the edits and report."
+            + "\nMake the assigned edits and report; the lead handles all validation."
     }
 
     /// What a Droppy-run head is sent for a task the lead delegated.
@@ -1254,7 +1258,7 @@ enum HydraPrompts {
         // With the check on, the lead reads every file listed rather than only the ones
         // that matter, and fixes what it finds itself.
         if reviewsHeads {
-            closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile or revert anything. Before you finish, read each file listed above, check the change does what the brief asked and fits the code around it, run the narrowest check that proves it builds, correct what is wrong yourself, and say plainly in your answer what you changed yourself. Never send out a head for the check or the corrections.")
+            closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile or revert anything. " + reviewRule)
         } else {
             closing.append("Do not check any of this with git status or git diff: the checkout changes under you while heads work, and the user may be editing too. Do not reconcile, revert or redo anything. Build on the reports, read the files they name if something matters, run one verification if it matters, and finish the job.")
         }

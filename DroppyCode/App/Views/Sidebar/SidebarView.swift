@@ -2207,6 +2207,11 @@ private enum ThreadActions {
                 }
             })
         }
+        // Forwarding starts a new thread that continues this one, at the same place in
+        // the list rather than under the settle/archive group.
+        items.append(RowAction(title: "Forward to new thread", symbol: "arrowshape.turn.up.right") {
+            Task { await model.forwardThread(thread.id) }
+        })
         if let path = thread.worktreePath {
             items.append(RowAction(title: "Reveal worktree in Finder", symbol: "folder") { Workspace.revealInFinder(path) })
         }
@@ -2266,6 +2271,12 @@ private enum ThreadActions {
                 }
             })
         }
+        // Forwarding starts a new thread that continues this one, at the same place in
+        // the list rather than under the settle/archive group.
+        items.append(RowAction(title: "Forward to new thread", symbol: "arrowshape.turn.up.right") { [weak model, threadID] in
+            guard let model else { return }
+            Task { await model.forwardThread(threadID) }
+        })
         if let path = thread.worktreePath {
             items.append(RowAction(title: "Reveal worktree in Finder", symbol: "folder") { [weak model, path] in
                 guard model != nil else { return }

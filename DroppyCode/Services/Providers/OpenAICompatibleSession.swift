@@ -947,19 +947,27 @@ class OpenAICompatibleSession: ProviderSession {
         case (.build, .fullAccess):
             "You are in BUILD mode with full access: use tools freely without asking."
         }
+        // The optional Hydra policy and the anti-slop guidance go in once each. The off
+        // notice goes out too, so a resumed thread cannot keep earlier guidance alive.
+        let appendedPolicy = [
+            configuration.hydra.map(HydraPrompts.fallbackPolicy),
+            AntiSlopPolicy.instructions(enabled: configuration.antiSlopEnabled),
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n\n")
         return """
         You are Droppy Code's \(config.agentIdentity(currentModel)), working inside \(workingDirectory) on macOS.
         \(modeLine)
         Rules:
         - Prefer the provided tools over asking the user to run things. Read files before editing them.
         - Keep file paths relative to the project root and never touch paths outside it.
-        - Explain briefly what you did after tool calls; keep chat replies concise markdown.
+        - Report the result and material limitations when the task is complete.
         - Never hard-wrap prose at a fixed column: write each paragraph of a reply as one unbroken
           line, however long, so a copied reply keeps its full line length wherever it is pasted.
           Lines inside a fenced code block keep their own breaks.
         - If a tool result shows the user declined an action, do not retry it: ask how to proceed.
         - Today's date is \(ISO8601DateFormatter().string(from: Date())).
-        \(configuration.hydra.map { "\n" + HydraPrompts.fallbackPolicy($0) } ?? "")
+        \n\(appendedPolicy)
         """
     }
 
