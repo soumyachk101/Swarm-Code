@@ -70,7 +70,7 @@
 	let paletteSelectedIndex = $derived(Math.min(paletteIndex, Math.max(0, filteredPaletteItems.length - 1)));
 
 	onMount(() => {
-		const hasLaunched = localStorage.getItem('swarmai_has_launched');
+		const hasLaunched = localStorage.getItem('swarmcode_has_launched') || localStorage.getItem('swarmai_has_launched');
 		isFirstLaunch = !hasLaunched;
 
 		document.addEventListener('keydown', handleGlobalKeydown);
@@ -195,6 +195,7 @@
 
 	function handleFinishTour() {
 		isFirstLaunch = false;
+		localStorage.setItem('swarmcode_has_launched', 'true');
 		localStorage.setItem('swarmai_has_launched', 'true');
 	}
 
@@ -237,7 +238,7 @@
 				{:else if selectedProjectID}
 				<div class="empty-state project-empty">
 					<div class="welcome-inner" style="gap: 16px;">
-						<img src="/icons/swarmai-logo.svg" alt="Swarm Code" class="welcome-glyph" width="72" height="72" />
+						<img src="/icons/swarmcode-logo.svg" alt="Swarm Code" class="welcome-glyph" width="72" height="72" />
 						<h2 class="welcome-title" style="font-size: 20px; font-weight: 600;">Project Selected</h2>
 						<p class="welcome-desc" style="max-width: 320px;">Pick a thread or start a new one</p>
 						<button class="welcome-action-btn" onclick={() => createNewThread()}>
@@ -252,7 +253,7 @@
 				<div class="empty-state">
 					<div class="welcome-inner">
 						<div class="welcome-header">
-							<img src="/icons/swarmai-logo.svg" alt="Swarm Code" class="welcome-glyph" width="104" height="104" />
+							<img src="/icons/swarmcode-logo.svg" alt="Swarm Code" class="welcome-glyph" width="104" height="104" />
 							<h2 class="welcome-title">Swarm Code</h2>
 							<p class="welcome-desc">The coding app by Soumya Chakraborty. A calm, native home for your coding agents.</p>
 						</div>

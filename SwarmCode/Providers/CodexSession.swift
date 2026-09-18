@@ -82,7 +82,7 @@ final class CodexSession: ProviderSession {
                 params["config"] = .object(HydraPrompts.codexConfig(hydra))
                 params["developerInstructions"] = .string(HydraPrompts.policy(for: .codex, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))
             } else {
-                // Heads on another provider are SwarmAI-run: the lead asks for them with the
+                // Heads on another provider are SwarmCode-run: the lead asks for them with the
                 // delegation block, and Codex's own agents stay off.
                 params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
             }
@@ -294,7 +294,7 @@ final class CodexSession: ProviderSession {
         configure(connection)
         try connection.start()
         _ = try await connection.request("initialize", [
-            "clientInfo": ["name": "swarmai", "title": "SwarmAI", "version": .string(AppInfo.version)],
+            "clientInfo": ["name": "swarmcode", "title": "Swarm Code", "version": .string(AppInfo.version)],
             "capabilities": ["experimentalApi": true],
         ])
         connection.notify("initialized")
@@ -698,9 +698,9 @@ final class CodexSession: ProviderSession {
         case "mcpServer/elicitation/request":
             connection?.respond(to: id, result: ["action": "decline"])
             let server = params["serverName"]?.string ?? "An MCP server"
-            onEvent?(.notice(Notice(level: .warning, message: "\(server) asked for input, which SwarmAI cannot show yet.")))
+            onEvent?(.notice(Notice(level: .warning, message: "\(server) asked for input, which Swarm Code cannot show yet.")))
         default:
-            connection?.respond(to: id, errorCode: -32601, message: "SwarmAI does not support \(method).")
+            connection?.respond(to: id, errorCode: -32601, message: "Swarm Code does not support \(method).")
         }
     }
 

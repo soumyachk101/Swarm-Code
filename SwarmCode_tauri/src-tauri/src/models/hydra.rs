@@ -435,8 +435,8 @@ impl HydraBudget {
  pub const MAX_SECONDS: f64 = 35.0 * 60.0;
  pub const REPORT_SECONDS: f64 = 3.0 * 60.0;
  pub const MAX_DELEGATION_ROUNDS: u32 = 3;
- pub const WORKER_AGENT_NAME: &'static str = "swarmai-worker";
- pub const SCOUT_AGENT_NAME: &'static str = "swarmai-scout";
+ pub const WORKER_AGENT_NAME: &'static str = "swarmcode-worker";
+ pub const SCOUT_AGENT_NAME: &'static str = "swarmcode-scout";
 }
 
 // ---------------------------------------------------------------------------

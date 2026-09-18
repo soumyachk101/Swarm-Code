@@ -951,7 +951,7 @@ mod tests {
 
     /// A tiny helper to find or create a temp repo for tests.
     fn setup_test_repo() -> GitCommand {
-        let dir = std::env::temp_dir().join("swarmai_git_test");
+        let dir = std::env::temp_dir().join("swarmcode_git_test");
         let _ = std::fs::create_dir_all(&dir);
         let git = GitCommand::new(&dir);
         // Init if needed.

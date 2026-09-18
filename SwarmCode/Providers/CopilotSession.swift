@@ -4,7 +4,7 @@ import Foundation
 /// protocol its SDK speaks.
 ///
 /// One `copilot --headless --stdio` process per thread, `Content-Length` framed.
-/// Sessions are created under SwarmAI's own id and resumed by it, so a
+/// Sessions are created under Swarm Code's own id and resumed by it, so a
 /// thread's conversation survives relaunches in `~/.copilot/session-state`.
 /// Turns arrive as `session.event` notifications. Permission prompts come as
 /// `permission.requested` events and are answered over
@@ -66,7 +66,7 @@ final class CopilotSession: ProviderSession {
     /// named by what it was sent to do.
     private var taskBriefs: [String: (description: String, prompt: String?)] = [:]
 
-    /// Commands SwarmAI answers with its own controls: permission modes, the model
+    /// Commands Swarm Code answers with its own controls: permission modes, the model
     /// picker, plan mode, the session list and the working directory.
     private static let ownCommands: Set<String> = ["allow-all", "yolo", "permissions", "model", "models", "plan", "session", "sessions", "cwd", "cd"]
 
@@ -118,7 +118,7 @@ final class CopilotSession: ProviderSession {
     /// thread restarts the session when it switches into or out of Auto.
     private func sessionParameters() -> [String: JSONValue] {
         var params: [String: JSONValue] = [
-            "clientName": "swarmai",
+            "clientName": "swarmcode",
             "workingDirectory": .string(workingDirectory),
             "streaming": true,
             "requestPermission": true,
@@ -134,7 +134,7 @@ final class CopilotSession: ProviderSession {
                 params["customAgents"] = .array(HydraPrompts.copilotAgents(hydra))
                 params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.policy(for: .copilot, maxHeads: hydra.maxHeads, autoMerges: hydra.autoMerges, reviewsHeads: hydra.reviewsHeads))]
             } else {
-                // Heads on another provider are SwarmAI-run: the lead asks for them with the
+                // Heads on another provider are SwarmCode-run: the lead asks for them with the
                 // delegation block, and no agents of the CLI's own are defined.
                 params["systemMessage"] = ["mode": "append", "content": .string(HydraPrompts.fallbackPolicy(hydra))]
             }
@@ -231,7 +231,7 @@ final class CopilotSession: ProviderSession {
     }
 
     /// Drops the most recent turns from Copilot's own history. Files stay as they
-    /// are: SwarmAI restores those from its checkpoints.
+    /// are: Swarm Code restores those from its checkpoints.
     func rollback(turns: Int) async throws {
         guard let connection, let sessionID, turns > 0 else { return }
         let listed = try await connection.request("session.history.listRewindPoints", ["sessionId": .string(sessionID)])
@@ -473,7 +473,7 @@ final class CopilotSession: ProviderSession {
         let connection = JSONRPCConnection(process: process, sendsVersion: true)
         configure(connection)
         try connection.start()
-        let pong = try await connection.request("ping", ["message": "swarmai"])
+        let pong = try await connection.request("ping", ["message": "swarmcode"])
         guard pong["protocolVersion"]?.int != nil else {
             connection.close()
             throw ProviderError.failed("This `copilot` does not speak the SDK protocol. Update it with `copilot update`.")
@@ -731,7 +731,7 @@ final class CopilotSession: ProviderSession {
             // A rate limit offered a switch to the Auto model tier: keep the model the user chose.
             connection?.respond(to: id, result: ["response": "no"])
         default:
-            connection?.respond(to: id, errorCode: -32601, message: "SwarmAI does not support \(method).")
+            connection?.respond(to: id, errorCode: -32601, message: "Swarm Code does not support \(method).")
         }
     }
 

@@ -1,12 +1,12 @@
-# SwarmAI Mobile App — Deep Research & System Design Plan
+# Swarm Code Mobile App — Deep Research & System Design Plan
 
 ## 1. Problem Statement
 
-SwarmAI is a native macOS app (Swift/SwiftUI, Apple Silicon only). The user wants:
+Swarm Code is a native macOS app (Swift/SwiftUI, Apple Silicon only). The user wants:
 
 - A mobile app that works on phone (Android + iOS)
-- Connects to their Mac/Laptop running SwarmAI
-- Lets them control SwarmAI from mobile — view chats, send messages, manage threads, see diffs, approve/reject actions, view terminal output
+- Connects to their Mac/Laptop running Swarm Code
+- Lets them control Swarm Code from mobile — view chats, send messages, manage threads, see diffs, approve/reject actions, view terminal output
 
 ## 2. High-Level Architecture
 
@@ -17,25 +17,25 @@ SwarmAI is a native macOS app (Swift/SwiftUI, Apple Silicon only). The user want
 | **A. Tauri Mobile + Local Bridge** (RECOMMENDED) | Medium | Same stack (Rust), cross-platform, can embed bridge server | New mobile UI layer needed |
 | **B. Flutter + Local Bridge** | Medium-High | Great mobile UI, mature ecosystem | Two codebases (Swift + Dart) |
 | **C. PWA + Local Bridge** | Low | Single codebase, instant deploy | Limited native access, no push notifications |
-| **D. Rewrite entire SwarmAI in Flutter** | Very High | Unified codebase | Loses SwiftUI Liquid Glass, massive effort |
+| **D. Rewrite entire Swarm Code in Flutter** | Very High | Unified codebase | Loses SwiftUI Liquid Glass, massive effort |
 
 ### Recommended: Option A — Tauri Mobile + Embedded Local Bridge
 
 **Why:**
-- SwarmAI already has a `SwarmAI_tauri` folder in the repo — the Tauri foundation exists
+- Swarm Code already has a `Swarm Code_tauri` folder in the repo — the Tauri foundation exists
 - Tauri v2 supports iOS and Android from a single Rust codebase
 - The local bridge can be embedded directly in the existing macOS app
-- WebSocket-based real-time streaming maps naturally to SwarmAI's streaming events
+- WebSocket-based real-time streaming maps naturally to Swarm Code's streaming events
 - Shared Rust core for protocol logic between Mac and mobile
 
 ## 3. System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         MAC (SwarmAI)                           │
+│                         MAC (Swarm Code)                           │
 │                                                                 │
 │  ┌──────────────┐    ┌──────────────┐    ┌─────────────────┐  │
-│  │  SwiftUI App │───▶│  Bridge      │───▶│  SwarmAI Core   │  │
+│  │  SwiftUI App │───▶│  Bridge      │───▶│  Swarm Code Core   │  │
 │  │  (existing)  │    │  Server      │    │  (Providers,    │  │
 │  │              │◀───│  (new)       │◀───│   Runtime, etc) │  │
 │  └──────────────┘    │              │    └─────────────────┘  │
@@ -81,7 +81,7 @@ SwarmAI is a native macOS app (Swift/SwiftUI, Apple Silicon only). The user want
 
 **Tech:** Swift (NIO) or Rust (Tauri command)
 **Port:** Configurable (default 8765 for WS, 8766 for HTTP)
-**Discovery:** mDNS/Bonjour advertise as `_swarmai-bridge._tcp.local.`
+**Discovery:** mDNS/Bonjour advertise as `_swarmcode-bridge._tcp.local.`
 
 **API Surface:**
 
@@ -139,7 +139,7 @@ SwarmAI is a native macOS app (Swift/SwiftUI, Apple Silicon only). The user want
 ### 4.4 Authentication & Security
 
 **Pairing Flow:**
-1. Mac shows a 6-digit pairing code in SwarmAI UI
+1. Mac shows a 6-digit pairing code in Swarm Code UI
 2. Mobile scans QR code (contains code + MAC address + port)
 3. Mobile connects and sends pairing code
 4. Mac confirms — connection established
@@ -169,9 +169,9 @@ SwarmAI is a native macOS app (Swift/SwiftUI, Apple Silicon only). The user want
 
 ### 5.2 Design Language
 
-**Inspired by SwarmAI's Liquid Glass on Mac:**
+**Inspired by Swarm Code's Liquid Glass on Mac:**
 - Translucent cards with blur (`backdrop-filter`)
-- Tinted accent colors matching SwarmAI themes
+- Tinted accent colors matching Swarm Code themes
 - Rounded corners, generous spacing
 - Dark mode default (matches coding context)
 - Bottom tab navigation (Threads / Chat / Terminal / Settings)
@@ -179,7 +179,7 @@ SwarmAI is a native macOS app (Swift/SwiftUI, Apple Silicon only). The user want
 **Color Palette:**
 - Background: `rgba(20, 20, 25, 0.9)` with blur
 - Cards: `rgba(255, 255, 255, 0.05)` with blur
-- Accent: User's SwarmAI theme color synced from Mac
+- Accent: User's Swarm Code theme color synced from Mac
 - Text: White primary, grey secondary
 - Streaming indicator: Animated gradient (same as Mac)
 
@@ -208,16 +208,16 @@ SwarmAI is a native macOS app (Swift/SwiftUI, Apple Silicon only). The user want
 ## 7. Implementation Roadmap
 
 ### Phase 1: Bridge Server (Weeks 1-2)
-- [ ] Create `SwarmAI/Bridge/` module
+- [ ] Create `Swarm Code/Bridge/` module
 - [ ] Implement WebSocket server on Swift NIO
 - [ ] Implement REST endpoints
 - [ ] Add mDNS discovery advertising
 - [ ] Integrate pairing code generation/validation
 - [ ] Wire into existing AppModel to expose threads, messages, models
-- [ ] Add connection status indicator in SwarmAI UI
+- [ ] Add connection status indicator in Swarm Code UI
 
 ### Phase 2: Mobile App Shell (Weeks 3-4)
-- [ ] Scaffold Tauri v2 mobile project (`SwarmAI_Mobile/`)
+- [ ] Scaffold Tauri v2 mobile project (`Swarm Code_Mobile/`)
 - [ ] Set up iOS + Android targets
 - [ ] Build connection/pairing screens
 - [ ] Implement bridge client in Rust
@@ -273,7 +273,7 @@ SwarmAI is a native macOS app (Swift/SwiftUI, Apple Silicon only). The user want
 
 ## 10. Open Questions
 
-1. Should the bridge be a separate process or embedded in SwarmAI? → Embedded (simpler deployment)
+1. Should the bridge be a separate process or embedded in Swarm Code? → Embedded (simpler deployment)
 2. How to handle terminal streaming at high output rates? → Throttle + batch WebSocket messages
 3. Should we support remote access over internet? → No (out of scope per README)
 4. iPad-specific layout or just scaled iPhone? → Split view in Phase 5

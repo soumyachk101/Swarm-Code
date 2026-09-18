@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+.cache/
+.env
+.env.local
+.DS_Store
+*.mp4
+*.mov
+*.gif
+*.webm

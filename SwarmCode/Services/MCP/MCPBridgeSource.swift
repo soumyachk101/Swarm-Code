@@ -1,11 +1,11 @@
 import Foundation
 
 /// The JavaScript bridge that exposes the connected MCP servers' tools to the
-/// providers that load a file SwarmAI installs: Pi (an extension) and
+/// providers that load a file Swarm Code installs: Pi (an extension) and
 /// Command Code (a mod). Both dynamic-import it and call `loadMCPTools()`.
 ///
 /// Plain ESM JavaScript (Node 18+, no npm dependencies). The server list comes
-/// from the file at `SWARMAI_MCP_CONFIG` or `DROPPY_CODE_MCP_CONFIG`
+/// from the file at `SWARMCODE_MCP_CONFIG`, `SWARMAI_MCP_CONFIG` or `DROPPY_CODE_MCP_CONFIG`
 /// (`{"mcpServers": { id: {command, args, env} | {type: "http", url, headers} }}`);
 /// when the variable is unset or the file is missing, nothing is registered.
 enum MCPBridge {
@@ -135,12 +135,12 @@ enum MCPBridge {
 
     function configServers() {
       try {
-        const file = process.env.SWARMAI_MCP_CONFIG || process.env.DROPPY_CODE_MCP_CONFIG || "";
+        const file = process.env.SWARMCODE_MCP_CONFIG || process.env.SWARMAI_MCP_CONFIG || process.env.DROPPY_CODE_MCP_CONFIG || "";
         if (!file) return {};
         const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
         if (parsed && typeof parsed === "object" && parsed.mcpServers && typeof parsed.mcpServers === "object") return parsed.mcpServers;
       } catch (error) {
-        console.error("swarmai mcp: could not read config: " + errorText(error));
+        console.error("swarmcode mcp: could not read config: " + errorText(error));
       }
       return {};
     }
@@ -350,7 +350,7 @@ enum MCPBridge {
             tools.push(...await withTimeout(connectStdio(server, entry)));
           }
         } catch (error) {
-          console.error("swarmai mcp: skipping " + server + ": " + errorText(error));
+          console.error("swarmcode mcp: skipping " + server + ": " + errorText(error));
         }
       }
       return tools;
@@ -365,7 +365,7 @@ enum MCPBridge {
             ?? URL(fileURLWithPath: LoginEnvironment.homeDirectory).appendingPathComponent("Library/Application Support")
         let directory = base.appendingPathComponent("\(AppInfo.name)/MCP", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let file = directory.appendingPathComponent("swarmai-mcp-bridge.mjs")
+        let file = directory.appendingPathComponent("swarmcode-mcp-bridge.mjs")
         let data = Data(mcpBridgeSource.utf8)
         if (try? Data(contentsOf: file)) != data {
             try data.write(to: file, options: .atomic)

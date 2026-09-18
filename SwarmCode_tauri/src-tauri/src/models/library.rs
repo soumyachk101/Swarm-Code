@@ -1,7 +1,7 @@
 //! Library item model -- saved snippets, prompts, templates, or code samples
 //! that the user collects and reuses.
 //!
-//! A LibraryItem is a first-class entity in SwarmAI's UI: it can be pinned,
+//! A LibraryItem is a first-class entity in Swarm Code's UI: it can be pinned,
 //! tagged, categorised, and inserted into a chat.
 
 use serde::{Deserialize, Serialize};

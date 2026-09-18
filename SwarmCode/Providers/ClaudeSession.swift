@@ -88,7 +88,7 @@ final class ClaudeSession: ProviderSession {
                 // Uncapped, the CLI keeps its own limit on heads at once.
                 if let cap = hydra.maxHeads { environment["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] = String(cap) }
             } else {
-                // The heads run on another provider, as threads SwarmAI starts: the
+                // The heads run on another provider, as threads SwarmCode starts: the
                 // lead asks for them with the delegation block, and its own agent tool goes,
                 // since a head it spawned itself would run on its own model.
                 arguments += [
@@ -241,7 +241,7 @@ final class ClaudeSession: ProviderSession {
     private func control(_ request: JSONValue) async throws -> JSONValue {
         guard let process else { throw ProviderError.notRunning }
         controlCounter += 1
-        let requestID = "swarmai-\(controlCounter)"
+        let requestID = "swarmcode-\(controlCounter)"
         return try await withCheckedThrowingContinuation { continuation in
             pendingControl[requestID] = continuation
             process.send(["type": "control_request", "request_id": .string(requestID), "request": request])
@@ -508,7 +508,7 @@ final class ClaudeSession: ProviderSession {
         guard request["subtype"]?.string == "can_use_tool" else {
             process?.send([
                 "type": "control_response",
-                "response": ["subtype": "error", "request_id": .string(requestID), "error": "SwarmAI does not support this request."],
+                "response": ["subtype": "error", "request_id": .string(requestID), "error": "Swarm Code does not support this request."],
             ])
             return
         }

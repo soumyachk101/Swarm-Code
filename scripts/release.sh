@@ -1,16 +1,16 @@
 #!/bin/bash
-# Builds, signs, notarizes and packages SwarmAI as a disk image.
+# Builds, signs, notarizes and packages Swarm Code as a disk image.
 #
 #   scripts/release.sh
 #
 # Needs Xcode, XcodeGen, a Developer ID Application certificate for the team below
-# and a notarytool keychain profile (NOTARY_PROFILE, "SwarmAI-Notarize" by default).
+# and a notarytool keychain profile (NOTARY_PROFILE, "SwarmCode-Notarize" by default).
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 TEAM_ID="NARHG44L48"
-NOTARY_PROFILE="${NOTARY_PROFILE:-SwarmAI-Notarize}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-SwarmCode-Notarize}"
 APP_NAME="Swarm Code"
 # ".noindex" keeps Spotlight and Launchpad from listing the build copies of the app.
 BUILD="$ROOT/build.noindex"

@@ -924,7 +924,7 @@ private struct ScriptsEditor: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Project scripts")
                 .font(.system(size: 17, weight: .semibold))
-            Text("Scripts run in a terminal at the project root. Swarm Code also picks up scripts from swarmai.json.")
+            Text("Scripts run in a terminal at the project root. Swarm Code also picks up scripts from swarmcode.json.")
                 .font(.system(size: 12))
                 .foregroundStyle(Chrome.secondaryText)
             ScrollView {

@@ -1,12 +1,12 @@
 import Foundation
 import Network
 
-/// Publishes the SwarmAI Bridge on the local network via mDNS so mobile devices
+/// Publishes the Swarm Code Bridge on the local network via mDNS so mobile devices
 /// can discover it automatically.
 @MainActor
 final class BridgeDiscovery: NSObject, NetServiceDelegate {
     private var netService: NetService?
-    private let serviceType = "_swarmai-bridge._tcp"
+    private let serviceType = "_swarmcode-bridge._tcp"
     private var isPublishing = false
 
     private var onStatusChange: ((Bool) -> Void)?
@@ -22,7 +22,7 @@ final class BridgeDiscovery: NSObject, NetServiceDelegate {
         netService = NetService(
             domain: "local.",
             type: "\(serviceType).",
-            name: Host.current().localizedName ?? "SwarmAI",
+            name: Host.current().localizedName ?? "Swarm Code",
             port: Int32(port)
         )
         netService?.delegate = self
@@ -67,7 +67,7 @@ final class BridgeDiscovery: NSObject, NetServiceDelegate {
 @MainActor
 final class BridgeBrowser: NSObject, NetServiceBrowserDelegate, NetServiceDelegate {
     private let browser = NetServiceBrowser()
-    private let serviceType = "_swarmai-bridge._tcp"
+    private let serviceType = "_swarmcode-bridge._tcp"
     private var foundServices: [NetService] = []
     private var onFound: ([(name: String, host: String?, port: Int)]) -> Void = { _ in }
 

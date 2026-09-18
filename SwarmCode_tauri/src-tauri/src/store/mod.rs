@@ -142,7 +142,7 @@ impl Default for AppStore {
  fn default() -> Self {
  let data_path = dirs::data_local_dir()
  .unwrap_or_else(|| PathBuf::from("."))
- .join("swarmai")
+ .join("swarmcode")
  .join("store.json");
  Self {
  library: Library::default(),
@@ -208,7 +208,7 @@ impl AppStore {
  let path = if self.data_path.as_os_str().is_empty() {
  dirs::data_local_dir()
  .unwrap_or_else(|| PathBuf::from("."))
- .join("swarmai")
+ .join("swarmcode")
  .join("library.json")
  } else {
  self.data_path.clone()

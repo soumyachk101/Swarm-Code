@@ -173,7 +173,7 @@
 					{:else if isAssistantMessage(item)}
 						<div class="timeline-item assistant-row">
 							<div class="avatar assistant-avatar">
-								<img src="/icons/swarmai-logo.svg" alt="Swarm Code" width="14" height="14" />
+								<img src="/icons/swarmcode-logo.svg" alt="Swarm Code" width="14" height="14" />
 							</div>
 							<div class="bubble assistant-bubble">
 								<div class="bubble-text">{getMessageText(item)}</div>
@@ -218,7 +218,7 @@
 		{:else}
 			<div class="empty-state">
 				<div class="empty-logo">
-					<img src="/icons/swarmai-logo.svg" alt="Swarm Code" width="48" height="48" />
+					<img src="/icons/swarmcode-logo.svg" alt="Swarm Code" width="48" height="48" />
 				</div>
 				<h3>No messages yet</h3>
 				<p>Type a message below to start the conversation.</p>

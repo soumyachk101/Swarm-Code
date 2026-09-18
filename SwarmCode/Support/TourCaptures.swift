@@ -4,7 +4,7 @@ import SwiftUI
 /// The onboarding tour's captures: six scenes (plus four theme variants) photographed
 /// over curated gradient backdrops as 16:10 images:
 ///
-///     open -n -W "SwarmAI.app" --args --tour-captures <folder>
+///     open -n -W "Swarm Code.app" --args --tour-captures <folder>
 ///
 /// Same isolation contract as WebsiteCaptures: own storage folder, own defaults suite,
 /// quits when the last file is written. The Hydra scene itself lives in

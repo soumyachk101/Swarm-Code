@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Tokens and building blocks shared with SwarmAI's settings panel, so the two apps read as one family.
+/// Tokens and building blocks shared with Swarm Code's settings panel, so the two apps read as one family.
 enum Chrome {
     // MARK: Window
 
@@ -110,7 +110,7 @@ enum Chrome {
     static let blue = Color(red: 0.040, green: 0.478, blue: 1.000)
     static let orange = Color(red: 1.000, green: 0.584, blue: 0.000)
 
-    /// The section tile hues SwarmAI's settings sidebar uses.
+    /// The section tile hues Swarm Code's settings sidebar uses.
     static let tileHues: [Color] = [
         Color(red: 0.345, green: 0.337, blue: 0.839),
         Color(red: 1.000, green: 0.584, blue: 0.000),
@@ -939,7 +939,7 @@ struct ChromeRowDivider: View {
 
 // MARK: - Window drag
 
-/// Lets a stretch of chrome move the window, the way the sidebar does in SwarmAI.
+/// Lets a stretch of chrome move the window, the way the sidebar does in Swarm Code.
 struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> WindowDragView {
         WindowDragView()

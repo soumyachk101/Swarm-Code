@@ -39,7 +39,7 @@ targets:
       base:
         PRODUCT_NAME: "Swarm Code"
         PRODUCT_MODULE_NAME: SwarmCode
-        PRODUCT_BUNDLE_IDENTIFIER: iordv.swarmai
+        PRODUCT_BUNDLE_IDENTIFIER: iordv.swarmcode
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: "Swarm Code"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools

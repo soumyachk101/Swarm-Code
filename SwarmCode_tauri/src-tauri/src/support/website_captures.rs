@@ -364,7 +364,7 @@ mod tests {
 
  #[tokio::test]
  async fn test_capture_lifecycle() {
- let dir = std::env::temp_dir().join("swarmai_test_captures");
+ let dir = std::env::temp_dir().join("swarmcode_test_captures");
  let captures = WebsiteCaptures::new(dir.clone()).unwrap();
  captures.load().await.unwrap();
 

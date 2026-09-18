@@ -192,14 +192,14 @@ enum PlanLimitsReader {
             watchdog.cancel()
             process.terminate()
         }
-        process.send(["type": "control_request", "request_id": "swarmai-init", "request": ["subtype": "initialize", "hooks": .null]])
+        process.send(["type": "control_request", "request_id": "swarmcode-init", "request": ["subtype": "initialize", "hooks": .null]])
         for await message in process.messages {
             guard message["type"]?.string == "control_response" else { continue }
             let response = message["response"] ?? .null
             switch response["request_id"]?.string {
-            case "swarmai-init":
-                process.send(["type": "control_request", "request_id": "swarmai-usage", "request": ["subtype": "get_usage"]])
-            case "swarmai-usage":
+            case "swarmcode-init":
+                process.send(["type": "control_request", "request_id": "swarmcode-usage", "request": ["subtype": "get_usage"]])
+            case "swarmcode-usage":
                 let usage = response["response"] ?? .null
                 let rateLimits = usage["rate_limits"] ?? .null
                 return parseClaudeUsage(rateLimits, limits: rateLimits["limits"]?.array ?? [], planName: planName(usage["subscription_type"]?.string))

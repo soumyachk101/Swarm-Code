@@ -11,7 +11,7 @@ stills and 60 fps HEVC film masters to build.noindex/website-captures, and quits
 script then cuts what the site shows (whole windows, or one self-contained region on empty
 glass), encodes every film twice, H.264 for everyone and HEVC for Safari, at the capture's
 own 2x pixels, and saves the stills as near-lossless WebP. Needs ffmpeg (brew), Pillow (pip)
-and, for --upload, wrangler signed in to the SwarmAI Cloudflare account.
+and, for --upload, wrangler signed in to the Swarm Code Cloudflare account.
 """
 
 import json
@@ -24,12 +24,12 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CAPTURES = ROOT / "build.noindex" / "website-captures"
 DERIVED = ROOT / "build.noindex" / "website"
-APP = DERIVED / "Build/Products/Debug/SwarmAI.app"
+APP = DERIVED / "Build/Products/Debug/Swarm Code.app"
 OUT = ROOT / "website" / "assets" / "app"
 FFMPEG = shutil.which("ffmpeg") or "/opt/homebrew/bin/ffmpeg"
 FFPROBE = shutil.which("ffprobe") or "/opt/homebrew/bin/ffprobe"
-R2_BUCKET = "swarmai-releases"
-R2_PREFIX = "site-assets/swarmai"
+R2_BUCKET = "swarmcode-releases"
+R2_PREFIX = "site-assets/swarmcode"
 
 # Every capture is 2x with a 72 point (144 px) wallpaper margin on every side. The wide
 # window is 1320x860 points, so its captures are 2928x2008; the narrow one is 860x560 points,

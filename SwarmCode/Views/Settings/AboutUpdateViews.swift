@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-// The software update story on the About page, told the way SwarmAI's settings tell it: the
+// The software update story on the About page, told the way Swarm Code's settings tell it: the
 // sticky chrome carries the version and the one control (the seal while up to date, the blue
 // Update & restart button while a release waits, the slider while it installs), and the page
 // shows the release's notes as three tappable cards: New, Bugs, Refinements.
@@ -338,7 +338,7 @@ struct SmoothedUpdateProgressSlider: View {
     }
 }
 
-/// A pill track filling with SwarmAI's icon's blues behind a soft white head, sparkles
+/// A pill track filling with Swarm Code's icon's blues behind a soft white head, sparkles
 /// twinkling in the filled part. Renders whatever fraction it is given.
 struct UpdateProgressSlider: View {
     let fraction: Double
@@ -678,7 +678,7 @@ struct AboutSoftwareUpdateSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
-            // The cards lead the page on their own, as on SwarmAI's About page; the version is
+            // The cards lead the page on their own, as on Swarm Code's About page; the version is
             // on the pill in the chrome and on the cards' popovers.
             if checker.updateAvailable, let update = checker.update {
                 releaseBody(update)

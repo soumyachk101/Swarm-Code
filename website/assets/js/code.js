@@ -25,8 +25,7 @@
     var ctx = canvas.getContext("2d", { alpha: true });
     if (!ctx) return;
 
-    /* Scroll-scrubbed, like the frame sequences behind getswarmai.app's
-       hero and outro: nothing moves while the page is still, and the
+    /* Scroll-scrubbed: nothing moves while the page is still, and the
        digits stream down as the visitor scrolls. "pagetop" spends the
        first --scroll-span pixels of the page (the hero); "viewport" runs
        while the host crosses the viewport (the outro). */

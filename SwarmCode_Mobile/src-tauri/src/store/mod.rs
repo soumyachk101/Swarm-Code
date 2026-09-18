@@ -1,5 +1,5 @@
 // =============================================================================
-// SwarmAI Mobile — Persistent Local Store
+// Swarm Code Mobile — Persistent Local Store
 // =============================================================================
 //
 // JSON-backed store for: saved pairings (host/port/displayName/token), recent
@@ -64,10 +64,17 @@ pub struct MobileStore {
 
 impl MobileStore {
     pub fn new() -> Self {
-        let data_dir = std::env::var("SWARMAI_DATA_DIR")
+        let data_dir = std::env::var("SWARMCODE_DATA_DIR")
+            .or_else(|_| std::env::var("SWARMAI_DATA_DIR"))
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
-                home_dir().join(".swarmai/mobile")
+                let primary = home_dir().join(".swarmcode/mobile");
+                let legacy = home_dir().join(".swarmai/mobile");
+                if !primary.exists() && legacy.exists() {
+                    legacy
+                } else {
+                    primary
+                }
             });
 
         std::fs::create_dir_all(&data_dir).ok();

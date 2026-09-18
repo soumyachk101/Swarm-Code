@@ -1,4 +1,4 @@
-// SwarmAI Tauri - Main entry point
+// Swarm Code Tauri - Main entry point
 import './app.css';
 import App from './App.svelte';
 

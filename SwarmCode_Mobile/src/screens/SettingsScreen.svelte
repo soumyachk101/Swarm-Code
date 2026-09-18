@@ -112,8 +112,8 @@ const goBack = () => view.set('threads');
         <div class="glass" style="padding: 18px; border-radius: var(--radius-lg);">
             <h3 style="margin-bottom: 8px;">About</h3>
             <div style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">
-                <p>SwarmAI Mobile v0.1.0</p>
-                <p class="text-muted" style="font-size: 12px; margin-top: 4px;">Works with SwarmAI on macOS via local bridge. Requires SwarmAI bridge enabled in Settings.</p>
+                <p>Swarm Code Mobile v0.1.0</p>
+                <p class="text-muted" style="font-size: 12px; margin-top: 4px;">Works with Swarm Code on macOS via local bridge. Requires Swarm Code bridge enabled in Settings.</p>
             </div>
         </div>
     </div>

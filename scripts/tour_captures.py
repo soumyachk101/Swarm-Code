@@ -25,7 +25,7 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CAPTURES = ROOT / "build.noindex" / "tour-captures"
 DERIVED = ROOT / "build.noindex" / "tour"
-APP = DERIVED / "Build/Products/Debug/SwarmAI.app"
+APP = DERIVED / "Build/Products/Debug/Swarm Code.app"
 ASSETS = ROOT / "SwarmCode" / "Resources" / "Assets.xcassets"
 
 WIDTH = 1320

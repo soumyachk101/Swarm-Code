@@ -9,7 +9,7 @@ import SwiftUI
 @Observable
 final class GenieAnimator {
     static let shared = GenieAnimator()
-    nonisolated static let coordinateSpace = "swarmai-window"
+    nonisolated static let coordinateSpace = "swarmcode-window"
     nonisolated static let duration: Double = 0.58
 
     struct Flight: Identifiable {

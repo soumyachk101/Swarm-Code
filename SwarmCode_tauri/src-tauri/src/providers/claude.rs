@@ -493,7 +493,7 @@ impl ClaudeSession {
     async fn send_control(&mut self, request: &serde_json::Value) -> Result<serde_json::Value, ProviderError> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.control_counter += 1;
-        let request_id = format!("swarmai-{}", self.control_counter);
+        let request_id = format!("swarmcode-{}", self.control_counter);
         self.pending_control.insert(request_id.clone(), tx);
 
         let wire = serde_json::json!({

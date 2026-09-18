@@ -257,7 +257,7 @@ mod tests {
 
  #[test]
  fn detect_empty_missing_file() {
- let dir = std::env::temp_dir().join(format!("swarmai-mig-{}", uuid::Uuid::new_v4()));
+ let dir = std::env::temp_dir().join(format!("swarmcode-mig-{}", uuid::Uuid::new_v4()));
  fs::create_dir_all(&dir).unwrap();
  let path = dir.join("library.json");
  let (raw, ver) = detect_version(&path).unwrap();
@@ -268,7 +268,7 @@ mod tests {
 
  #[test]
  fn detect_v1_format() {
- let dir = std::env::temp_dir().join(format!("swarmai-mig-{}", uuid::Uuid::new_v4()));
+ let dir = std::env::temp_dir().join(format!("swarmcode-mig-{}", uuid::Uuid::new_v4()));
  fs::create_dir_all(&dir).unwrap();
  let path = dir.join("library.json");
  fs::write(&path, r#"{"projects":[],"threads":[],"preferences":{"theme":"dark"}}"#).unwrap();
@@ -279,7 +279,7 @@ mod tests {
 
  #[test]
  fn detect_v2_format() {
- let dir = std::env::temp_dir().join(format!("swarmai-mig-{}", uuid::Uuid::new_v4()));
+ let dir = std::env::temp_dir().join(format!("swarmcode-mig-{}", uuid::Uuid::new_v4()));
  fs::create_dir_all(&dir).unwrap();
  let path = dir.join("library.json");
  fs::write(&path, r#"{"projects":[],"threads":[],"settings":{},"hydra_configs":[]}"#).unwrap();

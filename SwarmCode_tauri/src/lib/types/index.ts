@@ -1,5 +1,5 @@
 // =============================================================================
-// SwarmAI Tauri Frontend — Complete Type Definitions
+// Swarm Code Tauri Frontend — Complete Type Definitions
 // Mirrors the Rust backend models in src-tauri/src/models/
 // =============================================================================
 

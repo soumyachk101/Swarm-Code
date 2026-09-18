@@ -23,7 +23,7 @@ final class StdioProcess: @unchecked Sendable {
     private let stdout = Pipe()
     private let stderr = Pipe()
     private let framing: Framing
-    private let writeQueue = DispatchQueue(label: "swarmai.stdio.write")
+    private let writeQueue = DispatchQueue(label: "swarmcode.stdio.write")
     private let lock = NSLock()
     private var lineBuffer = Data()
     private var errorBuffer = Data()

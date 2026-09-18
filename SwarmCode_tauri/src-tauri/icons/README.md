@@ -17,4 +17,4 @@ This generates all required icon sizes and places them in `src-tauri/icons/`.
 ## Source
 
 The source icon image is `../public/icon.svg` (the app icon from the original
-SwarmAI project).
+Swarm Code project).

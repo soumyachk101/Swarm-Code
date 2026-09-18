@@ -1,5 +1,5 @@
 // =============================================================================
-// SwarmAI Tauri Frontend — Sidebar Store
+// Swarm Code Tauri Frontend — Sidebar Store
 // =============================================================================
 
 import { writable, derived, type Readable, type Writable } from 'svelte/store';

@@ -1,6 +1,6 @@
-# SwarmAI (Tauri Edition)
+# Swarm Code (Tauri Edition)
 
-Tauri-based cross-platform desktop port of [SwarmAI](https://droppy-code.github.io/SwarmAI/), a multi-provider AI swarm coordination tool.
+Tauri-based cross-platform desktop port of Swarm Code, a multi-provider AI swarm coordination tool.
 
 ## Features
 
@@ -136,7 +136,7 @@ Output will be in `src-tauri/target/release/bundle/`.
 
 ## Known Limitations vs Native macOS Version
 
-The original SwarmAI is built natively for macOS with Swift. This Tauri port reimplements the architecture in Rust + Svelte. Known differences:
+The original Swarm Code is built natively for macOS with Swift. This Tauri port reimplements the architecture in Rust + Svelte. Known differences:
 
 1. **Performance** — Svelte 5 + Vite dev server has slightly slower startup vs a native SwiftUI app
 2. **Native integration** — Some macOS-specific features (Touch Bar, native notifications, AppKit integration) may have reduced fidelity

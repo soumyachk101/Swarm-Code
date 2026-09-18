@@ -99,8 +99,8 @@ onMount(() => {
             font-size: 40px; color: white; font-weight: 700;
             box-shadow: 0 8px 32px var(--accent-glow);
         ">S</div>
-        <h1 style="font-size: 28px; margin-bottom: 6px;">SwarmAI</h1>
-        <p style="font-size: 14px;">Connect to your Mac to control SwarmAI remotely</p>
+        <h1 style="font-size: 28px; margin-bottom: 6px;">Swarm Code</h1>
+        <p style="font-size: 14px;">Connect to your Mac to control Swarm Code remotely</p>
     </div>
 
     <!-- Connection Form -->
@@ -156,7 +156,7 @@ onMount(() => {
         disabled={isDiscovering}
         onclick={handleDiscover}
     >
-        {isDiscovering ? 'Discovering...' : 'Discover SwarmAI on Network'}
+        {isDiscovering ? 'Discovering...' : 'Discover Swarm Code on Network'}
     </button>
 
     {#if discoveryResults.length > 0}

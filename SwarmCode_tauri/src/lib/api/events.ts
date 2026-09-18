@@ -1,5 +1,5 @@
 // =============================================================================
-// SwarmAI Tauri Frontend — Event Listeners & Streaming
+// Swarm Code Tauri Frontend — Event Listeners & Streaming
 // =============================================================================
 
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';

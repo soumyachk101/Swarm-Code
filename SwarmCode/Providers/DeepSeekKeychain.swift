@@ -4,7 +4,8 @@ import Security
 /// Stores the DeepSeek API key in the macOS Keychain so it never sits
 /// in plaintext. UserDefaults keeps a copy only where the Keychain refuses it.
 enum DeepSeekKeychain {
-    private static let service = "SwarmAI"
+    private static let service = "SwarmCode"
+    private static let legacyService = "SwarmAI"
     private static let account = "DeepSeek API Key"
 
     static func apiKey(fallback: String) -> String {
@@ -37,9 +38,18 @@ enum DeepSeekKeychain {
     }
 
     private static func read() -> String? {
+        if let key = readService(service) { return key }
+        if let legacy = readService(legacyService) {
+            setAPIKey(legacy)
+            return legacy
+        }
+        return nil
+    }
+
+    private static func readService(_ svc: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: svc,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
@@ -53,11 +63,13 @@ enum DeepSeekKeychain {
     }
 
     private static func delete() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(query as CFDictionary)
+        for svc in [service, legacyService] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: svc,
+                kSecAttrAccount as String: account,
+            ]
+            SecItemDelete(query as CFDictionary)
+        }
     }
 }

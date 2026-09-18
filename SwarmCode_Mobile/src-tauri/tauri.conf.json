@@ -1,8 +1,8 @@
 {
 	"$schema": "https://schema.tauri.app/config/2.0.0",
-	"productName": "SwarmAI Mobile",
+	"productName": "Swarm Code Mobile",
 	"version": "0.1.0",
-	"identifier": "com.swarmai.mobile",
+	"identifier": "com.swarmcode.mobile",
 	"build": {
 		"beforeDevCommand": "npm run dev",
 		"beforeBuildCommand": "npm run build",
@@ -13,7 +13,7 @@
 		"withGlobalTauri": true,
 		"windows": [
 			{
-				"title": "SwarmAI Mobile",
+				"title": "Swarm Code Mobile",
 				"width": 390,
 				"height": 844,
 				"resizable": false,
@@ -32,7 +32,7 @@
 			"icons/icon.icns",
 			"icons/icon.ico"
 		],
-		"longDescription": "Control SwarmAI from your phone — view chats, send messages, approve actions, and see diffs from anywhere on your local network.",
+		"longDescription": "Control Swarm Code from your phone — view chats, send messages, approve actions, and see diffs from anywhere on your local network.",
 		"macOS": {
 			"minimumSystemVersion": "14.0"
 		},

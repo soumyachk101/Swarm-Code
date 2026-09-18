@@ -299,7 +299,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = iordv.swarmai;
+				PRODUCT_BUNDLE_IDENTIFIER = iordv.swarmcode;
 				PRODUCT_MODULE_NAME = SwarmCode;
 				PRODUCT_NAME = "Swarm Code";
 				SDKROOT = macosx;
@@ -322,7 +322,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = iordv.swarmai;
+				PRODUCT_BUNDLE_IDENTIFIER = iordv.swarmcode;
 				PRODUCT_MODULE_NAME = SwarmCode;
 				PRODUCT_NAME = "Swarm Code";
 				SDKROOT = macosx;

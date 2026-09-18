@@ -1,5 +1,5 @@
 // =============================================================================
-// SwarmAI Mobile — Tauri Commands (Frontend → Rust Bridge)
+// Swarm Code Mobile — Tauri Commands (Frontend → Rust Bridge)
 // =============================================================================
 
 import { invoke } from '@tauri-apps/api/core';

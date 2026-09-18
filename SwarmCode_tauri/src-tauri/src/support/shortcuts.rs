@@ -258,7 +258,7 @@ impl ShortcutManager {
                 return Err("That chord is already registered for another action.".into());
             }
             if is_reserved_shortcut(&key) {
-                return Err("That chord is reserved by the system or SwarmAI.".into());
+                return Err("That chord is reserved by the system or Swarm Code.".into());
             }
             if is_text_stealing_shortcut(&key) {
                 return Err("That chord would steal typing without a modifier.".into());

@@ -1,5 +1,5 @@
 /*
-  SwarmAI marketing site, shared design system
+  Swarm Code marketing site, shared design system
   =================================================
 
   A dark Liquid Glass marketing site with notch navigation, glass pills,
@@ -40,7 +40,7 @@
   --glass-blur: blur(20px) saturate(180%);
   --glass-blur-soft: blur(14px) saturate(150%);
 
-  /* Accent, sampled from the SwarmAI icon's binary field. */
+  /* Accent, sampled from the Swarm Code icon's binary field. */
   --accent: #4f9cff;
   --accent-hover: #74b3ff;
   --accent-active: #2f86f5;
@@ -132,7 +132,7 @@ body {
   line-height: 1.6;
   color: var(--text-primary);
   background-color: var(--bg-top);
-  /* The same whisper of grain as the SwarmAI site, inverted for the dark
+  /* The same whisper of grain as the original design, inverted for the dark
      canvas so it lifts rather than dirties. */
   background-image:
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='matrix' values='0 0 0 0 0.75 0 0 0 0 0.82 0 0 0 0 0.95 0 0 0 0.035 0'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>");
@@ -464,10 +464,9 @@ section {
 }
 
 /* Menu-bar nav dock: on the first page load of a visit the pill springs
-   open like the SwarmAI shelf (shelf curve + blur snapping into focus). A
+   open like the Swarm Code shelf (shelf curve + blur snapping into focus). A
    head-inline gate adds html.nav-intro-done on later loads so it never
-   replays when navigating between pages. Tokens and keyframes are the
-   getswarmai.app ones, unchanged. */
+   replays when navigating between pages. */
 :root {
   --nav-dock-duration: 640ms;
   --nav-dock-curve: cubic-bezier(0.32, 1.22, 0.36, 1);
@@ -534,7 +533,7 @@ html.nav-intro-done .nav__pill { animation: none; }
 .btn--sm { height: 38px; padding-inline: 16px; }
 
 /* Hero CTA pills. The light pill is the canonical download button on
-   this dark site (the inverse of SwarmAI's dark pill on paper); the glass
+   this dark site; the glass
    pill is its secondary twin with identical geometry. */
 .btn--applepill {
   display: inline-flex;
@@ -580,7 +579,7 @@ html.nav-intro-done .nav__pill { animation: none; }
 /* ---------------------------------------------------------------------- */
 /* Morph hover — the one hover every button on the site shares.            */
 /* ---------------------------------------------------------------------- */
-/* Ported from getswarmai.app. On hover a button's content dissolves and
+/* On hover a button's content dissolves and
    reforms through a thick, real gaussian blur: the label blurs out where
    it stands and a fitting glyph blurs in, centred. Two content layers sit
    stacked in the same place inside the button, the REST face and the
@@ -776,12 +775,11 @@ html.nav-intro-done .nav__pill { animation: none; }
 .hero__title.reveal:not(.is-settled) { will-change: opacity, transform; }
 .hero__mac { white-space: nowrap; }
 
-/* The charged word. Same choreography as "Supercharged" on getswarmai.app:
+/* The charged word:
    once the headline's reveal settles, a strike drops into the word from
    the top of the viewport (850ms), an arrival bloom pulses once (900ms)
    and a sheen keeps sweeping through the letters (3.2s, linear, forever).
-   SwarmAI's strike is a lightning bolt; here it is a stream of ones and
-   zeros, and the sheen carries a row of digits instead of a bolt. */
+   A stream of ones and zeros sweeps through the letters. */
 .hero__charged {
   position: relative;
   display: inline-block;
@@ -883,6 +881,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   flex-wrap: wrap;
 }
 
+.hero__swarmcode-link,
 .hero__swarmai-link {
   display: inline-flex;
   align-items: center;
@@ -893,8 +892,11 @@ html.nav-intro-done .nav__pill { animation: none; }
   color: var(--text-tertiary);
   transition: color var(--dur-fast) var(--ease-out);
 }
+.hero__swarmcode-link img,
 .hero__swarmai-link img { width: 18px; height: 18px; border-radius: 5px; }
+.hero__swarmcode-link svg,
 .hero__swarmai-link svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.hero__swarmcode-link:hover,
 .hero__swarmai-link:hover { color: var(--text-primary); }
 
 
@@ -1407,7 +1409,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   background: var(--bg-well);
   position: relative;
   overflow: hidden;
-  /* Centred, as the pricing card on getswarmai.app is. */
+  /* Centred pricing card */
   text-align: center;
 }
 .free__app {

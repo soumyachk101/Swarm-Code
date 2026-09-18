@@ -284,10 +284,10 @@ impl TourCaptures {
  pub async fn register_defaults(&self) {
  let welcome_tour = Tour::new(
  "welcome",
- "Welcome to SwarmAI",
- "A quick introduction to SwarmAI's core concepts.",
+ "Welcome to Swarm Code",
+ "A quick introduction to Swarm Code's core concepts.",
  vec![
- TourStep::image("", "The SwarmAI interface"),
+ TourStep::image("", "The Swarm Code interface"),
  TourStep::image("", "Creating your first thread"),
  TourStep::interactive("try-chat", "Try a message", "Send a message to an AI assistant"),
  ],
@@ -326,7 +326,7 @@ mod tests {
 
  #[tokio::test]
  async fn test_tour_lifecycle() {
- let dir = std::env::temp_dir().join("swarmai_test_tours");
+ let dir = std::env::temp_dir().join("swarmcode_test_tours");
  let manager = TourCaptures::new(dir.clone());
 
  let mut tour = Tour::new(

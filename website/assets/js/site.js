@@ -2,7 +2,7 @@
   Swarm Code marketing site, shared site script
   =============================================
 
-  Plain vanilla JS, no build step, ported from getswarmai.app's site.js
+  Plain vanilla JS, no build step, for Swarm Code
   and trimmed to what this page uses:
 
     1. Staggered reveal-on-load and reveal-on-scroll for `.reveal`.
@@ -253,8 +253,7 @@
 
 /* ------------------------------------------------------------------- */
 /* Button morph hover: builds the two content layers the shared hover    */
-/* needs (see "Morph hover" in assets/css/site.css). Ported from         */
-/* getswarmai.app's site.js.                                              */
+/* needs (see "Morph hover" in assets/css/site.css).                     */
 /* ------------------------------------------------------------------- */
 /*
   Every button hovers the same way: its content dissolves and reforms
@@ -302,7 +301,7 @@
     [/^back\b/, "arrow-left"],
     [/^continue\b/, "arrow-right"],
     [/^what is\b|\?$/, "question"],
-    [/^(download|get swarm code|get swarmai)\b/, "arrow-down"],
+    [/^(download|get swarm code)\b/, "arrow-down"],
     [/^(view source|open source|source|gitlab|github|meet)\b/, "arrow-up-right"],
     [/^(see what it does|see how it works|show more)\b/, "arrow-down"]
   ];

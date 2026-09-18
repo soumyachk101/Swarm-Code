@@ -13,16 +13,16 @@ font.color.rgb = RGBColor(0x1A, 0x1A, 0x1A)
 
 title = doc.add_paragraph()
 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-run = title.add_run("SwarmAI — A LinkedIn Post")
+run = title.add_run("Swarm Code — A LinkedIn Post")
 run.bold = True
 run.font.size = Pt(11)
 run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
 
 doc.add_paragraph("")  # spacer
 
-doc.add_paragraph("SwarmAI — a native coding agent app for Mac, built entirely in Swift & SwiftUI.").italic = True
+doc.add_paragraph("Swarm Code — a native coding agent app for Mac, built entirely in Swift & SwiftUI.").italic = True
 
-post_text = """I built SwarmAI because I was tired of bouncing between terminal windows, git repos, and chat UIs just to get things done with my coding agents.
+post_text = """I built Swarm Code because I was tired of bouncing between terminal windows, git repos, and chat UIs just to get things done with my coding agents.
 
 We all have these amazing tools now — Claude Code, Codex, Cursor, Copilot, DeepSeek — but there wasn't really one place to hold them all together on a Mac. So I built one.
 
@@ -63,5 +63,5 @@ run = htag.add_run("#BuildInPublic  #SwiftUI  #DeveloperTools  #MacApp  #OpenSou
 run.font.size = Pt(13)
 run.bold = True
 
-doc.save("/Users/soumyachakraborty/Documents/droppy-code/docs/linkedin_swarmai_post.docx")
+doc.save("/Users/soumyachakraborty/Documents/droppy-code/docs/linkedin_swarmcode_post.docx")
 print("Saved.")

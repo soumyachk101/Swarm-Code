@@ -67,7 +67,8 @@ struct AvailableUpdate: Codable, Equatable, Sendable {
 
 /// Manages GitHub authentication token resolution and secure Keychain storage for UpdateChecker.
 enum GitHubAuth {
-    private static let service = "SwarmAI"
+    private static let service = "SwarmCode"
+    private static let legacyService = "SwarmAI"
     private static let account = "GitHub Update Token"
     private static let fallbackKey = "github_token_custom"
 
@@ -194,19 +195,23 @@ enum GitHubAuth {
     }
 
     private static func readKeychain() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let key = String(data: data, encoding: .utf8),
-              !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return key.trimmingCharacters(in: .whitespacesAndNewlines)
+        for s in [service, legacyService] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: s,
+                kSecAttrAccount as String: account,
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne,
+            ]
+            var item: CFTypeRef?
+            if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+               let data = item as? Data,
+               let key = String(data: data, encoding: .utf8),
+               !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return key.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return nil
     }
 
     private static func deleteKeychain() {
@@ -361,7 +366,7 @@ final class UpdateChecker {
 
     private func fetchReleases() async throws -> [GitHubRelease] {
         var request = URLRequest(url: Self.apiURL)
-        request.setValue("SwarmAI/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
+        request.setValue("SwarmCode/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         if let token = GitHubAuth.resolveToken(), !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -407,7 +412,7 @@ final class UpdateChecker {
     private func downloadSize(of url: URL) async -> Int64? {
         var request = URLRequest(url: url)
         request.httpMethod = "HEAD"
-        request.setValue("SwarmAI/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
+        request.setValue("SwarmCode/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
         if let token = GitHubAuth.resolveToken(), !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -436,7 +441,7 @@ final class UpdateChecker {
         guard defaults.string(forKey: Keys.notifiedVersion) != update.version else { return }
         defaults.set(update.version, forKey: Keys.notifiedVersion)
         let content = UNMutableNotificationContent()
-        content.title = "SwarmAI \(update.version) is available"
+        content.title = "Swarm Code \(update.version) is available"
         content.body = "Open Settings › About to update and restart."
         content.userInfo = ["update": update.version]
         let request = UNNotificationRequest(identifier: "update-\(update.version)", content: content, trigger: nil)

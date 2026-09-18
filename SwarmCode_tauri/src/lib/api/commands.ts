@@ -1,5 +1,5 @@
 // =============================================================================
-// SwarmAI Tauri Frontend — Tauri Command Wrappers
+// Swarm Code Tauri Frontend — Tauri Command Wrappers
 // All backend commands organized by domain
 // =============================================================================
 

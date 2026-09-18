@@ -1,6 +1,6 @@
 {
  "identifier": "default",
- "description": "Default capabilities for SwarmAI",
+ "description": "Default capabilities for Swarm Code",
  "windows": ["main"],
  "permissions": [
  "core:default",

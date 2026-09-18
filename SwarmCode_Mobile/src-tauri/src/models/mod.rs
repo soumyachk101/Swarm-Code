@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 // =============================================================================
-// Wire-Protocol Models (mirror SwarmAI/Bridge/API/BridgeEvent.swift)
+// Wire-Protocol Models (mirror SwarmCode/Bridge/API/BridgeEvent.swift)
 // =============================================================================
 
 // ---- WebSocket Event Envelope ----

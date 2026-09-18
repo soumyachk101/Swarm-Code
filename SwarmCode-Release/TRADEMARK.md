@@ -36,4 +36,4 @@ When discussing forks or derivatives, use language like:
 ## Contact
 For trademark licensing inquiries or permissions, contact:
 - Email: hi@swarmcode.dev
-- Website: https://getswarmai.app
+- Website: https://swarmcode.antideploy.com

@@ -1,6 +1,6 @@
 {
 	"identifier": "default",
-	"description": "Default capabilities for SwarmAI Mobile",
+	"description": "Default capabilities for Swarm Code Mobile",
 	"windows": ["main"],
 	"permissions": [
 		"core:default",

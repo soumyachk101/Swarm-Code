@@ -1,5 +1,5 @@
 // =============================================================================
-// SwarmAI Mobile — Bridge Client
+// Swarm Code Mobile — Bridge Client
 // =============================================================================
 //
 // WebSocket + REST client that lives in the Tauri Rust core. It talks to the
@@ -237,7 +237,7 @@ impl MobileBridgeClient {
                                 id: Uuid::new_v4(),
                                 host: host.clone(),
                                 port: 8765,
-                                name: format!("SwarmAI ({})", host),
+                                name: format!("Swarm Code ({})", host),
                                 token: String::new(),
                                 last_connected: None,
                             });

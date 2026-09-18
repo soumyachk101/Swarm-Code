@@ -41,20 +41,25 @@ final class TokenLedger {
     /// Merged history plus live spend, keyed by local day.
     private(set) var dailyTotals: [String: Int] = [:]
 
-    private static let liveDefaultsKey = "swarmai.tokenActivity.liveDaily"
+    private static let liveDefaultsKey = "swarmcode.tokenActivity.liveDaily"
+    private static let legacyLiveDefaultsKey = "swarmai.tokenActivity.liveDaily"
 
     /// Live-recorded spend, kept apart from history so a rescan never drops
     /// usage that arrived after the scan.
     private var liveDaily: [String: Int] = [:]
     private var historyDaily: [String: Int] = [:]
     private var didStartLoad = false
-    /// Live recording owns every session from this moment, so the history
+    /// Files written after this time are tracked via `record(spend:)`. The
     /// scan only takes files last written before it.
     private let launchDate = Date()
 
     private init() {
         if let cached = UserDefaults.standard.dictionary(forKey: Self.liveDefaultsKey) as? [String: Int] {
             liveDaily = cached
+        } else if let legacy = UserDefaults.standard.dictionary(forKey: Self.legacyLiveDefaultsKey) as? [String: Int] {
+            liveDaily = legacy
+            UserDefaults.standard.set(legacy, forKey: Self.liveDefaultsKey)
+            UserDefaults.standard.removeObject(forKey: Self.legacyLiveDefaultsKey)
         }
         dailyTotals = liveDaily
     }

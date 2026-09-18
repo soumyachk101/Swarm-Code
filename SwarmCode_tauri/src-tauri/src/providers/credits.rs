@@ -1,6 +1,6 @@
 //! Provider prepaid-credit reading.
 //!
-//! Mirrors `SwarmAI/Providers/ProviderCredits.swift`.
+//! Mirrors `SwarmCode/Providers/ProviderCredits.swift`.
 //!
 //! * `ProviderCredits` — the per-provider balance record
 //! * `CreditsReader`   — fetch balance from provider APIs (today: DeepSeek)

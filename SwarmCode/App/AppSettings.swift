@@ -326,7 +326,7 @@ final class AppSettings {
         didSet { defaults.set(hydraAlwaysHeads, forKey: Key.hydraAlwaysHeads) }
     }
 
-    /// A head SwarmAI runs gets a copy of the checkout of its own, so no head ever
+    /// A head Swarm Code runs gets a copy of the checkout of its own, so no head ever
     /// sees another's half-done work; its changes land in the chat's checkout when it
     /// reports. Off, the heads work in the checkout itself.
     var hydraIsolateHeads: Bool {
@@ -537,7 +537,7 @@ final class AppSettings {
         lastEfforts[provider.rawValue] = effort
     }
 
-    /// The API key SwarmAI sends to an API-key provider: the value from Settings,
+    /// The API key Swarm Code sends to an API-key provider: the value from Settings,
     /// falling back to the provider's env var from the login environment
     /// (`DEEPSEEK_API_KEY` for DeepSeek, `MODEL_API_KEY` for Meta).
     func apiKey(for provider: ProviderKind) -> String {

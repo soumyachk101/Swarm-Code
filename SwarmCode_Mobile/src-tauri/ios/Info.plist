@@ -3,9 +3,10 @@
 <plist version="1.0">
 <dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>SwarmAI needs to discover and connect to Swarm Code on your local network.</string>
+	<string>Swarm Code Mobile needs to discover and connect to Swarm Code on your local network.</string>
 	<key>NSBonjourServices</key>
 	<array>
+		<string>_swarmcode-bridge._tcp</string>
 		<string>_swarmai-bridge._tcp</string>
 	</array>
 </dict>

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Builds SwarmAI's windows the way SwarmAI builds its settings window: a plain titled AppKit window
+/// Builds Swarm Code's windows the way Swarm Code builds its settings window: a plain titled AppKit window
 /// with a clear background and a SwiftUI glass pane, so no scene background draws a second corner.
 @MainActor
 final class WindowManager {
@@ -18,7 +18,7 @@ final class WindowManager {
         static let settings = NSSize(width: 780, height: 580)
     }
 
-    private static let mainFrameName = "SwarmAIMainWindow"
+    private static let mainFrameName = "SwarmCodeMainWindow"
 
     func showMain() {
         let window = mainWindow ?? makeMainWindow()
@@ -57,7 +57,7 @@ final class WindowManager {
     }
 
     private func makeMainWindow() -> NSWindow {
-        let window = makeWindow(title: "SwarmAI", size: Size.main, resizable: true) { RootView() }
+        let window = makeWindow(title: "Swarm Code", size: Size.main, resizable: true) { RootView() }
         window.contentMinSize = Size.mainMinimum
         if !window.setFrameUsingName(Self.mainFrameName) {
             window.center()
@@ -69,7 +69,7 @@ final class WindowManager {
     /// The main window for the website captures: the same window, at a fixed size, with
     /// no frame autosave, so the run never reads or writes where the real window sits.
     func makeCaptureWindow(size: NSSize) -> NSWindow {
-        makeWindow(title: "SwarmAI", size: size, resizable: true) { RootView() }
+        makeWindow(title: "Swarm Code", size: size, resizable: true) { RootView() }
     }
 
     private func makeSettingsWindow() -> NSWindow {

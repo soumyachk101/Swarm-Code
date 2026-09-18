@@ -57,7 +57,7 @@ enum TextGeneration {
                   result.succeeded else { return nil }
             return result.trimmedOutput.nilIfEmpty
         case .codex(let executable, let environment, let model):
-            let output = FileManager.default.temporaryDirectory.appendingPathComponent("swarmai-\(UUID().uuidString).txt")
+            let output = FileManager.default.temporaryDirectory.appendingPathComponent("swarmcode-\(UUID().uuidString).txt")
             defer { try? FileManager.default.removeItem(at: output) }
             let arguments = [
                 "exec", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "--model", model,

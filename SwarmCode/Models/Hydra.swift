@@ -4,10 +4,10 @@ import SwiftUI
 // Hydra: one chat, many heads. With Hydra on, the chat's agent leads a team of helper
 // agents ("heads") that it sends out on the parts of a big job, in parallel. Claude, Codex
 // and Copilot run the heads natively, inside their own session, with the model and effort
-// from the pair the user set up; every other provider gets SwarmAI-run heads, each a thread
+// from the pair the user set up; every other provider gets SwarmCode-run heads, each a thread
 // of its own, and hands their reports back to the lead as the next message. A pair may
 // also send the heads out on another provider than the lead's (a Claude lead over Gemini
-// heads, say): then they are SwarmAI-run whatever the lead's provider, and the lead asks for
+// heads, say): then they are SwarmCode-run whatever the lead's provider, and the lead asks for
 // them the way the other providers do.
 
 /// A lead-and-heads pairing: which model runs the heads when a chat on this provider leads.
@@ -139,7 +139,7 @@ struct HydraLaunch: Hashable, Sendable {
     var headsProvider: ProviderKind
     /// Whether the lead's provider runs the heads inside its own session: only with the
     /// heads on the lead's provider, and only where it has heads of its own (Claude, Codex,
-    /// Copilot). Otherwise the heads are SwarmAI-run threads, whatever the lead runs on, and
+    /// Copilot). Otherwise the heads are SwarmCode-run threads, whatever the lead runs on, and
     /// the lead asks for them with the delegation block.
     var runsNatively: Bool
     /// The heads' model and provider in words, for the lead's brief, when they run on
@@ -152,9 +152,9 @@ struct HydraLaunch: Hashable, Sendable {
     /// The pair's cap on heads at work at once; nil, with no pair or an uncapped one,
     /// lets as many out as the work asks for.
     var maxHeads: Int?
-    /// Whether SwarmAI-run heads get copies of the checkout of their own.
+    /// Whether SwarmCode-run heads get copies of the checkout of their own.
     var isolatesHeads = true
-    /// Whether SwarmAI lands the team's finished work itself (see
+    /// Whether SwarmCode lands the team's finished work itself (see
     /// `AppModel.autoMergeHydraWork`); the lead is told so it never merges by hand.
     var autoMerges = false
     /// Whether the lead audits each head's landed work before it finishes (the
@@ -171,7 +171,7 @@ struct HydraLaunch: Hashable, Sendable {
     }
 }
 
-/// How much a SwarmAI-run head gets for one turn, on any provider: a nudge when it only
+/// How much a SwarmCode-run head gets for one turn, on any provider: a nudge when it only
 /// reads, a word to wrap up, then a stop and one more turn for its report, so the lead
 /// always hears back. The API sessions pace themselves with these from inside the turn;
 /// every other provider gets the stop from the head's runtime.
@@ -187,9 +187,9 @@ enum HydraBudget {
     /// What a stopped head gets to write its report in.
     static let reportSeconds: TimeInterval = 3 * 60
 
-    static let pacingNote = "[SwarmAI] You have run \(pacingTools) tools without changing a file. If the task is research, reply with your findings now. Otherwise act on what you know: make the change, or reply with what blocks you."
-    static let wrapUpNote = "[SwarmAI] Your budget is nearly spent. Finish now: complete the smallest correct version of the task, then reply with your report."
-    static let finalNote = "[SwarmAI] Your budget is spent and your tools are gone. Reply now with your report: what you changed, how far it got, and what is left."
+    static let pacingNote = "[Swarm Code] You have run \(pacingTools) tools without changing a file. If the task is research, reply with your findings now. Otherwise act on what you know: make the change, or reply with what blocks you."
+    static let wrapUpNote = "[Swarm Code] Your budget is nearly spent. Finish now: complete the smallest correct version of the task, then reply with your report."
+    static let finalNote = "[Swarm Code] Your budget is spent and your tools are gone. Reply now with your report: what you changed, how far it got, and what is left."
 }
 
 /// A head's identity: its name, its colour and the dragon head that is its glyph.
@@ -274,8 +274,8 @@ enum HydraRoster {
 /// A head thread's place in its lead's team: who it is, what it was sent to do, how it
 /// runs and how far it has got.
 struct HydraHeadInfo: Codable, Hashable, Sendable {
-    /// Native heads run inside the lead's own provider session; SwarmAI-run heads are
-    /// sessions of their own that SwarmAI starts and reports back for.
+    /// Native heads run inside the lead's own provider session; SwarmCode-run heads are
+    /// sessions of their own that SwarmCode starts and reports back for.
     enum Kind: String, Codable, Sendable {
         case native
         case droppy
@@ -305,7 +305,7 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
     var origin: Origin
     var status: Status = .running
     /// The head's report, once it has one: the provider's summary for a native head, the
-    /// final reply for a SwarmAI-run one.
+    /// final reply for a SwarmCode-run one.
     var summary: String?
     /// The provider's one-line progress note, or the last tool the head used.
     var activity: String?
@@ -320,14 +320,14 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
     var nativeTaskID: String?
     /// The tool row in the lead's timeline that stands for this head.
     var toolUseID: String?
-    /// The delegation a SwarmAI-run head belongs to: its report waits for the others.
+    /// The delegation a SwarmCode-run head belongs to: its report waits for the others.
     var batchID: UUID?
-    /// Whether SwarmAI can stop this head where it runs.
+    /// Whether SwarmCode can stop this head where it runs.
     var canStop = true
     /// A native head whose spawning tool call returned at once: only the provider's own
     /// word ends it, never the tool result.
     var isBackground = true
-    /// Set on a SwarmAI-run head with a copy of the checkout of its own: the tree the copy
+    /// Set on a SwarmCode-run head with a copy of the checkout of its own: the tree the copy
     /// started from, which its work is measured against when it lands. Moves on with
     /// every landing, so a head steered on afterwards lands only what is new.
     var baseTree: String?
@@ -336,7 +336,7 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
 
     var persona: HydraPersona { HydraRoster.persona(at: index) }
     var isFinished: Bool { status.isFinished }
-    /// Whether the head works in a copy of the checkout that SwarmAI made for it.
+    /// Whether the head works in a copy of the checkout that SwarmCode made for it.
     var hasOwnCopy: Bool { baseTree != nil }
 
     init(index: Int, task: String, kind: Kind, origin: Origin) {
@@ -366,7 +366,7 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
         nativeTaskID = container.value(.nativeTaskID, default: nil)
         toolUseID = container.value(.toolUseID, default: nil)
         batchID = container.value(.batchID, default: nil)
-        // SwarmAI owns a SwarmAI-run head's turn, so it can always stop one; only a
+        // SwarmCode owns a SwarmCode-run head's turn, so it can always stop one; only a
         // native head depends on the provider having said so.
         canStop = container.value(.canStop, default: kind == .droppy)
         isBackground = container.value(.isBackground, default: true)
@@ -375,7 +375,7 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
     }
 }
 
-/// Where a SwarmAI-run head's work went when it reported: into the lead's checkout, into
+/// Where a SwarmCode-run head's work went when it reported: into the lead's checkout, into
 /// it with conflicts left to settle, or into a patch file when it would not apply.
 struct HydraLanding: Codable, Hashable, Sendable {
     struct File: Codable, Hashable, Sendable {
@@ -425,7 +425,7 @@ struct HydraReport: Hashable, Sendable {
     var origin: HydraHeadInfo.Origin
     var status: HydraHeadInfo.Status
     var text: String
-    /// Where a SwarmAI-run head's work went; nil for a head that changed nothing or has
+    /// Where a SwarmCode-run head's work went; nil for a head that changed nothing or has
     /// no copy of its own.
     var landing: HydraLanding?
     /// The head's own copy of the checkout, for work that did not land.
@@ -436,10 +436,10 @@ struct HydraReport: Hashable, Sendable {
 
 /// The words Hydra puts in front of the lead and the heads, per provider.
 enum HydraPrompts {
-    static let workerAgentName = "swarmai-worker"
-    static let scoutAgentName = "swarmai-scout"
+    static let workerAgentName = "swarmcode-worker"
+    static let scoutAgentName = "swarmcode-scout"
 
-    /// Where a SwarmAI-run head works: a copy of the checkout made for it, or the checkout
+    /// Where a SwarmCode-run head works: a copy of the checkout made for it, or the checkout
     /// itself when the project cannot be copied (no git, no commits yet) or the user
     /// prefers it so.
     enum Workplace {
@@ -453,7 +453,7 @@ enum HydraPrompts {
         switch workplace {
         case .ownCopy(let path):
             """
-            You have your own copy of the project at \(path): a git worktree SwarmAI made for you from the lead's checkout as it was when you were sent out, uncommitted work included. Work in it directly, on the files as they are; your tools already run there. When you report, SwarmAI carries your changes into the lead's checkout itself. So never commit, branch, stash, push, check out, reset, restore or clean anything, and never make or remove worktrees, whatever the project's own guidelines say about agents and worktrees: this copy already is yours. Do not use git to check your work either.
+            You have your own copy of the project at \(path): a git worktree Swarm Code made for you from the lead's checkout as it was when you were sent out, uncommitted work included. Work in it directly, on the files as they are; your tools already run there. When you report, Swarm Code carries your changes into the lead's checkout itself. So never commit, branch, stash, push, check out, reset, restore or clean anything, and never make or remove worktrees, whatever the project's own guidelines say about agents and worktrees: this copy already is yours. Do not use git to check your work either.
             """
         case .shared(let path):
             """
@@ -472,10 +472,10 @@ enum HydraPrompts {
 
     private static let howToReport = "Reply with a short report the lead can act on: what you did, the files you changed, how you checked it, and anything the lead must know. No preamble, no logs."
 
-    /// What a lead is told when the setting has SwarmAI land the work: the merge is
+    /// What a lead is told when the setting has SwarmCode land the work: the merge is
     /// the app's, not the lead's, whatever else it has been told about merging, and asking
     /// for one is a job it finishes by replying.
-    private static let autoMergeRule = "SwarmAI merges your finished work itself: the moment you answer and every head is back, the files the team changed go out as a merge request on a branch of their own, it is merged, and the checkout is brought up to date. So never commit, push, make a branch, or open or merge a merge request yourself, and never send out a head to, whatever the project's guidelines or the user's standing instructions say about merging. When the user asks you to merge, there is nothing to run: make sure the work is complete, reply that it lands by itself as soon as you finish, and stop."
+    private static let autoMergeRule = "Swarm Code merges your finished work itself: the moment you answer and every head is back, the files the team changed go out as a merge request on a branch of their own, it is merged, and the checkout is brought up to date. So never commit, push, make a branch, or open or merge a merge request yourself, and never send out a head to, whatever the project's guidelines or the user's standing instructions say about merging. When the user asks you to merge, there is nothing to run: make sure the work is complete, reply that it lands by itself as soon as you finish, and stop."
 
     /// What a lead is told when the setting has it audit the heads' work: a quick read of
     /// every file a report names, with the fixes made by the lead itself, so the audit
@@ -512,9 +512,9 @@ enum HydraPrompts {
         - \(howToWait)
         - Give each head one self-contained task with the exact files, symbols and acceptance criteria it needs. Heads share the checkout but not your context, so write the task as if to a capable colleague who has read nothing yet.
         - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself: never send out a head to verify, redo or finish another head's work.
-        - Tell the user in one line which heads you sent out and what each one does. SwarmAI names the heads in roster order (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on): announce each head by its task and use exactly those names in that order, never invented ones. There is no head called Ives; the roster has Ivo.
+        - Tell the user in one line which heads you sent out and what each one does. Swarm Code names the heads in roster order (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on): announce each head by its task and use exactly those names in that order, never invented ones. There is no head called Ives; the roster has Ivo.
         - While they work, prepare the integration rather than starting on their tasks: how the pieces fit together, and the one check you will run at the end.
-        - Heads go out through the tools above, never through a fenced hydra block: that is the delegation format for providers without agent tools of their own. If you end a reply with one anyway, SwarmAI still sends those heads out as threads of their own, but your turn ends there and their reports come back as a later message.
+        - Heads go out through the tools above, never through a fenced hydra block: that is the delegation format for providers without agent tools of their own. If you end a reply with one anyway, Swarm Code still sends those heads out as threads of their own, but your turn ends there and their reports come back as a later message.
 
         When they report back:
         - The checkout changes under you while heads work, and the user may be editing too. Never use git status or git diff to check on a head, and never reconcile, revert, stash or move changes you did not make.
@@ -526,14 +526,14 @@ enum HydraPrompts {
 
     /// The system prompt a worker head runs with.
     static let workerPrompt = """
-    You are a Hydra head in SwarmAI: one of several helpers working in parallel for a lead agent, in the lead's own checkout, where the lead and the other heads are changing other files at the same time. Do exactly the task you were given, and only that: do not widen it, do not touch files it does not name unless the task cannot be done otherwise, and never revert, reformat or clean up work that is not yours. Changes you did not make are expected in the checkout: leave them alone, never stash, check out, reset, restore or clean anything, and never move work into a branch or worktree, whatever the project's own guidelines say about agents and worktrees. Do not use git status or git diff to check your work: they show everyone's changes. Check what you changed with the narrowest thing that proves it and leave the full build and test suite to the lead. If something blocks you, say so instead of guessing.
+    You are a Hydra head in Swarm Code: one of several helpers working in parallel for a lead agent, in the lead's own checkout, where the lead and the other heads are changing other files at the same time. Do exactly the task you were given, and only that: do not widen it, do not touch files it does not name unless the task cannot be done otherwise, and never revert, reformat or clean up work that is not yours. Changes you did not make are expected in the checkout: leave them alone, never stash, check out, reset, restore or clean anything, and never move work into a branch or worktree, whatever the project's own guidelines say about agents and worktrees. Do not use git status or git diff to check your work: they show everyone's changes. Check what you changed with the narrowest thing that proves it and leave the full build and test suite to the lead. If something blocks you, say so instead of guessing.
 
     \(howToReport)
     """
 
     /// The system prompt a scout head runs with.
     static let scoutPrompt = """
-    You are a Hydra head in SwarmAI: a read-only researcher working in parallel for a lead agent, in the lead's own checkout, where the lead and other heads are changing files at the same time; uncommitted changes there are theirs and expected. Answer exactly the question you were given, from the code and sources you can read. Change nothing.
+    You are a Hydra head in Swarm Code: a read-only researcher working in parallel for a lead agent, in the lead's own checkout, where the lead and other heads are changing files at the same time; uncommitted changes there are theirs and expected. Answer exactly the question you were given, from the code and sources you can read. Change nothing.
 
     Reply with a short report the lead can act on: the findings, with file paths and line references, and anything that contradicts what the lead assumed. No preamble.
     """
@@ -607,7 +607,7 @@ enum HydraPrompts {
         return ["agents": .object(agents), "features": ["multi_agent": true]]
     }
 
-    // MARK: - SwarmAI-run heads
+    // MARK: - SwarmCode-run heads
 
     /// How many times in a row a lead may send heads out for one request of the user's: a
     /// big job wants scouts to read, workers to change, and one round for what failed or
@@ -644,7 +644,7 @@ enum HydraPrompts {
     /// prompt, once; a CLI session gets it in front of every message.
     static func fallbackPolicy(maxHeads: Int?, isolated: Bool, autoMerges: Bool = false, reviewsHeads: Bool = false, heads: String? = nil) -> String {
         let whereHeadsWork = isolated
-            ? "Each head works in a copy of the project of its own and SwarmAI lands its changes in your checkout when it reports"
+            ? "Each head works in a copy of the project of its own and Swarm Code lands its changes in your checkout when it reports"
             : "The heads work in your checkout"
         let team = maxHeads.map { "a team of up to \($0) helper agents" } ?? "a team of helper agents"
         // Heads on another provider are a different model from the lead, chosen for speed
@@ -661,7 +661,7 @@ enum HydraPrompts {
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from SwarmAI, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "")
+        and stop there: do not wait, poll or verify anything after it. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone. Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Swarm Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "")
         """
     }
 
@@ -794,10 +794,10 @@ enum HydraPrompts {
         return message + " Write the block again at the end of your reply: one fenced block whose info string is hydra, holding a JSON array of objects with a task string and a prompt string. Inside a prompt never open a fenced code block of your own (no three backticks): describe code in words, quote identifiers with single backticks, or indent snippets. This does not count as a round of heads."
     }
 
-    /// What a SwarmAI-run head is sent for a task the lead delegated.
+    /// What a SwarmCode-run head is sent for a task the lead delegated.
     static func delegatedHeadPrompt(persona: HydraPersona, delegation: HydraDelegation, workplace: Workplace) -> String {
         """
-        You are \(persona.name), a Hydra head in SwarmAI: one of several helpers working in parallel for a lead agent. The lead delegated this task to you.
+        You are \(persona.name), a Hydra head in Swarm Code: one of several helpers working in parallel for a lead agent. The lead delegated this task to you.
 
         ## Your task: \(delegation.task)
         \(delegation.prompt)
@@ -822,7 +822,7 @@ enum HydraPrompts {
         var touchedPaths: [String] = []
     }
 
-    /// What a SwarmAI-run head is sent for a task the user queued while the lead worked, or
+    /// What a SwarmCode-run head is sent for a task the user queued while the lead worked, or
     /// sent straight to a head; `leadIsWorking` says which, so the head is told the truth
     /// about the lead.
     static func queuedHeadPrompt(persona: HydraPersona, task: String, context: ChatContext, workplace: Workplace, leadIsWorking: Bool = true) -> String {
@@ -842,7 +842,7 @@ enum HydraPrompts {
             ? "The user queued this task for you while the lead works on something else."
             : "The user sent this task straight to you; the lead is idle and will hear your report."
         return """
-        You are \(persona.name), a Hydra head in SwarmAI: a helper running in parallel with the lead agent. \(handoff)
+        You are \(persona.name), a Hydra head in Swarm Code: a helper running in parallel with the lead agent. \(handoff)
 
         ## What is going on in the main chat
         \(contextBlock)

@@ -120,7 +120,7 @@ final class ACPSession: ProviderSession {
         let initialized = try await connection.request("initialize", [
             "protocolVersion": 1,
             "clientCapabilities": ["fs": ["readTextFile": false, "writeTextFile": false], "terminal": false],
-            "clientInfo": ["name": "swarmai", "title": "SwarmAI", "version": .string(AppInfo.version)],
+            "clientInfo": ["name": "swarmcode", "title": "Swarm Code", "version": .string(AppInfo.version)],
         ])
         canLoadSessions = initialized["agentCapabilities"]?["loadSession"]?.bool ?? false
         authMethods = (initialized["authMethods"]?.array ?? []).compactMap { $0["id"]?.string }
@@ -199,7 +199,7 @@ final class ACPSession: ProviderSession {
     // MARK: - Catalog
 
     static func probeModels(provider: ProviderKind, executable: URL, environment: [String: String]) async throws -> [ModelOption] {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("swarmai-catalog", isDirectory: true)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("swarmcode-catalog", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let session = ACPSession(configuration: SessionConfiguration(
             provider: provider,

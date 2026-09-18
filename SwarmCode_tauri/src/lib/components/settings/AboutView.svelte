@@ -31,7 +31,7 @@
 		updateMessage = '';
 
 		try {
-			const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('swarmai_github_token') || '') : '';
+			const token = typeof localStorage !== 'undefined' ? (localStorage.getItem('swarmcode_github_token') || localStorage.getItem('swarmai_github_token') || '') : '';
 			const headers: Record<string, string> = { Accept: 'application/vnd.github+json' };
 			if (token) headers['Authorization'] = `Bearer ${token}`;
 			const res = await fetch('https://api.github.com/repos/soumyachk101/Swarm-Code-Release/releases/latest', {
@@ -78,7 +78,7 @@
 		<section class="settings-section">
 			<div class="about-hero">
 				<div class="about-icon">
-					<img src="/icons/swarmai-logo.svg" alt="Swarm Code" width="64" height="64" />
+					<img src="/icons/swarmcode-logo.svg" alt="Swarm Code" width="64" height="64" />
 				</div>
 				<div class="about-meta">
 					<h3 class="about-name">{appName}</h3>

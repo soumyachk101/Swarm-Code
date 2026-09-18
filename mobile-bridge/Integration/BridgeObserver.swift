@@ -89,7 +89,7 @@ final class BridgeObserver: @unchecked Sendable {
 // MARK: - AppSettings: Bridge toggle
 
 extension AppSettings {
-    /// When true, the bridge server starts with SwarmAI and advertises itself
+    /// When true, the bridge server starts with Swarm Code and advertises itself
     /// on the local network. Default: off, so the app behaves exactly as before.
     var bridgeEnabled: Bool {
         get { defaults.bool(forKey: "bridgeEnabled") }

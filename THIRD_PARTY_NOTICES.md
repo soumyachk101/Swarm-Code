@@ -2,9 +2,9 @@
 
 ## T3 Code
 
-SwarmAI began as a native Swift rewrite of T3 Code by T3 Tools Inc. (https://github.com/pingdotgg/t3code),
+Swarm Code began as a native Swift rewrite of T3 Code by T3 Tools Inc. (https://github.com/pingdotgg/t3code),
 in T3 Code's own repository: the history of this repository carries T3 Code's code, and `LICENSE` keeps
-T3 Tools Inc.'s copyright notice beside SwarmAI's.
+T3 Tools Inc.'s copyright notice beside Swarm Code's.
 
 MIT License
 
@@ -59,7 +59,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Zeron
 
-SwarmAI's working indicators (`SwarmAI/Views/Common/WorkingIndicators.swift`) are ported from Zeron,
+Swarm Code's working indicators (`SwarmCode/Views/Common/WorkingIndicators.swift`) are ported from Zeron,
 https://github.com/zeronsh/zeron, `apps/ios/Zeron/Views/Loaders.swift` and `apps/ios/Zeron/Theme/Motion.swift`.
 
 MIT License
@@ -86,7 +86,7 @@ SOFTWARE.
 
 ## Octicons
 
-The Copilot provider icon (`SwarmAI/Resources/Assets.xcassets/provider-copilot.imageset/copilot.svg`) is
+The Copilot provider icon (`SwarmCode/Resources/Assets.xcassets/provider-copilot.imageset/copilot.svg`) is
 the `copilot` mark from GitHub's Octicons, https://github.com/primer/octicons, `icons/copilot-24.svg`,
 with its artboard resized to match the other provider marks.
 
@@ -114,7 +114,7 @@ SOFTWARE.
 
 ## TourKit
 
-The welcome tour (`SwarmAI/Views/Tour/`) is a port of TourKit by Ram Patra,
+The welcome tour (`SwarmCode/Views/Tour/`) is a port of TourKit by Ram Patra,
 https://github.com/rampatra/TourKit: the slideshow card, its page indicator, its top controls
 and its floating window controller, carried over to the app's glass and asset catalog.
 
@@ -143,5 +143,5 @@ SOFTWARE.
 ## Provider names and marks
 
 Codex, Claude, Cursor, OpenCode, Grok, DeepSeek, Meta, Devin, Antigravity and GitHub Copilot are the
-names and marks of their respective owners, used here to name the agents the app drives. SwarmAI is
+names and marks of their respective owners, used here to name the agents the app drives. Swarm Code is
 not affiliated with or endorsed by any of them.

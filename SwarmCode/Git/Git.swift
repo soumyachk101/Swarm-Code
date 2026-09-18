@@ -249,7 +249,7 @@ struct Git: Sendable {
     /// happens to be uncommitted alongside it.
     func captureTree(paths: [String]) async throws -> String {
         let fileManager = FileManager.default
-        let index = fileManager.temporaryDirectory.appendingPathComponent("swarmai-index-\(UUID().uuidString)")
+        let index = fileManager.temporaryDirectory.appendingPathComponent("swarmcode-index-\(UUID().uuidString)")
         defer { try? fileManager.removeItem(at: index) }
         let environment = ["GIT_INDEX_FILE": index.path]
         try Self.check(await run(["read-tree", "HEAD"], environment: environment))
@@ -364,7 +364,7 @@ struct Git: Sendable {
     // MARK: - Checkpoints
 
     static func checkpointRef(thread: UUID, turn: Int, phase: String) -> String {
-        "refs/swarmai/checkpoints/\(thread.uuidString.lowercased())/\(turn)-\(phase)"
+        "refs/swarmcode/checkpoints/\(thread.uuidString.lowercased())/\(turn)-\(phase)"
     }
 
     /// The checkout's real index file, kept per checkout. Asking git for it is a process of
@@ -396,7 +396,7 @@ struct Git: Sendable {
     /// diff, with no commit and nothing referenced. Respects .gitignore.
     func captureTree() async throws -> String {
         let fileManager = FileManager.default
-        let index = fileManager.temporaryDirectory.appendingPathComponent("swarmai-index-\(UUID().uuidString)")
+        let index = fileManager.temporaryDirectory.appendingPathComponent("swarmcode-index-\(UUID().uuidString)")
         defer { try? fileManager.removeItem(at: index) }
         let environment = ["GIT_INDEX_FILE": index.path]
 
@@ -428,10 +428,11 @@ struct Git: Sendable {
     }
 
     func deleteCheckpoints(thread: UUID) async {
-        let prefix = "refs/swarmai/checkpoints/\(thread.uuidString.lowercased())/"
-        guard let refs = try? await output(["for-each-ref", "--format=%(refname)", prefix]) else { return }
-        for ref in refs.split(separator: "\n") {
-            _ = try? await run(["update-ref", "-d", String(ref)])
+        for prefix in ["refs/swarmcode/checkpoints/\(thread.uuidString.lowercased())/", "refs/swarmai/checkpoints/\(thread.uuidString.lowercased())/"] {
+            guard let refs = try? await output(["for-each-ref", "--format=%(refname)", prefix]) else { continue }
+            for ref in refs.split(separator: "\n") {
+                _ = try? await run(["update-ref", "-d", String(ref)])
+            }
         }
     }
 
@@ -476,7 +477,7 @@ struct Git: Sendable {
         // The three-way merge works through an index that matches the working tree, so
         // it gets a throwaway one that does, and the real index never changes.
         let fileManager = FileManager.default
-        let index = fileManager.temporaryDirectory.appendingPathComponent("swarmai-apply-\(UUID().uuidString)")
+        let index = fileManager.temporaryDirectory.appendingPathComponent("swarmcode-apply-\(UUID().uuidString)")
         defer { try? fileManager.removeItem(at: index) }
         let environment = ["GIT_INDEX_FILE": index.path]
         if let indexPath = await indexPath() {

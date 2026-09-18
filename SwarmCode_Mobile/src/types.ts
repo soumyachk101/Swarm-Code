@@ -1,5 +1,5 @@
 // =============================================================================
-// SwarmAI Mobile — Shared TypeScript Types
+// Swarm Code Mobile — Shared TypeScript Types
 // =============================================================================
 
 export type ViewKind = 'connect' | 'pair' | 'threads' | 'chat' | 'approvals' | 'settings';

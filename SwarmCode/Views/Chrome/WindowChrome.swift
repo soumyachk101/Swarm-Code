@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Sets up the hosting window the way SwarmAI's settings window is built: a transparent title bar over
+/// Sets up the hosting window the way Swarm Code's settings window is built: a transparent title bar over
 /// a clear window, a SwiftUI glass pane underneath, and AppKit's own traffic lights pinned to the chrome,
 /// with the title bar kept reaching down to them so they take their clicks wherever they are pinned.
 struct WindowChromeConfigurator: NSViewRepresentable {
@@ -71,8 +71,8 @@ final class WindowChromeProbeView: NSView {
 
 @MainActor
 enum WindowChrome {
-    private static let leadingIdentifier = "swarmai.trafficLight.leading"
-    private static let topIdentifier = "swarmai.trafficLight.top"
+    private static let leadingIdentifier = "swarmcode.trafficLight.leading"
+    private static let topIdentifier = "swarmcode.trafficLight.top"
 
     static func configure(_ window: NSWindow) {
         window.styleMask.insert(.fullSizeContentView)
@@ -185,7 +185,7 @@ enum WindowChrome {
 // MARK: - Sidebar layout
 
 /// The sidebar's width and visibility. Dragging its edge resizes it, and dragging past the
-/// collapse point hides it, the same interaction as SwarmAI's settings sidebar.
+/// collapse point hides it, the same interaction as Swarm Code's settings sidebar.
 @MainActor
 @Observable
 final class SidebarLayout {

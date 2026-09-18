@@ -6,7 +6,7 @@ import SwiftUI
 /// along the top that is the handle. The strip's left end counts the heads and opens
 /// them in a popover, where any head can take the stage or be stopped; its right end
 /// pops the head on stage out into a second panel of its own, and dismisses the panel. A
-/// SwarmAI-run head keeps its own chat box at the bottom, so it can be steered or answered;
+/// SwarmCode-run head keeps its own chat box at the bottom, so it can be steered or answered;
 /// a native head shows what it is up to instead.
 ///
 /// Popped out, the panel holds one head: no count at the left, and its right end puts the
@@ -380,7 +380,7 @@ private struct HydraHeadTranscript: View {
         .equatable()
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if head.hydra?.kind == .droppy {
-                // A head of SwarmAI's own can be steered and answered like any chat.
+                // A head of Swarm Code's own can be steered and answered like any chat.
                 ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false)
                     .overlay(alignment: .top) {
                         JumpToLatestButton(scrollState: scrollState)
@@ -485,7 +485,7 @@ enum HydraStatusText {
         }
     }
 
-    /// Where a SwarmAI-run head's work went, in a few words; nil for a head with no copy
+    /// Where a SwarmCode-run head's work went, in a few words; nil for a head with no copy
     /// of its own.
     static func landed(_ info: HydraHeadInfo) -> String? {
         guard let landing = info.landing else { return nil }

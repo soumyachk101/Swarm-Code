@@ -105,7 +105,7 @@ final class ThreadRuntime {
     private(set) var hydraToolHeads: [String: UUID] = [:]
     /// Heads by the provider's own id for them, for the events that come from inside them.
     @ObservationIgnored private var hydraNativeHeads: [String: UUID] = [:]
-    /// Reports from SwarmAI-run heads waiting for the lead to be idle.
+    /// Reports from SwarmCode-run heads waiting for the lead to be idle.
     @ObservationIgnored private var hydraPendingReports: [HydraReport] = []
     /// The reports' turn is on its way (see `flushHydraReports`): a head finishing in the
     /// meantime joins it rather than starting a turn of its own.
@@ -120,7 +120,7 @@ final class ThreadRuntime {
     /// How many times heads have gone out for the user's current request; a message of
     /// the user's own starts the count over.
     @ObservationIgnored private var hydraDelegationRounds = 0
-    /// A SwarmAI-run head's time for one turn (see `HydraBudget`): past it, the head is
+    /// A SwarmCode-run head's time for one turn (see `HydraBudget`): past it, the head is
     /// stopped and its next turn is its report.
     @ObservationIgnored private var headBudget: Task<Void, Never>?
     @ObservationIgnored private var headBudgetSpent = false
@@ -307,7 +307,7 @@ final class ThreadRuntime {
 
     var thread: ChatThread? { app?.thread(threadID) }
 
-    /// Whether any head of this lead, native or SwarmAI-run, is still at work. The native
+    /// Whether any head of this lead, native or SwarmCode-run, is still at work. The native
     /// ones run inside the lead's own session, so a turn with heads at work is never
     /// interrupted on the user's behalf by a new message: only the Stop button and
     /// Escape stop it, and those are the user stopping the lead on purpose.
@@ -389,7 +389,7 @@ final class ThreadRuntime {
         }
         // Heads at work are never stopped by a new message. The native ones run inside
         // the lead's own session, so interrupting the turn would kill them mid-task and
-        // throw away minutes of their work. The draft goes to a SwarmAI-run head of its
+        // throw away minutes of their work. The draft goes to a SwarmCode-run head of its
         // own when the settings allow it, else it waits as a follow-up behind the
         // running turn; either way nothing is interrupted.
         if hasWorkingHeads {
@@ -418,7 +418,7 @@ final class ThreadRuntime {
         } else if pendingSend == nil {
             // Heads at work are never stopped for a queued prompt: the native ones run
             // inside the lead's session and an interrupt would kill them. The prompt goes
-            // to a SwarmAI-run head when the settings allow it, else back to the front of
+            // to a SwarmCode-run head when the settings allow it, else back to the front of
             // the queue to wait for the turn, and the lead keeps working.
             if hasWorkingHeads {
                 if !dispatchQueuedHead(prompt) {
@@ -455,14 +455,14 @@ final class ThreadRuntime {
         flushFollowUpsIfIdle()
     }
 
-    /// Hands a queued prompt to a SwarmAI-run head, when the app and the chat allow it and
+    /// Hands a queued prompt to a SwarmCode-run head, when the app and the chat allow it and
     /// the pair has room for one more. Returns whether the head went out.
     private func dispatchQueuedHead(_ prompt: FollowUpPrompt) -> Bool {
         guard let app, app.settings.hydraQueueHeads || app.settings.hydraAlwaysHeads else { return false }
         return dispatchHead(prompt, origin: .queued)
     }
 
-    /// Hands a message the user sent, idle lead or not, to a SwarmAI-run head, when every
+    /// Hands a message the user sent, idle lead or not, to a SwarmCode-run head, when every
     /// message goes to heads and the pair has room. The local commands stay with the chat.
     /// Returns whether the head went out; if not, the message goes the ordinary way.
     private func dispatchSentHead(text: String, attachments: [Attachment]) -> Bool {
@@ -472,16 +472,16 @@ final class ThreadRuntime {
         return dispatchHead(prompt, origin: .sent)
     }
 
-    /// Sends a prompt out as a SwarmAI-run head with a note on what the lead is doing, or
+    /// Sends a prompt out as a SwarmCode-run head with a note on what the lead is doing, or
     /// that it is idle. Returns whether the head went out.
     private func dispatchHead(_ prompt: FollowUpPrompt, origin: HydraHeadInfo.Origin) -> Bool {
         guard let app, let thread, let launch = app.hydraLaunch(for: thread),
-              launch.hasRoom(running: app.runningSwarmAIHeads(of: threadID)) else { return false }
+              launch.hasRoom(running: app.runningSwarmCodeHeads(of: threadID)) else { return false }
         let task = TextCleanup.singleLine(prompt.text, limit: 60)
         let context = app.hydraChatContext(for: threadID)
         let leadIsWorking = phase != .idle
         let text = prompt.text
-        return app.spawnSwarmAIHead(from: threadID, task: task, origin: origin, attachments: prompt.attachments) { persona, workplace in
+        return app.spawnSwarmCodeHead(from: threadID, task: task, origin: origin, attachments: prompt.attachments) { persona, workplace in
             HydraPrompts.queuedHeadPrompt(persona: persona, task: text, context: context, workplace: workplace, leadIsWorking: leadIsWorking)
         } != nil
     }
@@ -628,7 +628,7 @@ final class ThreadRuntime {
                 $0.finishedAt = nil
             }
         }
-        // A SwarmAI-run head gets so long for a turn, on any provider. The API sessions
+        // A SwarmCode-run head gets so long for a turn, on any provider. The API sessions
         // stop themselves a little sooner from inside the turn; this is the backstop, and
         // the only stop a CLI head has.
         let isFinalReport = headReportsNext
@@ -690,7 +690,7 @@ final class ThreadRuntime {
             if !files.isEmpty {
                 prompt += "\n\nAttached files:\n" + files.map { "- \($0.path)" }.joined(separator: "\n")
             }
-            // A lead whose heads are SwarmAI-run is told how to ask SwarmAI for them. A
+            // A lead whose heads are SwarmCode-run is told how to ask Swarm Code for them. A
             // session that keeps that policy in its system prompt (the API providers, and
             // the providers with heads of their own sending them out elsewhere) gets only
             // the note on its team in front of a message; every other CLI gets the policy
@@ -726,7 +726,7 @@ final class ThreadRuntime {
 
     /// Whether the provider's session carries the lead's Hydra policy from launch: the API
     /// sessions put it in their system prompt, and the providers with heads of their own
-    /// define the heads, or the policy for SwarmAI-run ones, at launch. Such a session takes
+    /// define the heads, or the policy for SwarmCode-run ones, at launch. Such a session takes
     /// the team as part of its signature, so a change to the team restarts it.
     private static func keepsHydraPolicyInSystemPrompt(_ provider: ProviderKind) -> Bool {
         AppModel.hydraIsNative(provider) || provider.isAPIKeyBased
@@ -752,7 +752,7 @@ final class ThreadRuntime {
             await app.providers.loadCatalog(app.hydraHeadsProvider(of: pair))
         }
         // Providers with heads of their own define them at launch (or, with the heads
-        // sent out elsewhere, the policy for asking SwarmAI for them); the API
+        // sent out elsewhere, the policy for asking Swarm Code for them); the API
         // providers put the lead's Hydra policy in their system prompt. Either way the
         // team is part of the session, and a change to it restarts one.
         let hydra = Self.keepsHydraPolicyInSystemPrompt(thread.provider) ? app.hydraLaunch(for: thread) : nil
@@ -1219,7 +1219,7 @@ final class ThreadRuntime {
         case .commands(let list):
             if let provider = thread?.provider { app?.providers.updateCommands(list, for: provider) }
         case .title(let title):
-            // Provider titles are only a fallback; they must not replace the one SwarmAI writes.
+            // Provider titles are only a fallback; they must not replace the one Swarm Code writes.
             guard turns.count <= 1, let app, let thread, !thread.hasCustomTitle,
                   app.textEngine(preferring: thread.provider) == nil else { break }
             app.updateThread(threadID) { $0.title = TextCleanup.withoutEmDashes(title) }
@@ -1372,7 +1372,7 @@ final class ThreadRuntime {
         if !continues, status != .interrupted, flushHydraReports() { continues = true }
         // Heads still out will report, and the lead will work again: the job is not
         // finished until it has heard from all of them.
-        if !continues, status == .completed, let app, app.runningSwarmAIHeads(of: threadID) > 0 { continues = true }
+        if !continues, status == .completed, let app, app.runningSwarmCodeHeads(of: threadID) > 0 { continues = true }
         // A head stopped for its budget writes its report as its next turn, so its lead
         // hears what it managed rather than only that it was stopped.
         if headBudgetSpent {
@@ -1560,7 +1560,7 @@ final class ThreadRuntime {
     }
 
     /// The app finished a head of this lead's (see `AppModel.finishHydraHead`): a native
-    /// head's tool row completes; a SwarmAI-run head's report goes to the lead, once its
+    /// head's tool row completes; a SwarmCode-run head's report goes to the lead, once its
     /// batch is complete. A head reporting again (steered on from the panel) replaces
     /// any report of its own still waiting.
     func hydraHeadFinished(_ headID: UUID, info: HydraHeadInfo, status: HydraHeadInfo.Status, summary: String?, landing: HydraLanding? = nil, copyPath: String? = nil) {
@@ -1658,8 +1658,8 @@ final class ThreadRuntime {
     }
 
     /// A reply on any provider may end in a delegation block: its tasks go out as
-    /// SwarmAI-run heads, up to the pair's limit at a time, and the block leaves the reply.
-    /// A block SwarmAI cannot read leaves the reply as well, and the lead hears so in
+    /// SwarmCode-run heads, up to the pair's limit at a time, and the block leaves the reply.
+    /// A block Swarm Code cannot read leaves the reply as well, and the lead hears so in
     /// a turn of its own: a block never stays in a reply doing nothing.
     private func spawnDelegatedHeads(for turnID: UUID) -> DelegationOutcome {
         guard let app, let thread, let launch = app.hydraLaunch(for: thread),
@@ -1712,14 +1712,14 @@ final class ThreadRuntime {
     private func spawnWaitingHeads(launch: HydraLaunch? = nil) {
         guard let app, let thread, !hydraWaiting.isEmpty else { return }
         let launch = launch ?? app.hydraLaunch(for: thread)
-        while !hydraWaiting.isEmpty, launch?.hasRoom(running: app.runningSwarmAIHeads(of: threadID)) ?? true {
+        while !hydraWaiting.isEmpty, launch?.hasRoom(running: app.runningSwarmCodeHeads(of: threadID)) ?? true {
             let next = hydraWaiting.removeFirst()
             let delegation = next.delegation
             // The lead's announced name is authoritative: resolving it here pins the
             // spawned head to exactly that roster name. Unknown or already-taken names
             // resolve to nil and the head goes out next in order, as before.
             let preferredIndex = delegation.name.flatMap(HydraRoster.index(named:))
-            guard let head = app.spawnSwarmAIHead(from: threadID, task: delegation.task, origin: .delegated, batchID: next.batchID, preferredIndex: preferredIndex, brief: { persona, workplace in
+            guard let head = app.spawnSwarmCodeHead(from: threadID, task: delegation.task, origin: .delegated, batchID: next.batchID, preferredIndex: preferredIndex, brief: { persona, workplace in
                 HydraPrompts.delegatedHeadPrompt(persona: persona, delegation: delegation, workplace: workplace)
             }) else { continue }
             hydraBatches[next.batchID, default: HydraBatch(pending: [])].pending.insert(head.id)

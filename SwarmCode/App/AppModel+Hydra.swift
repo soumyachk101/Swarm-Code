@@ -3,7 +3,7 @@ import Foundation
 // Hydra's heads are threads: each one has a timeline of its own, sits in its lead's
 // floating panel while it works, and drops under the lead in the sidebar once dismissed,
 // like any helper. Native heads run inside the lead's provider session and their
-// timelines fill from the session's events; SwarmAI-run heads have sessions of their own,
+// timelines fill from the session's events; SwarmCode-run heads have sessions of their own,
 // each in a copy of the checkout made for it, and their work lands in the lead's checkout
 // the moment they report.
 
@@ -48,7 +48,7 @@ private enum HydraTreeCache {
             let tree = try await git.captureTree()
             // The commit is the heads' starting point and no branch ever sees it, so it
             // carries no head's name: several heads share this one.
-            let commit = try await git.commitTree(tree, message: "SwarmAI: a Hydra head's starting point")
+            let commit = try await git.commitTree(tree, message: "Swarm Code: a Hydra head's starting point")
             return (tree, commit)
         }
         inFlight[checkout] = task
@@ -74,9 +74,9 @@ extension AppModel {
 
     /// Whether the provider has heads of its own: it runs them inside its session, with
     /// the pair's model and effort, and keeps the lead's Hydra policy in its system prompt.
-    /// Every other provider gets SwarmAI-run heads and the delegation block. Whether a given
+    /// Every other provider gets SwarmCode-run heads and the delegation block. Whether a given
     /// chat's heads actually run natively is `HydraLaunch.runsNatively`: a pair that sends
-    /// the heads out on another provider makes them SwarmAI-run here too.
+    /// the heads out on another provider makes them SwarmCode-run here too.
     static func hydraIsNative(_ provider: ProviderKind) -> Bool {
         provider == .claude || provider == .codex || provider == .copilot
     }
@@ -173,12 +173,12 @@ extension AppModel {
             .sorted { ($0.hydra?.index ?? 0) < ($1.hydra?.index ?? 0) }
     }
 
-    /// How many of a lead's SwarmAI-run heads are still at work.
-    func runningSwarmAIHeads(of parentID: UUID) -> Int {
+    /// How many of a lead's SwarmCode-run heads are still at work.
+    func runningSwarmCodeHeads(of parentID: UUID) -> Int {
         hydraHeads(of: parentID).count { $0.hydra?.kind == .droppy && $0.hydra?.status == .running }
     }
 
-    /// How many of a lead's heads are still at work, native and SwarmAI-run alike. A native
+    /// How many of a lead's heads are still at work, native and SwarmCode-run alike. A native
     /// head lives inside the lead's own session, so this is what says whether stopping the
     /// lead's turn would take heads down with it.
     func runningHydraHeads(of parentID: UUID) -> Int {
@@ -192,7 +192,7 @@ extension AppModel {
             .sorted { ($0.hydra?.index ?? 0) < ($1.hydra?.index ?? 0) }
     }
 
-    /// The names of a lead's SwarmAI-run heads still at work, other than `excluding`.
+    /// The names of a lead's SwarmCode-run heads still at work, other than `excluding`.
     func workingHydraHeadNames(of parentID: UUID, excluding: Set<Int> = []) -> [String] {
         hydraHeads(of: parentID)
             .filter { $0.hydra?.kind == .droppy && $0.hydra?.status == .running && !excluding.contains($0.hydra?.index ?? -1) }
@@ -223,7 +223,7 @@ extension AppModel {
     /// own, made from the lead's checkout as it is; otherwise it works in the checkout
     /// itself. `brief` writes the prompt once it is known where the head works.
     @discardableResult
-    func spawnSwarmAIHead(
+    func spawnSwarmCodeHead(
         from parentID: UUID,
         task: String,
         origin: HydraHeadInfo.Origin,
@@ -233,7 +233,7 @@ extension AppModel {
         brief: @escaping @Sendable (HydraPersona, HydraPrompts.Workplace) -> String
     ) -> ChatThread? {
         guard let head = insertHydraHead(from: parentID, task: task, kind: .droppy, origin: origin, native: nil, batchID: batchID, preferredIndex: preferredIndex) else { return nil }
-        Task { await startSwarmAIHead(head.id, attachments: attachments, brief: brief) }
+        Task { await startSwarmCodeHead(head.id, attachments: attachments, brief: brief) }
         return head
     }
 
@@ -264,7 +264,7 @@ extension AppModel {
         let launch = hydraLaunch(for: parent)
         let persona = HydraRoster.persona(at: index)
 
-        // A SwarmAI-run head goes out on the pair's heads' provider, which may not be the
+        // A SwarmCode-run head goes out on the pair's heads' provider, which may not be the
         // lead's: there it runs the pair's model or that provider's default, and the lead's
         // model and effort mean nothing to it. A native head lives in the lead's session.
         let headsProvider = kind == .droppy ? launch?.headsProvider ?? parent.provider : parent.provider
@@ -301,8 +301,8 @@ extension AppModel {
         return head
     }
 
-    /// Gives a SwarmAI-run head its copy of the checkout, then its brief.
-    private func startSwarmAIHead(_ id: UUID, attachments: [Attachment], brief: @Sendable (HydraPersona, HydraPrompts.Workplace) -> String) async {
+    /// Gives a SwarmCode-run head its copy of the checkout, then its brief.
+    private func startSwarmCodeHead(_ id: UUID, attachments: [Attachment], brief: @Sendable (HydraPersona, HydraPrompts.Workplace) -> String) async {
         guard let head = thread(id), let info = head.hydra, let parentID = head.parentThreadID, let lead = thread(parentID),
               let checkout = hydraCheckout(of: lead) else { return }
         // A head on another provider than its lead, with no model chosen for it, runs that
@@ -369,7 +369,7 @@ extension AppModel {
     // MARK: - Reporting back
 
     /// A head is done: its status and report land on it, and its lead hears about it. A
-    /// native head's result reaches the lead through the provider; a SwarmAI-run head's
+    /// native head's result reaches the lead through the provider; a SwarmCode-run head's
     /// report is relayed by the lead's runtime, which waits for the rest of a batch.
     func finishHydraHead(_ id: UUID, status: TurnStatus, summary: String?, landing: HydraLanding? = nil) {
         guard let head = thread(id), let info = head.hydra, !info.isFinished else { return }
@@ -417,7 +417,7 @@ extension AppModel {
         }
     }
 
-    /// A SwarmAI-run head's turn ended: its last reply is its report, and the work in its
+    /// A SwarmCode-run head's turn ended: its last reply is its report, and the work in its
     /// copy lands in the lead's checkout before the lead hears of it. Native heads finish
     /// through their provider's own events instead.
     func hydraHeadTurnFinished(_ head: ChatThread, status: TurnStatus) {
@@ -628,7 +628,7 @@ extension AppModel {
 
     // MARK: - Stopping and clearing
 
-    /// Stops a head where it runs: a SwarmAI-run head's own turn, a native head through
+    /// Stops a head where it runs: a SwarmCode-run head's own turn, a native head through
     /// the lead's session.
     func stopHydraHead(_ id: UUID) {
         guard let head = thread(id), let info = head.hydra, !info.isFinished else { return }

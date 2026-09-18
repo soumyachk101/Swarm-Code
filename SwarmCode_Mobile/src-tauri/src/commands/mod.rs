@@ -43,7 +43,7 @@ pub async fn connect_to_bridge(
             id: Uuid::new_v4(),
             host: h.clone(),
             port,
-            name: format!("SwarmAI ({})", h),
+            name: format!("Swarm Code ({})", h),
             token: String::new(),
             last_connected: Some(chrono::Utc::now()),
         });

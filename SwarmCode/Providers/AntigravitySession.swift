@@ -3,7 +3,7 @@ import Foundation
 /// Drives Google's Antigravity CLI (`agy`) in headless streaming mode.
 ///
 /// The CLI speaks newline-delimited JSON on stdio, much like Claude's
-/// stream-json: SwarmAI holds one persistent process per thread with
+/// stream-json: Swarm Code holds one persistent process per thread with
 /// `--input-format stream-json --output-format stream-json`, writes one
 /// `{"event":"user","message":{"content":"…"}}` object per turn on stdin,
 /// and reads `init` / `step_update` / `result` events on stdout.
@@ -236,7 +236,7 @@ final class AntigravitySession: ProviderSession {
             }
         default:
             // `user_input` acknowledgements and `checkpoint` markers carry
-            // nothing SwarmAI renders.
+            // nothing Swarm Code renders.
             break
         }
     }

@@ -15,7 +15,7 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(before: .windowArrangement) {
-            Button("SwarmAI") { WindowManager.shared.showMain() }
+            Button("Swarm Code") { WindowManager.shared.showMain() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .showMainWindow))
             Divider()
         }

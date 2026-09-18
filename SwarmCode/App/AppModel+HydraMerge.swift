@@ -238,7 +238,7 @@ extension AppModel {
     ///
     /// - the turns of this job, meaning the ones no merge has taken yet, and the paths
     ///   they reported;
-    /// - the heads that worked alongside those turns: what a SwarmAI-run head landed, and,
+    /// - the heads that worked alongside those turns: what a SwarmCode-run head landed, and,
     ///   for a head the provider runs inside the lead's own session, the edits its own
     ///   timeline reported. A native head works in this very checkout and lands nothing,
     ///   so without its timeline its files are simply missing and the branch goes out
@@ -345,7 +345,7 @@ extension AppModel {
 
     /// The request's description: what the team did and how the lead summed it up.
     private func mergeRequestBody(for lead: ChatThread, files: [DiffFile], runtime: ThreadRuntime) -> String {
-        var lines = ["Opened by SwarmAI once its Hydra team finished.", ""]
+        var lines = ["Opened by Swarm Code once its Hydra team finished.", ""]
         let heads = hydraTeam(of: lead.id).compactMap(\.hydra).filter { !$0.task.isEmpty }
         if !heads.isEmpty {
             lines.append("## Heads")

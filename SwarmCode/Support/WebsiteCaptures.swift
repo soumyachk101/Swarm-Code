@@ -5,7 +5,7 @@ import SwiftUI
 
 /// Renders the real app with mock data into stills and films for the marketing site:
 ///
-///     open -n -W "SwarmAI.app" --args --website-captures <folder>
+///     open -n -W "Swarm Code.app" --args --website-captures <folder>
 ///
 /// Nothing in here runs otherwise. The run keeps to its own storage folder and its own
 /// defaults suite, never reads the Keychain, posts no notifications, and quits when the
@@ -48,7 +48,7 @@ enum WebsiteCaptures {
         isEnabled ? UserDefaults(suiteName: suiteName) : nil
     }
 
-    nonisolated private static let suiteName = "iordv.swarmai.website-captures"
+    nonisolated private static let suiteName = "iordv.swarmcode.website-captures"
 
     /// The composer's model chip, captured by the chip itself, so the slider and the
     /// switcher popovers hang from the real control.
@@ -78,7 +78,7 @@ enum WebsiteCaptures {
     // MARK: - Mock data
 
     enum ID {
-        static let swarmaiCode = UUID(uuidString: "A0000000-0000-4000-8000-000000000001")!
+        static let swarmCode = UUID(uuidString: "A0000000-0000-4000-8000-000000000001")!
         static let site = UUID(uuidString: "A0000000-0000-4000-8000-000000000002")!
         static let ios = UUID(uuidString: "A0000000-0000-4000-8000-000000000003")!
         static let composer = UUID(uuidString: "B0000000-0000-4000-8000-000000000001")!
@@ -111,7 +111,7 @@ enum WebsiteCaptures {
         defaults.set(true, forKey: "sidebarActivityView")
         defaults.set("supervised", forKey: "defaultRuntimeMode")
         defaults.set("claude", forKey: "defaultProvider")
-        defaults.set(ID.swarmaiCode.uuidString, forKey: "lastProjectID")
+        defaults.set(ID.swarmCode.uuidString, forKey: "lastProjectID")
         // The switcher shows a curated list, as a set-up Mac would.
         let pins = [
             ModelPin(provider: .claude, modelID: "opus"),
@@ -127,7 +127,7 @@ enum WebsiteCaptures {
         let repos = output.appendingPathComponent("repos", isDirectory: true)
         var library = Library()
         library.projects = [
-            project(ID.swarmaiCode, "Swarm Code", repos, ["SwarmCode/Views/Composer/ComposerView.swift": composerSource]),
+            project(ID.swarmCode, "Swarm Code", repos, ["SwarmCode/Views/Composer/ComposerView.swift": composerSource]),
             project(ID.site, "swarmcode.dev", repos, ["docs/index.html": "<!doctype html>\n<html lang=\"en\">\n</html>\n"]),
             project(ID.ios, "swarmcode-ios", repos, ["SwarmCode/LiveActivity.swift": "import ActivityKit\n"]),
         ]
@@ -138,13 +138,13 @@ enum WebsiteCaptures {
         let now = Date.now
         let day: TimeInterval = 86_400
         library.threads = [
-            thread(ID.composer, ID.swarmaiCode, "Composer: draft photo spacing", .claude, "opus", "high", age: 120, status: .completed, now),
-            thread(ID.fresh, ID.swarmaiCode, "Attachment strip insets", .claude, "opus", "high", age: 300, status: nil, now),
-            thread(ID.finalAnswer, ID.swarmaiCode, "Timeline final answer", .claude, "opus", "high", age: 600, status: .completed, now, plan: true),
+            thread(ID.composer, ID.swarmCode, "Composer: draft photo spacing", .claude, "opus", "high", age: 120, status: .completed, now),
+            thread(ID.fresh, ID.swarmCode, "Attachment strip insets", .claude, "opus", "high", age: 300, status: nil, now),
+            thread(ID.finalAnswer, ID.swarmCode, "Timeline final answer", .claude, "opus", "high", age: 600, status: .completed, now, plan: true),
             thread(ID.pricing, ID.site, "Regional pricing claim expiry", .codex, "gpt-5.5", nil, age: 900, status: .running, now),
-            thread(ID.freshPlan, ID.swarmaiCode, "Final answer card", .claude, "opus", "high", age: 1_500, status: nil, now, plan: true),
-            thread(ID.archive, ID.swarmaiCode, "Archive: delete all", .codex, "gpt-5.5", nil, age: 7_200, status: .completed, now),
-            thread(ID.diffPopover, ID.swarmaiCode, "Diff popover row patch", .claude, "opus", "high", age: day + 3_600, status: .completed, now),
+            thread(ID.freshPlan, ID.swarmCode, "Final answer card", .claude, "opus", "high", age: 1_500, status: nil, now, plan: true),
+            thread(ID.archive, ID.swarmCode, "Archive: delete all", .codex, "gpt-5.5", nil, age: 7_200, status: .completed, now),
+            thread(ID.diffPopover, ID.swarmCode, "Diff popover row patch", .claude, "opus", "high", age: day + 3_600, status: .completed, now),
             thread(ID.footer, ID.site, "Footer dragon scrub", .cursor, nil, nil, age: day + 5_400, status: .completed, now, unread: true),
             thread(ID.rail, ID.site, "Highlight rail poster blend", .claude, "sonnet", "medium", age: day + 9_000, status: .completed, now),
             thread(ID.liveActivity, ID.ios, "Live Activity for Pomodoro", .claude, "opus", "high", age: 3 * day, status: .completed, now),
@@ -216,7 +216,7 @@ enum WebsiteCaptures {
         turn.userItemID = user.id
         let reasoning = TimelineItem(turnID: turn.id, date: turn.startedAt.addingTimeInterval(2), content: .reasoning(ReasoningBlock(
             text: "The attachment strip lives in ComposerView.swift. Its insets come from a single constant, so I should read that first.")))
-        var read = ToolCall(kind: .read, title: "Read", detail: "SwarmAI/Views/Composer/ComposerView.swift")
+        var read = ToolCall(kind: .read, title: "Read", detail: "SwarmCode/Views/Composer/ComposerView.swift")
         read.status = .completed
         read.output = composerSource
         read.startedAt = turn.startedAt.addingTimeInterval(4)
@@ -954,7 +954,7 @@ final class Recorder {
 /// Encodes screenshots into an HEVC master as they arrive, on its own queue, stamped with
 /// the moment each was taken.
 private final class FilmRecorder: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "swarmai.website-captures.film", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "swarmcode.website-captures.film", qos: .userInteractive)
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor

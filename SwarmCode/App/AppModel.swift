@@ -31,7 +31,7 @@ final class AppModel {
     let sidebar: SidebarLayout
     /// Picks chats back up once a spent usage limit resets, with the setting on.
     @ObservationIgnored private(set) var autoContinue: AutoContinue!
-    /// How often each SwarmAI-run head has been started again after failing at the door
+    /// How often each SwarmCode-run head has been started again after failing at the door
     /// (see `hydraHeadTurnFinished`); a head gets two more goes.
     @ObservationIgnored var hydraHeadRetries: [UUID: Int] = [:]
 
@@ -640,7 +640,7 @@ final class AppModel {
         threads.removeAll { $0.id == id }
         if let project = project(thread.projectID) {
             let git = Git(project.path)
-            // A head's copy of the checkout was SwarmAI's to make, so it always goes.
+            // A head's copy of the checkout was Swarm Code's to make, so it always goes.
             let worktree = removeWorktree || thread.hydra?.hasOwnCopy == true ? thread.worktreePath : nil
             Task {
                 await git.deleteCheckpoints(thread: id)
@@ -801,7 +801,7 @@ final class AppModel {
         let suffix = String(threadID.uuidString.lowercased().prefix(8))
         let folder = project.name.replacingOccurrences(of: " ", with: "-").lowercased()
         let path = Storage.worktreesDirectory.appendingPathComponent("\(folder)-\(suffix)").path
-        let branch = "swarmai/\(suffix)"
+        let branch = "swarmcode/\(suffix)"
         let base = await git.status()?.branch
         do {
             try await git.addWorktree(at: path, branch: branch, base: base)
@@ -967,10 +967,13 @@ final class AppModel {
     }
 }
 
-/// Reads project scripts from `swarmai.json` at the project root.
+/// Reads project scripts from `swarmcode.json` (or `swarmai.json`) at the project root.
 enum ProjectFile {
     static func scripts(at url: URL) -> [ProjectScript] {
-        guard let data = try? Data(contentsOf: url.appendingPathComponent("swarmai.json")),
+        let fileURL = FileManager.default.fileExists(atPath: url.appendingPathComponent("swarmcode.json").path)
+            ? url.appendingPathComponent("swarmcode.json")
+            : url.appendingPathComponent("swarmai.json")
+        guard let data = try? Data(contentsOf: fileURL),
               let json = JSONValue.parse(data) else { return [] }
         return (json["scripts"]?.array ?? []).compactMap { script in
             guard let name = script["name"]?.string, let command = script["command"]?.string else { return nil }

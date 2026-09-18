@@ -1,4 +1,4 @@
-import swamlLogo from '../../assets/icons/swarmai-logo.svg';
+import swamlLogo from '../../assets/icons/swarmcode-logo.svg';
 import hydraMark from '../../assets/icons/hydra-mark.svg';
 import providerClaude from '../../assets/icons/provider-claude.svg';
 import providerAntigravity from '../../assets/icons/provider-antigravity.svg';
@@ -12,6 +12,7 @@ import providerMeta from '../../assets/icons/provider-meta.svg';
 import providerOllama from '../../assets/icons/provider-opencode.svg';
 
 export const ICONS = {
+	swarmcode_logo: swamlLogo,
 	swarmai_logo: swamlLogo,
 	hydra_mark: hydraMark,
 	provider_openai: providerClaude,

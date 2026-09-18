@@ -1,5 +1,5 @@
 // =============================================================================
-// SwarmAI Mobile — App State Store
+// Swarm Code Mobile — App State Store
 // =============================================================================
 
 import { writable, get } from 'svelte/store';

@@ -858,7 +858,7 @@ private struct LicensesRow: View {
 private struct MadeByRow: View {
     var body: some View {
         HStack(spacing: 12) {
-            Image("swarmai-logo")
+            Image("swarmcode-logo")
                 .resizable()
                 .interpolation(.high)
                 .frame(width: 40, height: 40)

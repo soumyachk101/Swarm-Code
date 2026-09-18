@@ -2,7 +2,7 @@
 # Publishes a built disk image as a GitHub release: what the in-app updater
 # offers and what the download link resolves to.
 #
-#   scripts/publish_release.sh [path/to/SwarmAI-1.2.3.dmg]
+#   scripts/publish_release.sh [path/to/Swarm-Code-1.2.3.dmg]
 #
 # The version is project.yml's MARKETING_VERSION; the disk image defaults to
 # the one scripts/release.sh leaves in build.noindex. The notes come from

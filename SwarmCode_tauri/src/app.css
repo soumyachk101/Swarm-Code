@@ -1,5 +1,5 @@
 /* =============================================================================
- SwarmAI Tauri Frontend — macOS-Style Stylesheet
+ Swarm Code Tauri Frontend — macOS-Style Stylesheet
  ============================================================================= */
 
 /* ---------------------------------------------------------------------------
@@ -20,7 +20,7 @@
 	--text-tertiary: #aeaeb2;
 	--text-inverse: #ffffff;
 
-	/* Accent — SwarmAI Gold */
+	/* Accent — Swarm Code Gold */
 	--accent-1: #e8a512;
 	--accent-2: #c88a0e;
 	--accent-3: rgba(232, 165, 18, 0.14);

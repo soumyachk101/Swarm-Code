@@ -1,5 +1,5 @@
 //! MCP (Model Context Protocol) module
-//! Mirrors the SwarmAI MCP subsystem: catalog, connection state, and commands.
+//! Mirrors the Swarm Code MCP subsystem: catalog, connection state, and commands.
 
 pub mod catalog;
 pub mod store;

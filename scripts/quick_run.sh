@@ -1,5 +1,5 @@
 #!/bin/bash
-# Dev loop for SwarmAI: build Debug, install it as the single
+# Dev loop for Swarm Code: build Debug, install it as the single
 # /Applications copy, and relaunch it.
 #
 #   scripts/quick_run.sh
@@ -7,9 +7,9 @@
 # Builds under build.noindex (never ~/Library/Developer/Xcode/DerivedData),
 # because the ".noindex" suffix keeps Spotlight and Launchpad from listing
 # the build folder as a second copy of the app. There must only ever be one
-# SwarmAI: /Applications/SwarmAI.app.
+# Swarm Code: /Applications/Swarm Code.app.
 #
-# Safe to run from an agent inside SwarmAI itself: quitting the app may
+# Safe to run from an agent inside Swarm Code itself: quitting the app may
 # interrupt the calling session, but this script keeps going and the fresh
 # build picks up the new changes on relaunch.
 set -euo pipefail

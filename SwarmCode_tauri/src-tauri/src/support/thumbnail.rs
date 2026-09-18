@@ -265,7 +265,7 @@ mod tests {
         let cache = ThumbnailCache::new(10, Duration::from_secs(60));
         let bytes = make_test_image(80, 40);
         // Use a temp file so get_or_generate can read it.
-        let tmp = std::env::temp_dir().join("swarmai_thumb_test.png");
+        let tmp = std::env::temp_dir().join("swarmcode_thumb_test.png");
         std::fs::write(&tmp, &bytes).unwrap();
         let first = cache.get_or_generate(&tmp, 40).await.unwrap();
         let second = cache.get_or_generate(&tmp, 40).await.unwrap();

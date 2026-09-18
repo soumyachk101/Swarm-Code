@@ -48,15 +48,15 @@
   <!-- Icons -->
   <link rel="icon" href="assets/brand/favicon.ico" sizes="any">
   <link rel="icon" type="image/svg+xml" href="app-icon.svg">
-  <link rel="icon" type="image/png" sizes="96x96" href="assets/brand/swarmai-icon-96.png">
-  <link rel="apple-touch-icon" sizes="180x180" href="assets/brand/swarmai-icon-180.png">
+  <link rel="icon" type="image/png" sizes="96x96" href="assets/brand/swarmcode-icon-96.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/brand/swarmcode-icon-180.png">
 
   <!-- Fonts: Inter (body/UI) + Instrument Sans and Inter Tight (display) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&display=swap" rel="stylesheet">
 
-  <script>try{if(sessionStorage.getItem("swarmaiNavIntro")){document.documentElement.className+=" nav-intro-done";}else{sessionStorage.setItem("swarmaiNavIntro","1");}}catch(e){}</script>
+  <script>try{if(sessionStorage.getItem("swarmcodeNavIntro")||sessionStorage.getItem("swarmaiNavIntro")){document.documentElement.className+=" nav-intro-done";}else{sessionStorage.setItem("swarmcodeNavIntro","1");}}catch(e){}</script>
   <link rel="stylesheet" href="assets/css/site.css?v=6">
   <link rel="stylesheet" href="assets/css/wordscroll.css?v=5">
   <noscript><style>.reveal { opacity: 1; transform: none; } .hero__field, .outro__field { display: none; }</style></noscript>
@@ -92,7 +92,7 @@
   <nav class="nav">
     <div class="nav__pill">
       <a class="nav__logo" href="index.html" aria-label="Swarm Code home">
-        <img src="assets/brand/swarmai-icon-96.png" alt="" width="24" height="24">
+        <img src="assets/brand/swarmcode-icon-96.png" alt="" width="24" height="24">
         <span>Swarm Code</span>
       </a>
       <div class="nav__links">
@@ -346,7 +346,7 @@
         </div>
         <div class="wordscroll__bloom" aria-hidden="true"></div>
         <div class="wordscroll__copy">
-          <span class="wordscroll__icon-wrap"><img class="wordscroll__icon" src="assets/brand/swarmai-icon-256.webp" alt="" width="96" height="96" aria-hidden="true" loading="lazy" decoding="async"></span>
+          <span class="wordscroll__icon-wrap"><img class="wordscroll__icon" src="assets/brand/swarmcode-icon-256.webp" alt="" width="96" height="96" aria-hidden="true" loading="lazy" decoding="async"></span>
           <p class="wordscroll__text" data-wordsplit>Make it yours. Twenty-six tinted-glass themes, from System to Catppuccin, Dracula, Claude and Codex.</p>
           <p class="wordscroll__text wordscroll__ask" data-wordsplit>Which one are you going to pick?</p>
         </div>
@@ -485,7 +485,7 @@
 
         <div class="free reveal">
           <div class="free__app">
-            <img src="assets/brand/swarmai-icon-96.png" alt="" width="34" height="34" loading="lazy" decoding="async">
+            <img src="assets/brand/swarmcode-icon-96.png" alt="" width="34" height="34" loading="lazy" decoding="async">
             <span>Swarm Code for macOS<small>Version 1.1.7 · Apple silicon</small></span>
           </div>
           <div class="free__price">Free<small>MIT</small></div>
@@ -651,7 +651,7 @@
       <div class="outro__field" data-binary-field data-progress="viewport" data-density="0.8" aria-hidden="true"><canvas></canvas></div>
       <div class="outro__content">
         <div class="outro__icon-wrap reveal">
-          <img class="outro__icon" src="assets/brand/swarmai-icon-256.webp" alt="" width="96" height="96" loading="lazy" decoding="async">
+          <img class="outro__icon" src="assets/brand/swarmcode-icon-256.webp" alt="" width="96" height="96" loading="lazy" decoding="async">
         </div>
         <h2 class="outro__title reveal">Ready to give your agents a real Mac app?</h2>
         <p class="outro__subtitle reveal">Eight providers, one window, a diff for every turn and a terminal per thread. Free, open source, native.</p>
@@ -676,7 +676,7 @@
     <div class="container footer__grid">
       <div class="footer__brand">
         <div class="footer__logo">
-          <img src="assets/brand/swarmai-icon-96.png" alt="" width="48" height="48" loading="lazy" decoding="async">
+          <img src="assets/brand/swarmcode-icon-96.png" alt="" width="48" height="48" loading="lazy" decoding="async">
           <span>Swarm Code</span>
         </div>
         <p class="footer__tagline">The coding app by Soumya Chakraborty.</p>
