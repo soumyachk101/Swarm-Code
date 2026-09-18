@@ -23,9 +23,15 @@ final class HydraHeadHoverPopover: NSObject, NSPopoverDelegate {
             try? await Task.sleep(for: .milliseconds(250))
             guard let self, !Task.isCancelled else { return }
             if self.popover.isShown { self.popover.close() }
+            // Measured with the card's own width pinned, and never laid out narrower
+            // than it: asked for its intrinsic size the hosting view can answer below
+            // the card's fixed frame, and the popover then wraps the task a couple of
+            // words a line in a card that had the room for it.
+            let width = HydraHeadHoverCard.width
             let content = HydraHeadHoverCard(persona: persona, target: target)
-            var size = NSHostingView(rootView: content).intrinsicContentSize
-            if size.width <= 0 || size.height <= 0 { size = NSSize(width: 260, height: 80) }
+            var size = NSHostingView(rootView: content.frame(width: width)).intrinsicContentSize
+            if size.width < width { size.width = width }
+            if size.height <= 0 { size.height = 78 }
             self.popover.setFixedContent(content, size: size)
             self.shownID = target.threadID
             self.popover.show(relativeTo: rect, of: view, preferredEdge: .maxY)
@@ -45,6 +51,10 @@ final class HydraHeadHoverPopover: NSObject, NSPopoverDelegate {
 }
 
 private struct HydraHeadHoverCard: View {
+    /// The card's width, and the popover's: a narrower frame breaks a task title
+    /// after two words with the card's own width left unused.
+    static let width: CGFloat = 300
+
     let persona: HydraPersona
     let target: HydraMentionTarget
 
@@ -63,9 +73,10 @@ private struct HydraHeadHoverCard: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Chrome.secondaryText)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(12)
-        .frame(width: 260, alignment: .leading)
+        .frame(width: Self.width, alignment: .leading)
     }
 
     private var statusLine: String {

@@ -6,6 +6,7 @@ struct EditorAttachments: View {
     /// Same shape as the chat strip: one preview panel for the strip, so every
     /// draft photo opens in a single tap.
     @State private var preview = AttachmentPreviewCoordinator()
+    @State private var drawn: Set<Attachment.ID> = []
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -19,22 +20,25 @@ struct EditorAttachments: View {
             // edge, where it lines up with the text.
             HStack(spacing: 0) {
                 ForEach(attachments) { attachment in
-                    AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
-                        .overlay(alignment: .topTrailing) {
-                            Button {
-                                attachments.removeAll { $0.id == attachment.id }
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .symbolRenderingMode(.palette)
-                                    .foregroundStyle(.white, .black.opacity(0.6))
-                                    .padding(4)
+                    AttachmentArrival(isNew: !drawn.contains(attachment.id)) {
+                        AttachmentThumbnail(attachment: attachment, size: 48, preview: preview)
+                            .overlay(alignment: .topTrailing) {
+                                Button {
+                                    attachments.removeAll { $0.id == attachment.id }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .symbolRenderingMode(.palette)
+                                        .foregroundStyle(.white, .black.opacity(0.6))
+                                        .padding(4)
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: 6, y: -6)
+                                .accessibilityLabel(Text("Remove \(attachment.name)"))
                             }
-                            .buttonStyle(.plain)
-                            .offset(x: 6, y: -6)
-                            .accessibilityLabel(Text("Remove \(attachment.name)"))
-                        }
-                        .padding(.top, 2)
-                        .padding(.trailing, 8)
+                            .padding(.top, 2)
+                            .padding(.trailing, 8)
+                    }
+                    .onAppear { drawn.insert(attachment.id) }
                 }
             }
             .background {

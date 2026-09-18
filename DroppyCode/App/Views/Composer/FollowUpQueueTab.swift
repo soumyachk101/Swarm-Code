@@ -8,10 +8,27 @@ import SwiftUI
 struct FollowUpQueueTab: View {
     static let overlap: CGFloat = ThreadChangesTab.overlap
 
+    /// The rows the tab shows before the list scrolls inside it: past that the tab would
+    /// cover the chat, and the prompts the reader is waiting on are the ones at the top.
+    static let maxRows = 7
+
+    /// The height the open list is cut to: the top of its content - the rule, the gap and
+    /// the tab's own padding - plus `maxRows` rows of the size the rows actually are.
+    /// Taken from `rowHeights`, so the cut lands on a whole row whatever a row's height
+    /// is. Below the cap, or before anything has been measured, the natural `listHeight`
+    /// stands as it is.
+    static func cappedHeight(_ listHeight: CGFloat, rowHeights: [UUID: CGFloat], count: Int) -> CGFloat {
+        guard count > maxRows, !rowHeights.isEmpty else { return listHeight }
+        let rows = rowHeights.values.reduce(0, +)
+        let top = max(0, listHeight - rows)
+        return top + CGFloat(maxRows) * rows / CGFloat(rowHeights.count)
+    }
+
     let runtime: ThreadRuntime
 
-    /// Whether the queued rows are folded away under the title.
-    @State private var isCollapsed = false
+    /// Whether the queued rows are folded away under the title: kept on the thread, so
+    /// the fold survives the tab leaving the screen whenever the queue empties.
+    private var isCollapsed: Bool { runtime.followUpsCollapsed }
 
     /// The live reorder: the grabbed prompt, the pointer's travel since the
     /// grab, and how far its slot has already moved to meet it (see `RowDrag`).
@@ -33,7 +50,7 @@ struct FollowUpQueueTab: View {
             // its end only says which way it will go: down to close while open, up to
             // reopen while collapsed.
             Button {
-                withAnimation(Chrome.panelSlide) { isCollapsed.toggle() }
+                withAnimation(Chrome.panelSlide) { runtime.followUpsCollapsed.toggle() }
             } label: {
                 HStack(spacing: 7) {
                     Image(systemName: "arrow.turn.down.right")
@@ -67,54 +84,61 @@ struct FollowUpQueueTab: View {
             // The rows stay in place and fold: a clip animates between zero
             // and their measured height while they fade, so nothing is ever
             // removed mid-animation to linger over the composer as a ghost.
-            VStack(alignment: .leading, spacing: 4) {
-                Divider().opacity(0.5)
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Divider().opacity(0.5)
 
-                // Rows carry their own vertical padding and rule, so a row's
-                // measured height is exactly its slot and the reorder maths
-                // never has to know about stack spacing.
-                VStack(alignment: .leading, spacing: 0) {
-                    let numbers = Self.numbers(for: runtime.followUps)
-                    ForEach(Array(runtime.followUps.enumerated()), id: \.element.id) { index, prompt in
-                        let isDragged = drag.id == prompt.id
-                        let previous = index > 0 ? runtime.followUps[index - 1] : nil
-                        let next = index + 1 < runtime.followUps.count ? runtime.followUps[index + 1] : nil
-                        let isBundledWithPrevious = prompt.bundleID != nil && prompt.bundleID == previous?.bundleID
-                        let bundledWithNext = prompt.bundleID != nil && prompt.bundleID == next?.bundleID
-                        FollowUpRow(
-                            position: numbers[prompt.id] ?? index + 1,
-                            prompt: prompt,
-                            runtime: runtime,
-                            isDragged: isDragged,
-                            showsRule: prompt.id != runtime.followUps.last?.id && !isDragged && !bundledWithNext,
-                            isBundledWithPrevious: isBundledWithPrevious,
-                            isBundledWithNext: bundledWithNext,
-                            isPairTarget: pairTarget == prompt.id,
-                            isPairing: isDragged && pairTarget != nil,
-                            onDragChanged: { translation in dragChanged(prompt.id, translation: translation) },
-                            onDragEnded: { dragEnded() }
-                        )
-                        .modifier(RowHeightReporter(id: prompt.id, heights: $rowHeights))
-                        // Only while dragging: settling is the only reader. In pairing
-                        // mode the held row indents to show it will pair on release.
-                        .offset(x: pairTarget != nil && isDragged ? 14 : 0, y: isDragged ? drag.visualOffset : 0)
-                        .animation(Self.slide, value: pairTarget != nil)
-                        .zIndex(isDragged ? 1 : 0)
+                    // Rows carry their own vertical padding and rule, so a row's
+                    // measured height is exactly its slot and the reorder maths
+                    // never has to know about stack spacing.
+                    VStack(alignment: .leading, spacing: 0) {
+                        let numbers = Self.numbers(for: runtime.followUps)
+                        ForEach(Array(runtime.followUps.enumerated()), id: \.element.id) { index, prompt in
+                            let isDragged = drag.id == prompt.id
+                            let previous = index > 0 ? runtime.followUps[index - 1] : nil
+                            let next = index + 1 < runtime.followUps.count ? runtime.followUps[index + 1] : nil
+                            let isBundledWithPrevious = prompt.bundleID != nil && prompt.bundleID == previous?.bundleID
+                            let bundledWithNext = prompt.bundleID != nil && prompt.bundleID == next?.bundleID
+                            FollowUpRow(
+                                position: numbers[prompt.id] ?? index + 1,
+                                prompt: prompt,
+                                runtime: runtime,
+                                isDragged: isDragged,
+                                showsRule: prompt.id != runtime.followUps.last?.id && !isDragged && !bundledWithNext,
+                                isBundledWithPrevious: isBundledWithPrevious,
+                                isBundledWithNext: bundledWithNext,
+                                isPairTarget: pairTarget == prompt.id,
+                                isPairing: isDragged && pairTarget != nil,
+                                onDragChanged: { translation in dragChanged(prompt.id, translation: translation) },
+                                onDragEnded: { dragEnded() }
+                            )
+                            .modifier(RowHeightReporter(id: prompt.id, heights: $rowHeights))
+                            // Only while dragging: settling is the only reader. In pairing
+                            // mode the held row indents to show it will pair on release.
+                            .offset(x: pairTarget != nil && isDragged ? 14 : 0, y: isDragged ? drag.visualOffset : 0)
+                            .animation(Self.slide, value: pairTarget != nil)
+                            .zIndex(isDragged ? 1 : 0)
+                        }
                     }
                 }
+                .padding(.top, 6)
+                // Measured inside the scroll view, where the height is the rows' own: the
+                // frame below proposes the capped height to the scroll view, and a scroll
+                // view answers that proposal rather than its content.
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                    if height > 0 { listHeight = height }
+                }
             }
-            .padding(.top, 6)
-            // Kept always: the fold animates to exactly this.
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
-                if height > 0 { listHeight = height }
-            }
-            .frame(height: isCollapsed ? 0 : listHeight, alignment: .top)
+            .scrollBounceBehavior(.basedOnSize)
+            // The cap: past seven rows the list scrolls inside the tab instead of covering
+            // the chat. The fold animates to the capped height, which is what the reader
+            // sees; `listHeight` itself stays the rows' natural height.
+            .frame(height: isCollapsed ? 0 : Self.cappedHeight(listHeight, rowHeights: rowHeights, count: runtime.followUps.count), alignment: .top)
             .opacity(isCollapsed ? 0 : 1)
-            // The fold needs the clip, but a lifted row must not: its capsule reaches
-            // 8 points past the rows on either side and its shadow hangs below, and a
-            // tight clip cut both off. The mask runs well past the tab's own edges, for the
-            // lifted row's overshoot and shadow, and a little above and below while the
-            // list is open, closing in with the fold.
+            // The fold needs the clip, but the rows inside it must not be shaved: the
+            // lifted row's shadow hangs below it, and the pair target's scale reaches
+            // past the row at the sides. The mask runs a little past the tab's own
+            // edges while the list is open, closing in with the fold.
             .mask {
                 Rectangle()
                     .padding(.horizontal, -32)
@@ -432,13 +456,11 @@ private struct FollowUpRow: View {
                     // The pencil toggles: a second tap while open closes the editor.
                     runtime.followUpEdit = isEditing ? nil : PromptEdit(id: prompt.id, text: prompt.text, attachments: prompt.attachments)
                 }
-                .background {
-                    AttachmentAnchorCapture { anchor in
-                        editor.setAnchor(anchor)
-                        // The anchor lands in its window after the row appears: the
-                        // moment a reopened thread can show the editor again.
-                        syncEditor(isEditing)
-                    }
+                .windowRectAnchor { rect in
+                    editor.setAnchor(windowRect: rect)
+                    // The rect lands after the row appears: the moment a reopened
+                    // thread can show the editor again.
+                    syncEditor(isEditing)
                 }
                 QueueIconButton(symbol: "trash", help: "Delete follow-up") {
                     runtime.removeFollowUp(prompt.id)
@@ -463,16 +485,16 @@ private struct FollowUpRow: View {
                         Capsule(style: .continuous)
                             .strokeBorder(Color.accentColor.opacity(0.65), lineWidth: 1.5)
                     }
-                    .padding(.horizontal, -8)
             }
             if isDragged {
                 Capsule(style: .continuous)
                     .fill(Chrome.overlay(0.12))
-                    .padding(.horizontal, -8)
                     .shadow(color: .black.opacity(0.28), radius: 10, y: 4)
             }
         }
-        .scaleEffect(isPairTarget ? 1.015 : isDragged ? 1.02 : 1)
+        // A scale above the scroll view's edge would be cut off there, so the lift reads
+        // off the shadow and the deep offset instead.
+        .scaleEffect(isPairTarget ? 1.008 : isDragged ? 1.01 : 1)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isDragged)
         .animation(.spring(response: 0.25, dampingFraction: 0.8), value: isPairTarget)
         .onChange(of: prompt.attachments) {

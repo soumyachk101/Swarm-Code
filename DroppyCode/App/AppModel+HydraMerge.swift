@@ -97,7 +97,15 @@ extension AppModel {
             return "\(paths.count == 1 ? "1 file was" : "\(paths.count) files were") changed outside every project: \(shown). Add the folder that holds them to the sidebar and ask for the merge again."
         }
         guard !groups.isEmpty else {
-            guard !stray.isEmpty else { return }
+            guard !stray.isEmpty else {
+                // Nothing to send and nothing outside a project: whatever the turns
+                // recorded is already on the branch, ignored, build output, or gone. Mark
+                // it spent, or the merge note counts those files forever.
+                runtime.markHydraMerged(own.turnIDs)
+                let spentAt = Date.now
+                for headID in own.headIDs { updateHydraHead(headID) { $0.mergedAt = spentAt } }
+                return
+            }
             runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .stray, project: nil, label: nil, url: nil, files: stray.count, detail: strayBody(stray)))
             note(leadID, "Hydra did not merge: the team's files are outside every project.", strayBody(stray))
             return
@@ -110,9 +118,9 @@ extension AppModel {
         guard !outcomes.contains(.failed) else { return }
         // The work is on the default branch now, so these turns are spent: the next
         // job merges what comes after them and never this again.
-        runtime.markHydraMerged(own.turnIDs)
+        runtime.markHydraMerged(groups.flatMap { $0.work.turnIDs })
         let mergedAt = Date.now
-        for headID in own.headIDs { updateHydraHead(headID) { $0.mergedAt = mergedAt } }
+        for headID in groups.flatMap({ $0.work.headIDs }) { updateHydraHead(headID) { $0.mergedAt = mergedAt } }
         // The projects' shares went out; only what no project holds stayed behind.
         if !stray.isEmpty {
             runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .stray, project: nil, label: nil, url: nil, files: stray.count, detail: strayBody(stray)))

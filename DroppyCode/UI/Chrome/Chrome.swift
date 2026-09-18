@@ -197,7 +197,7 @@ struct WindowBackdrop: View {
     @Environment(\.colorScheme) private var colorScheme
     /// The backdrop setting, 0 for bare glass and 1 for a solid base.
     let opacity: Double
-    /// The user's wallpaper, painted edge to edge under the scrim; nil for the stock glass.
+    /// The user's wallpaper, painted edge to edge at the transparency setting's own opacity; nil for the stock glass.
     var wallpaper: NSImage? = nil
 
     /// The scrim over the glass for a backdrop setting: the stock scrim at the
@@ -218,29 +218,25 @@ struct WindowBackdrop: View {
         let isSolid = opacity >= 0.98
         Group {
             if let wallpaper {
-                // The picture takes the desktop's place behind the glass: the transparency
-                // setting keeps working the way it does without one, and the glass over the
-                // picture is the same Liquid Glass the cards and capsules already draw.
+                // The picture rides over the desktop rather than in place of it: the
+                // transparency setting is the picture's own opacity, so a clear window
+                // shows the desktop through the picture and a solid one shows the picture
+                // alone. No scrim in this branch: the scrim is the window's base colour,
+                // and the picture is what that base is when one is set.
                 shape.fill(.clear)
                     .overlay {
                         Image(nsImage: wallpaper)
                             .resizable()
                             .interpolation(.high)
                             .aspectRatio(contentMode: .fill)
+                            .opacity(opacity)
                     }
                     .clipShape(shape)
                     .overlay {
-                        if isSolid {
-                            shape.fill(isDark ? Color.black : Color.white)
-                        } else {
+                        if !isSolid {
                             shape
                                 .fill(.clear)
                                 .glassEffect(in: shape)
-                                .overlay {
-                                    shape
-                                        .fill(isDark ? Color.black : Color.white)
-                                        .opacity(Self.scrim(for: opacity, isDark: isDark))
-                                }
                         }
                     }
                     .transition(.opacity)

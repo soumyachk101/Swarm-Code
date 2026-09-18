@@ -300,6 +300,7 @@ struct WelcomeView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var settings = model.settings
         ScrollView {
             VStack(spacing: 30) {
                 VStack(spacing: 14) {
@@ -325,6 +326,16 @@ struct WelcomeView: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Chrome.secondaryText)
                 }
+                ChromeSection(title: "Activity list") {
+                    ChromeCard {
+                        ChromeRow(title: "Project mark", detail: settings.activityThreadStyle.detail) {
+                            ChromeVisualPicker(options: ActivityThreadStyle.allCases.map { ($0, $0.title) }, selection: $settings.activityThreadStyle) { style in
+                                ActivityThreadStylePreview(style: style)
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: 480)
                 ChromeSection(title: "Providers") {
                     ProviderChecklist()
                 }

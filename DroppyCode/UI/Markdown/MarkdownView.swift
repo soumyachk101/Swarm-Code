@@ -703,12 +703,88 @@ enum RichLink {
         return false
     }
 
+    /// A bare domain as people type it in chat: getdroppy.app, www.droppy.app/pricing?a=1.
+    private static let bareDomainPattern = try? NSRegularExpression(
+        pattern: "(?<![A-Za-z0-9@._/-])((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\\.)+[A-Za-z]{2,24})(/[^\\s<>()]*)?",
+        options: [.caseInsensitive])
+
+    /// TLDs a chat linkifier is sure of. Curated, not every TLD: a file name
+    /// (MarkdownView.swift, index.html, package.json) has a bare domain's shape.
+    private static let bareDomainTLDs: Set<String> = [
+        "com", "org", "net", "edu", "gov", "mil", "info", "biz", "io", "ai", "app", "dev", "co", "me",
+        "xyz", "site", "online", "store", "shop", "tech", "cloud", "tools", "blog", "fm", "gg", "so", "tv",
+        "live", "news", "studio", "design", "social", "works", "codes", "run", "page", "link", "chat", "bot",
+        "art", "fun", "space", "world", "email", "group", "team", "digital", "agency", "solutions", "software",
+        "systems", "network", "media", "photo", "video", "games", "zone", "city", "life", "one", "plus", "pro",
+        "nl", "de", "be", "uk", "fr", "es", "it", "se", "no", "dk", "fi", "is", "ch", "at", "pl", "ie", "eu",
+        "ca", "us", "au", "nz", "jp", "cn", "in", "br", "mx", "za", "pt", "gr", "cz", "ro", "hu", "sk", "kr",
+        "sg", "hk", "tw", "th", "my", "id", "ph", "vn", "tr", "il", "ae", "sa", "cl", "ar", "pe"
+    ]
+
+    /// Links the bare domains Foundation leaves alone: `getdroppy.app` typed in chat
+    /// reads as a link with its favicon, the same as a full URL does.
+    private static func autolinkedBareDomains(_ parsed: AttributedString) -> AttributedString {
+        var out = AttributedString()
+        for run in parsed.runs {
+            let slice = parsed[run.range]
+            let text = String(slice.characters)
+            if run.link != nil || (run.inlinePresentationIntent ?? []).contains(.code) {
+                out.append(AttributedString(slice))
+                continue
+            }
+            guard let pattern = bareDomainPattern else {
+                out.append(AttributedString(slice))
+                continue
+            }
+            let ns = text as NSString
+            let matches = pattern.matches(in: text, options: [], range: NSRange(location: 0, length: ns.length))
+            if matches.isEmpty {
+                out.append(AttributedString(slice))
+                continue
+            }
+            // Offsets are Characters throughout: the regex reports UTF-16 ranges, and
+            // `Range(_:in:)` turns one back into the text's own indices, so a sentence with
+            // an emoji or an accent before the domain still links the domain itself.
+            let trimSet = ".,;:!?'\""
+            var cursor = 0
+            func piece(_ span: Range<Int>) -> AttributedString {
+                let lo = slice.characters.index(slice.characters.startIndex, offsetBy: span.lowerBound)
+                let hi = slice.characters.index(slice.characters.startIndex, offsetBy: span.upperBound)
+                return AttributedString(slice[lo..<hi])
+            }
+            for match in matches {
+                guard let range = Range(match.range, in: text) else { continue }
+                let start = text.distance(from: text.startIndex, to: range.lowerBound)
+                guard start >= cursor else { continue }
+                var matchText = String(text[range])
+                // Trailing punctuation belongs to the sentence, not the link.
+                while let last = matchText.last, trimSet.contains(last) { matchText.removeLast() }
+                let end = start + matchText.count
+                if start > cursor { out.append(piece(cursor..<start)) }
+                // Split at the first `/`: domain part vs the rest of the path/query.
+                let slash = matchText.firstIndex(of: "/")
+                let domainPart = slash.map { String(matchText[..<$0]) } ?? matchText
+                let lastLabel = domainPart.split(separator: ".").last.map(String.init)?.lowercased() ?? ""
+                if bareDomainTLDs.contains(lastLabel), let url = URL(string: "https://" + matchText) {
+                    var linkSlice = piece(start..<end)
+                    linkSlice.link = url
+                    out.append(linkSlice)
+                } else if end > cursor {
+                    out.append(piece(start..<end))
+                }
+                cursor = end
+            }
+            if cursor < text.count { out.append(piece(cursor..<text.count)) }
+        }
+        return out
+    }
+
     private static func baseAttributed(_ source: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible
         )
-        return (try? AttributedString(markdown: source, options: options)) ?? AttributedString(source)
+        return autolinkedBareDomains((try? AttributedString(markdown: source, options: options)) ?? AttributedString(source))
     }
 }
 
@@ -869,6 +945,8 @@ struct InlineText: View {
     let source: String
     /// Set when the caller already branched on containsLinks, so the check runs once.
     let hasLinks: Bool?
+    /// The caller is a bubble that hugs its text: no full-width frame.
+    var hugsContent = false
     @Environment(\.markdownPointSize) private var pointSize
     @Environment(\.chatZoom) private var zoom
     @Environment(\.markdownDimmed) private var dimmed
@@ -884,9 +962,10 @@ struct InlineText: View {
     /// The head whose card is up, so hover only re-shows the card on change.
     @State private var hoveredHeadID: UUID?
 
-    init(_ source: String, hasLinks: Bool? = nil) {
+    init(_ source: String, hasLinks: Bool? = nil, hugsContent: Bool = false) {
         self.source = source
         self.hasLinks = hasLinks
+        self.hugsContent = hugsContent
     }
 
     var body: some View {
@@ -917,7 +996,7 @@ struct InlineText: View {
             let personasByName = Dictionary(hydraMentionPersonas.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
             let targets = hydraMentionTargets
             LinkParagraphView(source: source, pointSize: scaled, dimmed: dimmed, streaming: streaming, revision: faviconRevision, mentions: hydraMentionPersonas, targets: hydraMentionTargets, onOpenHead: { url in openURL(url) }, onHost: { [weak linkBox] view in linkBox?.value = view })
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: hugsContent ? nil : .infinity, alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { _ in ascender }
                 .alignmentGuide(.lastTextBaseline) { $0.height - lineHeight + ascender }
                 // The pointing hand over links, from here rather than the text view's own
@@ -968,7 +1047,7 @@ struct InlineText: View {
             VeiledText(RichLink.prettyAttributed(source, streaming: streaming))
                 .modifier(MarkdownBlockSelection())
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: hugsContent ? nil : .infinity, alignment: .leading)
         }
     }
 

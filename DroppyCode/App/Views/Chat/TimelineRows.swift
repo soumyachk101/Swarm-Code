@@ -30,7 +30,7 @@ enum TimelineMetrics {
 /// The pasteboard half of `CopyButton` (see MarkdownView.swift), for the message menus.
 private func copyMessageText(_ text: String) {
     NSPasteboard.general.clearContents()
-    NSPasteboard.general.setString(text, forType: .string)
+    NSPasteboard.general.setString(ProseReflow.reflowed(text), forType: .string)
 }
 
 /// The last whole fenced code block's code, if the text holds one: a simple scan for
@@ -116,7 +116,10 @@ struct UserMessageRow: View {
                     .padding(.trailing, UserBubble.tail)
                 }
                 if !parts.body.isEmpty {
-                    Text(parts.body)
+                    // The user's own words render like the answers do: a domain types as a link
+                    // with its favicon in front. `hugsContent` keeps the bubble hugging its text
+                    // instead of filling the row.
+                    InlineText(parts.body, hugsContent: true)
                         .textSelection(.enabled)
                         .padding(.leading, 14)
                         // The tail hangs past the body; the text keeps its inset from the body.
@@ -1455,6 +1458,9 @@ struct WorkGroup: View {
     var workingDirectory: String?
     var startsCollapsed = false
     @State private var isCollapsed: Bool
+    @State private var showsAll = false
+    @State private var isFadingSteps = false
+    @State private var collapseTask: Task<Void, Never>?
     @Environment(\.revealTimelineEnd) private var revealBox
 
     init(entries: [TimelineEntry], runtime: ThreadRuntime, workingDirectory: String? = nil, startsCollapsed: Bool = false) {
@@ -1471,9 +1477,27 @@ struct WorkGroup: View {
         } else {
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 Button {
-                    withAnimation(.snappy(duration: 0.24)) {
-                        isCollapsed.toggle()
-                        if !isCollapsed { revealBox?.action() }
+                    if !isCollapsed {
+                        collapseTask?.cancel()
+                        withAnimation(.easeOut(duration: 0.12)) {
+                            isFadingSteps = true
+                        }
+                        collapseTask = Task { @MainActor in
+                            try? await Task.sleep(for: .seconds(0.12))
+                            guard !Task.isCancelled else { return }
+                            var transaction = Transaction()
+                            transaction.disablesAnimations = true
+                            withTransaction(transaction) {
+                                isCollapsed = true
+                                isFadingSteps = false
+                            }
+                        }
+                    } else {
+                        collapseTask?.cancel()
+                        withAnimation(.snappy(duration: 0.24)) {
+                            isCollapsed = false
+                        }
+                        revealBox?.action()
                     }
                 } label: {
                     HStack(spacing: TimelineMetrics.iconSpacing) {
@@ -1496,7 +1520,8 @@ struct WorkGroup: View {
                 .help(isCollapsed ? "Show these steps" : "Hide these steps")
                 .accessibilityLabel(Text(isCollapsed ? "Show these steps" : "Hide these steps"))
                 if !isCollapsed {
-                    WorkSteps(entries: entries, runtime: runtime, workingDirectory: workingDirectory)
+                    WorkSteps(entries: entries, runtime: runtime, workingDirectory: workingDirectory, showsAll: $showsAll)
+                        .opacity(isFadingSteps ? 0 : 1)
                 }
             }
             .onChange(of: startsCollapsed) { _, collapsed in
@@ -1516,7 +1541,7 @@ struct WorkSteps: View {
     let entries: [TimelineEntry]
     let runtime: ThreadRuntime
     var workingDirectory: String?
-    @State private var showsAll = false
+    @Binding var showsAll: Bool
     @Environment(\.revealTimelineEnd) private var revealBox
 
     var body: some View {

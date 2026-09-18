@@ -171,10 +171,22 @@ private struct DownloadRow: View {
     let pick: () -> Void
 
     @State private var isHovering = false
+    @State private var previewFrame: CGRect = .zero
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         Button {
+            let picture: NSImage
+            if let thumbnail {
+                picture = NSImage(cgImage: thumbnail, size: NSSize(width: 28, height: 28))
+            } else {
+                picture = FileIcons.icon(for: item.url.path)
+            }
+            AttachmentDrops.shared.arm(
+                image: picture,
+                fromScreen: previewFrame,
+                radius: 6
+            )
             dismiss()
             // Runs after the popover closes, matching PopoverItem behavior.
             Task { @MainActor in pick() }
@@ -216,11 +228,15 @@ private struct DownloadRow: View {
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 28, height: 28)
                 .clipShape(.rect(cornerRadius: 6, style: .continuous))
+                .background { ScreenFrameReader { previewFrame = $0 } }
         } else {
             Image(nsImage: FileIcons.icon(for: item.url.path))
                 .resizable()
                 .aspectRatio(contentMode: .fit)
                 .frame(width: 28, height: 28)
+                // The icon row flies too, so this branch reports its frame as well:
+                // without it the flight would start from the screen's own corner.
+                .background { ScreenFrameReader { previewFrame = $0 } }
         }
     }
 }

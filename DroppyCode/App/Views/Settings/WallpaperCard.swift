@@ -105,8 +105,8 @@ struct WallpaperCard: View {
         ChromeRow(
             title: "Wallpaper",
             detail: store.lastError ?? (store.hasWallpaper
-                ? "Fills the window edge to edge under the glass; the transparency slider dims it"
-                : "A picture of your own behind the glass, instead of the desktop")
+                ? "Fills the window edge to edge under the glass; the transparency slider lets the desktop show through it"
+                : "A picture of your own behind the glass, mixed with the desktop by the transparency slider")
         ) {
             HStack(spacing: 8) {
                 if store.hasWallpaper {

@@ -359,3 +359,47 @@ struct HeadsPlacementPreview: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
+
+/// The activity list's rows in either style: the project's emoji before the thread's name
+/// on one line, or the project's name, with a folder mark, on a line under the title.
+struct ActivityThreadStylePreview: View {
+    let style: ActivityThreadStyle
+    @Environment(\.chromeTileIsSelected) private var isSelected
+
+    var body: some View {
+        MockWindow {
+            VStack(alignment: .leading, spacing: 4) {
+                row(mark: "🚀", width: 24)
+                row(mark: "🛠️", width: 18)
+                // A second line per row needs the room the third row would take.
+                if style == .icon {
+                    row(mark: "🎨", width: 21)
+                }
+            }
+            .padding(.horizontal, 5)
+            .padding(.top, 4)
+        }
+    }
+
+    @ViewBuilder private func row(mark: String, width: CGFloat) -> some View {
+        switch style {
+        case .icon:
+            HStack(spacing: 3) {
+                Text(verbatim: mark)
+                    .font(.system(size: 7))
+                MockRow(width: width, color: MockPalette.highlight(isSelected))
+            }
+        case .projectName:
+            VStack(alignment: .leading, spacing: 2) {
+                MockRow(width: width, color: MockPalette.highlight(isSelected))
+                HStack(spacing: 2) {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 5))
+                        .foregroundStyle(Chrome.secondaryText)
+                    MockLine(width: width * 0.8, opacity: 0.5)
+                }
+            }
+            .padding(.vertical, 1)
+        }
+    }
+}

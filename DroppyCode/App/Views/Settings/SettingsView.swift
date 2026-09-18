@@ -61,7 +61,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
 
     var keywords: [String] {
         switch self {
-        case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "panel", "limits", "credits", "text", "size", "font", "zoom", "heatmap", "daily", "weekly", "cumulative", "settle", "settled", "finish", "finished", "done", "sound", "chime"]
+        case .general: ["permissions", "worktree", "reasoning", "thinking", "notifications", "theme", "appearance", "transparency", "transparent", "opacity", "glass", "dark", "light", "accent", "tint", "catppuccin", "dracula", "tokyo", "nord", "gruvbox", "solarized", "github", "claude", "codex", "cursor", "matrix", "token", "tokens", "activity", "usage", "panel", "limits", "credits", "text", "size", "font", "zoom", "heatmap", "daily", "weekly", "cumulative", "settle", "settled", "finish", "finished", "done", "sound", "chime", "icon", "icons", "emoji", "symbol", "symbols", "project mark", "compact"]
         case .models: ["model", "effort", "reasoning", "fast", "slider", "picker"]
         case .hydra: ["hydra", "heads", "subagents", "sub-agents", "agents", "team", "orchestrator", "worker", "pair", "pairs", "parallel", "delegate", "queue"]
         case .providers: ["codex", "claude", "cursor", "opencode", "grok", "deepseek", "meta", "muse", "spark", "zai", "z.ai", "glm", "coding plan", "devin", "cognition", "antigravity", "agy", "google", "gemini", "copilot", "github", "command code", "commandcode", "cmd", "binary", "path", "sign in", "login", "api key", "usage", "limits", "limit", "plan", "quota", "credits", "balance"]
@@ -360,6 +360,19 @@ private struct GeneralSettingsPage: View {
                 ChromeRow(title: "Projects", detail: "Activates every project at once unless explicitly overridden") {
                     SettingsSwitch(isOn: $settings.projectsEnabled)
                 }
+                ChromeRowDivider()
+                ChromeRow(title: "Marks", detail: "An emoji or symbol for each project, drawn before the thread's name in the activity list and on the project's own row") {
+                    EmptyView()
+                }
+                ForEach(model.projects) { project in
+                    ChromeRowDivider()
+                    ChromeRow(title: project.name, detail: project.path) {
+                        ProjectIconButton(icon: Binding(
+                            get: { model.project(project.id)?.icon },
+                            set: { newIcon in model.updateProject(project.id) { $0.icon = newIcon } }
+                        ))
+                    }
+                }
             }
         }
         ChromeSection(title: "Finished threads") {
@@ -394,6 +407,12 @@ private struct GeneralSettingsPage: View {
                 ChromeRow(title: "Sidebar", detail: settings.sidebarMode.detail) {
                     ChromeVisualPicker(options: SidebarMode.allCases.map { ($0, $0.title) }, selection: $settings.sidebarMode) { mode in
                         SidebarModePreview(style: Self.previewStyle(mode))
+                    }
+                }
+                ChromeRowDivider()
+                ChromeRow(title: "Activity list", detail: settings.activityThreadStyle.detail) {
+                    ChromeVisualPicker(options: ActivityThreadStyle.allCases.map { ($0, $0.title) }, selection: $settings.activityThreadStyle) { style in
+                        ActivityThreadStylePreview(style: style)
                     }
                 }
                 ChromeRowDivider()

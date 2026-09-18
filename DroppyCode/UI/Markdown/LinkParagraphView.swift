@@ -222,7 +222,9 @@ struct LinkParagraphView: NSViewRepresentable {
             attachment.bounds = NSRect(x: 0, y: base.descender + 1, width: glyphSize, height: glyphSize)
             if let target = targets[persona.name] {
                 // Custom attribute, not .link: linkTextAttributes would recolour the name in the accent.
-                let headAttributes: [NSAttributedString.Key: Any] = [.hydraHead: target.url, .cursor: NSCursor.pointingHand]
+                // No pointing hand either: a head chip keeps the normal arrow cursor. Its hover
+                // popover and its click still work; the hand is what a real link wears.
+                let headAttributes: [NSAttributedString.Key: Any] = [.hydraHead: target.url]
                 let attach = NSMutableAttributedString(attachment: attachment)
                 attach.addAttributes(headAttributes, range: NSRange(location: 0, length: attach.length))
                 out.append(attach)
@@ -231,7 +233,7 @@ struct LinkParagraphView: NSViewRepresentable {
             }
             out.append(NSAttributedString(string: " ", attributes: [.font: base, .foregroundColor: color]))
             if let target = targets[persona.name] {
-                out.append(NSAttributedString(string: persona.name, attributes: [.font: bold, .foregroundColor: nsColor(persona), .hydraHead: target.url, .cursor: NSCursor.pointingHand]))
+                out.append(NSAttributedString(string: persona.name, attributes: [.font: bold, .foregroundColor: nsColor(persona), .hydraHead: target.url]))
             } else {
                 out.append(NSAttributedString(string: persona.name, attributes: [.font: bold, .foregroundColor: nsColor(persona)]))
             }
@@ -348,8 +350,10 @@ final class LinkTextView: NSTextView {
     override func resetCursorRects() {}
 
     /// Whether `point`, in this view's coordinates, is over a link or a head mention.
+    /// Whether a real link sits under `point`, for the pointing hand. A head mention is
+    /// clickable too, but it keeps the normal arrow cursor: only links wear the hand.
     func hasLink(at point: CGPoint) -> Bool {
-        link(at: point) != nil || headMention(at: point) != nil
+        link(at: point) != nil
     }
 
     /// The link under `point`, in this view's coordinates.
