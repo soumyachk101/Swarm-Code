@@ -85,7 +85,7 @@ final class CodexSession: ProviderSession {
             var resume = params
             resume["threadId"] = .string(resumeID)
             resume["excludeTurns"] = true
-            let result = try await connection.request("thread/resume", .object(resume))
+            let result = try await requestThread(connection, "thread/resume", resume)
             guard let id = result["thread"]?["id"]?.string, id == resumeID else {
                 throw ProviderError.failed("Codex could not resume the original conversation.")
             }
@@ -94,7 +94,7 @@ final class CodexSession: ProviderSession {
             started = true
             return id
         }
-        let result = try await connection.request("thread/start", .object(params))
+        let result = try await requestThread(connection, "thread/start", params)
         guard let id = result["thread"]?["id"]?.string else {
             throw ProviderError.failed("Codex did not start a thread.")
         }
@@ -102,6 +102,25 @@ final class CodexSession: ProviderSession {
         activeModel = result["model"]?.string
         started = true
         return id
+    }
+
+    private func requestThread(_ connection: JSONRPCConnection, _ method: String, _ params: [String: JSONValue]) async throws -> JSONValue {
+        do {
+            return try await connection.request(method, .object(params))
+        } catch let error as RPCError where (error.message.contains("failed to load configuration") || error.message.contains("invalid transport")) && params["config"]?["mcp_servers"] != nil {
+            var retried = params
+            if case .object(var config) = retried["config"] {
+                config["mcp_servers"] = nil
+                if config.isEmpty {
+                    retried["config"] = nil
+                } else {
+                    retried["config"] = .object(config)
+                }
+            }
+            let result = try await connection.request(method, .object(retried))
+            onEvent?(.notice(Notice(level: .warning, message: "Codex refused the MCP server configuration, so this session runs without MCP servers. Check MCP in Settings.")))
+            return result
+        }
     }
 
     func send(_ input: TurnInput) async throws {

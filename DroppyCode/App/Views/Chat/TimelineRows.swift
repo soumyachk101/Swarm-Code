@@ -1458,8 +1458,6 @@ struct WorkGroup: View {
     var startsCollapsed = false
     @State private var isCollapsed: Bool
     @State private var showsAll = false
-    @State private var isFadingSteps = false
-    @State private var collapseTask: Task<Void, Never>?
     @Environment(\.revealTimelineEnd) private var revealBox
 
     init(entries: [TimelineEntry], runtime: ThreadRuntime, workingDirectory: String? = nil, startsCollapsed: Bool = false) {
@@ -1476,27 +1474,15 @@ struct WorkGroup: View {
         } else {
             VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                 Button {
-                    if !isCollapsed {
-                        collapseTask?.cancel()
-                        withAnimation(.easeOut(duration: 0.12)) {
-                            isFadingSteps = true
-                        }
-                        collapseTask = Task { @MainActor in
-                            try? await Task.sleep(for: .seconds(0.12))
-                            guard !Task.isCancelled else { return }
-                            var transaction = Transaction()
-                            transaction.disablesAnimations = true
-                            withTransaction(transaction) {
-                                isCollapsed = true
-                                isFadingSteps = false
-                            }
-                        }
-                    } else {
-                        collapseTask?.cancel()
+                    if isCollapsed {
                         withAnimation(.snappy(duration: 0.24)) {
                             isCollapsed = false
                         }
                         revealBox?.action()
+                    } else {
+                        withAnimation(.snappy(duration: 0.24)) {
+                            isCollapsed = true
+                        }
                     }
                 } label: {
                     HStack(spacing: TimelineMetrics.iconSpacing) {
@@ -1520,7 +1506,6 @@ struct WorkGroup: View {
                 .accessibilityLabel(Text(isCollapsed ? "Show these steps" : "Hide these steps"))
                 if !isCollapsed {
                     WorkSteps(entries: entries, runtime: runtime, workingDirectory: workingDirectory, showsAll: $showsAll)
-                        .opacity(isFadingSteps ? 0 : 1)
                 }
             }
             .onChange(of: startsCollapsed) { _, collapsed in
