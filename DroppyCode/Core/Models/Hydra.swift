@@ -554,7 +554,7 @@ enum HydraPrompts {
         case .ownCopy(let path):
             """
             You have your own copy of the project at \(path): a git worktree Droppy Code made for you from the project's checkout as it was when you were sent out, uncommitted work included. Work in it directly, on the files as they are; your tools already run there. When you report, Droppy Code carries your changes into that checkout itself. So never commit, branch, stash, push, check out, reset, restore or clean anything, and never make or remove worktrees, whatever the project's own guidelines say about agents and worktrees: this copy already is yours. Do not use git to check your work either.
-            Build only into a folder git ignores, such as `build.noindex/<your name>` with `-derivedDataPath`; never put build output in the project folder or the `.xcodeproj`, since everything not ignored in this copy lands in the lead's checkout.
+            Never build, test or verify anything in your copy: the lead runs every check itself, in its own checkout. Anything under the project folder that git does not ignore lands in the lead's checkout, so leave no build output there.
             """
         case .shared(let path):
             """
@@ -568,7 +568,7 @@ enum HydraPrompts {
     - Start on the task right away: read what you need and no more, then make the change.
     - A brief that names the file, the line and the change needs no second reading: make that edit first, then the next. Think briefly between tool calls; if you find yourself weighing designs for minutes, take the simplest reading of the brief and do it, and mention the choice in your report.
     - Do exactly this task and only this. Do not widen it, do not touch files it does not name unless it cannot be done otherwise, and never revert, reformat or clean up work that is not yours.
-    - Check what you changed with the narrowest thing that proves it, a targeted parse, type check or test; leave the project's full build and test suite to the lead unless the task asks for them.
+    - Never run a build, a test, a lint, a type check or any other check of your work, and never wait on one: the lead runs every check itself, in its own checkout. Make the edits your brief names and report.
     - If something blocks you, stop and say so instead of guessing or working around it.
     """
 
@@ -579,6 +579,10 @@ enum HydraPrompts {
     /// offers alternatives or asks the head to read and reason first leaves a head on a
     /// slow model thinking for minutes between tool calls, and some never make an edit.
     private static let briefRule = "A brief is a numbered list of mechanical steps a head can start on at once. Each step names the file and a line anchor, the symbol, and the exact change: the code shape, the new name, the value. Never a question, never two alternatives, never verify by reasoning or read the file fully: a head spends minutes weighing what a brief leaves open, and some never make an edit. When you have not decided something, decide it before you write the brief, or keep that part for yourself. A head should be able to make its first edit within its first few tool calls."
+
+    /// A lead may not put a check in a brief: every check is the lead's own. The rule
+    /// says so in words the lead cannot mistake for its own.
+    private static let verificationRule = "A brief never asks for a build, a test, a lint, a type check or any other check of the work, in any wording: you run every check yourself, in this chat's checkout, once the heads are back. Never write 'check that it builds', 'run the tests', 'prove it compiles' or 'make sure nothing else broke' in a brief, and never ask a head to report that something passed."
 
     /// Where heads work and where their work lands: this chat's project unless an entry
     /// names another, any project in the sidebar or any repository on the Mac, with the
@@ -640,13 +644,13 @@ enum HydraPrompts {
         let howToWait: String
         switch provider {
         case .claude:
-            howToSpawn = "Two agent types are yours: `\(workerAgentName)` (edits files, runs commands, verifies) and `\(scoutAgentName)` (read-only research). Spawn them with the Agent tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads.\(profileRule)"
+            howToSpawn = "Two agent types are yours: `\(workerAgentName)` (edits files, runs commands) and `\(scoutAgentName)` (read-only research). Spawn them with the Agent tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads.\(profileRule)"
             howToWait = "Launch every head for a job in one message so they run in parallel, in the foreground" + (maxHeads.map { ", and run at most \($0) at once." } ?? ".")
         case .codex:
             howToSpawn = "Spawn heads with `spawn_agent`: the `worker` agent for anything that edits files or runs commands, the `explorer` agent for read-only research.\(profileRule)"
             howToWait = "Spawn every head for a job before waiting, so they run in parallel, and collect them with `wait_agent`; never leave a head running when you answer." + (maxHeads.map { " Run at most \($0) at once." } ?? "")
         case .copilot:
-            howToSpawn = "Two agents are yours: `\(workerAgentName)` (edits files, runs commands, verifies) and `\(scoutAgentName)` (read-only research). Start them with the task tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads.\(profileRule)"
+            howToSpawn = "Two agents are yours: `\(workerAgentName)` (edits files, runs commands) and `\(scoutAgentName)` (read-only research). Start them with the task tool and prefer them over other agents while Hydra is on: they run on the model and effort the user chose for heads.\(profileRule)"
             howToWait = "Start every head for a job at once so they run in parallel" + (maxHeads.map { ", and run at most \($0) at a time." } ?? ".")
         default:
             howToSpawn = ""
@@ -663,6 +667,7 @@ enum HydraPrompts {
         - \(howToWait)
         - Give each head one self-contained task with the exact files, symbols and acceptance criteria it needs. Heads share the checkout but not your context, so write the task as if to a capable colleague who has read nothing yet.
         - \(briefRule)
+        - \(verificationRule)
         - \(projectRule(projects))
         - Split the work so no two heads edit the same file. Keep integration, verification and the final answer for yourself: never send out a head to verify, redo or finish another head's work.
         - Tell the user in one line which heads you sent out and what each one does. Droppy Code names the heads in roster order (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on): announce each head by its task and use exactly those names in that order, never invented ones. There is no head called Ives; the roster has Ivo.
@@ -679,7 +684,7 @@ enum HydraPrompts {
 
     /// The system prompt a worker head runs with.
     static let workerPrompt = """
-    You are a Hydra head in Droppy Code: one of several helpers working in parallel for a lead agent, in the lead's own checkout, where the lead and the other heads are changing other files at the same time. Do exactly the task you were given, and only that: do not widen it, do not touch files it does not name unless the task cannot be done otherwise, and never revert, reformat or clean up work that is not yours. Changes you did not make are expected in the checkout: leave them alone, never stash, check out, reset, restore or clean anything, and never move work into a branch or worktree, whatever the project's own guidelines say about agents and worktrees. Do not use git status or git diff to check your work: they show everyone's changes. Check what you changed with the narrowest thing that proves it and leave the full build and test suite to the lead. If something blocks you, say so instead of guessing.
+    You are a Hydra head in Droppy Code: one of several helpers working in parallel for a lead agent, in the lead's own checkout, where the lead and the other heads are changing other files at the same time. Do exactly the task you were given, and only that: do not widen it, do not touch files it does not name unless the task cannot be done otherwise, and never revert, reformat or clean up work that is not yours. Changes you did not make are expected in the checkout: leave them alone, never stash, check out, reset, restore or clean anything, and never move work into a branch or worktree, whatever the project's own guidelines say about agents and worktrees. Do not use git status or git diff to check your work: they show everyone's changes. Never run a build, a test, a lint or any other check of your work: the lead runs every check itself. Make the edits your brief names and report. If something blocks you, say so instead of guessing.
 
     \(howToReport)
     """
@@ -694,7 +699,7 @@ enum HydraPrompts {
     /// Claude's `--agents` definitions: the two heads on the pair's model and effort.
     static func claudeAgents(_ launch: HydraLaunch) -> JSONValue {
         var worker: [String: JSONValue] = [
-            "description": "Hydra head that implements one delegated task: edits files, runs commands, verifies. Use proactively when a request splits into independent pieces or touches several parts of the codebase.",
+            "description": "Hydra head that implements one delegated task: edits files, runs commands. Use proactively when a request splits into independent pieces or touches several parts of the codebase.",
             "prompt": .string(workerPrompt),
             "background": false,
         ]
@@ -743,7 +748,7 @@ enum HydraPrompts {
         let worker = agent(
             name: workerAgentName,
             display: "Hydra worker",
-            description: "Hydra head that implements one delegated task: edits files, runs commands, verifies. Use when a request splits into independent pieces.",
+            description: "Hydra head that implements one delegated task: edits files, runs commands. Use when a request splits into independent pieces.",
             prompt: workerPrompt,
             tools: nil
         )
@@ -850,7 +855,7 @@ enum HydraPrompts {
         [{"task": "short title", "prompt": "complete, self-contained instructions with the exact files and acceptance criteria"}]
         ```
 
-        and stop there: do not wait, poll or verify anything after it. When a request is yours to do alone, do it and end with no block at all: an empty block sends no heads and is not needed. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. An entry for work in another project carries `"project"` with that project's name or path, as in `{"task": "...", "prompt": "...", "project": "gaze-site"}`. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone.\(profileRule) Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. Each entry goes out to a head the moment its closing brace streams, before the block is finished, so write the entries in the order the heads should start and complete one entry before beginning the next. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. \(briefRule) \(projectRule(projects)) A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre)\(whatHeadsCanDo) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "") \(reportStyleRule)
+        and stop there: do not wait, poll or verify anything after it. When a request is yours to do alone, do it and end with no block at all: an empty block sends no heads and is not needed. An entry may also carry its head's announced name, as in `{"task": "...", "prompt": "...", "name": "Otto"}`: the announced name is authoritative and the spawned head carries exactly it, so repeating the same block spawns the same names. An entry for work in another project carries `"project"` with that project's name or path, as in `{"task": "...", "prompt": "...", "project": "gaze-site"}`. Name new heads with the next roster names in order after the team listed above (Hank, Walter, Ada, Otto, Nova, Remy, Iris, Milo, Juno, Ezra, Lena, Bo, Kai, Vera, Finn, Mira, Odin, Suki, Rex, Zola, Pip, Ivo, Lux, Tova, Gus, then Hank 2 and so on), and omit the name when unsure: the next heads in order go out instead. Never invent names outside the roster: there is no head called Ives (the roster has Ivo), and an unknown name falls back to the next head in order rather than renaming anyone.\(profileRule) Inside a prompt never open a fenced code block of your own (three backticks would end the hydra block early and no head would go out): describe code in words, quote identifiers with single backticks, or indent a snippet by four spaces. Each entry goes out to a head the moment its closing brace streams, before the block is finished, so write the entries in the order the heads should start and complete one entry before beginning the next. \(whereHeadsWork); heads never see your context, so write every prompt for a capable colleague who has read nothing yet, with the exact files, symbols and acceptance criteria, and give no two heads the same file. \(briefRule) \(verificationRule) \(projectRule(projects)) A head can be sent to read and report as well as to change files, so the reading goes out in parallel too. Say in one line which heads you sent out and what each one does.\(whoTheHeadsAre)\(whatHeadsCanDo) The reports arrive as a later message with the work already in place: build on them, do not redo them, never send out heads to verify or redo other heads, and never use git status or git diff to check on heads, since the checkout changes under you while they work. A message that opens with [Hydra] is from Droppy Code, not the user.\(reviewsHeads ? " " + reviewRule : "")\(autoMerges ? " " + autoMergeRule : "") \(reportStyleRule)
         """
     }
 
@@ -1053,13 +1058,38 @@ enum HydraPrompts {
         return message + " Write the block again at the end of your reply: one fenced block whose info string is hydra, holding a JSON array of objects with a task string and a prompt string. Inside a prompt never open a fenced code block of your own (no three backticks): describe code in words, quote identifiers with single backticks, or indent snippets. This does not count as a round of heads."
     }
 
+    /// A lead has been told never to put a check in a brief, but some do anyway: the
+    /// lines that ask a head to build or verify are taken out before the head sees them.
+    private static let verificationMarkers: [String] = [
+        "xcodebuild", "swift build", "swift test", "swiftlint", "npm test", "npm run build",
+        "npm run test", "yarn build", "yarn test", "pnpm test", "cargo build", "cargo test",
+        "go test", "pytest", "gradle", "eslint", "tsc ", "build succeeded", "run the build",
+        "run the tests", "run the test suite", "build and prove", "prove it builds",
+        "prove it compiles", "check that it builds", "check it still builds",
+        "make sure it builds", "make sure it compiles", "confirm the build",
+        "verify the build", "verify that it builds", "make sure nothing else broke",
+        "run the suite", "build verification",
+    ]
+
+    /// Drops every line of a brief that asks the head to build, test, lint or otherwise
+    /// verify. A prompt with no such line comes back unchanged.
+    static func withoutVerificationSteps(_ prompt: String) -> String {
+        let kept = prompt.split(separator: "\n", omittingEmptySubsequences: false).filter { line in
+            let lowered = line.lowercased()
+            return !verificationMarkers.contains { lowered.contains($0) }
+        }
+        if kept.count == prompt.split(separator: "\n", omittingEmptySubsequences: false).count { return prompt }
+        return kept.joined(separator: "\n")
+            + "\nThe lead has been told never to put a build or a check in your brief, so those steps were left out. Do not build, test, lint or verify anything: make the edits and report."
+    }
+
     /// What a Droppy-run head is sent for a task the lead delegated.
     static func delegatedHeadPrompt(persona: HydraPersona, delegation: HydraDelegation, workplace: Workplace) -> String {
         """
         You are \(persona.name), a Hydra head in Droppy Code: one of several helpers working in parallel for a lead agent. The lead delegated this task to you.
 
         ## Your task: \(delegation.task)
-        \(delegation.prompt)
+        \(withoutVerificationSteps(delegation.prompt))
 
         ## Where you work
         \(workplaceRules(workplace))
