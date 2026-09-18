@@ -1944,20 +1944,12 @@ private struct SidebarThreadRow: View, Equatable {
             arriving.hasUnread = false
         }
         let arrivalHeight = settled ? ThreadRowMetrics.settledHeight : (projectName != nil ? ThreadRowMetrics.detailedHeight : Chrome.rowHeight)
-        var fallback = CGRect(
+        let fallback = CGRect(
             x: from.minX,
             y: settled ? bounds.maxY : bounds.minY - arrivalHeight,
             width: from.width,
             height: arrivalHeight
         )
-        var headsForHeader = false
-        // With the settled section folded there is no row to land on, so the ghost heads
-        // for the `Settled` header's line, following the header as the list closes up, and
-        // fades into it there.
-        if settled, model.settings.settledCollapsed, let header = RowGlideAnimator.shared.settledHeaderFrame, bounds.intersects(header) {
-            fallback = CGRect(x: from.minX, y: header.maxY - arrivalHeight, width: from.width, height: arrivalHeight)
-            headsForHeader = true
-        }
         let animator = RowGlideAnimator.shared
         let badge = ThreadGhostBadge(thread: thread, runtime: model.existingRuntime(for: thread.id))
         // The faces leave the same room at the trailing end as the rows they stand in for: the
@@ -1980,7 +1972,7 @@ private struct SidebarThreadRow: View, Equatable {
             departure: departure,
             arrival: arrival,
             departureFill: Self.fill(isSelected: isSelected, isHovering: isHovering),
-            arrivalFill: Self.fill(isSelected: isSelected, isHovering: false), headsForHeader: headsForHeader
+            arrivalFill: Self.fill(isSelected: isSelected, isHovering: false)
         )
     }
 
@@ -2362,15 +2354,6 @@ private struct SettledHeader: View {
     let isFirst: Bool
 
     @State private var shown: Int
-    @State private var countTask: Task<Void, Never>?
-
-    /// The count's own roll: short and without bounce. The rows fly on `Chrome.settleFlight`,
-    /// whose spring overshoots, and digits rolling on it slid past the new number and back.
-    private static var roll: Animation {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-            ? .easeOut(duration: 0.15)
-            : .smooth(duration: 0.28)
-    }
 
     init(count: Int, isFirst: Bool) {
         self.count = count
@@ -2398,7 +2381,7 @@ private struct SettledHeader: View {
                     .opacity(0.8)
                     .fixedSize()
                     .contentTransition(.numericText(value: Double(shown)))
-                    .animation(Self.roll, value: shown)
+                    .animation(Chrome.panelSlide, value: shown)
                 Spacer(minLength: 4)
             }
             .foregroundStyle(Chrome.secondaryText)
@@ -2410,7 +2393,6 @@ private struct SettledHeader: View {
             .animation(Chrome.panelSlide, value: isFirst)
         }
         .buttonStyle(.plain)
-        .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(GenieAnimator.coordinateSpace)) }) { RowGlideAnimator.shared.noteSettledHeader($0) }
         .help(collapsed ? "Show settled threads" : "Hide settled threads")
         .accessibilityLabel(Text("Settled, \(shown) threads"))
         .accessibilityValue(Text(collapsed ? "Collapsed" : "Expanded"))
@@ -2419,28 +2401,10 @@ private struct SettledHeader: View {
             shown = count
         }
         .onChange(of: count) { _, newCount in
-            countTask?.cancel()
-            // A settle counts up when its ghost lands, which `RowGlideAnimator` puts at
-            // the spring's settling duration less its 0.12s handover; a reopen counts
-            // down at once, as the row leaves at once. With Reduce Motion nothing flies,
-            // so nothing waits.
-            guard newCount > shown, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
-                withAnimation(Self.roll) { self.shown = newCount }
-                return
-            }
-            countTask = Task { @MainActor in
-                do {
-                    try await Task.sleep(for: .seconds(max(RowGlideAnimator.spring.settlingDuration - 0.12, 0)))
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled else { return }
-                withAnimation(Self.roll) { self.shown = newCount }
-            }
-        }
-        .onDisappear {
-            countTask?.cancel()
-            RowGlideAnimator.shared.noteSettledHeader(nil)
+            // The count changes in the pass that closes the rows up on Chrome.panelSlide:
+            // rolling the digit on that same run, in that same pass, lands the number with
+            // the list instead of after it.
+            withAnimation(Chrome.panelSlide) { shown = newCount }
         }
     }
 }
