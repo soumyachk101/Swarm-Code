@@ -368,7 +368,7 @@ struct SmoothedUpdateProgressSlider: View {
     }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: settled)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: settled || ScrollActivity.shared.isScrolling)) { timeline in
             let fraction = chase.advance(
                 to: timeline.date.timeIntervalSinceReferenceDate,
                 target: target.value,
@@ -454,7 +454,7 @@ private struct FillCanvas: View {
     let sparkles: [SparkleParticle]
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: sparkles.isEmpty)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: sparkles.isEmpty || ScrollActivity.shared.isScrolling)) { timeline in
             let time = timeline.date.timeIntervalSinceReferenceDate
             Canvas { context, size in
                 let opacity = UpdateProgressSlider.fillOpacity(for: fraction)

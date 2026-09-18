@@ -181,6 +181,10 @@ final class VeilClock {
     }
 
     @objc private func tick() {
+        // The clock holds its last frame through a scroll, so the veiled paragraphs are
+        // not rebuilt for frames the reader never sees; the ramp resumes when the scroll
+        // ends.
+        guard !ScrollActivity.shared.isScrolling else { return }
         now = .now
         guard let deadline, now >= deadline else { return }
         link?.invalidate()
@@ -370,6 +374,10 @@ final class LinkTextVeil {
     private weak var tickTarget: NSTextView?
 
     @objc private func tick() {
+        // The clock holds its last frame through a scroll, so the layout-manager repaint
+        // does not run for frames the reader never sees; the ramp resumes when the scroll
+        // ends.
+        guard !ScrollActivity.shared.isScrolling else { return }
         guard let view = tickTarget else {
             displayLink?.invalidate()
             displayLink = nil

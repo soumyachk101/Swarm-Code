@@ -299,7 +299,8 @@ struct HydraReportsPopover: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    HydraNameStyle.label(Self.cleanedTitle(title, names: personas.map(\.name)), personas: personas, base: Chrome.primaryText)
+                    Text(verbatim: Self.cleanedTitle(title, names: personas.map(\.name)))
+                        .foregroundColor(Chrome.primaryText)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(2)
                     Text(Self.totalsLine(for: digest))
@@ -328,7 +329,7 @@ struct HydraReportsPopover: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(head.name)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(persona(for: head).color)
+                        .foregroundStyle(Chrome.primaryText)
                     Text(Self.outcomeCaption(for: head))
                         .font(.system(size: 11))
                         .foregroundStyle(Self.outcomeColor(for: head.outcome))
@@ -454,7 +455,7 @@ struct HydraReportsPopover: View {
 
     private func persona(for head: HydraReportDigest.Head) -> HydraPersona {
         if let match = personas.first(where: { $0.name == head.name }) { return match }
-        if let index = HydraRoster.index(named: head.name) { return HydraRoster.persona(at: index) }
+        if let persona = HydraRoster.persona(named: head.name) { return persona }
         return HydraRoster.persona(at: 0)
     }
 

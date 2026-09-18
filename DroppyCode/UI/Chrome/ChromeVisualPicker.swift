@@ -3,7 +3,7 @@ import SwiftUI
 // A row control of two or three tiles, each a single symbol standing for what the option
 // does, the way macOS Appearance offers Light / Dark / Auto; the chosen tile wears an accent
 // ring and takes the accent on its symbol. The symbol is the caller's: every picker hands in
-// one `Image` and the option's name shows on hover.
+// one `Image`, and the option's name sits under its tile so the symbol never has to be guessed.
 
 /// The tile's measures: every tile is the same size, so a picker of two options and a picker
 /// of three line up with each other and with the rows around them.
@@ -15,6 +15,7 @@ enum ChromeVisualTileMetrics {
     static let ringInset: CGFloat = 3
     static let ringWidth: CGFloat = 2
     static let spacing: CGFloat = 12
+    static let captionSpacing: CGFloat = 6
 }
 
 /// The row control: one tile per option, the chosen one ringed.
@@ -59,15 +60,27 @@ struct ChromeVisualTile<Content: View>: View {
 
     var body: some View {
         Button(action: action) {
-            stage
+            VStack(spacing: ChromeVisualTileMetrics.captionSpacing) {
+                stage
+                caption
+            }
         }
         .buttonStyle(.plain)
-        .help(Text(verbatim: title))
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
         .accessibilityLabel(Text(verbatim: title))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    /// The option's name under its tile: the symbol alone does not say what the choice is.
+    private var caption: some View {
+        Text(verbatim: title)
+            .font(.system(size: 11))
+            .foregroundStyle(isSelected ? Chrome.primaryText : Chrome.secondaryText)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .frame(width: width)
     }
 
     private var stage: some View {

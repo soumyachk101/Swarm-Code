@@ -90,6 +90,7 @@ struct SettingsView: View {
     @State private var modelSearch = ""
     @State private var mcpSearch = ""
     @State private var scrollChrome = ChromeScrollModel()
+    @State private var scrollTracker = SettingsScrollTracker()
 
     private var visiblePages: [SettingsPage] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -108,6 +109,7 @@ struct SettingsView: View {
                 .padding(.trailing, Chrome.sheetInset)
                 .padding(.vertical, Chrome.sheetInset)
         }
+        .onDisappear { scrollTracker.end() }
         .background { WindowBackdrop(opacity: model.settings.backdropOpacity) }
         .background { WindowChromeConfigurator() }
         .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
@@ -172,6 +174,13 @@ struct SettingsView: View {
                 .padding(.horizontal, Chrome.listInset)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
+                .allowsHitTesting(!scrollTracker.isFrozen)
+            }
+            .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { _, _ in
+                scrollTracker.note()
+            }
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { scrollTracker.note() } else { scrollTracker.coast() }
             }
             .scrollIndicators(.never)
         }
@@ -210,11 +219,20 @@ struct SettingsView: View {
             // Pages without chrome controls start just below the sheet edge; the others clear their capsules.
             .padding(.top, pageHasChromeControls ? Chrome.chromeTopPadding + Chrome.capsuleHeight + 16 : 22)
             .padding(.bottom, 24)
+            .allowsHitTesting(!scrollTracker.isFrozen)
         }
         .scrollIndicators(.never)
         .id(page)
         .onScrollGeometryChange(for: CGFloat.self, of: Self.travel) { _, travel in
+            scrollTracker.note()
             scrollChrome.update(travel: travel)
+        }
+        .onScrollPhaseChange { _, phase in
+            // Fingers on the content freeze the rows (no click can land then anyway); the
+            // moment the scroll coasts or settles they come back, so a click that stops a
+            // flick always reaches its target. Wheel scrolling reports no phases and is
+            // caught by the movement above instead.
+            if phase == .interacting { scrollTracker.note() } else { scrollTracker.coast() }
         }
         .overlay(alignment: .top) {
             PaneTopVeil(model: scrollChrome)
@@ -362,16 +380,7 @@ private struct GeneralSettingsPage: View {
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Marks", detail: "An emoji or symbol for each project, drawn before the thread's name in the activity list and on the project's own row") {
-                    EmptyView()
-                }
-                ForEach(model.projects) { project in
-                    ChromeRowDivider()
-                    ChromeRow(title: project.name, detail: project.path) {
-                        ProjectIconButton(icon: Binding(
-                            get: { model.project(project.id)?.icon },
-                            set: { newIcon in model.updateProject(project.id) { $0.icon = newIcon } }
-                        ))
-                    }
+                    ProjectMarksRow()
                 }
             }
         }
@@ -617,6 +626,14 @@ private struct ProviderSettingsSection: View {
         return status.isInstalled && status.auth != .signedOut
     }
 
+    /// Whether the page offers a sign-in row: hidden while the provider is signed in and
+    /// working, and while a check runs, so it never flashes in before the answer.
+    private var showsSignIn: Bool {
+        let status = model.providers.status(provider)
+        if case .signedIn = status.auth { return false }
+        return !status.isChecking
+    }
+
     var body: some View {
         let status = model.providers.status(provider)
         ChromeSection(title: provider.displayName) {
@@ -693,8 +710,11 @@ private struct ProviderSettingsSection: View {
                     if provider.isAPIKeyBased, !status.isInstalled {
                         ChromeRowDivider()
                         ChromeRow(title: "Get a key", detail: "\(provider.displayName) needs an API key. Nothing to install.") {
-                            Link("Get a \(provider.displayName) key", destination: provider.installURL)
-                                .buttonStyle(.glass)
+                            Link(destination: provider.installURL) {
+                                Text(verbatim: "Get a \(provider.displayName) key")
+                                    .frame(height: Chrome.rowButtonLabelHeight)
+                            }
+                            .buttonStyle(.glass)
                         }
                     }
                 }
@@ -709,16 +729,22 @@ private struct ProviderSettingsSection: View {
                     if !status.isInstalled {
                         ChromeRowDivider()
                         ChromeRow(title: "Install", detail: "\(provider.displayName) was not found on your PATH.") {
-                            Link("Get \(provider.displayName)", destination: provider.installURL)
-                                .buttonStyle(.glass)
+                            Link(destination: provider.installURL) {
+                                Text(verbatim: "Get \(provider.displayName)")
+                                    .frame(height: Chrome.rowButtonLabelHeight)
+                            }
+                            .buttonStyle(.glass)
                         }
-                    } else {
+                    } else if showsSignIn {
                         ChromeRowDivider()
-                        ChromeRow(title: "Sign in", detail: status.auth == .signedOut ? "Run this command in Terminal, or sign in here." : "Sign in again to refresh the account the app reads.") {
-                            HStack {
+                        ChromeRow(title: "Sign in", detail: status.auth == .signedOut ? "Run this command in Terminal, or sign in here." : "The app has not read an account yet. Sign in to connect one.") {
+                            HStack(spacing: 8) {
                                 CopyCommandButton(command: provider.loginCommand)
-                                Button(model.providers.signingIn == provider ? "Signing in…" : "Sign in") {
+                                Button {
                                     Task { await model.providers.signIn(provider) }
+                                } label: {
+                                    Text(verbatim: model.providers.signingIn == provider ? "Signing in…" : "Sign in")
+                                        .frame(height: Chrome.rowButtonLabelHeight)
                                 }
                                 .buttonStyle(.glass)
                                 .disabled(model.providers.signingIn != nil)
@@ -1080,6 +1106,40 @@ private struct CreditLink: View {
         }
         .buttonStyle(.plain)
         .help(url.absoluteString)
+    }
+}
+
+/// The per-project marks behind one button: the Projects card stays two rows long, and the
+/// list of projects with their marks opens in a popover off this row.
+private struct ProjectMarksRow: View {
+    @Environment(AppModel.self) private var model
+
+    @State private var isPresented = false
+
+    var body: some View {
+        Button("Edit") { isPresented = true }
+            .buttonStyle(.glass)
+            .controlSize(.small)
+            .disabled(model.projects.isEmpty)
+            .help("Choose a mark for each project")
+            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(model.projects.enumerated()), id: \.element.id) { index, project in
+                        if index > 0 { ChromeRowDivider() }
+                        ChromeRow(title: project.name, detail: project.path) {
+                            ProjectIconButton(icon: icon(for: project.id))
+                        }
+                    }
+                }
+                .frame(width: 400)
+            }
+    }
+
+    private func icon(for id: UUID) -> Binding<ProjectIcon?> {
+        Binding(
+            get: { model.project(id)?.icon },
+            set: { newIcon in model.updateProject(id) { $0.icon = newIcon } }
+        )
     }
 }
 

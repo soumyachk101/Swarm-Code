@@ -3,7 +3,8 @@ import SwiftUI
 
 // A project's mark: the emoji or the SF Symbol it wears in the activity list's icon style,
 // and the picker that chooses it. Core owns the value (`ProjectIcon`); this file draws it,
-// keeps the shortlist a popover can show, and presents that popover.
+// reads the generated catalogue of every symbol on offer, and presents the popover. Every symbol on offer
+// is the filled mark, so a project's icon is a solid shape rather than an outline.
 
 /// A project's mark as the rows draw it: the emoji or symbol the reader picked, or the
 /// folder mark until one has been picked.
@@ -61,38 +62,75 @@ struct ProjectIconPicker: View {
         "📊", "🕹️", "🎯", "🧠", "⚙️", "💎", "🪄", "🍿",
         "🛰️", "🧭", "📚", "🔮", "🐙", "🦀", "🐝", "🦊",
         "🌊", "🌙", "⚡️", "🍀", "🧵", "🏗️", "🔧", "🧰",
+        "🫧", "🧊", "🪵", "🪨", "🧱", "🏺", "🪑", "🛋️",
+        "🧲", "🔋", "🔌", "💡", "🔦", "🕯️", "🚿", "🛁",
+        "🧴", "🧹", "🧺", "🧼", "🪣", "🧽", "🪥", "🪒",
+        "🗝️", "🔐", "🛡️", "⚔️", "🪓", "🗡️", "🏹", "🪃",
+        "🧿", "📡", "🎛️", "🖲️", "🖨️", "⌨️", "🖥️", "💻",
+        "🖱️", "📱", "⌚️", "🎧", "🔊", "🎤", "🎬", "📷",
+        "🎥", "🖼️", "🖌️", "🖍️", "✏️", "📝", "📌", "📍",
+        "📎", "🗂️", "🗃️", "🗄️", "📁", "📂", "🗓️", "📅",
+        "⏰", "⏳", "🧮", "🔍", "🔎", "🔭", "🔬", "🧫",
+        "🧬", "🦠", "🌡️", "🌋", "🏔️", "🏕️", "🧗", "🌈",
+        "☄️", "🪐", "🛸", "🌍", "🗺️", "🧳", "🎒", "🪁",
+        "🎲", "♟️", "🧸", "🪩", "🎺", "🎸", "🥁", "🏆",
+        "🥇", "🎓", "🧑‍🏫",
     ]
 
-    /// The symbols the picker names, each checked against this Mac's own catalogue as the
-    /// list is first read, so a name the system does not have is never offered.
-    private static let symbols: [String] = candidates.filter {
+    /// The marks the picker opens on, each checked against this Mac's own catalogue as the
+    /// list is first read, so a name the system does not have is never offered. Every one is
+    /// a filled mark: a project's icon reads as a solid shape, never an outline.
+    private static let favourites: [String] = shortlist.filter {
         NSImage(systemSymbolName: $0, accessibilityDescription: nil) != nil
     }
 
-    private static let candidates = [
+    private static let shortlist = [
         "hammer.fill", "wrench.and.screwdriver.fill", "gearshape.fill", "terminal.fill",
-        "chevron.left.forwardslash.chevron.right", "curlybraces", "shippingbox.fill", "paintbrush.fill",
-        "flask.fill", "leaf.fill", "flame.fill", "puzzlepiece.fill",
-        "chart.bar.fill", "gamecontroller.fill", "target", "brain.head.profile",
-        "diamond.fill", "wand.and.stars", "popcorn.fill", "antenna.radiowaves.left.and.right",
-        "globe", "cursorarrow.rays", "point.3.connected.trianglepath.dotted", "bolt.fill",
-        "bolt.horizontal.fill", "sparkles", "star.fill", "heart.fill",
-        "book.fill", "cloud.fill", "moon.stars.fill", "cup.and.saucer.fill",
-        "cpu", "externaldrive.fill", "camera.fill", "music.note",
+        "curlybraces.square.fill", "chevron.left.square.fill", "shippingbox.fill", "cube.fill",
+        "tray.full.fill", "doc.fill", "square.stack.3d.up.fill", "memorychip.fill",
+        "cpu.fill", "externaldrive.fill", "paintbrush.fill", "paintpalette.fill",
+        "book.closed.fill", "graduationcap.fill", "lightbulb.fill", "key.fill",
+        "lock.fill", "leaf.fill", "flame.fill", "drop.fill",
+        "sun.max.fill", "moon.stars.fill", "cloud.fill", "bolt.fill",
+        "star.fill", "heart.fill", "diamond.fill", "crown.fill",
+        "trophy.fill", "medal.fill", "checkmark.seal.fill", "gift.fill",
+        "gamecontroller.fill", "dpad.fill", "popcorn.fill", "film.fill",
+        "mic.fill", "speaker.wave.3.fill", "camera.fill", "photo.fill",
+        "globe.fill", "point.3.filled.connected.trianglepath.dotted", "hand.point.up.left.fill", "person.fill",
+        "person.2.fill", "pawprint.fill", "bird.fill", "fish.fill",
+        "cup.and.saucer.fill", "waterbottle.fill", "takeoutbag.and.cup.and.straw.fill", "theatermasks.fill",
     ]
 
-    private static let columns = Array(repeating: GridItem(.fixed(26), spacing: 4), count: 8)
+    /// The sections the picker scrolls: the shortlist it used to open on under the name
+    /// Popular, then every symbol the generated catalogue holds, in the SF Symbols app's
+    /// own category order.
+    private static let groups: [ProjectSymbolCatalogue.Group] =
+        [ProjectSymbolCatalogue.Group(id: "popular", title: "Popular", names: favourites)]
+        + ProjectSymbolCatalogue.groups
+
+    private static let columns = Array(repeating: GridItem(.fixed(26), spacing: 4), count: 9)
 
     /// The symbols the query names, with the one the reader typed in front when the
-    /// catalogue knows a symbol by that name the shortlist does not hold.
+    /// catalogue knows that name in a filled form the shortlist does not hold.
     private var matchingSymbols: [String] {
         let needle = query.trimmingCharacters(in: .whitespaces)
         guard !needle.isEmpty else { return [] }
-        var names = Self.symbols.filter { $0.localizedCaseInsensitiveContains(needle) }
-        if !names.contains(needle), NSImage(systemSymbolName: needle, accessibilityDescription: nil) != nil {
-            names.insert(needle, at: 0)
+        var names = ProjectSymbolCatalogue.all.filter { $0.localizedCaseInsensitiveContains(needle) }
+        if let typed = Self.filledForm(of: needle), !names.contains(typed) {
+            names.insert(typed, at: 0)
         }
         return names
+    }
+
+    /// A typed name as the grid may offer it: the name itself when it is already a filled
+    /// mark, its `.fill` mark when the catalogue has one, and nothing at all otherwise, so
+    /// a symbol chosen from the search is as solid as the ones in the shortlist.
+    private static func filledForm(of name: String) -> String? {
+        if name.hasSuffix(".fill") || name.hasSuffix(".inverse") {
+            return NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil ? name : nil
+        }
+        let filled = name + ".fill"
+        return NSImage(systemSymbolName: filled, accessibilityDescription: nil) != nil ? filled : nil
     }
 
     var body: some View {
@@ -102,10 +140,12 @@ struct ProjectIconPicker: View {
                 .foregroundStyle(Chrome.primaryText)
             searchField
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 14) {
                     if matchingSymbols.isEmpty {
                         emojiGrid
-                        symbolGrid(Self.symbols)
+                        ForEach(Self.groups) { group in
+                            symbolSection(group)
+                        }
                     } else {
                         symbolGrid(matchingSymbols)
                     }
@@ -128,7 +168,21 @@ struct ProjectIconPicker: View {
             }
         }
         .padding(12)
-        .frame(width: 272, height: 330)
+        .frame(width: 300, height: 420)
+    }
+
+    private func symbolSection(_ group: ProjectSymbolCatalogue.Group) -> some View {
+        section(group.title) {
+            LazyVGrid(columns: Self.columns, spacing: 4) {
+                ForEach(group.names, id: \.self) { name in
+                    IconTile(isSelected: icon?.symbolName == name, action: { icon = .symbol(name) }) {
+                        Image(systemName: name)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Chrome.primaryText.opacity(0.9))
+                    }
+                }
+            }
+        }
     }
 
     private var searchField: some View {

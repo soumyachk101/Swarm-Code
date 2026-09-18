@@ -23,24 +23,6 @@ struct PlanLimitsView: View {
                 }
             }
             if let limits {
-                // A read that filled no windows carries the provider's own words instead of
-                // silence: an expired login must never look like an unchanged number, and the
-                // sign-in it usually asks for is one tap from here.
-                if let problem = limits.problem {
-                    Text(verbatim: problem)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Chrome.danger)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 8)
-                    if !provider.isAPIKeyBased {
-                        Button(model.providers.signingIn == provider ? "Signing in…" : "Sign in again") {
-                            Task { await model.providers.signIn(provider) }
-                        }
-                        .buttonStyle(.glass)
-                        .disabled(model.providers.signingIn != nil)
-                        .padding(.top, 8)
-                    }
-                }
                 ForEach(limits.windows) { window in
                     LimitRow(window: window)
                         .padding(.top, 14)
@@ -54,6 +36,32 @@ struct PlanLimitsView: View {
                     }
                     BankedResetsView(provider: provider, credits: credits)
                         .padding(.top, 14)
+                }
+                // A read that filled no windows carries the provider's own words instead of
+                // silence: an expired login must never look like an unchanged number. The note
+                // sits at the foot of the block, small and quiet, with the one tap that fixes
+                // it beside it.
+                if let problem = limits.problem {
+                    HStack(alignment: .center, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Chrome.warning)
+                        Text(verbatim: problem)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        if !provider.isAPIKeyBased {
+                            Button(model.providers.signingIn == provider ? "Signing in…" : "Sign in again") {
+                                Task { await model.providers.signIn(provider) }
+                            }
+                            .buttonStyle(.glass)
+                            .controlSize(.small)
+                            .disabled(model.providers.signingIn != nil)
+                        }
+                    }
+                    .padding(.top, 14)
                 }
             } else if !isLoading {
                 Text(verbatim: "\(provider.displayName) did not report plan limits.")

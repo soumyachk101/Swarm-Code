@@ -275,7 +275,8 @@ struct HydraReportRow: View {
                             }
                         }
                     }
-                    HydraNameStyle.label(title, personas: personas, base: Chrome.primaryText.opacity(0.9))
+                    Text(verbatim: title)
+                        .foregroundColor(Chrome.primaryText.opacity(0.9))
                         .font(.chat(.callout, weight: .medium, zoom: zoom))
                         .lineLimit(1)
                         .truncationMode(.tail)
@@ -758,8 +759,8 @@ struct HydraDelegationBlock: View {
 
     /// The roster persona the lead announced for an entry, when it is a roster name.
     private static func persona(named name: String?) -> HydraPersona? {
-        guard let name, let index = HydraRoster.index(named: name) else { return nil }
-        return HydraRoster.persona(at: index)
+        guard let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return HydraRoster.persona(named: name)
     }
 
     /// A project the brief names, as its name: a path reads as its last folder.
@@ -1750,9 +1751,9 @@ struct ToolRow: View {
         let generic: Set<String> = ["subagent", "agent", "task", ""]
         if let colon = title.firstIndex(of: ":") {
             let name = String(title[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if let index = HydraRoster.index(named: name) {
+            if let persona = HydraRoster.persona(named: name) {
                 let task = String(title[title.index(after: colon)...]).trimmingCharacters(in: .whitespacesAndNewlines)
-                return (HydraRoster.persona(at: index), HydraRoster.persona(at: index).name, task)
+                return (persona, persona.name, task)
             }
         }
         return (HydraRoster.persona(at: 0), nil, generic.contains(title.lowercased()) ? "" : title)
