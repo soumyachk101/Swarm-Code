@@ -102,6 +102,12 @@ struct MCPKeyPanelView: View {
         }
         .padding(18)
         .frame(width: 380)
+        // The key page opens in the browser as the panel appears, and the panel has to be
+        // movable off it: a press anywhere the fields and buttons do not claim drags the
+        // panel, as it does in the setup guide's panel.
+        .background {
+            WindowDragArea()
+        }
         .background {
             WindowBackdrop(opacity: 0.5)
         }
