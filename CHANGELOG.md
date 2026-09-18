@@ -8,6 +8,7 @@ All notable changes to Droppy Code are documented here, newest first. The format
 
 ### New features
 - Netlify joins the MCP catalog: sign in with your Netlify account and a thread can create projects, deploy sites and manage environment variables.
+- Projects wear a mark: each project can be given an emoji or an SF Symbol in Settings, General, Projects, and the activity list can draw that mark in front of a thread's name in place of the line that named the project, one line per thread, while what the thread is doing still reads at the end of the row. The choice of list sits on the General page and on the welcome screen, and a new install starts on the compact one.
 
 ### Bug fixes
 - The GitLab MCP server no longer looks like a hiccup on GitLab's side: a top-level group that hasn't allowed MCP client access is answered by GitLab 19.4 and earlier with 404 instead of "MCP server disabled", so connecting ended in "gitlab.com didn't answer its MCP address (404), try again in a few minutes". That answer now opens the steps to turn MCP on for the group, and the app's own MCP proxy answers a path it has no route for with 502 rather than a 404 that reads as the server's reply.
