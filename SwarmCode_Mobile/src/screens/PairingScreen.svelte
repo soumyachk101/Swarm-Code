@@ -1,19 +1,16 @@
 <script lang="ts">
-import { pairWithCode, getConnectionStatus } from '../api/commands';
-import { connectionStatus, view, currentHost, currentPort } from '../stores/appStore';
+import { pairWithCode } from '../api/commands';
+import { connectionStatus, view } from '../stores/appStore';
 
 let code = ['', '', '', '', '', ''];
 let inputRefs: HTMLInputElement[] = [];
 let error = '';
 let isSubmitting = false;
 
-$: if ($connectionStatus === 'paired') {
-    view.set('threads');
-}
-
 const handleInput = (index: number, value: string) => {
     if (!/^\d*$/.test(value)) return;
     code[index] = value.slice(-1);
+    code = [...code];
     error = '';
 
     if (code[index] && index < 5) {
@@ -39,8 +36,8 @@ const submitCode = async () => {
     error = '';
     try {
         await pairWithCode(fullCode);
-        // Wait for the paired event to fire
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        connectionStatus.set('paired');
+        view.set('threads');
     } catch (err) {
         error = err instanceof Error ? err.message : 'Pairing failed';
         code = ['', '', '', '', '', ''];
@@ -84,7 +81,12 @@ const goBack = () => view.set('connect');
         <p style="color: var(--danger); font-size: 13px; margin-top: 20px; text-align: center;">{error}</p>
     {/if}
 
-    {#if isSubmitting}
-        <p class="text-muted" style="margin-top: 20px; font-size: 14px;">Pairing...</p>
-    {/if}
+    <button
+        class="btn btn-primary"
+        style="margin-top: 24px; min-width: 200px;"
+        disabled={isSubmitting || code.join('').length < 6}
+        onclick={submitCode}
+    >
+        {isSubmitting ? 'Pairing...' : 'Pair & Connect'}
+    </button>
 </div>
