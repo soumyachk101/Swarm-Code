@@ -331,7 +331,7 @@ private struct GeneralSettingsPage: View {
                         SettingsSwitch(isOn: $settings.showReasoning)
                     }
                     ChromeRowDivider()
-                    ChromeRow(title: "Chronological order", detail: "A running turn's replies and tool runs stay in the order they arrived, not gathered into the working line") {
+                    ChromeRow(title: "Chronological order", detail: "Open the working line with all replies and tool steps in the order they arrived") {
                         SettingsSwitch(isOn: $settings.chronologicalTimeline)
                     }
                     ChromeRowDivider()

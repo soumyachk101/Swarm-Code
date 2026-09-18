@@ -2673,6 +2673,11 @@ struct TurnFinishedBlock: View {
                         }
                     }
                 }
+                .padding(14)
+                .background {
+                    RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous)
+                        .fill(.quaternary.opacity(0.32))
+                }
                 .padding(.bottom, derived.hasResponse || showsHeads ? TimelineMetrics.rowSpacing : 0)
             } else if derived.hasResponse {
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
