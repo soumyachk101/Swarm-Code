@@ -736,7 +736,7 @@ private struct GitActionsMenu: View {
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 url = try await repository.createPullRequest(
                     title: subject.isEmpty ? "Update" : subject,
-                    body: body.isEmpty ? "Opened from SwarmAI." : body
+                    body: body.isEmpty ? "Opened from Swarm Code." : body
                 )
             }
             if let error {
@@ -882,7 +882,7 @@ private struct ScriptsEditor: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Project scripts")
                 .font(.system(size: 17, weight: .semibold))
-            Text("Scripts run in a terminal at the project root. SwarmAI also picks up scripts from swarmai.json.")
+            Text("Scripts run in a terminal at the project root. Swarm Code also picks up scripts from swarmai.json.")
                 .font(.system(size: 12))
                 .foregroundStyle(Chrome.secondaryText)
             ScrollView {

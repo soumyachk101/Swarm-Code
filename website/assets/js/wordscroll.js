@@ -2,8 +2,8 @@
   "use strict";
 
   function initWordscroll(section) {
-    if (!section || section.__swarmaiWordscroll) return;
-    section.__swarmaiWordscroll = true;
+    if (!section || section.__swarmCodeWordscroll) return;
+    section.__swarmCodeWordscroll = true;
 
     var stage = section.querySelector(".wordscroll__stage");
     var demo = section.querySelector(".wordscroll__demo");

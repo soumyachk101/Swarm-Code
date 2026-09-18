@@ -127,9 +127,9 @@ enum WebsiteCaptures {
         let repos = output.appendingPathComponent("repos", isDirectory: true)
         var library = Library()
         library.projects = [
-            project(ID.swarmaiCode, "SwarmAI", repos, ["SwarmAI/Views/Composer/ComposerView.swift": composerSource]),
-            project(ID.site, "swarmai.app", repos, ["docs/index.html": "<!doctype html>\n<html lang=\"en\">\n</html>\n"]),
-            project(ID.ios, "swarmai-ios", repos, ["SwarmAI/LiveActivity.swift": "import ActivityKit\n"]),
+            project(ID.swarmaiCode, "Swarm Code", repos, ["SwarmCode/Views/Composer/ComposerView.swift": composerSource]),
+            project(ID.site, "swarmcode.dev", repos, ["docs/index.html": "<!doctype html>\n<html lang=\"en\">\n</html>\n"]),
+            project(ID.ios, "swarmcode-ios", repos, ["SwarmCode/LiveActivity.swift": "import ActivityKit\n"]),
         ]
         library.projects[0].scripts = [
             ProjectScript(name: "Quick run", command: "scripts/quick_run.sh", symbol: "hammer"),
@@ -175,7 +175,7 @@ enum WebsiteCaptures {
         // A real repository on `main`, so the chrome row has a branch to show.
         let git = Process()
         git.executableURL = URL(fileURLWithPath: "/bin/sh")
-        git.arguments = ["-c", "git init -q -b main && git -c user.name=SwarmAI -c user.email=hi@swarmai.app add -A && git -c user.name=SwarmAI -c user.email=hi@swarmai.app commit -q -m 'Initial import' >/dev/null 2>&1"]
+        git.arguments = ["-c", "git init -q -b main && git -c user.name='Swarm Code' -c user.email=hi@swarmcode.dev add -A && git -c user.name='Swarm Code' -c user.email=hi@swarmcode.dev commit -q -m 'Initial import' >/dev/null 2>&1"]
         git.currentDirectoryURL = folder
         try? git.run()
         git.waitUntilExit()
@@ -290,9 +290,9 @@ enum WebsiteCaptures {
     """
 
     private static let composerPatch = """
-    diff --git a/SwarmAI/Views/Composer/ComposerView.swift b/SwarmAI/Views/Composer/ComposerView.swift
-    --- a/SwarmAI/Views/Composer/ComposerView.swift
-    +++ b/SwarmAI/Views/Composer/ComposerView.swift
+    diff --git a/SwarmCode/Views/Composer/ComposerView.swift b/SwarmCode/Views/Composer/ComposerView.swift
+    --- a/SwarmCode/Views/Composer/ComposerView.swift
+    +++ b/SwarmCode/Views/Composer/ComposerView.swift
     @@ -12,8 +12,10 @@ struct DraftAttachments: View {
                      }
                  }
@@ -373,7 +373,7 @@ enum WebsiteCaptures {
         try? await Task.sleep(for: .milliseconds(600))
         runtime.rehearseTurn(
             "The draft photo in the composer should sit as far from the top as it does from the left.",
-            touchedPaths: ["SwarmAI/Views/Composer/ComposerView.swift"],
+            touchedPaths: ["SwarmCode/Views/Composer/ComposerView.swift"],
             providerDiff: composerPatch
         )
         try? await Task.sleep(for: .milliseconds(500))
@@ -381,7 +381,7 @@ enum WebsiteCaptures {
         runtime.rehearse(.reasoningCompleted(id: "r1", text: ""))
         try? await Task.sleep(for: .milliseconds(250))
 
-        runtime.rehearse(.toolStarted(id: "t-read", call: ToolCall(kind: .read, title: "Read", detail: "SwarmAI/Views/Composer/ComposerView.swift")))
+        runtime.rehearse(.toolStarted(id: "t-read", call: ToolCall(kind: .read, title: "Read", detail: "SwarmCode/Views/Composer/ComposerView.swift")))
         try? await Task.sleep(for: .milliseconds(650))
         runtime.rehearse(.toolUpdated(id: "t-read", update: ToolUpdate(output: composerSource, status: .completed)))
         try? await Task.sleep(for: .milliseconds(300))
@@ -390,7 +390,7 @@ enum WebsiteCaptures {
         try? await Task.sleep(for: .milliseconds(800))
         runtime.rehearse(.toolUpdated(id: "t-edit", update: ToolUpdate(
             status: .completed,
-            edits: [FileEdit(path: "SwarmAI/Views/Composer/ComposerView.swift", diff: composerPatch, additions: 3, deletions: 1)]
+            edits: [FileEdit(path: "SwarmCode/Views/Composer/ComposerView.swift", diff: composerPatch, additions: 3, deletions: 1)]
         )))
         runtime.rehearse(.diff(composerPatch))
         try? await Task.sleep(for: .milliseconds(250))
@@ -400,7 +400,7 @@ enum WebsiteCaptures {
             TodoStep(text: "Build and confirm nothing else moved", status: .active),
         ]))
         try? await Task.sleep(for: .milliseconds(350))
-        runtime.rehearse(.toolStarted(id: "t-build", call: ToolCall(kind: .command, title: "xcodebuild -scheme SwarmAI build", detail: nil)))
+        runtime.rehearse(.toolStarted(id: "t-build", call: ToolCall(kind: .command, title: "xcodebuild -scheme \"Swarm Code\" build", detail: nil)))
         try? await Task.sleep(for: .milliseconds(400))
         await stream(runtime, id: "m1", reasoning: false, "Done. The attachment strip now uses the same 14pt inset on both axes, so the draft photo sits as far from the top as from the left. The build is running to confirm nothing else moved.", step: 38)
         runtime.rehearse(.messageCompleted(id: "m1", text: ""))
@@ -501,7 +501,7 @@ enum WebsiteCaptures {
         await stream(runtime, id: "r2", reasoning: true, "Comparing the last text block against tool results in TimelineView. The answer needs its own marker before it can get its own card.", step: 40)
         runtime.rehearse(.reasoningCompleted(id: "r2", text: ""))
         try? await Task.sleep(for: .milliseconds(200))
-        runtime.rehearse(.toolStarted(id: "t-tl", call: ToolCall(kind: .read, title: "Read", detail: "SwarmAI/Views/Chat/TimelineRows.swift")))
+        runtime.rehearse(.toolStarted(id: "t-tl", call: ToolCall(kind: .read, title: "Read", detail: "SwarmCode/Views/Chat/TimelineRows.swift")))
         try? await Task.sleep(for: .milliseconds(500))
         runtime.rehearse(.toolUpdated(id: "t-tl", update: ToolUpdate(output: "struct TimelineRows: View {\n", status: .completed)))
         try? await Task.sleep(for: .milliseconds(300))
@@ -527,7 +527,7 @@ enum WebsiteCaptures {
         try? await Task.sleep(for: .milliseconds(800))
         runtime.rehearse(.toolStarted(id: "t-edit2", call: ToolCall(kind: .edit, title: "Edit", detail: "TimelineRows.swift · final answer card")))
         try? await Task.sleep(for: .milliseconds(700))
-        runtime.rehearse(.toolUpdated(id: "t-edit2", update: ToolUpdate(status: .completed, edits: [FileEdit(path: "SwarmAI/Views/Chat/TimelineRows.swift", additions: 18, deletions: 3)])))
+        runtime.rehearse(.toolUpdated(id: "t-edit2", update: ToolUpdate(status: .completed, edits: [FileEdit(path: "SwarmCode/Views/Chat/TimelineRows.swift", additions: 18, deletions: 3)])))
         try? await Task.sleep(for: .milliseconds(500))
         runtime.rehearse(.approval(ApprovalRequest(
             id: "a1",

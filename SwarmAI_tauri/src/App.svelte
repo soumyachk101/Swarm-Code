@@ -48,7 +48,7 @@
 
 		items.push({ id: 'new-thread', label: 'New Thread', desc: 'Start a new conversation', action: () => { createNewThread(); }, icon: 'plus', shortcut: '⌘N', category: 'Threads', keywords: ['create', 'new'] });
 		items.push({ id: 'settings', label: 'Settings', desc: 'Open settings', action: () => { viewKind = 'settings'; }, icon: 'gear', shortcut: '⌘,', category: 'Navigation', keywords: ['preferences', 'config'] });
-		items.push({ id: 'about', label: 'About SwarmAI', desc: 'Show app version and credits', action: () => { viewKind = 'about'; }, icon: 'info', category: 'Navigation', keywords: ['version', 'info'] });
+		items.push({ id: 'about', label: 'About Swarm Code', desc: 'Show app version and credits', action: () => { viewKind = 'about'; }, icon: 'info', category: 'Navigation', keywords: ['version', 'info'] });
 
 		if (selectedThread) {
 			items.push({ id: 'toggle-terminal', label: 'Toggle Terminal', desc: 'Show/hide terminal panel', action: () => { terminalVisible = !terminalVisible; }, icon: 'terminal', shortcut: '⌘T', category: 'Navigation', keywords: ['shell', 'bash'] });
@@ -237,7 +237,7 @@
 				{:else if selectedProjectID}
 				<div class="empty-state project-empty">
 					<div class="welcome-inner" style="gap: 16px;">
-						<img src="/icons/swarmai-logo.svg" alt="SwarmAI" class="welcome-glyph" width="72" height="72" />
+						<img src="/icons/swarmai-logo.svg" alt="Swarm Code" class="welcome-glyph" width="72" height="72" />
 						<h2 class="welcome-title" style="font-size: 20px; font-weight: 600;">Project Selected</h2>
 						<p class="welcome-desc" style="max-width: 320px;">Pick a thread or start a new one</p>
 						<button class="welcome-action-btn" onclick={() => createNewThread()}>
@@ -252,8 +252,8 @@
 				<div class="empty-state">
 					<div class="welcome-inner">
 						<div class="welcome-header">
-							<img src="/icons/swarmai-logo.svg" alt="SwarmAI" class="welcome-glyph" width="104" height="104" />
-							<h2 class="welcome-title">SwarmAI</h2>
+							<img src="/icons/swarmai-logo.svg" alt="Swarm Code" class="welcome-glyph" width="104" height="104" />
+							<h2 class="welcome-title">Swarm Code</h2>
 							<p class="welcome-desc">The coding app by Soumya Chakraborty. A calm, native home for your coding agents.</p>
 						</div>
 

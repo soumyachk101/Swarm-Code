@@ -1,9 +1,9 @@
 /*
-  SwarmAI marketing site, page script
-  ========================================
+  Swarm Code marketing site, page script
+  ======================================
 
     1. The binary field: a canvas of zeros and ones behind the hero and
-       the outro, scrubbed by scroll like SwarmAI's hero and outro art.
+       the outro, scrubbed by scroll like Swarm Code's hero and outro art.
     2. The highlight rail controller, ported from the home page's
        showcase carousel (drag, arrows, keyboard, aria-current).
     3. The theme picker: the real app captured in every theme, one big window at a time.
@@ -314,7 +314,7 @@
       img.width = 2080;
       img.height = 1426;
       img.decoding = "async";
-      img.alt = "SwarmAI in the " + id + " theme";
+      img.alt = "Swarm Code in the " + id + " theme";
       stage.appendChild(img);
       images[id] = img;
       return img;

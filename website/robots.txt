@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://getswarmai.app/sitemap.xml
+Sitemap: https://swarmcode.dev/sitemap.xml

@@ -916,7 +916,7 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 
 /* Hero film: the real app, captured from its own capture mode, in the same block
-   geometry as the SwarmAI promo film. */
+   geometry as the Swarm Code promo film. */
 .hero__film { aspect-ratio: 2400 / 1646; }
 .hero__video {
   display: block;
@@ -925,7 +925,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   object-fit: cover;
 }
 
-/* Hero media block, same container geometry as the SwarmAI promo film. */
+/* Hero media block, same container geometry as the Swarm Code promo film. */
 .media-block {
   position: relative;
   width: 100%;
@@ -1878,7 +1878,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   .themes__name { padding: 6px 10px; font-size: 12px; }
 }
 
-/* Binary twinkles for the wordscroll stages (replaces SwarmAI's sparks). */
+/* Binary twinkles for the wordscroll stages (replaces Swarm Code's sparks). */
 .wordscroll__bits {
   position: absolute;
   inset: 0 0 45% 0;

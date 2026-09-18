@@ -12,10 +12,10 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-PROJECT="soumyachk101/SwarmAI-Release"
+PROJECT="soumyachk101/Swarm-Code-Release"
 VERSION=$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -1)
 TAG="v$VERSION"
-DMG="${1:-build.noindex/SwarmAI-$VERSION.dmg}"
+DMG="${1:-build.noindex/Swarm-Code-$VERSION.dmg}"
 NOTES="ReleaseNotes/$VERSION.md"
 
 step() { printf '\n==> %s\n' "$1"; }
@@ -34,7 +34,7 @@ fi
 
 step "Tagging $TAG"
 if ! git rev-parse -q --verify "refs/tags/$TAG" > /dev/null; then
-  git tag -a "$TAG" -m "SwarmAI $VERSION"
+  git tag -a "$TAG" -m "Swarm Code $VERSION"
 fi
 git push origin "$TAG"
 
@@ -43,9 +43,9 @@ if gh release view "$TAG" -R "$PROJECT" > /dev/null 2>&1; then
   echo "Release $TAG already exists on GitHub."
   exit 1
 fi
-gh release create "$TAG" "$DMG#SwarmAI $VERSION (Apple silicon)" \
+gh release create "$TAG" "$DMG#Swarm Code $VERSION (Apple silicon)" \
   -R "$PROJECT" \
-  --title "SwarmAI $VERSION" \
+  --title "Swarm Code $VERSION" \
   --notes-file "$NOTES"
 
 printf '\nPublished: https://github.com/%s/releases/tag/%s\n' "$PROJECT" "$TAG"

@@ -26,9 +26,9 @@
 	const steps: { id: TourStep; title: string; subtitle: string; description: string; icon: string; accent: string }[] = [
 		{
 			id: 'welcome',
-			title: 'Welcome to SwarmAI',
+			title: 'Welcome to Swarm Code',
 			subtitle: 'Multi-agent AI orchestration for the desktop',
-			description: 'SwarmAI lets you chat with multiple AI providers, orchestrate parallel agent swarms with Hydra, and manage all your conversations in one place.',
+			description: 'Swarm Code lets you chat with multiple AI providers, orchestrate parallel agent swarms with Hydra, and manage all your conversations in one place.',
 			icon: 'sparkle',
 			accent: 'var(--accent-1)',
 		},

@@ -2,7 +2,7 @@ import SwiftUI
 
 enum Tour {
     static let pages: [TourPage] = [
-        TourPage(imageName: "tour-welcome", title: "Welcome to SwarmAI", description: "One native macOS window for every coding agent you use. Claude, Codex, Gemini, Copilot and more, each in its own thread, on the same Liquid Glass."),
+        TourPage(imageName: "tour-welcome", title: "Welcome to Swarm Code", description: "One native macOS window for every coding agent you use. Claude, Codex, Gemini, Copilot and more, each in its own thread, on the same Liquid Glass."),
         TourPage(imageName: "tour-hydra", title: "Meet Hydra", description: "One chat, many heads. On a big job the lead writes the briefs and sends helper agents out in parallel, each in a copy of your project. They report back in the chat, and their work lands in your checkout."),
         TourPage(imageName: "tour-pairs", title: "Pair a strong lead with quick heads", description: "Put a Claude lead over Gemini or OpenCode heads. Pick the pair from the model picker, cap how many heads run at once, and give each side its own effort."),
         TourPage(imageName: "tour-slider", title: "Effort, on a slider", description: "Drag from low to max on any model. In a pair the track blends the lead's colour into the heads', fast mode streaks toward the knob, and the title opens the model picker."),

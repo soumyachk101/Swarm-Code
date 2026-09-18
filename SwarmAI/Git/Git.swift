@@ -387,7 +387,7 @@ struct Git: Sendable {
     /// Snapshots the working tree into a hidden ref without touching the user's index or branch.
     func captureCheckpoint(_ ref: String) async throws {
         let tree = try await captureTree()
-        let commit = try await run(["commit-tree", tree, "-m", "SwarmAI checkpoint"], environment: Self.identity)
+        let commit = try await run(["commit-tree", tree, "-m", "Swarm Code checkpoint"], environment: Self.identity)
         try Self.check(commit)
         try Self.check(await run(["update-ref", ref, commit.trimmedOutput]))
     }
@@ -438,8 +438,8 @@ struct Git: Sendable {
     // MARK: - Copies of the checkout
 
     private static let identity = [
-        "GIT_AUTHOR_NAME": "SwarmAI", "GIT_AUTHOR_EMAIL": "swarmai@localhost",
-        "GIT_COMMITTER_NAME": "SwarmAI", "GIT_COMMITTER_EMAIL": "swarmai@localhost",
+        "GIT_AUTHOR_NAME": "Swarm Code", "GIT_AUTHOR_EMAIL": "swarmcode@localhost",
+        "GIT_COMMITTER_NAME": "Swarm Code", "GIT_COMMITTER_EMAIL": "swarmcode@localhost",
     ]
 
     /// A commit of `tree` on top of HEAD that no ref points at: the checkout as it is,

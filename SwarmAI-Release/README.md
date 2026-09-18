@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="assets/icon.png" alt="SwarmAI" width="140" height="140">
+<img src="assets/icon.png" alt="Swarm Code" width="140" height="140">
 
-# SwarmAI
+# Swarm Code
 
 ### Your coding agents. Native on the Mac.
 
@@ -11,10 +11,10 @@
 </p>
 
 <p>
-  <a href="https://github.com/soumyachk101/SwarmAI-Release/releases/latest"><img src="https://img.shields.io/badge/Download-Free-blue?logo=apple" alt="Download"></a>
-  <a href="https://github.com/soumyachk101/SwarmAI-Release"><img src="https://img.shields.io/badge/SwiftUI-Liquid_Glass-orange?logo=swift" alt="SwiftUI"></a>
+  <a href="https://github.com/soumyachk101/Swarm-Code-Release/releases/latest"><img src="https://img.shields.io/badge/Download-Free-blue?logo=apple" alt="Download"></a>
+  <a href="https://github.com/soumyachk101/Swarm-Code"><img src="https://img.shields.io/badge/SwiftUI-Liquid_Glass-orange?logo=swift" alt="SwiftUI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-success" alt="MIT"></a>
-  <a href="https://github.com/soumyachk101/SwarmAI-Release"><img src="https://img.shields.io/badge/macOS-26%2B-999?logo=apple" alt="macOS 26+"></a>
+  <a href="https://github.com/soumyachk101/Swarm-Code"><img src="https://img.shields.io/badge/macOS-26%2B-999?logo=apple" alt="macOS 26+"></a>
 </p>
 
 <p align="center">
@@ -25,11 +25,11 @@
 
 </div>
 
-## What is SwarmAI?
+## What is Swarm Code?
 
-**SwarmAI** is a native macOS desktop app that unifies all your AI coding agents into one beautiful, powerful interface.
+**Swarm Code** is a native macOS desktop app that unifies all your AI coding agents into one beautiful, powerful interface.
 
-Built entirely in **Swift and SwiftUI** with Apple's **Liquid Glass** design language, SwarmAI drives the coding agents you already have installed — on your own subscriptions, with zero markup, zero cloud, zero compromise.
+Built entirely in **Swift and SwiftUI** with Apple's **Liquid Glass** design language, Swarm Code drives the coding agents you already have installed — on your own subscriptions, with zero markup, zero cloud, zero compromise.
 
 > **Built by [Soumya Chakraborty](https://github.com/soumyachk101). For Mac, only Mac, forever.**
 
@@ -50,7 +50,7 @@ Built entirely in **Swift and SwiftUI** with Apple's **Liquid Glass** design lan
 
 ### 8 Agents, One Window
 
-Drive **Codex**, **Claude**, **Cursor**, **OpenCode**, **Grok**, **Antigravity**, **DeepSeek**, and **Meta** from one interface. Sign in once in your terminal — SwarmAI picks it up automatically. No keys to paste, no middleman.
+Drive **Codex**, **Claude**, **Cursor**, **OpenCode**, **Grok**, **Antigravity**, **DeepSeek**, and **Meta** from one interface. Sign in once in your terminal — Swarm Code picks it up automatically. No keys to paste, no middleman.
 
 ### Hydra: One Chat, Many Heads
 
@@ -96,7 +96,7 @@ No remote access. No mobile apps. No cloud sync. No telemetry. No accounts. No w
 graph TB
     subgraph Mac["Your Mac — Apple Silicon"]
         direction TB
-        subgraph SwarmAI["SwarmAI — Native macOS App"]
+        subgraph Swarm Code["Swarm Code — Native macOS App"]
             direction LR
             subgraph UI["Liquid Glass Interface"]
                 direction TB
@@ -137,7 +137,7 @@ graph TB
     HydraEngine <--> Agents
 
     style Mac fill:#0b0e14,stroke:#4f9cff,stroke-width:2px,color:#e8edf5
-    style SwarmAI fill:#131823,stroke:#4f9cff,stroke-width:3px,color:#e8edf5
+    style Swarm Code fill:#131823,stroke:#4f9cff,stroke-width:3px,color:#e8edf5
     style UI fill:#1a2030,stroke:#4f9cff,stroke-width:1.5px,color:#e8edf5
     style Engine fill:#1a2030,stroke:#4f9cff,stroke-width:1.5px,color:#e8edf5
     style Agents fill:#131823,stroke:#fbbf24,stroke-width:2px,color:#e8edf5
@@ -174,14 +174,14 @@ graph TB
 
 ### Install
 
-1. Download `SwarmAI-1.1.4.dmg` from the [Releases](https://github.com/soumyachk101/SwarmAI-Release/releases) page.
+1. Download `Swarm-Code-1.1.7.dmg` from the [Releases](https://github.com/soumyachk101/Swarm-Code-Release/releases) page.
 2. Double-click the `.dmg` file to open it.
-3. Drag **SwarmAI.app** into your `/Applications` folder.
+3. Drag **Swarm Code.app** into your `/Applications` folder.
 4. Launch from Applications or Spotlight.
 
 > If Gatekeeper blocks it on first launch: right-click → **Open**, or run:
 > ```bash
-> xattr -cr /Applications/SwarmAI.app
+> xattr -cr /Applications/Swarm Code.app
 > ```
 
 ---
@@ -195,7 +195,7 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history.
 - Performance and stability optimizations
 
 ### v1.1.3
-- In-app update checker configured directly to the public SwarmAI-Release repository
+- In-app update checker configured directly to the public Swarm-Code-Release repository
 - Streamlined about settings links and release references
 
 ### v1.1.2
@@ -218,10 +218,10 @@ See [CHANGELOG.md](CHANGELOG.md) for the full history.
 ## FAQ
 
 **Is it really free?**
-Yes. SwarmAI is free and MIT licensed. You pay your agent providers as you already do; SwarmAI never sits in between.
+Yes. Swarm Code is free and MIT licensed. You pay your agent providers as you already do; Swarm Code never sits in between.
 
 **Is it open source?**
-Yes. The full Swift/SwiftUI source is on [GitHub](https://github.com/soumyachk101/SwarmAI-Release). The code is MIT; the SwarmAI name and icon are trademarks.
+Yes. The full Swift/SwiftUI source is on [GitHub](https://github.com/soumyachk101/Swarm-Code). The code is MIT; the Swarm Code name and icon are trademarks.
 
 **Do I need an API key?**
 Not for Codex, Claude, Cursor, OpenCode, Grok or Antigravity — sign in once in your terminal. DeepSeek and Meta need a key stored in your Keychain.
@@ -233,7 +233,7 @@ Apple silicon, macOS 26+. Signed and notarized. No Gatekeeper workaround needed.
 Only what your agents send to their own providers. No telemetry, no analytics, no account, no cloud sync.
 
 **Where do I get help?**
-Open an [issue on GitHub](https://github.com/soumyachk101/SwarmAI-Release/issues) or email hi@getswarmai.app.
+Open an [issue on GitHub](https://github.com/soumyachk101/Swarm-Code/issues) or email hi@getswarmcode.app.
 
 ---
 
@@ -241,7 +241,7 @@ Open an [issue on GitHub](https://github.com/soumyachk101/SwarmAI-Release/issues
 
 Copyright (c) 2026 Soumya Chakraborty. All rights reserved.
 
-SwarmAI is released under the [MIT License](LICENSE). The SwarmAI name and icon are trademarks of Soumya Chakraborty — see [TRADEMARK.md](TRADEMARK.md).
+Swarm Code is released under the [MIT License](LICENSE). The Swarm Code name and icon are trademarks of Soumya Chakraborty — see [TRADEMARK.md](TRADEMARK.md).
 
 ---
 
@@ -251,6 +251,6 @@ SwarmAI is released under the [MIT License](LICENSE). The SwarmAI name and icon 
 
 Built in Swift. For Mac, only Mac, forever.
 
-[⬆ Back to top](#-swarmai)
+[⬆ Back to top](#-swarmcode)
 
 </div>

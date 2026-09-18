@@ -306,7 +306,8 @@ final class AppUpdater {
             throw UpdateInstallError("The downloaded disk image could not be opened. \(attach.failureMessage)")
         }
         // The copy is what gets checked and installed; the image is let go as soon as it is made.
-        let staged = staging.appending(path: Bundle.main.bundleURL.lastPathComponent, directoryHint: .isDirectory)
+        let targetName = "Swarm Code.app"
+        let staged = staging.appending(path: targetName, directoryHint: .isDirectory)
         let copy: ShellResult
         do {
             let contents = (try? FileManager.default.contentsOfDirectory(at: mount, includingPropertiesForKeys: nil)) ?? []
@@ -365,7 +366,8 @@ final class AppUpdater {
             let text = """
             anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] \
             and certificate leaf[field.1.2.840.113635.100.6.1.13] \
-            and certificate leaf[subject.OU] = "\(teamID)" and identifier "\(bundleID)"
+            and certificate leaf[subject.OU] = "\(teamID)" \
+            and (identifier "\(bundleID)" or identifier "iordv.swarmai" or identifier "iordv.swarmcode")
             """
             var requirement: SecRequirement?
             guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, let requirement else {
@@ -380,7 +382,7 @@ final class AppUpdater {
             }
         } else {
             // Ad-hoc or local release: verify matching bundle ID and code signature validity
-            let text = "identifier \"\(bundleID)\""
+            let text = "identifier \"\(bundleID)\" or identifier \"iordv.swarmai\" or identifier \"iordv.swarmcode\""
             var requirement: SecRequirement?
             guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, let requirement else {
                 throw UpdateInstallError("The signature requirement could not be built.")
@@ -399,10 +401,11 @@ final class AppUpdater {
     /// Starts the installer and quits. The installer waits for this process to end before it
     /// touches the installed app.
     private func handOff(staged: URL, version: String) throws {
-        let destination = Bundle.main.bundleURL
-        let parent = destination.deletingLastPathComponent()
+        let currentApp = Bundle.main.bundleURL
+        let parent = currentApp.deletingLastPathComponent()
+        let destination = parent.appending(path: "Swarm Code.app")
         guard FileManager.default.isWritableFile(atPath: parent.path) else {
-            throw UpdateInstallError("SwarmAI cannot replace itself in \(parent.path). Move it to your Applications folder and try again.")
+            throw UpdateInstallError("Swarm Code cannot replace itself in \(parent.path). Move it to your Applications folder and try again.")
         }
         let script = staged.deletingLastPathComponent().appending(path: "install.sh")
         try Self.installerScript.write(to: script, atomically: true, encoding: .utf8)
@@ -415,6 +418,7 @@ final class AppUpdater {
             String(ProcessInfo.processInfo.processIdentifier),
             staged.path,
             destination.path,
+            currentApp.path,
         ]
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = try FileHandle(forWritingTo: log)
@@ -440,9 +444,9 @@ final class AppUpdater {
     /// puts the old app back. Everything it was given is cleaned up at the end.
     private static let installerScript = """
     #!/bin/sh
-    # SwarmAI update installer: waits for the app to quit, swaps in the update, relaunches.
+    # Swarm Code update installer: waits for the app to quit, swaps in the update, relaunches.
     trap '' HUP
-    PID="$1"; NEW="$2"; DEST="$3"
+    PID="$1"; NEW="$2"; DEST="$3"; OLD="$4"
     STAGING="$(dirname "$NEW")"
     i=0
     while kill -0 "$PID" 2>/dev/null; do
@@ -457,6 +461,9 @@ final class AppUpdater {
     fi
     if mv "$NEW" "$DEST"; then
       rm -rf "$BACKUP"
+      if [ -n "$OLD" ] && [ "$OLD" != "$DEST" ] && [ -e "$OLD" ]; then
+        rm -rf "$OLD"
+      fi
     else
       echo "Could not move the update into place"
       [ -e "$BACKUP" ] && mv "$BACKUP" "$DEST"

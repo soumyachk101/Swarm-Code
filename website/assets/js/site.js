@@ -1,6 +1,6 @@
 /*
-  SwarmAI marketing site, shared site script
-  ===============================================
+  Swarm Code marketing site, shared site script
+  =============================================
 
   Plain vanilla JS, no build step, ported from getswarmai.app's site.js
   and trimmed to what this page uses:
@@ -302,7 +302,7 @@
     [/^back\b/, "arrow-left"],
     [/^continue\b/, "arrow-right"],
     [/^what is\b|\?$/, "question"],
-    [/^(download|get swarmai)\b/, "arrow-down"],
+    [/^(download|get swarm code|get swarmai)\b/, "arrow-down"],
     [/^(view source|open source|source|gitlab|github|meet)\b/, "arrow-up-right"],
     [/^(see what it does|see how it works|show more)\b/, "arrow-down"]
   ];

@@ -1,9 +1,9 @@
 import Foundation
 
 enum AppInfo {
-    static let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "SwarmAI"
-    static let isDevelopment = Bundle.main.bundleIdentifier == "iordv.swarmai.dev"
-    static let stateDirectoryName = ".swarmai"
+    static let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Swarm Code"
+    static let isDevelopment = Bundle.main.bundleIdentifier?.hasSuffix(".dev") ?? false
+    static let stateDirectoryName = ".swarmcode"
     static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
     static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
 }

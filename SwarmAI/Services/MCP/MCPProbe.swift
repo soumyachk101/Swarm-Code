@@ -57,7 +57,7 @@ enum MCPProbe {
         .object([
             "protocolVersion": .string("2025-06-18"),
             "capabilities": .object([:]),
-            "clientInfo": .object(["name": .string("SwarmAI"), "version": .string("1.0")]),
+            "clientInfo": .object(["name": .string("Swarm Code"), "version": .string("1.0")]),
         ])
     }
 

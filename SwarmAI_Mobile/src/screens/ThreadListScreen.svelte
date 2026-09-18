@@ -48,7 +48,7 @@ const formatTime = (dateStr: string) => {
     <!-- Header -->
     <div class="header" style="padding-top: calc(12px + var(--safe-top));">
         <div>
-            <h2 class="text-primary" style="font-size: 20px; font-weight: 700;">SwarmAI</h2>
+            <h2 class="text-primary" style="font-size: 20px; font-weight: 700;">Swarm Code</h2>
             <div style="display: flex; align-items: center; gap: 6px; margin-top: 2px;">
                 <span class="status-dot {($connectionStatus === 'paired' || $connectionStatus === 'connected') ? 'connected' : 'disconnected'}"></span>
                 <span style="font-size: 12px; color: var(--text-muted);">
@@ -66,7 +66,7 @@ const formatTime = (dateStr: string) => {
         <div class="empty-state">
             <div class="empty-icon">💬</div>
             <div class="empty-title">No Threads</div>
-            <div class="empty-desc">Your Mac has no active threads yet. Start a conversation in SwarmAI on your Mac to see it here.</div>
+            <div class="empty-desc">Your Mac has no active threads yet. Start a conversation in Swarm Code on your Mac to see it here.</div>
         </div>
     {:else}
         <div class="scrollable">

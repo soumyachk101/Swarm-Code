@@ -379,7 +379,7 @@ struct UpdateProgressSlider: View {
         }
         .frame(height: headDiameter)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("Updating SwarmAI"))
+        .accessibilityLabel(Text("Updating Swarm Code"))
         .accessibilityValue(Text(fraction.formatted(.percent.precision(.fractionLength(0)))))
     }
 
@@ -527,7 +527,7 @@ private struct AboutIdentityPill: View {
         .frame(height: Chrome.capsuleContentHeight)
         .padding(.vertical, Chrome.capsuleVerticalPadding)
         .chromeGlassCapsule()
-        .accessibilityLabel(Text("SwarmAI \(AppInfo.version)"))
+        .accessibilityLabel(Text("Swarm Code \(AppInfo.version)"))
     }
 }
 
@@ -637,7 +637,7 @@ private struct AboutVersionPill: View {
                 // The seal is not a button, but it is still worth saying what it means
                 // rather than showing an empty tooltip.
                 .help(isReady
-                    ? "Installs SwarmAI \(checker.update?.version ?? "") and relaunches"
+                    ? "Installs \(AppInfo.name) \(checker.update?.version ?? "") and relaunches"
                     : standingHelp)
                 .accessibilityLabel(Text(accessibilityLabel))
                 .accessibilityAddTraits(isReady ? .isButton : [])
@@ -653,14 +653,14 @@ private struct AboutVersionPill: View {
     /// The seal is not a button, but it is still worth saying what it means.
     private var standingHelp: String {
         switch standing {
-        case .upToDate: "SwarmAI \(AppInfo.version) is the latest version"
+        case .upToDate: "\(AppInfo.name) \(AppInfo.version) is the latest version"
         case .failed: checker.lastError ?? "The last check did not reach GitHub"
-        case .unchecked: "SwarmAI has not asked GitHub for a release yet"
+        case .unchecked: "\(AppInfo.name) has not asked GitHub for a release yet"
         }
     }
 
     private var accessibilityLabel: String {
-        isReady ? "Update & restart" : "SwarmAI \(AppInfo.version), \(standing.title.lowercased())"
+        isReady ? "Update & restart" : "\(AppInfo.name) \(AppInfo.version), \(standing.title.lowercased())"
     }
 }
 
@@ -834,8 +834,8 @@ struct AboutUpdateCheckRow: View {
         let checked = checker.lastCheckedAt.map { "Checked \($0.formatted(.relative(presentation: .named)))." } ?? "Not checked yet."
         if let error = checker.lastError { return "\(error) \(checked)" }
         if checker.updateAvailable, let version = checker.update?.version {
-            return "SwarmAI \(version) is ready to install. \(checked)"
+            return "\(AppInfo.name) \(version) is ready to install. \(checked)"
         }
-        return "SwarmAI checks GitHub for new versions a few times a day. \(checked)"
+        return "\(AppInfo.name) checks GitHub for new versions a few times a day. \(checked)"
     }
 }

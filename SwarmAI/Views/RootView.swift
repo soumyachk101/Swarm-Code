@@ -123,7 +123,7 @@ struct WelcomeView: View {
                     Image(nsImage: NSApp.applicationIconImage)
                         .resizable()
                         .frame(width: 104, height: 104)
-                    Text("SwarmAI")
+                    Text("Swarm Code")
                         .font(.system(size: 34, weight: .semibold))
                     Text("The coding app by Soumya Chakraborty. A calm, native home for your coding agents.")
                         .font(.system(size: 15))

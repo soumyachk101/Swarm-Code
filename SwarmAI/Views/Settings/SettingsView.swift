@@ -736,6 +736,22 @@ private struct AboutSettingsPage: View {
                 ChromeCard {
                     MadeByRow()
                     ChromeRowDivider()
+                    ChromeRow(title: "Website", detail: "swarmcode.antideploy.com") {
+                        CreditLink(title: "Open website", url: URL(string: "https://swarmcode.antideploy.com")!)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "GitHub Profile", detail: "Soumya Chakraborty on GitHub (@soumyachk101)") {
+                        CreditLink(title: "@soumyachk101", url: URL(string: "https://github.com/soumyachk101")!)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "Source code", detail: "Swarm Code repository on GitHub.") {
+                        CreditLink(title: "soumyachk101/Swarm-Code", url: URL(string: "https://github.com/soumyachk101/Swarm-Code")!)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "Releases", detail: "Latest release builds and changelog.") {
+                        CreditLink(title: "Releases", url: URL(string: "https://github.com/soumyachk101/Swarm-Code-Release/releases")!)
+                    }
+                    ChromeRowDivider()
                     ChromeRow(title: "Working indicators", detail: "Ported from Zeron by Wing, MIT License.") {
                         CreditLink(title: "zeronsh/zeron", url: URL(string: "https://github.com/zeronsh/zeron")!)
                     }
@@ -761,7 +777,7 @@ private struct AboutSettingsPage: View {
                     .resizable()
                     .frame(width: 56, height: 56)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("SwarmAI")
+                    Text("Swarm Code")
                         .font(.system(size: 15, weight: .semibold))
                     Text(verbatim: "Version \(AppInfo.version) (\(AppInfo.build))")
                         .font(.system(size: 12))
@@ -783,7 +799,7 @@ private struct AboutSettingsPage: View {
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
             ChromeRowDivider()
-            Text("SwarmAI and SwiftTerm are MIT licensed.")
+            Text("Swarm Code and SwiftTerm are MIT licensed.")
                 .font(.system(size: 12))
                 .foregroundStyle(Chrome.secondaryText)
                 .padding(.leading, 16)
@@ -799,7 +815,7 @@ private struct LicensesRow: View {
     @State private var isPresented = false
 
     private static let files: [(title: String, resource: String)] = [
-        ("SwarmAI", "LICENSE"),
+        ("Swarm Code", "LICENSE"),
         ("Third-party notices", "THIRD_PARTY_NOTICES"),
         ("Trademarks", "TRADEMARK"),
     ]
@@ -838,7 +854,7 @@ private struct LicensesRow: View {
     }
 }
 
-/// SwarmAI's logo and name, showing attribution that the app is made by Soumya Chakraborty.
+/// Swarm Code's logo and name, showing attribution that the app is made by Soumya Chakraborty.
 private struct MadeByRow: View {
     var body: some View {
         HStack(spacing: 12) {
@@ -851,11 +867,15 @@ private struct MadeByRow: View {
                 Text("Made by Soumya Chakraborty")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)
-                Text("SwarmAI is a coding app by Soumya Chakraborty for Mac.")
+                Text("Swarm Code is a coding app by Soumya Chakraborty for Mac.")
                     .font(.system(size: 11))
                     .foregroundStyle(Chrome.secondaryText)
             }
             Spacer(minLength: 12)
+            HStack(spacing: 10) {
+                CreditLink(title: "Website", url: URL(string: "https://swarmcode.antideploy.com")!)
+                CreditLink(title: "GitHub", url: URL(string: "https://github.com/soumyachk101")!)
+            }
         }
         .padding(.leading, 16)
         .padding(.trailing, Chrome.rowControlTrailingPadding + 4)

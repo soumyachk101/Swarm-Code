@@ -81,7 +81,7 @@ final class TourWindowController {
         window.collectionBehavior = [.managed, .participatesInCycle, .fullScreenAuxiliary]
         window.contentView = hosting
 
-        if let main = NSApp.windows.first(where: { $0.title == "SwarmAI" && $0.isVisible }) {
+        if let main = NSApp.windows.first(where: { ($0.title == "Swarm Code" || $0.title == "SwarmAI") && $0.isVisible }) {
             let mainFrame = main.frame
             let origin = NSPoint(
                 x: mainFrame.midX - contentSize.width / 2,

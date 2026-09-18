@@ -1,6 +1,6 @@
 [package]
-name = "swarmai_tauri"
-version = "1.0.0"
+name = "swarm_code_tauri"
+version = "1.1.7"
 edition = "2021"
 
 [build-dependencies]

@@ -102,7 +102,7 @@
 		{ id: 'terminal', label: 'Open Terminal', icon: 'terminal', category: 'Navigation', keywords: ['shell', 'bash', 'cli'] },
 		{ id: 'git-diff', label: 'View Git Diff', icon: 'diff', category: 'Git', keywords: ['changes', 'diff'] },
 		{ id: 'git-commit', label: 'Git Commit', icon: 'git', category: 'Git', keywords: ['commit', 'save'] },
-		{ id: 'about', label: 'About SwarmAI', icon: 'info', category: 'Navigation', keywords: ['version', 'info'] },
+		{ id: 'about', label: 'About Swarm Code', icon: 'info', category: 'Navigation', keywords: ['version', 'info'] },
 	];
 
 	let iconMap: Record<string, string> = {

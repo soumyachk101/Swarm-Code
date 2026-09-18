@@ -10,8 +10,8 @@ packages:
     exactVersion: 1.20.0
 settings:
   base:
-    MARKETING_VERSION: "1.1.5"
-    CURRENT_PROJECT_VERSION: "9"
+    MARKETING_VERSION: "1.1.7"
+    CURRENT_PROJECT_VERSION: "10"
     ARCHS: arm64
     EXCLUDED_ARCHS: x86_64
     SWIFT_VERSION: "6.0"
@@ -37,13 +37,13 @@ targets:
       - package: SwiftTerm
     settings:
       base:
-        PRODUCT_NAME: "SwarmAI"
+        PRODUCT_NAME: "Swarm Code"
         PRODUCT_MODULE_NAME: SwarmAI
         PRODUCT_BUNDLE_IDENTIFIER: iordv.swarmai
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: "SwarmAI"
+        INFOPLIST_KEY_CFBundleDisplayName: "Swarm Code"
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
-        INFOPLIST_KEY_NSHumanReadableCopyright: "SwarmAI, the coding app by Soumya Chakraborty. MIT License."
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Swarm Code, the coding app by Soumya Chakraborty. MIT License."
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Automatic

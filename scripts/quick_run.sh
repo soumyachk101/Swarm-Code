@@ -15,7 +15,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-APP_NAME="SwarmAI"
+APP_NAME="Swarm Code"
 DERIVED="build.noindex/dev"
 PRODUCT="$DERIVED/Build/Products/Debug/$APP_NAME.app"
 TARGET="/Applications/$APP_NAME.app"

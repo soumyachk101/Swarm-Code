@@ -205,7 +205,8 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.1.7;
+				CURRENT_PROJECT_VERSION = 10;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -268,7 +269,8 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.1.7;
+				CURRENT_PROJECT_VERSION = 10;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -290,16 +292,16 @@
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "SwarmAI";
+				INFOPLIST_KEY_CFBundleDisplayName = "Swarm Code";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "SwarmAI, the coding app by Soumya Chakraborty. MIT License.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Swarm Code, the coding app by Soumya Chakraborty. MIT License.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = iordv.swarmai;
 				PRODUCT_MODULE_NAME = SwarmAI;
-				PRODUCT_NAME = "SwarmAI";
+				PRODUCT_NAME = "Swarm Code";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -313,16 +315,16 @@
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "SwarmAI";
+				INFOPLIST_KEY_CFBundleDisplayName = "Swarm Code";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "SwarmAI, the coding app by Soumya Chakraborty. MIT License.";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "Swarm Code, the coding app by Soumya Chakraborty. MIT License.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = iordv.swarmai;
 				PRODUCT_MODULE_NAME = SwarmAI;
-				PRODUCT_NAME = "SwarmAI";
+				PRODUCT_NAME = "Swarm Code";
 				SDKROOT = macosx;
 			};
 			name = Debug;

@@ -6,7 +6,12 @@ enum Storage {
     static let root: URL = {
         if let captures = WebsiteCaptures.storageRoot { return captures }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let url = base.appendingPathComponent("SwarmAI", isDirectory: true)
+        let swarmCodeURL = base.appendingPathComponent("Swarm Code", isDirectory: true)
+        let legacyURL = base.appendingPathComponent("SwarmAI", isDirectory: true)
+        if !FileManager.default.fileExists(atPath: swarmCodeURL.path) && FileManager.default.fileExists(atPath: legacyURL.path) {
+            try? FileManager.default.copyItem(at: legacyURL, to: swarmCodeURL)
+        }
+        let url = swarmCodeURL
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }()
@@ -18,8 +23,8 @@ enum Storage {
     static var attachmentsDirectory: URL { directory("attachments") }
 
     static var worktreesDirectory: URL {
-        let url = URL(fileURLWithPath: LoginEnvironment.homeDirectory)
-            .appendingPathComponent(".swarmai/worktrees", isDirectory: true)
+        let home = URL(fileURLWithPath: LoginEnvironment.homeDirectory)
+        let url = home.appendingPathComponent(".swarmcode/worktrees", isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
@@ -230,7 +235,7 @@ actor DiskWriter {
         do {
             try data.write(to: url, options: .atomic)
         } catch {
-            NSLog("SwarmAI could not save %@: %@", url.lastPathComponent, error.localizedDescription)
+            NSLog("Swarm Code could not save %@: %@", url.lastPathComponent, error.localizedDescription)
         }
     }
 }

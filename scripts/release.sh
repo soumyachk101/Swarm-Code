@@ -11,13 +11,13 @@ cd "$(dirname "$0")/.."
 ROOT="$PWD"
 TEAM_ID="NARHG44L48"
 NOTARY_PROFILE="${NOTARY_PROFILE:-SwarmAI-Notarize}"
-APP_NAME="SwarmAI"
+APP_NAME="Swarm Code"
 # ".noindex" keeps Spotlight and Launchpad from listing the build copies of the app.
 BUILD="$ROOT/build.noindex"
-ARCHIVE="$BUILD/SwarmAI.xcarchive"
+ARCHIVE="$BUILD/Swarm Code.xcarchive"
 EXPORT="$BUILD/export"
 VERSION=$(sed -nE 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"([^"]+)".*/\1/p' project.yml | head -1)
-DMG="$BUILD/SwarmAI-$VERSION.dmg"
+DMG="$BUILD/Swarm-Code-$VERSION.dmg"
 
 step() { printf '\n==> %s\n' "$1"; }
 
@@ -95,8 +95,8 @@ if [ "$archs" != "arm64" ]; then
 fi
 
 step "Notarizing the app"
-ditto -c -k --keepParent "$APP" "$BUILD/SwarmAI.zip"
-notarize "$BUILD/SwarmAI.zip"
+ditto -c -k --keepParent "$APP" "$BUILD/Swarm-Code.zip"
+notarize "$BUILD/Swarm-Code.zip"
 xcrun stapler staple "$APP"
 
 step "Building the disk image"
@@ -119,6 +119,6 @@ xcrun stapler validate "$DMG"
 
 step "Cleaning up"
 # Only the disk image stays, so Spotlight and Launchpad never list a second copy of the app.
-rm -rf "$ARCHIVE" "$EXPORT" "$STAGING" "$BUILD/SwarmAI.zip" "$BUILD/DerivedData"
+rm -rf "$ARCHIVE" "$EXPORT" "$STAGING" "$BUILD/Swarm-Code.zip" "$BUILD/DerivedData"
 
 printf '\nReady: %s\nPublish it with scripts/publish_release.sh once ReleaseNotes/%s.md is written.\n' "$DMG" "$VERSION"
