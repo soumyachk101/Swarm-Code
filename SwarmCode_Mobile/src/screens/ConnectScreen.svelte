@@ -5,7 +5,7 @@ import {
     connectionStatus, currentHost, currentPort, pairings, connectionError, isLoading, view, threads
 } from '../stores/appStore';
 
-let hostInput = '';
+let hostInput = 'localhost';
 let portInput = '8765';
 let discoveryResults: { id: string; host: string; port: number; name: string }[] = [];
 let isDiscovering = false;
