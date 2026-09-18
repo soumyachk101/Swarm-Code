@@ -39,7 +39,15 @@ final class WallpaperStore {
     /// re-renders shortly after while the current picture stays on screen.
     var softness: Double {
         didSet {
-            softness = min(1, max(0, softness))
+            // Writing the property from its own observer calls the observer again, and an
+            // unconditional clamp here recursed until the stack ran out: dragging the
+            // softness slider crashed the app. Only write back a value that was really out
+            // of range, and let that one extra pass do the saving and the re-render.
+            let clamped = min(1, max(0, softness))
+            guard clamped == softness else {
+                softness = clamped
+                return
+            }
             defaults.set(softness, forKey: Key.softness)
             scheduleRerender()
         }

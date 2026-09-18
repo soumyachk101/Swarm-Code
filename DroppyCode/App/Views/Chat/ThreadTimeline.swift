@@ -545,15 +545,18 @@ struct ThreadTimeline: View, Equatable {
                 let pinned = new.distanceFromBottom < 48
                 if pinned != tracking.isPinnedToBottom { tracking.isPinnedToBottom = pinned }
                 if pinned != anchorsBottomOnGrowth { anchorsBottomOnGrowth = pinned }
-            } else if tracking.isPinnedToBottom, atRest, abs(new.distanceFromBottom) > 1 {
+            } else if (tracking.isPinnedToBottom || old.distanceFromBottom < 48), atRest, abs(new.distanceFromBottom) > 1 {
                 // Pinned, at rest, and not at the end: the content grew or reflowed to a new
                 // width, the chat box took height, or the scroll view lost its place (rows
                 // measured after it anchored, a thread opened mid-animation) and is showing
                 // empty space past the conversation. The end is where the reader is; the
                 // timeline snaps back to it, never slides, so a new row lands in place and
                 // fades in on its own. (Mid-resize this waits for the settle below: the
-                // anchor already holds the bottom edge each frame.)
+                // anchor already holds the bottom edge each frame.) A reader at the end whose pin
+                // flag went stale is caught by the end they held last frame.
                 guard !liveResize.isActive else { return }
+                tracking.isPinnedToBottom = true
+                anchorsBottomOnGrowth = true
                 DispatchQueue.main.async {
                     withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
                 }
@@ -643,10 +646,11 @@ struct ThreadTimeline: View, Equatable {
             // must not yank the reader down, and an active drag is never fought: the
             // next entry, or the geometry branch, catches up once it lets go. Growth
             // inside an existing row stays with the pinned machinery above; this is for
-            // new rows only.
+            // new rows only. A reader whose pin flag went stale while they sat at the end
+            // is followed by the distance they hold as well.
             guard !historyLoadPending, !tracking.isUserScrolling else { return }
             let isQuestion = lastEntryID?.hasPrefix("question-") == true
-            guard tracking.isPinnedToBottom || isQuestion else { return }
+            guard tracking.isPinnedToBottom || tracking.distanceFromBottom < 48 || isQuestion else { return }
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
             scrollState.showsJumpButton = false
@@ -749,9 +753,11 @@ struct ThreadTimeline: View, Equatable {
     /// (the bottom anchor follows the rows as they open) and the offset is sent to it in
     /// the same transaction, so the timeline glides down with the opening and lands on
     /// the new end, never short of it and never in a snap. A reader higher up is left
-    /// where they are.
+    /// where they are. A row the reader taps to open is revealed when the end is on
+    /// screen, when the reader is pinned to it, or when it sits less than one viewport
+    /// below, so a tap never opens steps off screen.
     private func revealEnd() {
-        guard !scrollState.showsJumpButton else { return }
+        guard !scrollState.showsJumpButton || tracking.isPinnedToBottom || tracking.distanceFromBottom < viewportHeight else { return }
         followEnd()
     }
 
