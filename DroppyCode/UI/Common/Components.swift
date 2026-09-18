@@ -116,6 +116,24 @@ enum Workspace {
         Editor(name: "iTerm", bundleID: "com.googlecode.iterm2"),
     ]
 
+    /// Opens Terminal with the command already running, so an interactive CLI login gets a real shell.
+    static func openTerminal(running command: String) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("droppy-code-login", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        // One file per CLI: a second login opened while the first shell is still running
+        // must not overwrite the script that shell is reading.
+        let token = command.split(whereSeparator: \.isWhitespace).first.map { $0.filter(\.isLetter) } ?? ""
+        let script = directory.appendingPathComponent(token.isEmpty ? "login.command" : "login-\(token).command")
+        let contents = "#!/bin/zsh -l\n" + command + "\n"
+        do {
+            try contents.write(to: script, atomically: true, encoding: .utf8)
+        } catch {
+            return
+        }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        NSWorkspace.shared.open(script)
+    }
+
     /// Looked up once per launch: the chat's controls build this list on every render, and each
     /// entry is a Launch Services query.
     static let installedEditors: [Editor] = editors.filter {

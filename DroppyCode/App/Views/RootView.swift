@@ -396,7 +396,8 @@ private struct ProviderStatusRow: View {
                 if provider.isAPIKeyBased {
                     OpenProvidersSettingsButton()
                 } else {
-                    CopyCommandButton(command: provider.loginCommand)
+                    Button("Login") { Workspace.openTerminal(running: provider.loginCommand) }
+                        .buttonStyle(.glass)
                 }
             } else {
                 Image(systemName: "checkmark.circle.fill")

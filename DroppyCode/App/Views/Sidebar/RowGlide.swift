@@ -57,6 +57,12 @@ final class RowGlideAnimator {
     /// would flip out of its sight.
     @ObservationIgnored private var hidingCells: [UUID: ObservedValue<Bool>] = [:]
 
+    /// Whether a thread's row is fading in place on a settle. The helper rows and the head
+    /// cards row under it read this cell too, so everything under a settling thread leaves
+    /// with the identical fade instead of lingering past it. Cells are kept once made, like
+    /// `hidingCells`.
+    @ObservationIgnored private var leavingCells: [UUID: ObservedValue<Bool>] = [:]
+
     /// The `Settled` header's frame in the window, reported by the header while it is
     /// on screen; a settle with the section folded lands on it.
     @ObservationIgnored private(set) var settledHeaderFrame: CGRect?
@@ -125,6 +131,28 @@ final class RowGlideAnimator {
         let cell = ObservedValue(false)
         hidingCells[threadID] = cell
         return cell
+    }
+
+    /// Whether the thread's own row and the rows attached under it are leaving on a settle.
+    func isLeaving(_ threadID: UUID) -> Bool {
+        leavingCell(threadID).value
+    }
+
+    private func leavingCell(_ threadID: UUID) -> ObservedValue<Bool> {
+        if let cell = leavingCells[threadID] { return cell }
+        let cell = ObservedValue(false)
+        leavingCells[threadID] = cell
+        return cell
+    }
+
+    /// The settling row flips this on; it is cleared once the list has taken the thread's
+    /// rows away, so a later reopen shows them again.
+    func beginLeaving(_ threadID: UUID) { setLeaving(threadID, true) }
+    func endLeaving(_ threadID: UUID) { setLeaving(threadID, false) }
+
+    private func setLeaving(_ threadID: UUID, _ leaving: Bool) {
+        let cell = leavingCell(threadID)
+        if cell.value != leaving { cell.value = leaving }
     }
 
     /// Flips a thread's cell only when the answer changes, so a row is never re-rendered

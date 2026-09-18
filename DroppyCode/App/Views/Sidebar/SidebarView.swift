@@ -1300,6 +1300,7 @@ private struct SidebarHelperRow: View, Equatable {
         // A helper goes out of sight the moment its parent's ghost takes off, so it never
         // lingers under the rows closing up.
         let isHidden = RowGlideAnimator.shared.isHiding(thread.parentThreadID ?? thread.id)
+        let isLeaving = RowGlideAnimator.shared.isLeaving(thread.parentThreadID ?? thread.id)
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         HStack(spacing: 0) {
             HelperConnector(endsHere: isLast, action: onFold)
@@ -1363,8 +1364,10 @@ private struct SidebarHelperRow: View, Equatable {
             .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
         }
         // A helper goes out of sight the moment its parent's ghost takes off, so it never
-        // lingers under the rows closing up.
-        .opacity(isHidden ? 0 : 1)
+        // lingers under the rows closing up; on a settle it fades out with its parent's row.
+        .opacity(isHidden || isLeaving ? 0 : 1)
+        .scaleEffect(isLeaving ? SidebarThreadRow.leaveScale : 1)
+        .animation(isLeaving ? SidebarThreadRow.leave : nil, value: isLeaving)
     }
 
     /// The ellipsis popover's items. Kept on the instance: a popover is not an AppKit menu.
@@ -1398,6 +1401,7 @@ private struct HeadCardsRow: View {
 
     var body: some View {
         let heads = SidebarView.orderedHeads(headSnapshots.map { model.thread($0.id) ?? $0 })
+        let isLeaving = RowGlideAnimator.shared.isLeaving(parentSnapshot.id)
         let capped = heads.count > 12
         let visible = showsAllHeads ? heads : Array(heads.prefix(12))
         // The glyphs' room: the row's width less the connector's column and the card's
@@ -1496,7 +1500,9 @@ private struct HeadCardsRow: View {
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
         // A helper goes out of sight the moment its parent's ghost takes off, so it never
         // lingers under the rows closing up.
-        .opacity(RowGlideAnimator.shared.isHiding(parentSnapshot.id) ? 0 : 1)
+        .opacity((RowGlideAnimator.shared.isHiding(parentSnapshot.id) || isLeaving) ? 0 : 1)
+        .scaleEffect(isLeaving ? SidebarThreadRow.leaveScale : 1)
+        .animation(isLeaving ? SidebarThreadRow.leave : nil, value: isLeaving)
         .animation(Chrome.panelSlide, value: heads.map(\.id))
     }
 
@@ -1537,6 +1543,7 @@ private struct HelperStubRow: View {
         // A helper goes out of sight the moment its parent's ghost takes off, so it never
         // lingers under the rows closing up.
         let isHidden = RowGlideAnimator.shared.isHiding(parentSnapshot.id)
+        let isLeaving = RowGlideAnimator.shared.isLeaving(parentSnapshot.id)
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         Button(action: action) {
             HStack(spacing: 0) {
@@ -1572,8 +1579,10 @@ private struct HelperStubRow: View {
         .help(count == 1 ? "Show the \(noun)" : "Show \(count) \(noun)s")
         .accessibilityLabel(Text(count == 1 ? "1 folded \(noun)" : "\(count) folded \(noun)s"))
         // A helper goes out of sight the moment its parent's ghost takes off, so it never
-        // lingers under the rows closing up.
-        .opacity(isHidden ? 0 : 1)
+        // lingers under the rows closing up; on a settle it fades out with its parent's row.
+        .opacity(isHidden || isLeaving ? 0 : 1)
+        .scaleEffect(isLeaving ? SidebarThreadRow.leaveScale : 1)
+        .animation(isLeaving ? SidebarThreadRow.leave : nil, value: isLeaving)
     }
 }
 
@@ -1878,10 +1887,10 @@ private struct SidebarThreadRow: View, Equatable {
 
     /// The row's exit on a settle: a quick ease-out, a beat after the check's pop so the
     /// pop reads first. Reduce Motion keeps the fade and drops the shrink.
-    private static let leaveDelay: TimeInterval = 0.06
-    private static let leaveDuration: TimeInterval = 0.16
-    private static var leave: Animation { .easeOut(duration: leaveDuration).delay(leaveDelay) }
-    private static var leaveScale: CGFloat { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0.97 }
+    fileprivate static let leaveDelay: TimeInterval = 0.06
+    fileprivate static let leaveDuration: TimeInterval = 0.16
+    fileprivate static var leave: Animation { .easeOut(duration: leaveDuration).delay(leaveDelay) }
+    fileprivate static var leaveScale: CGFloat { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 1 : 0.97 }
 
     /// The check pops green and the note sounds on the click; the row fades and shrinks
     /// away in place right behind the pop, and the thread settles once it is gone, so the
@@ -1895,11 +1904,16 @@ private struct SidebarThreadRow: View, Equatable {
         isLeaving = true
         let id = thread.id
         let model = model
+        RowGlideAnimator.shared.beginLeaving(id)
         // The thread changes once the row is out of sight; the list's removal fade then
         // takes an already invisible row, and only the closing up shows.
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(Self.leaveDelay + Self.leaveDuration))
             withAnimation(Chrome.panelSlide) { model.settle(id, sounds: false) }
+            // The thread's rows are off the list by now: clearing the flag lets them
+            // show again if the thread is reopened.
+            try? await Task.sleep(for: .seconds(0.5))
+            RowGlideAnimator.shared.endLeaving(id)
         }
     }
 
