@@ -1,0 +1,16 @@
+{
+	"identifier": "default",
+	"description": "Default capabilities for SwarmAI Mobile",
+	"windows": ["main"],
+	"permissions": [
+		"core:default",
+		"core:window:default",
+		"core:app:default",
+		"core:resources:default",
+		"core:event:default",
+		"shell:default",
+		"dialog:default",
+		"http:default",
+		"notification:default"
+	]
+}

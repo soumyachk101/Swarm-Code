@@ -682,7 +682,13 @@ export interface AppSettings {
 	hydra_auto_merge: boolean;
 	hydra_reviews_heads: boolean;
 	hydra_isolates_heads: boolean;
-	// Additional settings from AppSettings.swift
+	hydra_queue_heads: boolean;
+	hydra_always_heads: boolean;
+	hydra_enabled: boolean;
+	hydra_auto_clear_finished: boolean;
+	hydra_pairs: HydraPair[];
+	hydra_pair_id: UUID | null;
+	hydra_head_count: number;
 	notify_when_finished: boolean;
 	chime_when_finished: string;
 	confirm_before_deleting: boolean;
@@ -698,13 +704,6 @@ export interface AppSettings {
 	disabled_providers: ProviderKind[];
 	model_list: ModelInfo[];
 	model_preferences: Record<string, { effort?: string; fastMode?: boolean }>;
-	hydra_enabled: boolean;
-	hydra_queue_heads: boolean;
-	hydra_always_heads: boolean;
-	hydra_isolate_heads: boolean;
-	hydra_auto_merge: boolean;
-	hydra_review_heads: boolean;
-	hydra_max_heads: number | undefined;
 	last_project_id: UUID | null;
 	last_effort: Record<ProviderKind, string>;
 	default_workspace_mode: string;

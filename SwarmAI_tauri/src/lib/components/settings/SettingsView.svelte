@@ -4,15 +4,19 @@
 	import HydraSettings from '$lib/components/settings/HydraSettings.svelte';
 	import ShortcutsSettingsPage from '$lib/components/settings/ShortcutsSettingsPage.svelte';
 	import AboutView from '$lib/components/settings/AboutView.svelte';
+	import ModelsSettingsPage from '$lib/components/settings/ModelsSettingsPage.svelte';
+	import ArchiveSettingsPage from '$lib/components/settings/ArchiveSettingsPage.svelte';
+	import SourceControlSettingsPage from '$lib/components/settings/SourceControlSettingsPage.svelte';
+	import TerminalSettingsPage from '$lib/components/settings/TerminalSettingsPage.svelte';
 	import { getSettings, updateSettings, resetSettings } from '$lib/api/commands';
 	import type { AppSettings, RuntimeMode } from '$lib/types';
 	import { AppTheme, RUNTIME_MODE_TITLES } from '$lib/types';
 
 	// ---------------------------------------------------------------------------
-	// Tab definitions
+	// Tab definitions — must match SettingsView.swift tab set
 	// ---------------------------------------------------------------------------
 
-	type TabId = 'general' | 'providers' | 'hydra' | 'shortcuts' | 'about';
+	type TabId = 'general' | 'models' | 'archive' | 'source_control' | 'terminal' | 'providers' | 'hydra' | 'shortcuts' | 'about';
 
 	interface TabDef {
 		id: TabId;
@@ -21,6 +25,10 @@
 
 	const tabs: TabDef[] = [
 		{ id: 'general', label: 'General' },
+		{ id: 'models', label: 'Models' },
+		{ id: 'archive', label: 'Archive' },
+		{ id: 'source_control', label: 'Source Control' },
+		{ id: 'terminal', label: 'Terminal' },
 		{ id: 'providers', label: 'Providers' },
 		{ id: 'hydra', label: 'Hydra' },
 		{ id: 'shortcuts', label: 'Shortcuts' },
@@ -405,6 +413,14 @@
 					{/if}
 				</div>
 			</div>
+		{:else if activeTab === 'models'}
+			<ModelsSettingsPage />
+		{:else if activeTab === 'archive'}
+			<ArchiveSettingsPage />
+		{:else if activeTab === 'source_control'}
+			<SourceControlSettingsPage />
+		{:else if activeTab === 'terminal'}
+			<TerminalSettingsPage />
 		{:else if activeTab === 'providers'}
 			<ProviderSettings />
 		{:else if activeTab === 'hydra'}

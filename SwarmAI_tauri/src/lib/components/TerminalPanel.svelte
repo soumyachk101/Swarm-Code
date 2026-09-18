@@ -4,14 +4,12 @@
 	import type { TerminalSession } from '$lib/types';
 
 	interface Props {
-		open: boolean;
-		onClose: () => void;
-		projectId?: string | null;
+		threadId?: string | null;
 	}
 
-	let { open = false, onClose, projectId = null }: Props = $props();
+	let { threadId = null }: Props = $props();
 
-	let sessions = $state<TerminalSession[]>([]);
+	let sessions: TerminalSession[] = $state([]);
 	let activeSessionId = $state<string | null>(null);
 	let commandInput = $state('');
 	let commandHistory: string[] = $state([]);
@@ -20,12 +18,12 @@
 	let sessionContainer: HTMLDivElement | null = $state(null);
 
 	$effect(() => {
-		if (open) loadSessions();
+		if (threadId) loadSessions();
 	});
 
 	async function loadSessions() {
 		try {
-			const result = await invoke<TerminalSession[]>('list_terminal_sessions');
+			const result = await invoke<TerminalSession[]>('get_terminal_sessions');
 			sessions = result;
 			if (sessions.length > 0 && !activeSessionId) {
 				selectSession(sessions[0].id);
@@ -37,9 +35,9 @@
 
 	async function spawnSession(cwd?: string) {
 		try {
-			const session = await invoke<TerminalSession>('spawn_terminal_session', {
-				cwd: cwd || projectId || null,
-				env: null
+			const session = await invoke<TerminalSession>('create_terminal_session', {
+				command: null,
+				cwd: cwd || threadId || null
 			});
 			sessions = [...sessions, session];
 			selectSession(session.id);
@@ -50,18 +48,6 @@
 
 	async function selectSession(id: string) {
 		activeSessionId = id;
-		await refreshOutput();
-	}
-
-	async function refreshOutput() {
-		if (!activeSessionId) return;
-		try {
-			const session = await invoke<TerminalSession>('get_terminal_session', { id: activeSessionId });
-			const idx = sessions.findIndex(s => s.id === activeSessionId);
-			if (idx >= 0) sessions[idx] = session;
-		} catch (e) {
-			console.error('Failed to refresh session:', e);
-		}
 	}
 
 	async function sendCommand() {
@@ -74,10 +60,9 @@
 
 		try {
 			await invoke('write_terminal_input', {
-				id: activeSessionId,
-				data: cmd + '\n'
+				sessionId: activeSessionId,
+				input: cmd + '\n'
 			});
-			setTimeout(refreshOutput, 100);
 		} catch (e) {
 			console.error('Failed to send command:', e);
 		}
@@ -86,7 +71,7 @@
 	async function sendSignal(signal: string) {
 		if (!activeSessionId) return;
 		try {
-			await invoke('send_terminal_signal', { id: activeSessionId, signal });
+			await invoke('send_terminal_signal', { sessionId: activeSessionId, signal });
 		} catch (e) {
 			console.error('Failed to send signal:', e);
 		}
@@ -139,97 +124,90 @@
 	}
 </script>
 
-{#if open}
-	<div class="terminal-panel">
-		<div class="terminal-toolbar">
-			<div class="session-tabs">
-				{#each sessionTabs as session (session.id)}
-					<button
-						class="session-tab"
-						class:active={session.id === activeSessionId}
-						onclick={() => selectSession(session.id)}
+<div class="terminal-panel">
+	<div class="terminal-toolbar">
+		<div class="session-tabs">
+			{#each sessionTabs as session (session.id)}
+				<button
+					class="session-tab"
+					class:active={session.id === activeSessionId}
+					onclick={() => selectSession(session.id)}
+				>
+					<span class="session-name">
+						{activeSessionId === session.id ? '●' : '○'}
+						{session.directory?.split('/').pop() ?? 'Shell'}
+					</span>
+					<span
+						class="tab-close"
+						onclick={(e) => { e.stopPropagation(); closeSession(session.id); }}
 					>
-						<span class="session-name">
-							{activeSessionId === session.id ? '●' : '○'}
-							{session.directory?.split('/').pop() ?? 'Shell'}
-						</span>
-						<span
-							class="tab-close"
-							onclick={(e) => { e.stopPropagation(); closeSession(session.id); }}
-						>
-							<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-								<path d="M18 6L6 18M6 6l12 12"/>
-							</svg>
-						</span>
-					</button>
-				{/each}
-				<button class="new-tab-btn" onclick={() => spawnSession()}>
-					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-						<path d="M12 5v14M5 12h14"/>
-					</svg>
-				</button>
-			</div>
-			<div class="terminal-actions">
-				{#if activeSession}
-					<button class="term-btn" onclick={() => sendSignal('C')} title="Interrupt (Ctrl+C)">
-						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 							<path d="M18 6L6 18M6 6l12 12"/>
 						</svg>
-					</button>
-				{/if}
-				<button class="term-btn close-btn" onclick={onClose} title="Close">
-					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+					</span>
+				</button>
+			{/each}
+			<button class="new-tab-btn" onclick={() => spawnSession()}>
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+					<path d="M12 5v14M5 12h14"/>
+				</svg>
+			</button>
+		</div>
+		<div class="terminal-actions">
+			{#if activeSession}
+				<button class="term-btn" onclick={() => sendSignal('C')} title="Interrupt (Ctrl+C)">
+					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<path d="M18 6L6 18M6 6l12 12"/>
 					</svg>
 				</button>
-			</div>
-		</div>
-
-		<div class="terminal-body">
-			{#if activeSession}
-				<div class="terminal-output" bind:this={sessionContainer}>
-					{#if outputLines().length === 0}
-						<div class="terminal-empty">
-							<span class="prompt-symbol">$</span>
-							<span class="welcome-text">Terminal ready — type a command or use ↑↓ for history</span>
-						</div>
-					{/if}
-					{#each outputLines() as line (line)}
-						<div class="output-line">{line}</div>
-					{/each}
-				</div>
-				<div class="terminal-input-row">
-					<span class="prompt-symbol">$</span>
-					<input
-						type="text"
-						class="terminal-input"
-						placeholder="Run a command…"
-						value={commandInput}
-						oninput={(e) => commandInput = e.currentTarget.value}
-						onkeydown={handleKeyDown}
-						spellcheck={false}
-					/>
-				</div>
-			{:else}
-				<div class="terminal-empty-state">
-					<div class="empty-icon">
-						<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
-							<polyline points="4 17 10 11 4 5"/>
-							<line x1="12" y1="19" x2="20" y2="19"/>
-						</svg>
-					</div>
-					<p>No active terminal sessions</p>
-					<button class="spawn-btn" onclick={() => spawnSession()}>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M12 5v14M5 12h14"/>
-						</svg>
-						New Shell
-					</button>
-				</div>
 			{/if}
 		</div>
 	</div>
-{/if}
+
+	<div class="terminal-body">
+		{#if activeSession}
+			<div class="terminal-output" bind:this={sessionContainer}>
+				{#if outputLines().length === 0}
+					<div class="terminal-empty">
+						<span class="prompt-symbol">$</span>
+						<span class="welcome-text">Terminal ready — type a command or use ↑↓ for history</span>
+					</div>
+				{/if}
+				{#each outputLines() as line (line)}
+					<div class="output-line">{line}</div>
+				{/each}
+			</div>
+			<div class="terminal-input-row">
+				<span class="prompt-symbol">$</span>
+				<input
+					type="text"
+					class="terminal-input"
+					placeholder="Run a command…"
+					value={commandInput}
+					oninput={(e) => commandInput = e.currentTarget.value}
+					onkeydown={handleKeyDown}
+					spellcheck={false}
+				/>
+			</div>
+		{:else}
+			<div class="terminal-empty-state">
+				<div class="empty-icon">
+					<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+						<polyline points="4 17 10 11 4 5"/>
+						<line x1="12" y1="19" x2="20" y2="19"/>
+					</svg>
+				</div>
+				<p>No active terminal sessions</p>
+				<button class="spawn-btn" onclick={() => spawnSession()}>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M12 5v14M5 12h14"/>
+					</svg>
+					New Shell
+				</button>
+			</div>
+		{/if}
+	</div>
+</div>
 
 <style>
 	.terminal-panel {

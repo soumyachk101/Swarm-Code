@@ -67,12 +67,31 @@
 	--border-color-2: rgba(0, 0, 0, 0.06);
 	--border-color-3: rgba(0, 0, 0, 0.04);
 	--radius-xs: 3px;
-	--radius-sm: 4px;
-	--radius-md: 6px;
-	--radius-lg: 10px;
-	--radius-xl: 14px;
-	--radius-2xl: 20px;
+	--radius-sm: 6px;
+	--radius-md: 10px;
+	--radius-lg: 16px;
+	--radius-xl: 20px;
+	--radius-2xl: 24px;
 	--radius-full: 9999px;
+
+	/* Glass / Liquid Surface tokens (mirrors Swift chromeGlassCapsule / WindowBackdrop) */
+	--glass-blur: 20px;
+	--glass-bg: rgba(255, 255, 255, 0.18);
+	--glass-border: rgba(255, 255, 255, 0.25);
+	--glass-tint-opacity: 0.16;
+	--glass-hover-tint: rgba(0, 0, 0, 0.06);
+
+	/* Surface overlays (mirrors Chrome.overlay(_ opacity:)) — textPrimary at varying opacities */
+	--overlay-1: rgba(0, 0, 0, 0.03);
+	--overlay-2: rgba(0, 0, 0, 0.06);
+	--overlay-3: rgba(0, 0, 0, 0.12);
+	--overlay-4: rgba(0, 0, 0, 0.18);
+
+	/* Animation tokens (mirrors Chrome.hover, Chrome.panelSlide, Chrome.settleFlight) */
+	--spring-fast: 180ms cubic-bezier(0.25, 0.1, 0.25, 1);
+	--spring-slow: 320ms cubic-bezier(0.25, 0.1, 0.25, 1);
+	--ease-out: 120ms cubic-bezier(0.25, 0.1, 0.25, 1);
+	--smooth: 320ms ease;
 
 	/* Shadows */
 	--shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
@@ -81,9 +100,11 @@
 	--shadow-xl: 0 16px 50px rgba(0,0,0,0.16);
 
 	/* Transitions */
-	--transition-fast: 120ms ease;
-	--transition-normal: 200ms ease;
-	--transition-slow: 350ms cubic-bezier(0.25, 0.1, 0.25, 1);
+	--transition-fast: var(--ease-out);
+	--transition-normal: var(--spring-fast);
+	--transition-slow: var(--spring-slow);
+	--spring-settle: 320ms cubic-bezier(0.25, 0.1, 0.25, 1);
+	--spring-panel: 280ms cubic-bezier(0.25, 0.1, 0.25, 1);
 
 	/* Z-index layers */
 	--z-base: 0;
@@ -125,6 +146,16 @@
 	--border-color-2: rgba(255, 255, 255, 0.06);
 	--border-color-3: rgba(255, 255, 255, 0.04);
 
+	--glass-bg: rgba(255, 255, 255, 0.08);
+	--glass-border: rgba(255, 255, 255, 0.12);
+	--glass-tint-opacity: 0.22;
+	--glass-hover-tint: rgba(255, 255, 255, 0.06);
+
+	--overlay-1: rgba(255, 255, 255, 0.03);
+	--overlay-2: rgba(255, 255, 255, 0.06);
+	--overlay-3: rgba(255, 255, 255, 0.12);
+	--overlay-4: rgba(255, 255, 255, 0.18);
+
 	--shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
 	--shadow-md: 0 4px 12px rgba(0,0,0,0.3);
 	--shadow-lg: 0 8px 30px rgba(0,0,0,0.4);
@@ -165,6 +196,379 @@
 }
 
 /* ---------------------------------------------------------------------------
+ Named Theme Overrides — mirrors Swift AppTheme palettes so both apps
+ read as the same design family across every palette.
+ --------------------------------------------------------------------------- */
+
+/* Catppuccin Mocha */
+:root[data-theme="catppuccin_mocha"] {
+	--surface-1: #1E1E2E; --surface-2: #252536; --surface-3: #31313F;
+	--surface-4: #45475A; --surface-5: #585B70; --surface-6: #7F849C;
+	--text-primary: #CDD6F4; --text-secondary: #A6ADC8; --text-tertiary: #6C6F85;
+	--text-inverse: #1E1E2E;
+	--accent-1: #CBA6F7; --accent-2: #B5B4F0;
+	--accent-3: rgba(203,166,247,0.16); --accent-4: rgba(203,166,247,0.08);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.06); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.05);
+}
+
+/* Catppuccin Latte */
+:root[data-theme="catppuccin_latte"] {
+	--surface-1: #EFF1F5; --surface-2: #E6E9EF; --surface-3: #DDE0E7;
+	--surface-4: #CCD0DA; --surface-5: #BCC0CC; --surface-6: #9CA0B0;
+	--text-primary: #4C4F69; --text-secondary: #5C5F72; --text-tertiary: #8C8FA1;
+	--text-inverse: #EFF1F5;
+	--accent-1: #8839EF; --accent-2: #7C35D4;
+	--accent-3: rgba(136,57,239,0.14); --accent-4: rgba(136,57,239,0.06);
+	--border-color-1: rgba(0,0,0,0.10); --border-color-2: rgba(0,0,0,0.06);
+	--border-color-3: rgba(0,0,0,0.03);
+	--overlay-1: rgba(0,0,0,0.02); --overlay-2: rgba(0,0,0,0.04);
+	--overlay-3: rgba(0,0,0,0.08); --overlay-4: rgba(0,0,0,0.14);
+	--glass-bg: rgba(255,255,255,0.28); --glass-border: rgba(255,255,255,0.40);
+	--glass-tint-opacity: 0.12; --glass-hover-tint: rgba(0,0,0,0.04);
+}
+
+/* Dracula */
+:root[data-theme="dracula"] {
+	--surface-1: #282A36; --surface-2: #2E303E; --surface-3: #343746;
+	--surface-4: #44465A; --surface-5: #555770; --surface-6: #70718A;
+	--text-primary: #F8F8F2; --text-secondary: #BD93F9; --text-tertiary: #6272A4;
+	--text-inverse: #282A36;
+	--accent-1: #BD93F9; --accent-2: #A87CE8;
+	--accent-3: rgba(189,147,249,0.16); --accent-4: rgba(189,147,249,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Tokyo Night */
+:root[data-theme="tokyo_night"] {
+	--surface-1: #1A1B26; --surface-2: #1F2230; --surface-3: #252839;
+	--surface-4: #343B59; --surface-5: #565F89; --surface-6: #727CB5;
+	--text-primary: #C0CAF5; --text-secondary: #A9B1D6; --text-tertiary: #565F89;
+	--text-inverse: #1A1B26;
+	--accent-1: #7AA2F7; --accent-2: #658DE0;
+	--accent-3: rgba(122,162,247,0.16); --accent-4: rgba(122,162,247,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Nord */
+:root[data-theme="nord"] {
+	--surface-1: #2E3440; --surface-2: #333848; --surface-3: #3B4252;
+	--surface-4: #434C5E; --surface-5: #4C566A; --surface-6: #616E88;
+	--text-primary: #ECEFF4; --text-secondary: #D8DEE9; --text-tertiary: #88909A;
+	--text-inverse: #2E3440;
+	--accent-1: #88C0D0; --accent-2: #73AFC0;
+	--accent-3: rgba(136,192,208,0.16); --accent-4: rgba(136,192,208,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Gruvbox Dark */
+:root[data-theme="gruvbox"] {
+	--surface-1: #282828; --surface-2: #302D26; --surface-3: #3C3836;
+	--surface-4: #504945; --surface-5: #665C54; --surface-6: #7C6F64;
+	--text-primary: #EBDBB2; --text-secondary: #D5C4A1; --text-tertiary: #928374;
+	--text-inverse: #282828;
+	--accent-1: #FE8019; --accent-2: #E07315;
+	--accent-3: rgba(254,128,25,0.16); --accent-4: rgba(254,128,25,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Gruvbox Light */
+:root[data-theme="gruvbox_light"] {
+	--surface-1: #FBF1C7; --surface-2: #F2E5BC; --surface-3: #EBDBB2;
+	--surface-4: #D5C4A1; --surface-5: #BDAE8B; --surface-6: #A89A72;
+	--text-primary: #3C3836; --text-secondary: #504945; --text-tertiary: #928374;
+	--text-inverse: #FBF1C7;
+	--accent-1: #AF3A03; --accent-2: #9A3503;
+	--accent-3: rgba(175,58,3,0.12); --accent-4: rgba(175,58,3,0.06);
+	--border-color-1: rgba(0,0,0,0.10); --border-color-2: rgba(0,0,0,0.06);
+	--border-color-3: rgba(0,0,0,0.03);
+	--overlay-1: rgba(0,0,0,0.02); --overlay-2: rgba(0,0,0,0.04);
+	--overlay-3: rgba(0,0,0,0.08); --overlay-4: rgba(0,0,0,0.14);
+	--glass-bg: rgba(255,255,255,0.30); --glass-border: rgba(255,255,255,0.45);
+	--glass-tint-opacity: 0.12; --glass-hover-tint: rgba(0,0,0,0.04);
+}
+
+/* One Dark */
+:root[data-theme="one_dark"] {
+	--surface-1: #282C34; --surface-2: #2D3139; --surface-3: #333843;
+	--surface-4: #3E4451; --surface-5: #545862; --surface-6: #6B7280;
+	--text-primary: #ABB2BF; --text-secondary: #9DA5B4; --text-tertiary: #5C6370;
+	--text-inverse: #282C34;
+	--accent-1: #61AFEF; --accent-2: #5294D8;
+	--accent-3: rgba(97,175,239,0.16); --accent-4: rgba(97,175,239,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Everforest */
+:root[data-theme="everforest"] {
+	--surface-1: #2D353B; --surface-2: #343E46; --surface-3: #3A454D;
+	--surface-4: #465258; --surface-5: #5A6A72; --surface-6: #728388;
+	--text-primary: #D3C6AA; --text-secondary: #BDB89F; --text-tertiary: #859089;
+	--text-inverse: #2D353B;
+	--accent-1: #A7C080; --accent-2: #96B070;
+	--accent-3: rgba(167,192,128,0.16); --accent-4: rgba(167,192,128,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Kanagawa */
+:root[data-theme="kanagawa"] {
+	--surface-1: #1F1F28; --surface-2: #252535; --surface-3: #2D2D3C;
+	--surface-4: #3D3D52; --surface-5: #54546C; --surface-6: #6E6E8A;
+	--text-primary: #DCD7BA; --text-secondary: #C8C3A0; --text-tertiary: #727169;
+	--text-inverse: #1F1F28;
+	--accent-1: #7E9CD8; --accent-2: #6B8CC8;
+	--accent-3: rgba(126,156,216,0.16); --accent-4: rgba(126,156,216,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Rose Pine */
+:root[data-theme="rose_pine"] {
+	--surface-1: #191724; --surface-2: #1F1D2E; --surface-3: #26233A;
+	--surface-4: #403D52; --surface-5: #524F67; --surface-6: #6E6A86;
+	--text-primary: #E0DEF4; --text-secondary: #BDBBDB; --text-tertiary: #6E6A86;
+	--text-inverse: #191724;
+	--accent-1: #EB6F92; --accent-2: #D86082;
+	--accent-3: rgba(235,111,146,0.16); --accent-4: rgba(235,111,146,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Solarized Dark */
+:root[data-theme="solarized_dark"] {
+	--surface-1: #002B36; --surface-2: #073642; --surface-3: #0B3C48;
+	--surface-4: #13484F; --surface-5: #1F5A62; --surface-6: #2A6E78;
+	--text-primary: #839496; --text-secondary: #657B83; --text-tertiary: #586E75;
+	--text-inverse: #002B36;
+	--accent-1: #268BD2; --accent-2: #2276B8;
+	--accent-3: rgba(38,139,210,0.16); --accent-4: rgba(38,139,210,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Solarized Light */
+:root[data-theme="solarized_light"] {
+	--surface-1: #FDF6E3; --surface-2: #F5ECCE; --surface-3: #EEE3C7;
+	--surface-4: #DDD3B5; --surface-5: #C9BFA5; --surface-6: #B0A58A;
+	--text-primary: #657B83; --text-secondary: #586E75; --text-tertiary: #93A1A1;
+	--text-inverse: #FDF6E3;
+	--accent-1: #268BD2; --accent-2: #2276B8;
+	--accent-3: rgba(38,139,210,0.14); --accent-4: rgba(38,139,210,0.06);
+	--border-color-1: rgba(0,0,0,0.10); --border-color-2: rgba(0,0,0,0.06);
+	--border-color-3: rgba(0,0,0,0.03);
+	--overlay-1: rgba(0,0,0,0.02); --overlay-2: rgba(0,0,0,0.04);
+	--overlay-3: rgba(0,0,0,0.08); --overlay-4: rgba(0,0,0,0.14);
+	--glass-bg: rgba(255,255,255,0.30); --glass-border: rgba(255,255,255,0.45);
+	--glass-tint-opacity: 0.12; --glass-hover-tint: rgba(0,0,0,0.04);
+}
+
+/* GitHub Dark */
+:root[data-theme="github_dark"] {
+	--surface-1: #0D1117; --surface-2: #161B22; --surface-3: #1C2128;
+	--surface-4: #2D333B; --surface-5: #3D444D; --surface-6: #545D68;
+	--text-primary: #E6EDF3; --text-secondary: #8B949E; --text-tertiary: #6E7681;
+	--text-inverse: #0D1117;
+	--accent-1: #4493F8; --accent-2: #3680E0;
+	--accent-3: rgba(68,147,248,0.16); --accent-4: rgba(68,147,248,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* GitHub Light */
+:root[data-theme="github_light"] {
+	--surface-1: #FFFFFF; --surface-2: #F6F8FA; --surface-3: #EFF2F5;
+	--surface-4: #D0D7DE; --surface-5: #AEB5BD; --surface-6: #8C959F;
+	--text-primary: #1F2328; --text-secondary: #424A53; --text-tertiary: #6E7781;
+	--text-inverse: #FFFFFF;
+	--accent-1: #0969DA; --accent-2: #085DC0;
+	--accent-3: rgba(9,105,218,0.10); --accent-4: rgba(9,105,218,0.05);
+	--border-color-1: rgba(0,0,0,0.10); --border-color-2: rgba(0,0,0,0.06);
+	--border-color-3: rgba(0,0,0,0.03);
+	--overlay-1: rgba(0,0,0,0.02); --overlay-2: rgba(0,0,0,0.04);
+	--overlay-3: rgba(0,0,0,0.08); --overlay-4: rgba(0,0,0,0.14);
+	--glass-bg: rgba(255,255,255,0.30); --glass-border: rgba(255,255,255,0.50);
+	--glass-tint-opacity: 0.12; --glass-hover-tint: rgba(0,0,0,0.04);
+}
+
+/* Ayu */
+:root[data-theme="ayu"] {
+	--surface-1: #0F1419; --surface-2: #13171D; --surface-3: #1A1E24;
+	--surface-4: #263036; --surface-5: #384754; --surface-6: #4D5D6B;
+	--text-primary: #B3B1AD; --text-secondary: #95959A; --text-tertiary: #5C6773;
+	--text-inverse: #0F1419;
+	--accent-1: #E6B450; --accent-2: #D0A040;
+	--accent-3: rgba(230,180,80,0.16); --accent-4: rgba(230,180,80,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Night Owl */
+:root[data-theme="night_owl"] {
+	--surface-1: #011627; --surface-2: #0A1525; --surface-3: #101E30;
+	--surface-4: #1A2D45; --surface-5: #2A4060; --surface-6: #3B5A80;
+	--text-primary: #D6DEEB; --text-secondary: #A7B3C4; --text-tertiary: #63778A;
+	--text-inverse: #011627;
+	--accent-1: #82AAFF; --accent-2: #6E96EF;
+	--accent-3: rgba(130,170,255,0.16); --accent-4: rgba(130,170,255,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Monokai */
+:root[data-theme="monokai"] {
+	--surface-1: #272822; --surface-2: #2E2E26; --surface-3: #35352E;
+	--surface-4: #42423A; --surface-5: #545448; --surface-6: #6E6E60;
+	--text-primary: #F8F8F2; --text-secondary: #CFCFC2; --text-tertiary: #75715E;
+	--text-inverse: #272822;
+	--accent-1: #F92672; --accent-2: #E01E64;
+	--accent-3: rgba(249,38,114,0.16); --accent-4: rgba(249,38,114,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Claude */
+:root[data-theme="claude"] {
+	--surface-1: #1A1816; --surface-2: #211F1B; --surface-3: #29261F;
+	--surface-4: #3A352C; --surface-5: #524B3F; --surface-6: #6E6554;
+	--text-primary: #E8E4DE; --text-secondary: #B8B0A2; --text-tertiary: #8C8272;
+	--text-inverse: #1A1816;
+	--accent-1: #C15F3C; --accent-2: #B05435;
+	--accent-3: rgba(193,95,60,0.18); --accent-4: rgba(193,95,60,0.08);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Claude Light */
+:root[data-theme="claude_light"] {
+	--surface-1: #FAF9F5; --surface-2: #F3F1EB; --surface-3: #EBE8E0;
+	--surface-4: #DCD7CC; --surface-5: #C4BEA8; --surface-6: #A89E84;
+	--text-primary: #2C2418; --text-secondary: #5C5040; --text-tertiary: #8C8272;
+	--text-inverse: #FAF9F5;
+	--accent-1: #C15F3C; --accent-2: #B05435;
+	--accent-3: rgba(193,95,60,0.12); --accent-4: rgba(193,95,60,0.05);
+	--border-color-1: rgba(0,0,0,0.10); --border-color-2: rgba(0,0,0,0.06);
+	--border-color-3: rgba(0,0,0,0.03);
+	--overlay-1: rgba(0,0,0,0.02); --overlay-2: rgba(0,0,0,0.04);
+	--overlay-3: rgba(0,0,0,0.08); --overlay-4: rgba(0,0,0,0.14);
+	--glass-bg: rgba(255,255,255,0.35); --glass-border: rgba(255,255,255,0.50);
+	--glass-tint-opacity: 0.10; --glass-hover-tint: rgba(0,0,0,0.04);
+}
+
+/* Codex */
+:root[data-theme="codex"] {
+	--surface-1: #101014; --surface-2: #16161A; --surface-3: #1C1C22;
+	--surface-4: #2A2A34; --surface-5: #3D3D4A; --surface-6: #55556A;
+	--text-primary: #D4D4D8; --text-secondary: #A1A1AA; --text-tertiary: #71717A;
+	--text-inverse: #101014;
+	--accent-1: #D946EF; --accent-2: #C43DE0;
+	--accent-3: rgba(217,70,239,0.16); --accent-4: rgba(217,70,239,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Cursor */
+:root[data-theme="cursor"] {
+	--surface-1: #181818; --surface-2: #1E1E1E; --surface-3: #252525;
+	--surface-4: #333333; --surface-5: #474747; --surface-6: #5E5E5E;
+	--text-primary: #D4D4D8; --text-secondary: #A1A1AA; --text-tertiary: #636366;
+	--text-inverse: #181818;
+	--accent-1: #88C0D0; --accent-2: #73AFC0;
+	--accent-3: rgba(136,192,208,0.16); --accent-4: rgba(136,192,208,0.07);
+	--border-color-1: rgba(255,255,255,0.08); --border-color-2: rgba(255,255,255,0.05);
+	--border-color-3: rgba(255,255,255,0.03);
+	--overlay-1: rgba(255,255,255,0.02); --overlay-2: rgba(255,255,255,0.05);
+	--overlay-3: rgba(255,255,255,0.10); --overlay-4: rgba(255,255,255,0.16);
+	--glass-bg: rgba(255,255,255,0.05); --glass-border: rgba(255,255,255,0.10);
+	--glass-tint-opacity: 0.18; --glass-hover-tint: rgba(255,255,255,0.04);
+}
+
+/* Matrix */
+:root[data-theme="matrix"] {
+	--surface-1: #000000; --surface-2: #0A0A0A; --surface-3: #101010;
+	--surface-4: #1A1A1A; --surface-5: #262626; --surface-6: #333333;
+	--text-primary: #00E676; --text-secondary: #00CC68; --text-tertiary: #009950;
+	--text-inverse: #000000;
+	--accent-1: #00E676; --accent-2: #00CC68;
+	--accent-3: rgba(0,230,118,0.14); --accent-4: rgba(0,230,118,0.06);
+	--border-color-1: rgba(0,230,118,0.10); --border-color-2: rgba(0,230,118,0.06);
+	--border-color-3: rgba(0,230,118,0.03);
+	--overlay-1: rgba(0,230,118,0.02); --overlay-2: rgba(0,230,118,0.04);
+	--overlay-3: rgba(0,230,118,0.08); --overlay-4: rgba(0,230,118,0.14);
+	--glass-bg: rgba(0,230,118,0.03); --glass-border: rgba(0,230,118,0.08);
+	--glass-tint-opacity: 0.10; --glass-hover-tint: rgba(0,230,118,0.04);
+}
+
+/* ---------------------------------------------------------------------------
  Base Reset & App Container
  --------------------------------------------------------------------------- */
 *, *::before, *::after {
@@ -184,7 +588,9 @@ html, body {
 	background: var(--surface-1);
 	-webkit-font-smoothing: antialiased;
 	-moz-osx-font-smoothing: grayscale;
-	text-rendering: optimizeLegibility;
+	/* Swift uses SF Pro Text with specific optical sizing */
+	-webkit-font-optical-sizing: auto;
+	letter-spacing: -0.01em;
 }
 
 #app {
@@ -194,7 +600,7 @@ html, body {
 }
 
 /* ---------------------------------------------------------------------------
- App Shell
+ App Shell — mirrors Swift RootView HStack (Sidebar + DetailView)
  --------------------------------------------------------------------------- */
 .app-shell {
 	display: flex;
@@ -202,6 +608,7 @@ html, body {
 	height: 100%;
 	overflow: hidden;
 	position: relative;
+	background: var(--surface-1);
 }
 
 .app-shell.sidebar-collapsed .sidebar-panel {
@@ -215,6 +622,7 @@ html, body {
 	overflow: hidden;
 	min-width: 0;
 	position: relative;
+	background: var(--surface-1);
 }
 
 /* ---------------------------------------------------------------------------
@@ -478,7 +886,7 @@ html, body {
 }
 
 .thread-item:hover {
-	background: var(--surface-3);
+	background: var(--overlay-2);
 }
 
 .thread-item.selected {
@@ -2815,6 +3223,26 @@ html, body {
 .gap-3 { gap: var(--space-3); }
 .gap-4 { gap: var(--space-4); }
 .hidden { display: none; }
+
+/* Glass surface utility — mirrors Swift chromeGlassCapsule / glassEffect */
+.glass-surface {
+	backdrop-filter: blur(var(--glass-blur));
+	-webkit-backdrop-filter: blur(var(--glass-blur));
+	background: var(--glass-bg);
+	border: var(--border-1) var(--glass-border);
+}
+
+.glass-surface:hover {
+	background: var(--glass-hover-tint);
+}
+
+.glass-capsule {
+	backdrop-filter: blur(var(--glass-blur));
+	-webkit-backdrop-filter: blur(var(--glass-blur));
+	background: var(--glass-bg);
+	border: var(--border-1) var(--glass-border);
+	border-radius: var(--radius-full);
+}
 .truncate {
 	white-space: nowrap;
 	overflow: hidden;
