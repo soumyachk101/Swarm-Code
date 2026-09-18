@@ -169,6 +169,13 @@ struct MCPSetupPanelView: View {
         }
         .padding(18)
         .frame(width: 400)
+        // The steps sit beside the browser page the panel opened, and the page is behind
+        // whichever half of the screen the panel lands on: a press anywhere its controls do
+        // not claim drags it clear, the way the window's own chrome does. The panel's own
+        // steps, reason and status line are not controls, so they drag with the background.
+        .background {
+            WindowDragArea()
+        }
         .background {
             WindowBackdrop(opacity: 0.5)
         }
