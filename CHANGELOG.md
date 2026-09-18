@@ -6,6 +6,10 @@ All notable changes to Droppy Code are documented here, newest first. The format
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-09-18
+
+Droppy Code 1.6.0 folds a finished turn into its "Worked for …" line with the turn's steps behind the chevron, keeps a running turn's steps, and the agent's thinking, in the card below its bar, hands a chat stopped by its provider's usage limit a New thread that carries the work on, lets the heads leave the sidebar on their own, and puts a mark of your choosing in front of a project's name; Netlify joins the MCP catalog. Apple silicon, macOS 26 or later. Signed and notarized.
+
 ### New features
 - Netlify joins the MCP catalog: sign in with your Netlify account and a thread can create projects, deploy sites and manage environment variables.
 - Projects wear a mark: each project can be given an emoji or an SF Symbol in Settings, General, Projects, and the activity list can draw that mark in front of a thread's name in place of the line that named the project, one line per thread, while what the thread is doing still reads at the end of the row. The choice of list sits on the General page and on the welcome screen, and a new install starts on the compact one.
