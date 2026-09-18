@@ -4,10 +4,10 @@
 	"version": "0.1.0",
 	"identifier": "com.swarmcode.mobile",
 	"build": {
-		"beforeDevCommand": "npm run dev",
-		"beforeBuildCommand": "npm run build",
+		"beforeDevCommand": "pnpm run dev",
+		"beforeBuildCommand": "pnpm run build",
 		"devUrl": "http://localhost:5174",
-		"frontendDist": "../dist-mobile"
+		"frontendDist": "../dist"
 	},
 	"app": {
 		"withGlobalTauri": true,
@@ -32,16 +32,6 @@
 			"icons/icon.icns",
 			"icons/icon.ico"
 		],
-		"longDescription": "Control Swarm Code from your phone — view chats, send messages, approve actions, and see diffs from anywhere on your local network.",
-		"macOS": {
-			"minimumSystemVersion": "14.0"
-		},
-		"ios": {
-			"minimumSystemVersion": "16.0"
-		},
-		"android": {
-			"minSdkVersion": 24,
-			"versionCode": 1
-		}
+		"longDescription": "Control Swarm Code from your phone — view chats, send messages, approve actions, and see diffs from anywhere on your local network."
 	}
 }
