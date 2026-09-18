@@ -350,10 +350,10 @@ private struct HydraPairEditor: View {
             let leadOption = registry.model(pair.orchestratorModel, for: pair.provider)
             let workerOption = registry.model(pair.workerModel, for: pair.headsProvider)
             // A lead that may be any model offers every effort the provider's models know.
-            let leadEfforts = leadOption?.efforts ?? Self.allEfforts(options)
+            let leadEfforts = Self.efforts(of: leadOption, fallback: Self.allEfforts(options))
             // Heads with no model chosen inherit the chat's, and its efforts; on another
             // provider they run its default model, so its efforts are the ones on offer.
-            let workerEfforts = workerOption?.efforts ?? (pair.sendsHeadsElsewhere ? (registry.defaultModel(for: pair.headsProvider)?.efforts ?? Self.allEfforts(headsOptions)) : leadEfforts)
+            let workerEfforts = Self.efforts(of: workerOption, fallback: pair.sendsHeadsElsewhere ? Self.efforts(of: registry.defaultModel(for: pair.headsProvider), fallback: Self.allEfforts(headsOptions)) : leadEfforts)
             VStack(alignment: .leading, spacing: 0) {
                 // The name is the header: the pair's own word for itself, over what it
                 // stands for in the picker when it has none.
@@ -569,6 +569,14 @@ private struct HydraPairEditor: View {
             for effort in option.efforts where !seen.contains(effort) { seen.append(effort) }
         }
         return seen
+    }
+
+    /// A model's efforts for the picker: its declared scale, or the fallback when the
+    /// declaration is empty — a catalog that has not walked the model's scale yet would
+    /// otherwise take the effort row away from a model that does reason.
+    private static func efforts(of option: ModelOption?, fallback: [String]) -> [String] {
+        guard let option, !option.efforts.isEmpty else { return fallback }
+        return option.efforts
     }
 
     /// The providers whose catalogs the editor shows: the lead's and the heads', each once
