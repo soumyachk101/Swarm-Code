@@ -361,11 +361,15 @@ struct SidebarView: View {
     /// A scroll movement (re)arms the list's scroll freeze: rows take no hover or clicks
     /// for 150 ms after the last movement, covering wheel ticks, which report no phase.
     private func noteListScroll() {
-        isListScrolling = true
+        // The list's whole body -- placements, grouping, the row diff -- is what a write to
+        // this flag re-evaluates, and scroll geometry reports every wheel tick: set it once
+        // per scroll, not once per frame of one. The settle task still re-arms on every
+        // movement, so the freeze lifts 150 ms after the last one, as before.
+        if !isListScrolling { isListScrolling = true }
         scrollSettle?.cancel()
         scrollSettle = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(150))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isListScrolling else { return }
             isListScrolling = false
         }
     }
@@ -780,8 +784,8 @@ struct SidebarView: View {
                     }
                     let headCount = helpers.count(where: \.isHydraHead)
                     if headCount > 0 {
-                        let cards = (headCount + 5) / 6
-                        height += (rowHeights.values["heads-\(id)"] ?? ThreadRowMetrics.headCardHeight * CGFloat(cards)) + 1
+                        let rows = (headCount + 5) / 6
+                        height += (rowHeights.values["heads-\(id)"] ?? ThreadRowMetrics.headCardHeight(rows: rows)) + 1
                     }
                 }
             }
@@ -1223,8 +1227,16 @@ private enum ThreadRowMetrics {
     static let headGlyphSize: CGFloat = 18
     /// A head glyph plus its gap.
     static let headGlyphPitch: CGFloat = 26
-    /// A glyph row over an 11 pt caption line, padded 6 top and bottom.
-    static let headCardHeight: CGFloat = 46
+    /// Between a head card's glyph rows, and the card's own padding all round.
+    static let headRowGap: CGFloat = 6
+    static let headCardPadding: CGFloat = 6
+    /// A head card's height for `rows` rows of glyphs: the rows, the gaps between them
+    /// and the padding. The card reports its own height as it lays out; this stands in
+    /// until the first measurement lands.
+    static func headCardHeight(rows: Int) -> CGFloat {
+        let rows = max(1, rows)
+        return 2 * headCardPadding + CGFloat(rows) * headGlyphSize + CGFloat(rows - 1) * headRowGap
+    }
 }
 
 /// A helper under the thread it was spawned from: one small line, joined to its parent by a
@@ -1350,74 +1362,76 @@ private struct HeadCardsRow: View {
 
     @State private var width: CGFloat = 0
     @State private var hoveredID: UUID?
+    /// The card's own height as it lays out: the connector's dotted line runs the
+    /// card's whole depth, however many rows the heads need.
+    @State private var cardHeight: CGFloat = 0
 
     var body: some View {
         let heads = SidebarView.orderedHeads(headSnapshots.map { model.thread($0.id) ?? $0 })
-        // The glyphs' room: the row's width less the connector's column and the card's own
-        // padding. Six per card until the row has been measured.
-        let cardInner = width - ThreadRowMetrics.connectorWidth - 14
-        let perCard = width == 0 ? 6 : max(1, Int(cardInner / ThreadRowMetrics.headGlyphPitch))
-        let cards = Self.chunk(heads, by: perCard)
-        VStack(spacing: 2) {
-            ForEach(Array(cards.enumerated()), id: \.offset) { index, card in
-                let isLastCard = index == cards.count - 1
-                HStack(spacing: 0) {
-                    HelperConnector(endsHere: isLastCard, action: onFold)
-                        .frame(width: ThreadRowMetrics.connectorWidth, height: ThreadRowMetrics.headCardHeight)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: ThreadRowMetrics.headGlyphPitch - ThreadRowMetrics.headGlyphSize) {
-                            ForEach(card, id: \.id) { head in
-                                if let info = head.hydra {
-                                    Button {
-                                        model.selectedThreadID = head.id
-                                    } label: {
-                                        HydraGlyph(persona: info.persona, size: ThreadRowMetrics.headGlyphSize, isRunning: info.status == .running, status: info.status)
-                                            .background {
-                                                if model.isSelected(head.id) {
-                                                    Circle().fill(Chrome.overlay(0.14)).padding(-3)
-                                                }
+        // The glyphs' room: the row's width less the connector's column and the card's
+        // own padding, which is the same on both sides. The last glyph of a row needs
+        // its own 18 pt, not a whole 26 pt pitch, so six glyphs (6 x 18 + 5 x 8 = 148)
+        // fit the 150 pt the card has at the sidebar's 210 pt minimum. Six to a row
+        // until the row has been measured.
+        let cardInner = width - ThreadRowMetrics.connectorWidth - 2 * ThreadRowMetrics.headCardPadding
+        let perRow = width == 0 ? 6 : max(1, Int((cardInner + ThreadRowMetrics.headGlyphPitch - ThreadRowMetrics.headGlyphSize) / ThreadRowMetrics.headGlyphPitch))
+        let rows = Self.chunk(heads, by: perRow)
+        HStack(spacing: 0) {
+            HelperConnector(endsHere: true, action: onFold)
+                .frame(
+                    width: ThreadRowMetrics.connectorWidth,
+                    height: cardHeight > 0 ? cardHeight : ThreadRowMetrics.headCardHeight(rows: rows.count)
+                )
+            VStack(alignment: .leading, spacing: ThreadRowMetrics.headRowGap) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    HStack(spacing: ThreadRowMetrics.headGlyphPitch - ThreadRowMetrics.headGlyphSize) {
+                        ForEach(row, id: \.id) { head in
+                            if let info = head.hydra {
+                                Button {
+                                    model.selectedThreadID = head.id
+                                } label: {
+                                    HydraGlyph(persona: info.persona, size: ThreadRowMetrics.headGlyphSize, isRunning: info.status == .running, status: info.status)
+                                        .background {
+                                            if model.isSelected(head.id) {
+                                                Circle().fill(Chrome.overlay(0.14)).padding(-3)
                                             }
-                                    }
-                                    .buttonStyle(.plain)
-                                    .scaleEffect(hoveredID == head.id ? 1.18 : 1)
-                                    .animation(Chrome.hover, value: hoveredID == head.id)
-                                    .onHover { hovering in
-                                        withAnimation(Chrome.hover) { hoveredID = hovering ? head.id : (hoveredID == head.id ? nil : hoveredID) }
-                                        if hovering { model.warmDocuments([head.id]) }
-                                    }
-                                    .help("\(info.persona.name) · \(info.task)")
-                                    // Snapshots only: the menu builder must not capture the row, so the AppKit menu
-                                    // it builds cannot pin the row's state storage (and its responder with it).
-                                    .contextMenu { [head, model, menuRequests] in
-                                        let threadSnapshot = head
-                                        let modelSnapshot = model
-                                        let requestsSnapshot = menuRequests
-                                        RowActionMenuButtons(actions: ThreadActions.makeContextMenu(
-                                            model: modelSnapshot,
-                                            thread: threadSnapshot,
-                                            settleFirst: false,
-                                            requests: requestsSnapshot
-                                        ))
-                                    }
-                                    .accessibilityLabel(Text("\(info.persona.name), \(info.task)"))
-                                    .accessibilityAddTraits(.isButton)
+                                        }
                                 }
+                                .buttonStyle(.plain)
+                                .scaleEffect(hoveredID == head.id ? 1.18 : 1)
+                                .animation(Chrome.hover, value: hoveredID == head.id)
+                                .onHover { hovering in
+                                    withAnimation(Chrome.hover) { hoveredID = hovering ? head.id : (hoveredID == head.id ? nil : hoveredID) }
+                                    if hovering { model.warmDocuments([head.id]) }
+                                }
+                                .help("\(info.persona.name) · \(info.task)")
+                                // Snapshots only: the menu builder must not capture the row, so the AppKit menu
+                                // it builds cannot pin the row's state storage (and its responder with it).
+                                .contextMenu { [head, model, menuRequests] in
+                                    let threadSnapshot = head
+                                    let modelSnapshot = model
+                                    let requestsSnapshot = menuRequests
+                                    RowActionMenuButtons(actions: ThreadActions.makeContextMenu(
+                                        model: modelSnapshot,
+                                        thread: threadSnapshot,
+                                        settleFirst: false,
+                                        requests: requestsSnapshot
+                                    ))
+                                }
+                                .accessibilityLabel(Text("\(info.persona.name), \(info.task)"))
+                                .accessibilityAddTraits(.isButton)
                             }
                         }
-                        Text(cardCaption(card))
-                            .font(.system(size: 11))
-                            .foregroundStyle(Chrome.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                    .padding(.leading, 6)
-                    .padding(.trailing, 8)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background {
-                        RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous).fill(Chrome.overlay(0.04))
                     }
                 }
+            }
+            .padding(ThreadRowMetrics.headCardPadding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
+                if height > 0 { cardHeight = height }
+            }
+            .background {
+                RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous).fill(Chrome.overlay(0.04))
             }
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
@@ -1427,30 +1441,9 @@ private struct HeadCardsRow: View {
         .animation(Chrome.panelSlide, value: heads.map(\.id))
     }
 
-    /// The heads in cards of `size`, in the order given; the last card takes the rest.
+    /// The heads in rows of `size`, in the order given; the last row takes the rest.
     private static func chunk(_ heads: [ChatThread], by size: Int) -> [[ChatThread]] {
         stride(from: 0, to: heads.count, by: size).map { Array(heads[$0 ..< min($0 + size, heads.count)]) }
-    }
-
-    private func cardCaption(_ card: [ChatThread]) -> String {
-        if let hovered = card.first(where: { $0.id == hoveredID }), let info = hovered.hydra {
-            return "\(info.persona.name) · \(info.task)"
-        }
-        let working = card.count { $0.hydra?.status == .running }
-        let done = card.count { $0.hydra?.status == .completed }
-        let failed = card.count { $0.hydra?.status == .failed }
-        let stopped = card.count { $0.hydra?.status == .stopped }
-        var parts: [String] = []
-        if working > 0 { parts.append("\(working) working") }
-        if done > 0 { parts.append("\(done) done") }
-        if failed > 0 { parts.append("\(failed) failed") }
-        if stopped > 0 { parts.append("\(stopped) stopped") }
-        if parts.isEmpty {
-            let finished = card.count { $0.hydra?.status.isFinished ?? true }
-            if finished > 0 { return "\(finished) done" }
-            return "\(card.count) working"
-        }
-        return parts.joined(separator: " · ")
     }
 }
 
