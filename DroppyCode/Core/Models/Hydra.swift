@@ -1158,7 +1158,7 @@ enum HydraPrompts {
             closing.append("The heads worked in your checkout, so their changes are there already.")
         }
         if reports.contains(where: { !($0.landing?.conflicts.isEmpty ?? true) }) {
-            closing.append("A file listed with conflicts was merged three-way and keeps conflict markers: resolve those first.")
+            closing.append("A file listed with conflicts was merged three-way and keeps conflict markers: resolve those first, and tell the user in one line that you settled them, so the landing card above does not read as broken.")
         }
         // Two heads on one file is the split the lead was told not to make; it hears
         // which file, so it reads the result instead of trusting it.
