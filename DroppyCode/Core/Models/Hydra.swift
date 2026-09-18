@@ -910,6 +910,23 @@ enum HydraPrompts {
         }
     }
 
+    /// The user's enabled Hydra setting expressed alongside their request. Codex's
+    /// manual delegation mode needs a user/project/skill request, not only the standing
+    /// developer policy. Keep this out of automatic reports, which have their own limit.
+    static func delegationRequest(_ launch: HydraLaunch) -> String {
+        let route = launch.runsNatively
+            ? "Use the configured Hydra agent tools and head profiles."
+            : "Delegate through the final hydra block so Droppy Code runs the selected heads; do not use native agent tools."
+        return """
+        [Hydra setting: enabled]
+        Use Hydra heads for this request when it involves multiple files, an audit, broad research, or independent tasks. Keep a single obvious change in one file with the lead. \(route) Follow any explicit request below to work alone or limit delegation.
+
+        ---
+
+
+        """
+    }
+
     /// In front of the user's own message: the team so far, when there is one.
     static func fallbackTurnNote(team: String?, merge: String? = nil) -> String {
         let parts = [team, merge].compactMap { $0 }

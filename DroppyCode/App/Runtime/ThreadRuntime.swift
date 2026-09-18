@@ -1235,9 +1235,9 @@ final class ThreadRuntime {
             }
             // A lead whose heads are Droppy-run is told how to ask Droppy Code for them. A
             // session that keeps that policy in its system prompt (the API providers, and
-            // the providers with heads of their own sending them out elsewhere) gets only
-            // the note on its team in front of a message; every other CLI gets the policy
-            // in front of every message, having nowhere else to keep it.
+            // the providers with heads of their own sending them out elsewhere) gets the
+            // team note here; every other CLI also gets the policy, having nowhere else
+            // to keep it. The user's enabled delegation request is added below both paths.
             if let launch = app.hydraLaunch(for: thread) {
                 let merge = launch.autoMerges ? HydraPrompts.mergeStatus(merges: hydraMerges, unmergedFiles: app.hydraUnmergedFileCount(of: threadID)) : nil
                 if !launch.runsNatively {
@@ -1252,6 +1252,12 @@ final class ThreadRuntime {
                     }
                 } else if merge != nil {
                     prompt = HydraPrompts.fallbackTurnNote(team: nil, merge: merge) + prompt
+                }
+                // Selecting Hydra is a request to delegate. Carry that request at the
+                // user-input boundary as well as keeping the routing policy in the session.
+                // Automatic reports retain their round limit and review-only instructions.
+                if hydraHeads == nil {
+                    prompt = HydraPrompts.delegationRequest(launch) + prompt
                 }
             }
             phase = .running
