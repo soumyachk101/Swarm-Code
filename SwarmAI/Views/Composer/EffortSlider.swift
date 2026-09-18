@@ -790,11 +790,9 @@ struct EffortSlider: View {
                     .frame(width: x + inset, height: Self.trackHeight)
                     .overlay(alignment: .leading) {
                         if look.kind != .plain || look.pair != nil {
-                            TrackEffect(look: look)
+                            TrackEffect(look: look, effectID: look.effectID)
                                 .frame(width: x + inset, height: Self.trackHeight)
                                 .clipShape(Capsule(style: .continuous))
-                                .transition(.opacity)
-                                .id(look.effectIdentity)
                         }
                     }
                 ForEach(0..<count, id: \.self) { stop in
@@ -1052,8 +1050,16 @@ struct TrackLook: Hashable {
     /// effect over on every change, crossfading. A pair's fusion is the whole track's
     /// animation, so it keeps its time through the kind's changes: the seam does not jump
     /// because the knob reached maximum, and the kind's effects join it in place.
-    var effectIdentity: AnyHashable {
-        pair.map { AnyHashable(TrackLook(kind: .plain, brand: brand, pair: $0)) } ?? AnyHashable(self)
+    var effectID: String {
+        if let pair {
+            return "pair:" + String(describing: pair.colors) + ":" + (pair.isLight ? "light" : "dark")
+        }
+        switch kind {
+        case .plain: return "plain:\(brand)"
+        case .supercharged: return "supercharged:\(brand)"
+        case .fast: return "fast:\(brand)"
+        case .fusion: return "fusion:\(brand)"
+        }
     }
 }
 
@@ -1065,6 +1071,10 @@ struct TrackLook: Hashable {
 /// from purple into gold, with a glossy sheen sweeping across. 30fps, 60 when streaks move.
 private struct TrackEffect: View {
     let look: TrackLook
+    /// Stable identifier driving whether the animation restarts. Pairs keep their identity
+    /// across kind changes so the seam does not jump; non-pair looks change identity so the
+    /// particles begin fresh each time the look swaps.
+    let effectID: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var startedAt = Date.now
 
@@ -1091,6 +1101,8 @@ private struct TrackEffect: View {
                 }
             }
         }
+        .id(effectID)
+        .onAppear { startedAt = Date.now }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
