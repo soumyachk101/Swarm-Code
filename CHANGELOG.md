@@ -6,6 +6,10 @@ All notable changes to Droppy Code are documented here, newest first. The format
 
 ## [Unreleased]
 
+### Bug fixes
+- A framework's own raise while a notification is posted no longer ends the app: on macOS 27 a popover's window coming on screen can make the framework's remote view throw from inside the notification that announces it, and because that happens during a SwiftUI layout pass AppKit catches the exception and stops the app, which is how both reports of September 18 read, both from the release-notes cards on Settings › About. The app's notification posts now catch such a raise, log it with the raising observer's frames, and carry on, so the popover's window ordering and the popover itself still finish.
+- The New features, Bug fixes and Refinements cards on Settings › About open their section in a card under the row instead of in a popover: the notes read in the page and scroll with it, and tapping the card again, or the card's close button, folds them away.
+
 ## [1.6.0] - 2026-09-18
 
 Droppy Code 1.6.0 folds a finished turn into its "Worked for …" line with the turn's steps behind the chevron, keeps a running turn's steps, and the agent's thinking, in the card below its bar, hands a chat stopped by its provider's usage limit a New thread that carries the work on, lets the heads leave the sidebar on their own, and puts a mark of your choosing in front of a project's name; Netlify joins the MCP catalog. Apple silicon, macOS 26 or later. Signed and notarized.
