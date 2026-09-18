@@ -71,6 +71,8 @@ struct HydraSettingsPage: View {
                     ChromeRowDivider()
                     toggleRow("Clear finished heads", detail: "A finished head moves from the panel to the sidebar.", isOn: $settings.hydraAutoClearFinished)
                     ChromeRowDivider()
+                    toggleRow("Auto-hide heads in the sidebar", detail: "A chat's heads show in the sidebar while one of them runs; the whole card leaves once every head of that chat has finished, and comes back on its own when one starts again.", isOn: $settings.hydraAutoHidesIdleHeads)
+                    ChromeRowDivider()
                     ChromeRow(title: "Head panel", detail: "The head's progress bar, or each of its steps as it goes.") {
                         ChromeVisualPicker(options: [(false, "Progress"), (true, "Every step")], selection: $settings.hydraShowsHeadDetails) { showsSteps in
                             Image(systemName: showsSteps ? "list.number" : "chart.bar")

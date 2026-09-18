@@ -206,6 +206,15 @@ struct Notice: Codable, Hashable, Sendable {
 
     var level: Level
     var message: String
+    /// Set on the usage-limit notice alone: the chat whose auto-continue it belongs to.
+    /// Its row draws the badge with the two controls while that chat waits (see `AutoContinue`).
+    var limit: LimitNotice? = nil
+}
+
+/// The chat a usage-limit notice belongs to. `AutoContinue` marks its notice with this,
+/// and the notice's row reads that chat's wait and outcome from it.
+struct LimitNotice: Codable, Hashable, Sendable {
+    var threadID: UUID
 }
 
 enum TurnStatus: String, Codable, Sendable {

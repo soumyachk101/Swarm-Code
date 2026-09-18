@@ -331,10 +331,6 @@ private struct GeneralSettingsPage: View {
                         SettingsSwitch(isOn: $settings.showReasoning)
                     }
                     ChromeRowDivider()
-                    ChromeRow(title: "Chronological order", detail: "Open the working line with all replies and tool steps in the order they arrived") {
-                        SettingsSwitch(isOn: $settings.chronologicalTimeline)
-                    }
-                    ChromeRowDivider()
                     ChromeRow(title: "Working line", detail: "A card with the turn's progress bar, or a plain line") {
                         ChromeVisualPicker(options: [(true, "Card"), (false, "Line")], selection: $settings.showsWorkingCard) { isCard in
                             Image(systemName: isCard ? "rectangle.fill" : "minus")
