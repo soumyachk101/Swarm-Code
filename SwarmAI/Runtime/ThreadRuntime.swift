@@ -96,6 +96,10 @@ final class ThreadRuntime {
     var hydraPoppedPanelDock: PanelDockCorner = .bottomLeading
     /// The Hydra panel was dismissed; the next head to start brings it back.
     var isHydraPanelHidden = false
+    /// Whether the Hydra panel is expanded to full screen.
+    var isHydraPanelFullScreen = false
+    /// The same for a popped-out head's panel.
+    var isHydraPoppedFullScreen = false
     /// Heads by the tool row that stands for them in this timeline, so the row can show
     /// who was sent out.
     private(set) var hydraToolHeads: [String: UUID] = [:]

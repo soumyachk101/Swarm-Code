@@ -21,6 +21,10 @@ struct HydraPanel: View {
     let projectName: String?
     /// A second panel holding one head popped out of the team panel.
     var isPoppedOut = false
+    /// Whether the panel is expanded to full screen.
+    var isFullScreen = false
+    /// Toggles full screen on and off.
+    var toggleFullScreen: (() -> Void)? = nil
     /// The pointer's travel since the handle was grabbed.
     let onDrag: (CGSize) -> Void
     let onDragEnd: () -> Void
@@ -133,10 +137,18 @@ struct HydraPanel: View {
             PanelDragHandle(onDrag: onDrag, onDragEnd: onDragEnd)
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.stripHeight)
-                .help("Drag to move")
-                .accessibilityLabel(Text("Drag to move"))
+                .help(isFullScreen ? "" : "Drag to move")
+                .accessibilityLabel(Text(isFullScreen ? "" : "Drag to move"))
             HStack(spacing: 8) {
                 if isPoppedOut {
+                    if let toggleFullScreen {
+                        ChromeCircleButton(
+                            symbol: isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                            help: isFullScreen ? "Exit full screen" : "Full screen"
+                        ) {
+                            toggleFullScreen()
+                        }
+                    }
                     ChromeCircleButton(symbol: "arrow.down.left", help: "Put \(selected?.hydra?.persona.name ?? "the head") back in the team panel") {
                         dismiss()
                     }
@@ -149,6 +161,14 @@ struct HydraPanel: View {
                         }
                         .transition(.softAppear)
                     }
+                    if let toggleFullScreen {
+                        ChromeCircleButton(
+                            symbol: isFullScreen ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+                            help: isFullScreen ? "Exit full screen" : "Full screen"
+                        ) {
+                            toggleFullScreen()
+                        }
+                    }
                     ChromeCircleButton(symbol: "xmark", help: "Dismiss the panel; heads keep working") {
                         dismiss()
                     }
@@ -159,6 +179,7 @@ struct HydraPanel: View {
         }
         .animation(Chrome.panelSlide, value: selected?.id)
         .animation(Chrome.panelSlide, value: heads.count > 1)
+        .animation(Chrome.panelSlide, value: isFullScreen)
     }
 }
 

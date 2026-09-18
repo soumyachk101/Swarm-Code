@@ -174,19 +174,39 @@ struct ChatView: View {
 
     /// The team's panel: next to the helper panel when that one is in the same corner.
     private func hydraPanel(scene: PanelScene, workingDirectory: String?, project: Project?) -> some View {
+        let isFullScreen = runtime.isHydraPanelFullScreen
         let corner = runtime.hydraPanelDock
-        let rest = scene.docks.stacked(corner, below: scene.isDocked && runtime.subagentPanelDock == corner ? 1 : 0, layout: scene.layout)
-        return PlacedPanel(drag: hydraDrag, rest: rest, size: scene.layout.panelSize, content: HydraPanel(
+        let dockedRest = scene.docks.stacked(corner, below: scene.isDocked && runtime.subagentPanelDock == corner ? 1 : 0, layout: scene.layout)
+
+        let margin: CGFloat = 12
+        let fullOrigin = CGPoint(x: margin, y: margin)
+        let fullSize = CGSize(
+            width: max(320, scene.layout.pane.width - 2 * margin),
+            height: max(220, scene.layout.pane.height - 2 * margin)
+        )
+
+        let rest = isFullScreen ? fullOrigin : dockedRest
+        let size = isFullScreen ? fullSize : scene.layout.panelSize
+
+        return PlacedPanel(drag: hydraDrag, rest: rest, size: size, content: HydraPanel(
             runtime: runtime,
             heads: scene.heads,
-            size: scene.layout.panelSize,
+            size: size,
             workingDirectory: workingDirectory,
             projectName: project?.name,
+            isFullScreen: isFullScreen,
+            toggleFullScreen: {
+                withAnimation(Chrome.panelSlide) {
+                    runtime.isHydraPanelFullScreen.toggle()
+                }
+            },
             onDrag: { translation in
+                guard !runtime.isHydraPanelFullScreen else { return }
                 let position = hydraDrag.move(by: translation, from: rest, in: scene.layout)
                 dock(\.hydraPanelDock, nearest: position, scene: scene)
             },
             onDragEnd: {
+                guard !runtime.isHydraPanelFullScreen else { return }
                 if let heading = hydraDrag.release() {
                     dock(\.hydraPanelDock, nearest: heading, scene: scene)
                 }
@@ -202,6 +222,7 @@ struct ChatView: View {
             },
             dismiss: {
                 withAnimation(Chrome.panelSlide) {
+                    runtime.isHydraPanelFullScreen = false
                     model.dismissHydraHeads(of: runtime.threadID)
                 }
             }
@@ -211,21 +232,41 @@ struct ChatView: View {
 
     /// The popped-out head's panel: beyond whichever panels are in the same corner.
     private func poppedPanel(_ popped: ChatThread, scene: PanelScene, workingDirectory: String?, project: Project?) -> some View {
+        let isFullScreen = runtime.isHydraPoppedFullScreen
         let corner = runtime.hydraPoppedPanelDock
         let below = [scene.isDocked && runtime.subagentPanelDock == corner, scene.isHydraDocked && runtime.hydraPanelDock == corner].count { $0 }
-        let rest = scene.docks.stacked(corner, below: below, layout: scene.layout)
-        return PlacedPanel(drag: poppedDrag, rest: rest, size: scene.layout.panelSize, content: HydraPanel(
+        let dockedRest = scene.docks.stacked(corner, below: below, layout: scene.layout)
+
+        let margin: CGFloat = 12
+        let fullOrigin = CGPoint(x: margin, y: margin)
+        let fullSize = CGSize(
+            width: max(320, scene.layout.pane.width - 2 * margin),
+            height: max(220, scene.layout.pane.height - 2 * margin)
+        )
+
+        let rest = isFullScreen ? fullOrigin : dockedRest
+        let size = isFullScreen ? fullSize : scene.layout.panelSize
+
+        return PlacedPanel(drag: poppedDrag, rest: rest, size: size, content: HydraPanel(
             runtime: runtime,
             heads: [popped],
-            size: scene.layout.panelSize,
+            size: size,
             workingDirectory: workingDirectory,
             projectName: project?.name,
             isPoppedOut: true,
+            isFullScreen: isFullScreen,
+            toggleFullScreen: {
+                withAnimation(Chrome.panelSlide) {
+                    runtime.isHydraPoppedFullScreen.toggle()
+                }
+            },
             onDrag: { translation in
+                guard !runtime.isHydraPoppedFullScreen else { return }
                 let position = poppedDrag.move(by: translation, from: rest, in: scene.layout)
                 dock(\.hydraPoppedPanelDock, nearest: position, scene: scene)
             },
             onDragEnd: {
+                guard !runtime.isHydraPoppedFullScreen else { return }
                 if let heading = poppedDrag.release() {
                     dock(\.hydraPoppedPanelDock, nearest: heading, scene: scene)
                 }
@@ -233,6 +274,7 @@ struct ChatView: View {
             dismiss: {
                 // Back into the team panel, and onto its stage.
                 withAnimation(Chrome.panelSlide) {
+                    runtime.isHydraPoppedFullScreen = false
                     runtime.hydraSelectedHeadID = popped.id
                     runtime.hydraPoppedHeadID = nil
                 }
