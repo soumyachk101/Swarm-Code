@@ -302,7 +302,7 @@ private struct GeneralSettingsPage: View {
                 ChromeRowDivider()
                 ChromeRow(title: "Workspace", detail: "Where a new thread makes its changes") {
                     ChromeVisualPicker(options: WorkspaceMode.allCases.map { ($0, $0.title) }, selection: $settings.defaultWorkspaceMode) { mode in
-                        WorkspacePreview(mode: mode)
+                        Image(systemName: mode == .local ? "folder" : "arrow.triangle.branch")
                     }
                 }
             }
@@ -319,7 +319,7 @@ private struct GeneralSettingsPage: View {
                     ChromeRowDivider()
                     ChromeRow(title: "Working line", detail: "A card with the turn's progress bar, or a plain line") {
                         ChromeVisualPicker(options: [(true, "Card"), (false, "Line")], selection: $settings.showsWorkingCard) { isCard in
-                            WorkingLinePreview(isCard: isCard)
+                            Image(systemName: isCard ? "rectangle.fill" : "minus")
                         }
                     }
                     ChromeRowDivider()
@@ -379,7 +379,7 @@ private struct GeneralSettingsPage: View {
             ChromeCard {
                 ChromeRow(title: "Done with a thread", detail: settings.threadFinishAction.detail) {
                     ChromeVisualPicker(options: ThreadFinishAction.allCases.map { ($0, $0.title) }, selection: $settings.threadFinishAction) { action in
-                        ThreadFinishPreview(action: action)
+                        Image(systemName: action == .settle ? "checkmark" : "archivebox")
                     }
                 }
                 ChromeRowDivider()
@@ -406,13 +406,13 @@ private struct GeneralSettingsPage: View {
                 ChromeRowDivider()
                 ChromeRow(title: "Sidebar", detail: settings.sidebarMode.detail) {
                     ChromeVisualPicker(options: SidebarMode.allCases.map { ($0, $0.title) }, selection: $settings.sidebarMode) { mode in
-                        SidebarModePreview(style: Self.previewStyle(mode))
+                        Image(systemName: mode == .column ? "sidebar.left" : (mode == .floating ? "macwindow.on.rectangle" : "macwindow"))
                     }
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Activity list", detail: settings.activityThreadStyle.detail) {
                     ChromeVisualPicker(options: ActivityThreadStyle.allCases.map { ($0, $0.title) }, selection: $settings.activityThreadStyle) { style in
-                        ActivityThreadStylePreview(style: style)
+                        Image(systemName: style == .icon ? "list.bullet" : "text.alignleft")
                     }
                 }
                 ChromeRowDivider()
@@ -428,15 +428,6 @@ private struct GeneralSettingsPage: View {
             }
             WallpaperCard()
             ChatTextSizeCard(index: $settings.chatZoom)
-        }
-    }
-
-    /// The mock keeps its own style so the mocks file owes nothing to the settings model.
-    private static func previewStyle(_ mode: SidebarMode) -> SidebarModePreview.Style {
-        switch mode {
-        case .column: .column
-        case .floating: .floating
-        case .panelOnly: .panelOnly
         }
     }
 }
@@ -721,10 +712,17 @@ private struct ProviderSettingsSection: View {
                             Link("Get \(provider.displayName)", destination: provider.installURL)
                                 .buttonStyle(.glass)
                         }
-                    } else if status.auth == .signedOut {
+                    } else {
                         ChromeRowDivider()
-                        ChromeRow(title: "Sign in", detail: "Run this command in Terminal.") {
-                            CopyCommandButton(command: provider.loginCommand)
+                        ChromeRow(title: "Sign in", detail: status.auth == .signedOut ? "Run this command in Terminal, or sign in here." : "Sign in again to refresh the account the app reads.") {
+                            HStack {
+                                CopyCommandButton(command: provider.loginCommand)
+                                Button(model.providers.signingIn == provider ? "Signing in…" : "Sign in") {
+                                    Task { await model.providers.signIn(provider) }
+                                }
+                                .buttonStyle(.glass)
+                                .disabled(model.providers.signingIn != nil)
+                            }
                         }
                     }
                 }

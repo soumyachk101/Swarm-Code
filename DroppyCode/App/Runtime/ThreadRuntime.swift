@@ -2197,7 +2197,11 @@ final class ThreadRuntime {
             for edit in reportedEdits {
                 if let path = TouchedPaths.relative(edit.path, root: root) { touched.insert(path) }
             }
-            for file in providerFiles { touched.insert(file.path) }
+            // The provider's own repository diff is no part of a turn's record, because
+            // it spans every file that changed in the checkout while the turn ran, another
+            // chat's work included, and one such file was once merged out under a chat that
+            // had changed nothing; a change of the turn that no edit reported is caught by
+            // the merge's checkout sweep instead.
             // What the lead's native heads changed, which their own timelines carry: this
             // turn takes it, whether it came during the turn or between the last and this.
             touched.formUnion(hydraTouched)
@@ -2631,11 +2635,25 @@ final class ThreadRuntime {
             streamedMessage.text = HydraPrompts.markingDelegationBlockSent(streamedMessage.text)
             streamedEntry.item.content = .assistant(streamedMessage)
             saveRevision += 1
-            let total = HydraPrompts.streamedDelegations(in: streamedMessage.text)?.delegations.count ?? stream.sent
-            if total > stream.sent {
+            let all = HydraPrompts.streamedDelegations(in: streamedMessage.text)?.delegations ?? []
+            let total = all.isEmpty ? stream.sent : all.count
+            // What the app's last read of the block missed goes out here rather than being
+            // reported as lost: only the ceiling of a block, or a request that has had all
+            // its rounds of heads, holds a task back, and only that is named in the note.
+            var sent = stream.sent
+            if total > sent, hydraDelegationRounds < HydraPrompts.maxDelegationRounds {
+                let rest = Array(all.dropFirst(sent).prefix(max(0, Self.maxDelegatedTasks - sent)))
+                if !rest.isEmpty {
+                    hydraWaiting += rest.map { (delegation: $0, batchID: stream.batchID) }
+                    sent += rest.count
+                    hydraStream = (turnID: turnID, entryID: stream.entryID, batchID: stream.batchID, sent: sent)
+                    spawnWaitingHeads(launch: launch)
+                }
+            }
+            if total > sent {
                 appendHydraNote("""
                     Not every task went out
-                    \(stream.sent) of the \(total) tasks in that block went to heads. The last \(total - stream.sent) did not: ask for them again once these report back.
+                    \(sent) of the \(total) tasks in that block went to heads. The last \(total - sent) did not: ask for them again once these report back.
                     """)
             }
             holdSentDelegationBlock(streamedEntry.id)

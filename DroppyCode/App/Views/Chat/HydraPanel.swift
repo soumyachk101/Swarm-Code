@@ -136,9 +136,7 @@ struct HydraPanel: View {
                 if let selected, let info = selected.hydra {
                     HStack(spacing: 6) {
                         HydraGlyph(persona: info.persona, size: 16, isRunning: info.status == .running, status: info.status)
-                        Text(verbatim: info.persona.name)
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(Chrome.primaryText.opacity(0.92))
+                        HydraNameText(persona: info.persona, size: 12.5, weight: .medium, color: Chrome.primaryText.opacity(0.92))
                             .lineLimit(1)
                         // The provider's mark: the strip says whose model is at work on
                         // stage, whether or not it is the lead's own.
@@ -320,9 +318,7 @@ private struct HydraHeadRow: View {
                         HydraGlyph(persona: info.persona, size: 22, isRunning: info.status == .running, status: info.status)
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 6) {
-                                Text(verbatim: info.persona.name)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .foregroundStyle(Chrome.primaryText)
+                                HydraNameText(persona: info.persona, size: 13, weight: .medium, color: Chrome.primaryText)
                                 // The provider's mark, so the list says whose model each
                                 // head runs on.
                                 ProviderIcon(provider: head.provider, size: 11)

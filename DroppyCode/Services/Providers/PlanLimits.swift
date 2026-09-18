@@ -13,6 +13,8 @@ struct PlanLimits: Sendable, Equatable {
     var planName: String?
     var windows: [Window]
     var resetCredits: ResetCredits? = nil
+    /// Why the read filled no windows, in the provider's own words; shown in place of the bars so an expired login never reads as an unchanged number.
+    var problem: String? = nil
 
     /// One reset Codex has banked for the account. `title` and `detail` are the app-server's own words when it gives any.
     struct ResetCredit: Sendable, Equatable, Identifiable {

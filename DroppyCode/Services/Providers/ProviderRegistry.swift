@@ -51,6 +51,8 @@ final class ProviderRegistry {
     /// The banked reset being spent right now: its credit id, or "codex" for one the app-server listed only by count.
     private(set) var redeemingReset: String?
     @ObservationIgnored private var limitsFetchedAt: [ProviderKind: Date] = [:]
+    // A forced read that arrives while a read is out is remembered, not dropped.
+    @ObservationIgnored private var forcedLimitReads: Set<ProviderKind> = []
 
     /// Pay-as-you-go balances (DeepSeek's credit), shown where subscriptions show their windows.
     private(set) var credits: [ProviderKind: ProviderCredits] = [:]
@@ -259,6 +261,34 @@ final class ProviderRegistry {
     }
 
     private(set) var isRefreshing = false
+
+    /// The provider currently being signed in from the Providers page, if any.
+    private(set) var signingIn: ProviderKind?
+
+    /// Signs a CLI provider in from the app: the provider's own login command, which opens the
+    /// browser, then a fresh status check and usage read, so the numbers follow the new login
+    /// without a trip to Terminal. Returns the CLI's message when it failed, nil on success.
+    func signIn(_ provider: ProviderKind) async -> String? {
+        guard signingIn == nil else { return nil }
+        guard !provider.isAPIKeyBased else { return nil }
+        signingIn = provider
+        defer { signingIn = nil }
+        await LoginEnvironment.load()
+        guard let executable = executable(for: provider) else { return "\(provider.displayName) was not found." }
+        // The login command starts with the executable's own name; the rest are its arguments.
+        let arguments = provider.loginCommand.split(whereSeparator: \.isWhitespace).dropFirst().map(String.init)
+        let result = try? await Shell.run(executable, arguments, environment: environment(for: provider), timeout: 300)
+        if let result, result.succeeded {
+            await refresh(provider)
+            refreshPlanLimits(provider, force: true)
+            return nil
+        }
+        let output = result.map { TextCleanup.stripANSI($0.output + $0.errorOutput) } ?? ""
+        guard let lastLine = output.split(separator: "\n", omittingEmptySubsequences: true).last, !lastLine.isEmpty else {
+            return "\(provider.displayName) did not finish signing in."
+        }
+        return String(lastLine)
+    }
 
     /// The Providers page's refresh button: checks every provider again, re-reads the usage limits
     /// the page shows for each signed-in account and reloads the live catalogs. Beyond the limits,
@@ -482,7 +512,8 @@ final class ProviderRegistry {
     /// Reads the provider's plan limits, at most once a minute after a successful read unless forced.
     /// The read runs on its own task, so closing the popover that asked for it cannot cancel it.
     func refreshPlanLimits(_ provider: ProviderKind, force: Bool = false) {
-        guard PlanLimitsReader.exposesLimits(provider), !loadingLimits.contains(provider) else { return }
+        guard PlanLimitsReader.exposesLimits(provider) else { return }
+        guard !loadingLimits.contains(provider) else { if force { forcedLimitReads.insert(provider) }; return }
         if !force, let fetched = limitsFetchedAt[provider], Date.now.timeIntervalSince(fetched) < 60 { return }
         if provider.isAPIKeyBased {
             let apiKey = settings.apiKey(for: provider)
@@ -491,9 +522,10 @@ final class ProviderRegistry {
                 return
             }
             loadingLimits.insert(provider)
+            let watchdog = Task { try? await Task.sleep(for: .seconds(25)); loadingLimits.remove(provider); drainedForcedRead(provider) }
             Task {
+                defer { watchdog.cancel(); loadingLimits.remove(provider); drainedForcedRead(provider) }
                 let limits = await PlanLimitsReader.read(provider, apiKey: apiKey)
-                loadingLimits.remove(provider)
                 guard let limits else { return }
                 planLimits[provider] = limits
                 limitsFetchedAt[provider] = .now
@@ -502,8 +534,9 @@ final class ProviderRegistry {
         }
         guard PlanLimitsReader.exposesLimits(provider), !loadingLimits.contains(provider) else { return }
         loadingLimits.insert(provider)
+        let watchdog = Task { try? await Task.sleep(for: .seconds(25)); loadingLimits.remove(provider); drainedForcedRead(provider) }
         Task {
-            defer { loadingLimits.remove(provider) }
+            defer { watchdog.cancel(); loadingLimits.remove(provider); drainedForcedRead(provider) }
             // A popover opened right after launch waits for the login shell like everything
             // else; before that read the CLI can only be found on the fallback PATH.
             await LoginEnvironment.load()
@@ -513,6 +546,12 @@ final class ProviderRegistry {
             planLimits[provider] = limits
             limitsFetchedAt[provider] = .now
         }
+    }
+
+    /// Runs a forced read that had to wait because a read was already out for this provider.
+    private func drainedForcedRead(_ provider: ProviderKind) {
+        guard forcedLimitReads.remove(provider) != nil else { return }
+        refreshPlanLimits(provider, force: true)
     }
 
     /// Spends one of a provider's banked resets and re-reads its limits so the bars show the cleared window. Codex through its app-server, Z.ai through its reset-card endpoint.

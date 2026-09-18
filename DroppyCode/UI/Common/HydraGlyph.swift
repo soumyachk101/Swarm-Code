@@ -222,3 +222,54 @@ struct HydraMarkImage: View {
             .aspectRatio(contentMode: .fit)
     }
 }
+
+enum HydraNameStyle {
+    /// The head's name as Text, its round number in the head's own colour.
+    static func text(_ persona: HydraPersona, base: Color) -> Text {
+        guard let round = persona.round else { return Text(verbatim: persona.name).foregroundColor(base) }
+        return Text(verbatim: persona.baseName).foregroundColor(base) + Text(verbatim: " \(round)").foregroundColor(persona.color)
+    }
+
+    /// A label that may carry head names, each drawn through `text(_:base:)` so a round number wears its head's colour, the rest of the string in `base`.
+    static func label(_ string: String, personas: [HydraPersona], base: Color) -> Text {
+        var result = Text(verbatim: "")
+        var i = string.startIndex
+        var runStart = string.startIndex
+        let sorted = personas.sorted { $0.name.count > $1.name.count }
+        func isBoundary(_ index: String.Index) -> Bool {
+            let ch = string[index]
+            return !(ch.isLetter || ch.isNumber)
+        }
+        /// The first persona whose name stands word-bounded at `index`, longest name first.
+        func match(at index: String.Index) -> HydraPersona? {
+            for persona in sorted where string[index...].hasPrefix(persona.name) {
+                guard index == string.startIndex || isBoundary(string.index(before: index)) else { continue }
+                let after = string.index(index, offsetBy: persona.name.count, limitedBy: string.endIndex) ?? string.endIndex
+                if after == string.endIndex || isBoundary(after) { return persona }
+            }
+            return nil
+        }
+        while i < string.endIndex {
+            if let persona = match(at: i) {
+                result = result + Text(verbatim: String(string[runStart..<i])).foregroundColor(base)
+                result = result + text(persona, base: base)
+                i = string.index(i, offsetBy: persona.name.count)
+                runStart = i
+            } else {
+                i = string.index(after: i)
+            }
+        }
+        result = result + Text(verbatim: String(string[runStart...])).foregroundColor(base)
+        return result
+    }
+}
+
+struct HydraNameText: View {
+    let persona: HydraPersona
+    var size: CGFloat = 13
+    var weight: Font.Weight = .medium
+    var color: Color = Chrome.primaryText.opacity(0.92)
+    var body: some View {
+        HydraNameStyle.text(persona, base: color).font(.system(size: size, weight: weight))
+    }
+}

@@ -275,9 +275,8 @@ struct HydraReportRow: View {
                             }
                         }
                     }
-                    Text(verbatim: title)
+                    HydraNameStyle.label(title, personas: personas, base: Chrome.primaryText.opacity(0.9))
                         .font(.chat(.callout, weight: .medium, zoom: zoom))
-                        .foregroundStyle(Chrome.primaryText.opacity(0.9))
                         .lineLimit(1)
                         .truncationMode(.tail)
                     if !details.isEmpty {
