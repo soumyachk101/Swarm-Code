@@ -53,7 +53,12 @@ enum ZaiAPI {
         case "glm-5.3-flash":
             return ModelOption(id: id, name: "GLM-5.3 Flash", detail: "Fast, reads images · 1M context", efforts: zaiEfforts, defaultEffort: "max")
         default:
-            guard id.hasPrefix("glm-5.3") else { return nil }
+            // GLM-5.3-FlashX is on the account's model list but not in the Coding Plan
+            // ("GLM-5.3-FlashX is not yet available on the plan", docs.z.ai/guides/vlm/
+            // glm-5.3-flash), so every request for it is turned down with 1311 before a
+            // single credit is spent. It is never offered, or a pair can be pointed at a
+            // model that cannot answer.
+            guard id.hasPrefix("glm-5.3"), !id.lowercased().contains("flashx") else { return nil }
             return ModelOption(id: id, name: id, efforts: zaiEfforts, defaultEffort: "max")
         }
     }
