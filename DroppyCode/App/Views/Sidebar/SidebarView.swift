@@ -105,7 +105,7 @@ struct SidebarView: View {
                         // row grows or shrinks and slides to its new place instead of being replaced.
                         ForEach(listItems(placements: placements, helpers: helpers)) { item in
                             itemView(item)
-                                .transition(.sidebarRow)
+                                .transition(rowTransition(item))
                         }
                     } else {
                         searchList(helpers: helpers)
@@ -294,6 +294,15 @@ struct SidebarView: View {
     private struct ConfirmedDeletion {
         let threadID: UUID
         let removeWorktree: Bool
+    }
+
+    /// How a row enters and leaves the list. A settled thread's row arrives on the list's
+    /// own motion: its space opens, the rows below make room and the count rolls in one
+    /// pass, so the arrival must not wait out the handover delay that covers a reopen's
+    /// ghost. Every other row keeps that delay.
+    private func rowTransition(_ item: SidebarItem) -> AnyTransition {
+        if case .thread(let thread, _, _, _, _) = item.kind, thread.isSettled { return .opacity }
+        return .sidebarRow
     }
 
     @ViewBuilder
@@ -983,7 +992,7 @@ private struct RenameThreadPopover: View {
 
 /// One entry of the sidebar list. Thread entries use the thread's id in both layouts, and a
 /// settled thread's row is an entry of its own: the open row leaves and the settled one
-/// arrives, with a ghost gliding between them, instead of one row morphing on the spot.
+/// arrives as the list makes room for it; a reopen's ghost glides between the two.
 private struct SidebarItem: Identifiable {
     enum Kind {
         case gap(CGFloat)
@@ -2353,14 +2362,6 @@ private struct SettledHeader: View {
     let count: Int
     let isFirst: Bool
 
-    @State private var shown: Int
-
-    init(count: Int, isFirst: Bool) {
-        self.count = count
-        self.isFirst = isFirst
-        _shown = State(initialValue: count)
-    }
-
     var body: some View {
         let collapsed = model.settings.settledCollapsed
         Button {
@@ -2375,13 +2376,15 @@ private struct SettledHeader: View {
                     .animation(Chrome.panelSlide, value: collapsed)
                 Text(verbatim: "Settled")
                     .font(.system(size: 12, weight: .semibold))
-                Text(verbatim: "\(shown)")
+                // Bound straight to the list's count: it changes in the pass that opens the
+                // settled row's space, so the roll runs on that same transaction as the list.
+                Text(verbatim: "\(count)")
                     .font(.system(size: 12))
                     .monospacedDigit()
                     .opacity(0.8)
                     .fixedSize()
-                    .contentTransition(.numericText(value: Double(shown)))
-                    .animation(Chrome.panelSlide, value: shown)
+                    .contentTransition(.numericText(value: Double(count)))
+                    .animation(Chrome.panelSlide, value: count)
                 Spacer(minLength: 4)
             }
             .foregroundStyle(Chrome.secondaryText)
@@ -2394,18 +2397,9 @@ private struct SettledHeader: View {
         }
         .buttonStyle(.plain)
         .help(collapsed ? "Show settled threads" : "Hide settled threads")
-        .accessibilityLabel(Text("Settled, \(shown) threads"))
+        .accessibilityLabel(Text("Settled, \(count) threads"))
         .accessibilityValue(Text(collapsed ? "Collapsed" : "Expanded"))
         .accessibilityAddTraits(.isButton)
-        .onAppear {
-            shown = count
-        }
-        .onChange(of: count) { _, newCount in
-            // The count changes in the pass that closes the rows up on Chrome.panelSlide:
-            // rolling the digit on that same run, in that same pass, lands the number with
-            // the list instead of after it.
-            withAnimation(Chrome.panelSlide) { shown = newCount }
-        }
     }
 }
 
