@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { appState } from '$lib/stores/appState.svelte';
+	import { appStore, updateSettings } from '$lib/stores/appStore';
 
-	let settings = $derived(appState.settings);
+	let settings = $derived($appStore.settings);
 
 	let autoSelectModel = $state(false);
 	let rememberChoice = $state(true);
@@ -22,7 +22,7 @@
 
 	function handleSave() {
 		if (!settings) return;
-		appState.updateSettings({
+		updateSettings({
 			autoSelectModel,
 			rememberChoice,
 			showCostIndicator,

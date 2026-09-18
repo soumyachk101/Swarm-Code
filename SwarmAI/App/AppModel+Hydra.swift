@@ -114,17 +114,32 @@ extension AppModel {
             let model = providers.model(pair?.workerModel, for: headsProvider) ?? providers.defaultModel(for: headsProvider)
             label = "\(model?.shortName ?? pair?.workerModel ?? "the default model") on \(headsProvider.displayName)"
         }
+        let profile = attachProfile(for: thread.title ?? thread.id.uuidString, pair: pair)
+
         return HydraLaunch(
             headsProvider: headsProvider,
             runsNatively: !elsewhere && Self.hydraIsNative(thread.provider),
             headsLabel: label,
-            workerModel: keepsModel ? pair?.workerModel : nil,
-            workerEffort: keepsModel ? pair?.workerEffort : nil,
-            maxHeads: pair?.maxHeads,
+            workerModel: keepsModel ? (profile?.headModel ?? pair?.workerModel) : nil,
+            workerEffort: keepsModel ? (profile?.headEffort ?? pair?.workerEffort) : nil,
+            maxHeads: profile?.maxHeads ?? pair?.maxHeads,
             isolatesHeads: settings.hydraIsolateHeads,
             autoMerges: settings.hydraAutoMerge,
-            reviewsHeads: settings.hydraReviewHeads
+            reviewsHeads: settings.hydraReviewHeads,
+            profile: profile
         )
+    }
+
+    /// Returns the profile that matches `title` for the pair's provider+model combo,
+    /// otherwise nil when no profile applies.
+    func attachProfile(for title: String, pair: HydraPair?) -> HydraHeadProfile? {
+        guard let pair = pair else { return nil }
+        let provider = pair.provider
+        let model = pair.orchestratorModel ?? pair.workerModel
+        let list = settings.hydraHeadProfiles
+        let candidate = list.first { $0.applies(to: provider, model: model) && $0.matchMode == .title && $0.name == title }
+        guard let c = candidate else { return list.first { $0.applies(to: provider, model: model) && $0.matchMode == .wildcard && $0.name == "*" } }
+        return c
     }
 
     /// Legacy per-chat switch, now unused. Kept so old callers still compile; Hydra is

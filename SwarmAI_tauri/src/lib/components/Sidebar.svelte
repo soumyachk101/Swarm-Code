@@ -29,7 +29,7 @@
 
 	function handleSelectThread(thread: ChatThread) {
 		selectThread(thread.id);
-		selectedProjectID = thread.projectID;
+		selectedProjectID = thread.project_id;
 		selectedThreadID = thread.id;
 		viewKind = 'chat';
 	}
@@ -65,19 +65,19 @@
 		document.addEventListener('mouseup', onMouseUp);
 	}
 
-	let visibleThreads = $derived($threads.filter(t => $showArchive || !t.isArchived));
+	let visibleThreads = $derived($threads.filter(t => $showArchive || !t.is_archived));
 	let sortedThreads = $derived([...visibleThreads].sort((a, b) => {
-		if (a.isPinned && !b.isPinned) return -1;
-		if (!a.isPinned && b.isPinned) return 1;
-		return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+		if (a.is_pinned && !b.is_pinned) return -1;
+		if (!a.is_pinned && b.is_pinned) return 1;
+		return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
 	}));
 	let filteredThreads = $derived(sortedThreads.filter(t => {
 		if (!$localSearchQuery) return true;
 		const q = $localSearchQuery.toLowerCase();
 		return t.title.toLowerCase().includes(q) || t.provider?.toLowerCase().includes(q);
 	}));
-	let pinnedThreads = $derived(filteredThreads.filter(t => t.isPinned));
-	let unpinnedThreads = $derived(filteredThreads.filter(t => !t.isPinned));
+	let pinnedThreads = $derived(filteredThreads.filter(t => t.is_pinned));
+	let unpinnedThreads = $derived(filteredThreads.filter(t => !t.is_pinned));
 
 	function formatDate(dateStr: string): string {
 		const date = new Date(dateStr);
@@ -91,7 +91,7 @@
 	}
 
 	function getThreadStatus(thread: ChatThread): 'running' | 'idle' {
-		if (thread.lastStatus === 'running') return 'running';
+		if (thread.last_status === 'running') return 'running';
 		const hydraHeads = getHydraHeads(thread);
 		if (hydraHeads.length > 0) return 'running';
 		return 'idle';

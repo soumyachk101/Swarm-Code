@@ -25,6 +25,7 @@ final class ObservedValue<Value> {
 @Observable
 final class AppModel {
     let settings: AppSettings
+    let mcp: MCPStore
     let providers: ProviderRegistry
     let terminals: TerminalStore
     let sidebar: SidebarLayout
@@ -74,6 +75,7 @@ final class AppModel {
 
     init() {
         settings = AppSettings()
+        mcp = MCPStore()
         providers = ProviderRegistry(settings: settings)
         terminals = TerminalStore()
         sidebar = SidebarLayout()

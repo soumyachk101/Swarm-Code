@@ -62,7 +62,8 @@
 	}
 	function getMessageText(item: TimelineItem): string {
 		const content = item.content as any;
-		return content.data?.text ?? content.text ?? '';
+		const val = content.value ?? content;
+		return val.text ?? '';
 	}
 	function handleScroll() {
 		if (!scrollContainer) return;
@@ -97,15 +98,15 @@
 					<span class="chrome-sep">·</span>
 					<span class="chrome-effort">effort: {thread.effort}</span>
 				{/if}
-				{#if thread.gitBranch}
+				{#if thread.branch}
 					<span class="chrome-sep">·</span>
-					<span class="chrome-git">&#x2387; {thread.gitBranch}</span>
+					<span class="chrome-git">&#x2387; {thread.branch}</span>
 				{/if}
 				{#if thread.hydra}
 					<span class="chrome-sep">·</span>
 					<span class="chrome-hydra"><span class="hydra-dot"></span>hydra</span>
 				{/if}
-				{#if thread.fastMode}
+				{#if thread.fast_mode}
 					<span class="chrome-sep">·</span>
 					<span class="chrome-fast">fast</span>
 				{/if}
@@ -188,23 +189,23 @@
 											<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
 										</svg>
 									</span>
-									<span class="tool-name">{(item.content as any).data?.title || 'Tool Call'}</span>
-									<span class="tool-status">{(item.content as any).data?.status === 'running' ? 'Running' : 'Done'}</span>
+									<span class="tool-name">{(item.content as any).value?.title || 'Tool Call'}</span>
+									<span class="tool-status">{(item.content as any).value?.status === 'running' ? 'Running' : 'Done'}</span>
 								</div>
-								{#if (item.content as any).data?.detail}
+								{#if (item.content as any).value?.detail}
 									<details class="tool-details">
 										<summary class="tool-summary">details</summary>
-										<pre class="tool-body">{(item.content as any).data.detail}</pre>
+										<pre class="tool-body">{(item.content as any).value.detail}</pre>
 									</details>
 								{/if}
 							</div>
 						</div>
 					{:else if isNotice(item)}
-						{@const level = (item.content as any).data?.level || 'info'}
+						{@const level = (item.content as any).value?.level || 'info'}
 						<div class="timeline-item notice-row">
 							<div class="notice-pill {level}">
 								<span class="notice-dot"></span>
-								<span class="notice-text">{(item.content as any).data?.message || ''}</span>
+								<span class="notice-text">{(item.content as any).value?.message || ''}</span>
 							</div>
 						</div>
 					{:else if isSystem(item)}

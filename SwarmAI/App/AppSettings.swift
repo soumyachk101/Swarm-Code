@@ -100,7 +100,10 @@ final class AppSettings {
         static let hydraReviewHeads = "hydraReviewHeads"
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
         static let hydraPairs = "hydraPairs"
+        static let hydraHeadProfiles = "hydraHeadProfiles"
+        static let headProfileSelection = "headProfileSelection"
         static let hasSeenTour = "hasSeenTour"
+        static let chronologicalTimelineOrder = "chronologicalTimelineOrder"
     }
 
     static let modelListLimit = 15
@@ -353,6 +356,17 @@ final class AppSettings {
         didSet { store(hydraPairs, forKey: Key.hydraPairs) }
     }
 
+    /// Saved profiles for head dispatch routing. Empty means no profiles exist.
+    private(set) var hydraHeadProfiles: [HydraHeadProfile] {
+        didSet { store(hydraHeadProfiles, forKey: Key.hydraHeadProfiles) }
+    }
+
+    /// When true, the thread timeline shows messages in chronological (oldest first)
+    /// order. Default false preserves the current newest-first layout.
+    var chronologicalTimelineOrder: Bool {
+        didSet { defaults.set(chronologicalTimelineOrder, forKey: Key.chronologicalTimelineOrder) }
+    }
+
     init() {
         let defaults = WebsiteCaptures.defaults ?? .standard
         defaultProvider = ProviderKind(rawValue: defaults.string(forKey: Key.defaultProvider) ?? "") ?? .codex
@@ -407,6 +421,8 @@ final class AppSettings {
         hydraReviewHeads = defaults.object(forKey: Key.hydraReviewHeads) as? Bool ?? false
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
+        hydraHeadProfiles = Self.load([HydraHeadProfile].self, forKey: Key.hydraHeadProfiles) ?? []
+        chronologicalTimelineOrder = defaults.object(forKey: Key.chronologicalTimelineOrder) as? Bool ?? false
     }
 
     // MARK: - Hydra pairs
@@ -554,5 +570,25 @@ final class AppSettings {
         case .meta: metaAPIKeyInput = value
         default: break
         }
+    }
+
+    // MARK: - Hydra head profiles
+
+    func addHydraHeadProfile(_ profile: HydraHeadProfile) {
+        guard !hydraHeadProfiles.contains(where: { $0.id == profile.id }) else { return }
+        hydraHeadProfiles.append(profile)
+    }
+
+    func updateHydraHeadProfile(_ id: UUID, _ change: (inout HydraHeadProfile) -> Void) {
+        guard let index = hydraHeadProfiles.firstIndex(where: { $0.id == id }) else { return }
+        var profile = hydraHeadProfiles[index]
+        change(&profile)
+        profile.maxHeads = HydraPair.clampedCap(profile.maxHeads)
+        guard profile != hydraHeadProfiles[index] else { return }
+        hydraHeadProfiles[index] = profile
+    }
+
+    func removeHydraHeadProfile(_ id: UUID) {
+        hydraHeadProfiles.removeAll { $0.id == id }
     }
 }

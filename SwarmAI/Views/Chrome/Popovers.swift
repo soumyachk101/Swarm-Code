@@ -1,6 +1,14 @@
 import AppKit
 import SwiftUI
 
+extension View {
+    func presentedChrome() -> some View {
+        self
+            .buttonBorderShape(.capsule)
+            .tint(ThemeManager.spec.accent)
+    }
+}
+
 extension NSPopover {
     /// Installs SwiftUI content at a fixed size and makes that size the only
     /// one the panel ever has. A hosting controller normally publishes its

@@ -41,7 +41,7 @@ final class TokenLedger {
     /// Merged history plus live spend, keyed by local day.
     private(set) var dailyTotals: [String: Int] = [:]
 
-    private static let liveDefaultsKey = "droppycode.tokenActivity.liveDaily"
+    private static let liveDefaultsKey = "swarmai.tokenActivity.liveDaily"
 
     /// Live-recorded spend, kept apart from history so a rescan never drops
     /// usage that arrived after the scan.
@@ -136,7 +136,7 @@ private struct CodexFileFingerprint: Sendable, Codable {
 /// their own JSON file in Application Support instead, beside the library.
 private enum CodexFingerprintStore {
     /// Where earlier builds kept them. Read once, then cleared.
-    private static let legacyDefaultsKey = "droppycode.tokenActivity.codexFiles"
+    private static let legacyDefaultsKey = "swarmai.tokenActivity.codexFiles"
 
     private static var fileURL: URL {
         Storage.root.appendingPathComponent("token-activity-codex.json")

@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { appState } from '$lib/stores/appState.svelte';
-	import { t } from '$lib/i18n';
+	import { appStore, updateSettings } from '$lib/stores/appStore';
 
-	let settings = $derived(appState.settings);
+	let settings = $derived($appStore.settings);
 	let canvasInfinite = $state(false);
 	let defaultEffort = $state<'minimal' | 'low' | 'medium' | 'high' | 'maximal'>('medium');
 	let allowEmptyCommits = $state(false);
@@ -31,7 +30,7 @@
 
 	function handleSave() {
 		if (!settings) return;
-		appState.updateSettings({
+		updateSettings({
 			canvasInfinite,
 			defaultEffort,
 			allowEmptyCommits,

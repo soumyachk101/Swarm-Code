@@ -191,6 +191,7 @@ private struct DetailSheetModifier: ViewModifier {
 struct WindowBackdrop: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(AppModel.self) private var model
+    var opacity: Double? = nil
 
     /// The scrim over the glass for a backdrop setting: the stock scrim at the
     /// midpoint, none at 0, a solid base at 1, linear either side.
@@ -203,7 +204,7 @@ struct WindowBackdrop: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous)
         let isDark = colorScheme == .dark
-        let opacity = model.settings.backdropOpacity
+        let opacity = opacity ?? model.settings.backdropOpacity
         // At the solid end of the slider the scrim covers the glass completely, and a
         // Liquid Glass surface the size of the window is a full-window sample on every
         // frame anything over it moves. There it draws as a plain fill instead; the

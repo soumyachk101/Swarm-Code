@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { appState } from '$lib/stores/appState.svelte';
+	import { appStore, updateSettings } from '$lib/stores/appStore';
 
-	let settings = $derived(appState.settings);
+	let settings = $derived($appStore.settings);
 	let retainDays = $state(90);
 	let maxSizeMB = $state(100);
 	let autoPrune = $state(false);
@@ -19,7 +19,7 @@
 
 	function handleSave() {
 		if (!settings) return;
-		appState.updateSettings({
+		updateSettings({
 			retainDays,
 			maxSizeMB,
 			autoPrune,

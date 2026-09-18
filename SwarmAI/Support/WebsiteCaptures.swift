@@ -48,7 +48,7 @@ enum WebsiteCaptures {
         isEnabled ? UserDefaults(suiteName: suiteName) : nil
     }
 
-    nonisolated private static let suiteName = "iordv.droppycode.website-captures"
+    nonisolated private static let suiteName = "iordv.swarmai.website-captures"
 
     /// The composer's model chip, captured by the chip itself, so the slider and the
     /// switcher popovers hang from the real control.
@@ -78,7 +78,7 @@ enum WebsiteCaptures {
     // MARK: - Mock data
 
     enum ID {
-        static let droppyCode = UUID(uuidString: "A0000000-0000-4000-8000-000000000001")!
+        static let swarmaiCode = UUID(uuidString: "A0000000-0000-4000-8000-000000000001")!
         static let site = UUID(uuidString: "A0000000-0000-4000-8000-000000000002")!
         static let ios = UUID(uuidString: "A0000000-0000-4000-8000-000000000003")!
         static let composer = UUID(uuidString: "B0000000-0000-4000-8000-000000000001")!
@@ -111,7 +111,7 @@ enum WebsiteCaptures {
         defaults.set(true, forKey: "sidebarActivityView")
         defaults.set("supervised", forKey: "defaultRuntimeMode")
         defaults.set("claude", forKey: "defaultProvider")
-        defaults.set(ID.droppyCode.uuidString, forKey: "lastProjectID")
+        defaults.set(ID.swarmaiCode.uuidString, forKey: "lastProjectID")
         // The switcher shows a curated list, as a set-up Mac would.
         let pins = [
             ModelPin(provider: .claude, modelID: "opus"),
@@ -127,9 +127,9 @@ enum WebsiteCaptures {
         let repos = output.appendingPathComponent("repos", isDirectory: true)
         var library = Library()
         library.projects = [
-            project(ID.droppyCode, "SwarmAI", repos, ["SwarmAI/Views/Composer/ComposerView.swift": composerSource]),
-            project(ID.site, "getdroppy.app", repos, ["docs/index.html": "<!doctype html>\n<html lang=\"en\">\n</html>\n"]),
-            project(ID.ios, "droppy-ios", repos, ["Droppy/LiveActivity.swift": "import ActivityKit\n"]),
+            project(ID.swarmaiCode, "SwarmAI", repos, ["SwarmAI/Views/Composer/ComposerView.swift": composerSource]),
+            project(ID.site, "swarmai.app", repos, ["docs/index.html": "<!doctype html>\n<html lang=\"en\">\n</html>\n"]),
+            project(ID.ios, "swarmai-ios", repos, ["SwarmAI/LiveActivity.swift": "import ActivityKit\n"]),
         ]
         library.projects[0].scripts = [
             ProjectScript(name: "Quick run", command: "scripts/quick_run.sh", symbol: "hammer"),
@@ -138,13 +138,13 @@ enum WebsiteCaptures {
         let now = Date.now
         let day: TimeInterval = 86_400
         library.threads = [
-            thread(ID.composer, ID.droppyCode, "Composer: draft photo spacing", .claude, "opus", "high", age: 120, status: .completed, now),
-            thread(ID.fresh, ID.droppyCode, "Attachment strip insets", .claude, "opus", "high", age: 300, status: nil, now),
-            thread(ID.finalAnswer, ID.droppyCode, "Timeline final answer", .claude, "opus", "high", age: 600, status: .completed, now, plan: true),
+            thread(ID.composer, ID.swarmaiCode, "Composer: draft photo spacing", .claude, "opus", "high", age: 120, status: .completed, now),
+            thread(ID.fresh, ID.swarmaiCode, "Attachment strip insets", .claude, "opus", "high", age: 300, status: nil, now),
+            thread(ID.finalAnswer, ID.swarmaiCode, "Timeline final answer", .claude, "opus", "high", age: 600, status: .completed, now, plan: true),
             thread(ID.pricing, ID.site, "Regional pricing claim expiry", .codex, "gpt-5.5", nil, age: 900, status: .running, now),
-            thread(ID.freshPlan, ID.droppyCode, "Final answer card", .claude, "opus", "high", age: 1_500, status: nil, now, plan: true),
-            thread(ID.archive, ID.droppyCode, "Archive: delete all", .codex, "gpt-5.5", nil, age: 7_200, status: .completed, now),
-            thread(ID.diffPopover, ID.droppyCode, "Diff popover row patch", .claude, "opus", "high", age: day + 3_600, status: .completed, now),
+            thread(ID.freshPlan, ID.swarmaiCode, "Final answer card", .claude, "opus", "high", age: 1_500, status: nil, now, plan: true),
+            thread(ID.archive, ID.swarmaiCode, "Archive: delete all", .codex, "gpt-5.5", nil, age: 7_200, status: .completed, now),
+            thread(ID.diffPopover, ID.swarmaiCode, "Diff popover row patch", .claude, "opus", "high", age: day + 3_600, status: .completed, now),
             thread(ID.footer, ID.site, "Footer dragon scrub", .cursor, nil, nil, age: day + 5_400, status: .completed, now, unread: true),
             thread(ID.rail, ID.site, "Highlight rail poster blend", .claude, "sonnet", "medium", age: day + 9_000, status: .completed, now),
             thread(ID.liveActivity, ID.ios, "Live Activity for Pomodoro", .claude, "opus", "high", age: 3 * day, status: .completed, now),
@@ -175,7 +175,7 @@ enum WebsiteCaptures {
         // A real repository on `main`, so the chrome row has a branch to show.
         let git = Process()
         git.executableURL = URL(fileURLWithPath: "/bin/sh")
-        git.arguments = ["-c", "git init -q -b main && git -c user.name=Droppy -c user.email=hi@getdroppy.app add -A && git -c user.name=Droppy -c user.email=hi@getdroppy.app commit -q -m 'Initial import' >/dev/null 2>&1"]
+        git.arguments = ["-c", "git init -q -b main && git -c user.name=SwarmAI -c user.email=hi@swarmai.app add -A && git -c user.name=SwarmAI -c user.email=hi@swarmai.app commit -q -m 'Initial import' >/dev/null 2>&1"]
         git.currentDirectoryURL = folder
         try? git.run()
         git.waitUntilExit()
@@ -954,7 +954,7 @@ final class Recorder {
 /// Encodes screenshots into an HEVC master as they arrive, on its own queue, stamped with
 /// the moment each was taken.
 private final class FilmRecorder: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "droppycode.website-captures.film", qos: .userInteractive)
+    private let queue = DispatchQueue(label: "swarmai.website-captures.film", qos: .userInteractive)
     private let writer: AVAssetWriter
     private let input: AVAssetWriterInput
     private let adaptor: AVAssetWriterInputPixelBufferAdaptor

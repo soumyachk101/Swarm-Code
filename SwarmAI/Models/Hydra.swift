@@ -57,6 +57,80 @@ struct HydraPair: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+// MARK: - Hydra Head Profile
+
+/// A purpose-built config that routes heads in specific ways. A profile selects which
+/// heads to dispatch for a given lead context, and what kind of heads to spawn.
+/// Profiles are optional: when not set, Hydra behaves exactly as before.
+struct HydraHeadProfile: Codable, Hashable, Identifiable, Sendable {
+    enum MatchMode: String, Codable, Hashable {
+        case title
+        case wildcard
+    }
+
+    var id: UUID
+    var name: String
+    var description: String?
+    var maxHeads: Int?
+    var headProvider: ProviderKind?
+    var headModel: String?
+    var headEffort: String?
+    /// `title` matches a chat by its exact title; `wildcard` matches any chat for
+    /// the same provider+model combo.
+    var matchMode: MatchMode
+
+    init(id: UUID = UUID(), name: String, description: String? = nil, maxHeads: Int? = nil, headProvider: ProviderKind? = nil, headModel: String? = nil, headEffort: String? = nil, matchMode: MatchMode = .title) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.maxHeads = maxHeads
+        self.headProvider = headProvider
+        self.headModel = headModel
+        self.headEffort = headEffort
+        self.matchMode = matchMode
+    }
+
+    /// Returns true when the profile applies to `provider`/`model`: either the
+    /// profile wildcards both fields, or at least one is set and the chat matches it.
+    func applies(to provider: ProviderKind, model: String?) -> Bool {
+        guard let profileProvider = headProvider, profileProvider == provider else {
+            return headProvider == nil && headModel == nil
+        }
+        guard let profileModel = headModel, let model = model, profileModel == model else {
+            return headModel == nil
+        }
+        return true
+    }
+
+    /// Minimum heads this profile permits; profiles never shrink below 1.
+    static let minimumHeads = 1
+    /// Safety cap so a bad config cannot launch more than the codebase expects.
+    static let maximumHeads = 50
+
+    /// Returns `value` clamped to the [minimumHeads, maximumHeads] range, or nil
+    /// when `value` is out of range.
+    static func clampedCap(_ value: Int?) -> Int? {
+        guard let value else { return nil }
+        guard value >= minimumHeads else { return minimumHeads }
+        guard value <= maximumHeads else { return maximumHeads }
+        return value
+    }
+}
+
+/// Matches a task description against the most appropriate profile for a lead's context.
+struct HydraProfileMatcher: Sendable {
+    /// Returns the best matching profile for a given task, from a list of profiles.
+    /// Returns nil when no profile matches or profiles is empty (falls back to default behavior).
+    static func match(task: String, profiles: [HydraHeadProfile]) -> HydraHeadProfile? {
+        guard !profiles.isEmpty else { return nil }
+        let lowered = task.lowercased()
+        return profiles.first {
+            guard let description = $0.description?.lowercased(), !description.isEmpty else { return true }
+            return lowered.contains(description) || description.contains(lowered)
+        }
+    }
+}
+
 /// What a session launches with while Hydra is on: where the heads run and on what,
 /// resolved from the pair, and how many may run at once.
 struct HydraLaunch: Hashable, Sendable {
@@ -87,6 +161,9 @@ struct HydraLaunch: Hashable, Sendable {
     /// `hydraReviewHeads` setting): it reads the files the reports name and corrects what
     /// is wrong itself, rather than trusting the reports or sending out a head to check.
     var reviewsHeads = false
+    /// A saved profile that overrides pair fields for this session. When nil, the pair
+    /// fields are used directly (legacy behavior).
+    let profile: HydraHeadProfile?
 
     /// Whether one more head may go out with `running` already at work.
     func hasRoom(running: Int) -> Bool {

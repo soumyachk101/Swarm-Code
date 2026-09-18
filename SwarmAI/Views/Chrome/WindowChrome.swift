@@ -71,8 +71,8 @@ final class WindowChromeProbeView: NSView {
 
 @MainActor
 enum WindowChrome {
-    private static let leadingIdentifier = "droppycode.trafficLight.leading"
-    private static let topIdentifier = "droppycode.trafficLight.top"
+    private static let leadingIdentifier = "swarmai.trafficLight.leading"
+    private static let topIdentifier = "swarmai.trafficLight.top"
 
     static func configure(_ window: NSWindow) {
         window.styleMask.insert(.fullSizeContentView)

@@ -298,7 +298,7 @@ enum LoginEnvironment {
 
     @concurrent
     static func load() async {
-        let marker = "__DROPPY_CODE_ENVIRONMENT__"
+        let marker = "__SWARMAI_ENVIRONMENT__"
         let script = "printf '\(marker)'; /usr/bin/env -0; printf '\(marker)'"
         var environment = fallback()
         let shell = URL(fileURLWithPath: userShell())

@@ -67,6 +67,65 @@ impl HydraPair {
 }
 
 // ---------------------------------------------------------------------------
+// HydraHeadProfile (mirrors Swift HydraHeadProfile)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HydraHeadProfile {
+ pub id: Uuid,
+ pub name: String,
+ pub description: Option<String>,
+ pub max_heads: Option<u32>,
+ pub head_provider: Option<ProviderKind>,
+ pub head_model: Option<String>,
+ pub head_effort: Option<String>,
+ #[serde(default)]
+ pub match_mode: HydraMatchMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, Copy)]
+#[serde(rename_all = "snake_case")]
+pub enum HydraMatchMode {
+ /// Match a chat by its exact title.
+ #[serde(rename = "title")]
+ Title,
+ /// Match any chat for the same provider+model combo.
+ #[serde(rename = "wildcard")]
+ #[default]
+ Wildcard,
+}
+
+impl HydraHeadProfile {
+ pub const MIN_HEADS: u32 = 1;
+ pub const MAX_HEADS: u32 = 50;
+
+ /// Returns true when the profile applies to `provider`/`model`: either the
+ /// profile wildcards both fields, or at least one is set and the chat matches it.
+ pub fn applies_to(&self, provider: ProviderKind, model: Option<&str>) -> bool {
+ match (self.head_provider, &self.head_model) {
+ (None, None) => true,
+ (Some(p), None) => p == provider,
+ (None, Some(m)) => model.map(|md| md == m).unwrap_or(false),
+ (Some(p), Some(m)) => {
+ let provider_match = p == provider;
+ let model_match = model.map(|md| md == m).unwrap_or(false);
+ provider_match || model_match
+ }
+ }
+ }
+
+ /// Clamp `max_heads` into the [MIN_HEADS, MAX_HEADS] range, returning None when absent.
+ pub fn clamped_max_heads(&self) -> Option<u32> {
+ self.max_heads.map(|v| v.clamp(Self::MIN_HEADS, Self::MAX_HEADS))
+ }
+
+ /// Returns the effective max-heads for this profile, or None when not set.
+ pub fn effective_max_heads(&self) -> Option<u32> {
+ self.clamped_max_heads()
+ }
+}
+
+// ---------------------------------------------------------------------------
 // HydraLaunch (mirrors Swift HydraLaunch)
 // ---------------------------------------------------------------------------
 

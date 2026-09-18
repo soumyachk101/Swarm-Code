@@ -30,6 +30,7 @@ final class TerminalSession: Identifiable {
         environment["TERM"] = "xterm-256color"
         environment["COLORTERM"] = "truecolor"
         environment["TERM_PROGRAM"] = "SwarmAI"
+        environment["SWARMAI_PROJECT_ROOT"] = directory
         environment["DROPPY_CODE_PROJECT_ROOT"] = directory
         let pairs = environment.map { "\($0.key)=\($0.value)" }
         let shellName = "-" + (shell as NSString).lastPathComponent

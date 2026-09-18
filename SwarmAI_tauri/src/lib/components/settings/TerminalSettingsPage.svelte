@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { appState } from '$lib/stores/appState.svelte';
+	import { appStore, updateSettings } from '$lib/stores/appStore';
 
-	let settings = $derived(appState.settings);
+	let settings = $derived($appStore.settings);
 
 	let shell = $state('');
 	let copyOnSelect = $state(false);
@@ -30,7 +30,7 @@
 
 	function handleSave() {
 		if (!settings) return;
-		appState.updateSettings({
+		updateSettings({
 			terminal_shell: shell,
 			terminal_copyOnSelect: copyOnSelect,
 			terminal_cursorShape: cursorShape,
