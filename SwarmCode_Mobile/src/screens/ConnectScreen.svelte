@@ -23,6 +23,10 @@ const autoConnect = async () => {
 const handleConnect = async () => {
     if (!hostInput.trim()) return;
     const host = hostInput.trim();
+    if (/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(host)) {
+        connectionError.set("Hardware MAC address detected. Please enter your Mac's IP address (e.g. 192.168.1.x or localhost), not the hardware MAC address.");
+        return;
+    }
     const port = parseInt(portInput) || 8765;
     currentHost.set(host);
     currentPort.set(port);
@@ -107,11 +111,11 @@ onMount(() => {
     <div class="glass" style="padding: 20px; border-radius: var(--radius-lg); margin-bottom: 20px;">
         <div style="display: flex; flex-direction: column; gap: 14px;">
             <div>
-                <label class="text-secondary" style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;">Mac Address</label>
+                <label class="text-secondary" style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em;">Mac IP Address / Hostname</label>
                 <input
                     class="input"
                     type="text"
-                    placeholder="192.168.1.42 or localhost"
+                    placeholder="localhost or 192.168.1.x"
                     bind:value={hostInput}
                     autocomplete="off"
                 />
