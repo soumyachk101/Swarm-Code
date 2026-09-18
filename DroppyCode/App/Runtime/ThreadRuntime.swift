@@ -3345,10 +3345,14 @@ final class ThreadRuntime {
     }
 
     func saveNow() {
-        // A save before the history is installed would write an empty thread over the file.
-        guard persistenceEnabled, !isLoadingHistory else { return }
+        // The timer that calls this is finished the moment it runs, so its handle goes
+        // whatever happens below. Left standing across a skipped save, `scheduleSave` would
+        // see a task already over and return, and nothing would be written until the turn
+        // ended: the five-second bound on what a crash costs is exactly this handle.
         saveTask?.cancel()
         saveTask = nil
+        // A save before the history is installed would write an empty thread over the file.
+        guard persistenceEnabled, !isLoadingHistory else { return }
         // The periodic save fires every few seconds while a turn runs, even when the
         // turn's events changed nothing since the last write: skip the snapshot then.
         // `finishTurn` and friends still land on disk, as their mutations bump the

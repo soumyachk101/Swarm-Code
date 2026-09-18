@@ -814,9 +814,14 @@ final class MetaSession: ProviderSession {
     }
 
     private func approveIfNeeded(kind: ToolCall.Kind, title: String, detail: String?, toolItemID: String?) async -> Bool {
-        if approveAllRemaining || interrupted { return interrupted ? false : approveAllRemaining }
-        let needsApproval: Bool = {
-            if interactionMode == .plan, (kind == .edit || kind == .command) { return true }
+        // A stopped turn declines whatever is still asking, before anything else.
+        if interrupted { return false }
+        // Plan mode is a promise the turn keeps, not a preference, so it is decided before
+        // "approve for turn" rather than after it: one click of that button on a read used
+        // to switch the promise off for every edit and command left in the turn.
+        let planBlocks = interactionMode == .plan && (kind == .edit || kind == .command)
+        if approveAllRemaining, !planBlocks { return true }
+        let needsApproval: Bool = planBlocks || {
             switch runtimeMode {
             case .supervised: return true
             case .autoAcceptEdits, .auto: return kind == .command
@@ -884,10 +889,28 @@ final class MetaSession: ProviderSession {
         let trimmed = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "Error: a search pattern is required." }
         let directory = URL(fileURLWithPath: workingDirectory)
+        // Search is the one file tool that used to hand the model's path to the shell
+        // untouched, so an absolute path or a climb out of the root recursively grepped
+        // ~/.ssh and returned the matches into the transcript. It answers to the same
+        // guard as read, list, write and edit now.
+        let target: String
+        if path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            target = "."
+        } else {
+            do {
+                target = try fileTools.resolveURL(path).path
+            } catch {
+                return "Error: \(error.localizedDescription)"
+            }
+        }
         let grep = URL(fileURLWithPath: "/usr/bin/grep")
         var args = ["-R", "-n", "-I", "--exclude-dir=.git", "--exclude-dir=node_modules", "--exclude-dir=.build", "--exclude-dir=build"]
-        args += regex ? ["-E", trimmed] : ["-F", trimmed]
-        args.append(path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "." : path)
+        args.append(regex ? "-E" : "-F")
+        // Everything past `--` is an operand, so a pattern or a path that starts with a
+        // dash is searched for rather than parsed as a flag.
+        args.append("--")
+        args.append(trimmed)
+        args.append(target)
         guard let result = try? await Shell.run(grep, args, in: directory, environment: LoginEnvironment.current, timeout: 30, outputLimit: 64_000) else {
             return "Search failed."
         }
