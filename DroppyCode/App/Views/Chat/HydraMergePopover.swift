@@ -146,7 +146,10 @@ struct HydraMergePopover: View {
             // runs the card's full width and the name only shortens once it truly cannot fit.
             if !note.heads.isEmpty {
                 HStack(spacing: 6) {
-                    ForEach(note.heads) { head in
+                    // Eight faces at most: the card's fixed width cannot hold a dozen of
+                    // them, and the row spilled out of the popover when a big team came
+                    // back. The count beside the faces still names every head that landed.
+                    ForEach(Array(note.heads.prefix(8))) { head in
                         HydraGlyph(persona: HydraRoster.persona(at: head.index), size: 26)
                             .help("\(head.name): \(head.task)")
                             .onHover { inside in

@@ -1377,9 +1377,14 @@ private struct HeadCardsRow: View {
     /// The card's own height as it lays out: the connector's dotted line runs the
     /// card's whole depth, however many rows the heads need.
     @State private var cardHeight: CGFloat = 0
+    /// The card shows the first twelve faces and keeps the rest behind the chevron: a
+    /// long-running chat's team must not push the card half the sidebar tall.
+    @State private var showsAllHeads = false
 
     var body: some View {
         let heads = SidebarView.orderedHeads(headSnapshots.map { model.thread($0.id) ?? $0 })
+        let capped = heads.count > 12
+        let visible = showsAllHeads ? heads : Array(heads.prefix(12))
         // The glyphs' room: the row's width less the connector's column and the card's
         // own padding, which is the same on both sides. The last glyph of a row needs
         // its own 18 pt, not a whole 26 pt pitch, so six glyphs (6 x 18 + 5 x 8 = 148)
@@ -1387,12 +1392,12 @@ private struct HeadCardsRow: View {
         // until the row has been measured.
         let cardInner = width - ThreadRowMetrics.connectorWidth - 2 * ThreadRowMetrics.headCardPadding
         let perRow = width == 0 ? 6 : max(1, Int((cardInner + ThreadRowMetrics.headGlyphPitch - ThreadRowMetrics.headGlyphSize) / ThreadRowMetrics.headGlyphPitch))
-        let rows = Self.chunk(heads, by: perRow)
+        let rows = Self.chunk(visible, by: perRow)
         HStack(spacing: 0) {
             HelperConnector(endsHere: true, action: onFold)
                 .frame(
                     width: ThreadRowMetrics.connectorWidth,
-                    height: cardHeight > 0 ? cardHeight : ThreadRowMetrics.headCardHeight(rows: rows.count)
+                    height: cardHeight > 0 ? cardHeight : ThreadRowMetrics.headCardHeight(rows: rows.count + (capped ? 1 : 0))
                 )
             VStack(alignment: .leading, spacing: ThreadRowMetrics.headRowGap) {
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
@@ -1435,6 +1440,19 @@ private struct HeadCardsRow: View {
                             }
                         }
                     }
+                }
+                if capped {
+                    Button {
+                        withAnimation(.snappy(duration: 0.18)) { showsAllHeads.toggle() }
+                    } label: {
+                        Image(systemName: showsAllHeads ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .frame(width: ThreadRowMetrics.headGlyphSize, height: ThreadRowMetrics.headGlyphSize)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(showsAllHeads ? "Show fewer heads" : "Show all \(heads.count) heads")
                 }
             }
             .padding(ThreadRowMetrics.headCardPadding)

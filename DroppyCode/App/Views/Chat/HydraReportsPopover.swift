@@ -283,8 +283,19 @@ struct HydraReportsPopover: View {
         } else {
             HStack(alignment: .center, spacing: 10) {
                 HStack(spacing: -6) {
-                    ForEach(personas, id: \.self) { persona in
+                    ForEach(Array(personas.prefix(9)), id: \.self) { persona in
                         HydraGlyph(persona: persona, size: 22)
+                    }
+                    if personas.count > 9 {
+                        // Faces past a handful overrun the header: the rest are counted
+                        // here, and the totals line beside names the full number.
+                        Text(verbatim: "+\(personas.count - 9)")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Capsule(style: .continuous).fill(Chrome.overlay(0.1)))
+                            .padding(.leading, 10)
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
