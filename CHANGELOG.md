@@ -19,7 +19,7 @@ All notable changes to Droppy Code are documented here, newest first. The format
 
 ### Refinements
 - A finished turn reads folded: it shows its final reply with the turn's plans and any warning, and the steps it took, its heads and its changed-files card wait behind the "Worked for …" line, which opens them in a card of their own.
-- A running turn keeps its work on the working line: the progress card carries the steps the turn is taking, with the agent's thinking and what it says between them behind its chevron, and the reply that concludes the turn lands in the chat once the turn ends.
+- A running turn keeps its work on the working line: the progress card stays the card it is, and the steps the turn is taking, with the agent's thinking and what it says between them, open under it once its chevron is clicked; the reply that concludes the turn lands in the chat once the turn ends.
 - The Chronological order switch is gone from Settings › Conversation: a turn reads folded until its line is clicked, which is what the app always does now, so the switch had nothing left to change.
 
 ### Thanks
