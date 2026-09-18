@@ -110,10 +110,14 @@ extension AppModel {
         roots.append((home as NSString).appendingPathComponent("Library"))
         let underHome = home.hasSuffix("/") ? home : home + "/"
         if full.hasPrefix(underHome), full.dropFirst(underHome.count).first == "." { return true }
+        // `standardizingPath` drops a leading `/private` only while the file still exists,
+        // so a head's temp file deleted since it was written keeps its `/private/tmp`
+        // form while the roots lose theirs: both spellings are tried.
+        let spellings = full.hasPrefix("/private/") ? [full, String(full.dropFirst("/private".count))] : [full]
         return roots.contains { root in
             let root = (root as NSString).standardizingPath
             let prefix = root.hasSuffix("/") ? root : root + "/"
-            return full.hasPrefix(prefix)
+            return spellings.contains { $0.hasPrefix(prefix) }
         }
     }
 
