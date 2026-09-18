@@ -2099,8 +2099,6 @@ private struct WorkingIndicator: View {
     @State private var now = Date.now
     @State private var isExpanded = false
     @State private var showsAllSteps = false
-    @State private var isFadingSteps = false
-    @State private var collapseTask: Task<Void, Never>?
 
     /// The one motion for whatever changes on the line: the words, the chevron.
     private static let change = Animation.smooth(duration: 0.3)
@@ -2115,23 +2113,12 @@ private struct WorkingIndicator: View {
         VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             Button {
                 guard canExpand else { return }
+                // Both directions run the one animation: the card closes with the glide it opens with.
                 if isExpanded {
-                    collapseTask?.cancel()
-                    withAnimation(.easeOut(duration: 0.12)) {
-                        isFadingSteps = true
-                    }
-                    collapseTask = Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(0.12))
-                        guard !Task.isCancelled else { return }
-                        var transaction = Transaction()
-                        transaction.disablesAnimations = true
-                        withTransaction(transaction) {
-                            isExpanded = false
-                            isFadingSteps = false
-                        }
+                    withAnimation(.snappy(duration: 0.24)) {
+                        isExpanded = false
                     }
                 } else {
-                    collapseTask?.cancel()
                     withAnimation(.snappy(duration: 0.24)) {
                         isExpanded = true
                         revealBox?.follow()
@@ -2195,7 +2182,6 @@ private struct WorkingIndicator: View {
                             .transition(.softAppear)
                     }
                 }
-                .opacity(isFadingSteps ? 0 : 1)
             }
         }
         .animation(Self.change, value: label)
