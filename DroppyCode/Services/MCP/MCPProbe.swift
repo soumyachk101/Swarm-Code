@@ -6,8 +6,8 @@ enum MCPProbeError: LocalizedError, Sendable {
     case timedOut
     case http(status: Int, body: String)
     case unauthorizedOAuth
-    /// The sign-in is fine but the server needs a step on its side first (GitLab answers
-    /// 403 "MCP server disabled" until the top-level group allows MCP clients).
+    /// The sign-in is fine but the server needs a step on its side first (GitLab answers 403
+    /// "MCP server disabled", or 404 on GitLab 19.4 and earlier, until the top-level group allows MCP clients).
     case needsSetup(MCPSetupGuide)
     /// A signed-in server answered 404 at its own MCP address: a hiccup on their side.
     case unavailable(host: String)
@@ -253,7 +253,14 @@ enum MCPProbe {
                 }
                 throw MCPProbeError.unauthorizedOAuth
             } catch MCPProbeError.http(let status, _) where status == 404 && server.oauthUpstream != nil {
-                throw MCPProbeError.unavailable(host: URL(string: server.oauthUpstream ?? urlString)?.host ?? "The server")
+                let upstream = server.oauthUpstream ?? urlString
+                // GitLab 19.4 and earlier answer a namespace that does not allow its MCP server with 404
+                // instead of 403 'MCP server disabled'; both statuses share every cause, so a 404 from
+                // its MCP endpoint is the setup case rather than a hiccup on GitLab's side.
+                if Self.isGitLabMCP(upstream) {
+                    throw MCPProbeError.needsSetup(Self.gitLabServerDisabled(upstream: upstream))
+                }
+                throw MCPProbeError.unavailable(host: URL(string: upstream)?.host ?? "The server")
             }
         }
 
@@ -341,6 +348,13 @@ enum MCPProbe {
 
     // MARK: - Setup guides
 
+    /// Whether an OAuth upstream is a GitLab instance's MCP endpoint. GitLab.com and a
+    /// self-managed instance both answer at <origin>/api/v4/mcp, behind a relative URL root too.
+    static func isGitLabMCP(_ upstream: String) -> Bool {
+        guard let url = URL(string: upstream) else { return false }
+        return url.path.lowercased().hasSuffix("/api/v4/mcp")
+    }
+
     /// GitLab keeps its MCP server off until an Owner allows it on the top-level group.
     static func gitLabServerDisabled(upstream: String) -> MCPSetupGuide {
         let origin: String = {
@@ -349,7 +363,7 @@ enum MCPProbe {
         }()
         return MCPSetupGuide(
             title: "Turn on GitLab's MCP server",
-            reason: "You're signed in, but GitLab keeps its MCP server off until a group Owner allows it.",
+            reason: "You're signed in, but GitLab keeps its MCP server off until a group Owner allows it. Until then its address answers not found, whatever the sign-in.",
             steps: [
                 "Open your groups and pick the top-level group your projects live in",
                 "Go to Settings › General and expand Permissions and group features",
