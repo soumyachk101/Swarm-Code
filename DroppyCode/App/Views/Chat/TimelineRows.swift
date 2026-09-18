@@ -453,9 +453,8 @@ private struct FinishedHeadPill: View {
         } label: {
             HStack(spacing: 8) {
                 HydraGlyph(persona: head.persona, size: 18, status: head.status)
-                Text(verbatim: title)
+                (HydraNameStyle.text(head.persona, base: Chrome.primaryText.opacity(0.75)) + Text(verbatim: head.status == .failed ? " failed" : (head.status == .stopped ? " was stopped" : " finished working")))
                     .font(.chat(.callout, weight: .medium, zoom: zoom))
-                    .foregroundStyle(Chrome.primaryText.opacity(0.75))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Image(systemName: "chevron.right")
