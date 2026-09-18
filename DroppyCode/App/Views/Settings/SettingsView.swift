@@ -108,7 +108,7 @@ struct SettingsView: View {
                 .padding(.trailing, Chrome.sheetInset)
                 .padding(.vertical, Chrome.sheetInset)
         }
-        .background { WindowBackdrop(opacity: model.settings.backdropOpacity, wallpaper: WallpaperStore.shared.image) }
+        .background { WindowBackdrop(opacity: model.settings.backdropOpacity) }
         .background { WindowChromeConfigurator() }
         .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
         .ignoresSafeArea()
