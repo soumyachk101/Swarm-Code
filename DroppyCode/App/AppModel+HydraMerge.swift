@@ -72,7 +72,10 @@ extension AppModel {
         // What the team touched, and only that, so a sibling's uncommitted work in the
         // same checkout stays behind. The chat's own checkout goes first, then every
         // other sidebar project that holds touched files, one merge each; only paths
-        // under no sidebar project at all stay out.
+        // under no sidebar project at all stay out. What the records do not hold in one
+        // of those other checkouts cannot be told apart from a sibling's work there and
+        // stays behind: the note says so, with the count, rather than calling the merge
+        // done and leaving the user to find out.
         let ownCheckout = lead.worktreePath ?? project.path
         let own = await hydraWork(of: leadID, runtime: runtime, checkout: ownCheckout, git: Git(ownCheckout), projectID: project.id, leadCheckout: ownCheckout, leadProjectID: project.id, sweepsCheckout: true)
         var groups: [(project: Project, checkout: String, work: HydraWork)] = own.paths.isEmpty ? [] : [(project, ownCheckout, own)]
@@ -125,6 +128,18 @@ extension AppModel {
         if !stray.isEmpty {
             runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .stray, project: nil, label: nil, url: nil, files: stray.count, detail: strayBody(stray)))
             note(leadID, "Hydra left \(stray.count == 1 ? "a file" : "\(stray.count) files") outside every project.", strayBody(stray))
+        }
+        // A merge that took only what the records held can leave work the team did in a
+        // checkout behind. Say so with the count, rather than report nothing pending.
+        for group in groups {
+            let git = Git(group.checkout)
+            guard let tree = try? await git.captureTree(),
+                  let changed = try? await git.changedPaths(from: "HEAD", to: tree) else { continue }
+            var leftover = Set(changed.filter { !TouchedPaths.isBuildOutput($0) })
+            leftover.subtract(await git.ignoredPaths(among: leftover.sorted()))
+            guard !leftover.isEmpty else { continue }
+            let shown = leftover.sorted().prefix(6).map { "`\($0)`" }.joined(separator: ", ") + (leftover.count > 6 ? " and \(leftover.count - 6) more" : "")
+            note(leadID, "Hydra merged \(group.project.name), but left \(leftover.count == 1 ? "a changed file" : "\(leftover.count) changed files") no turn or head recorded.", "\(shown). Still uncommitted in that checkout: name them in a brief, or commit them there by hand.")
         }
     }
 
