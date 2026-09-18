@@ -34,3 +34,8 @@
 - Do not rewrite existing history (`rebase -i`, `filter-branch`,
  `filter-repo`, force-push to `main`) to "fix" the 4,292 commits; squash
  applies to new merges only.
+
+## Releases (only to release repo)
+
+- All DMG releases, app updates, and GitHub release publications must ONLY be made to `soumyachk101/Swarm-Code-Release`.
+- Never publish releases or upload binaries/assets to the main source repository (`soumyachk101/Swarm-Code`).
