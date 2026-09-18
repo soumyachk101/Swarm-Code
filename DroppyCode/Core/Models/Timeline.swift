@@ -225,6 +225,18 @@ struct TurnSummary: Codable, Hashable, Sendable {
     var changes: FileChangeSummary?
 }
 
+/// One outcome of the Hydra auto-merge for this thread, kept so the lead can be told the true merge state at the front of its next message.
+struct HydraMergeRecord: Codable, Hashable, Sendable {
+    enum Outcome: String, Codable, Sendable { case merged, failed, stray }
+    var at: Date
+    var outcome: Outcome
+    var project: String?
+    var label: String?
+    var url: URL?
+    var files: Int
+    var detail: String?
+}
+
 struct TurnRecord: Codable, Identifiable, Hashable, Sendable {
     var id = UUID()
     var index: Int
@@ -284,6 +296,7 @@ struct ThreadDocument: Codable, Equatable, Sendable {
     var turns: [TurnRecord] = []
     var usage: ContextUsage?
     var followUps: [FollowUpPrompt] = []
+    var hydraMerges: [HydraMergeRecord] = []
 
     init(threadID: UUID) {
         self.threadID = threadID
@@ -296,5 +309,6 @@ struct ThreadDocument: Codable, Equatable, Sendable {
         turns = container.value(.turns, default: [Lenient<TurnRecord>]()).compactMap(\.value)
         usage = container.value(.usage, default: nil)
         followUps = container.value(.followUps, default: [Lenient<FollowUpPrompt>]()).compactMap(\.value)
+        hydraMerges = container.value(.hydraMerges, default: [Lenient<HydraMergeRecord>]()).compactMap(\.value)
     }
 }

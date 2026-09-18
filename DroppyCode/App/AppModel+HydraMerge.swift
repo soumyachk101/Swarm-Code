@@ -78,6 +78,7 @@ extension AppModel {
         }
         guard !groups.isEmpty else {
             guard !stray.isEmpty else { return }
+            runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .stray, project: nil, label: nil, url: nil, files: stray.count, detail: strayBody(stray)))
             note(leadID, "Hydra did not merge: the team's files are outside every project.", strayBody(stray))
             return
         }
@@ -94,6 +95,7 @@ extension AppModel {
         for headID in own.headIDs { updateHydraHead(headID) { $0.mergedAt = mergedAt } }
         // The projects' shares went out; only what no project holds stayed behind.
         if !stray.isEmpty {
+            runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .stray, project: nil, label: nil, url: nil, files: stray.count, detail: strayBody(stray)))
             note(leadID, "Hydra left \(stray.count == 1 ? "a file" : "\(stray.count) files") outside every project.", strayBody(stray))
         }
     }
@@ -134,10 +136,12 @@ extension AppModel {
         let git = Git(checkout)
         guard await git.isRepository(), await git.hasCommits() else { return .failed }
         guard await git.remoteURL() != nil else {
+            runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .failed, project: project.name, label: nil, url: nil, files: 0, detail: title("Hydra did not merge: no remote.") + ": The team's work is in the checkout; there is no origin to push it to."))
             note(leadID, title("Hydra did not merge: no remote."), "The team's work is in the checkout; there is no origin to push it to.")
             return .failed
         }
         guard !(await git.hasOperationInProgress()) else {
+            runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .failed, project: project.name, label: nil, url: nil, files: 0, detail: title("Hydra did not merge: a rebase or merge is underway.") + ": The team's work is in the checkout; finish that first and merge by hand."))
             note(leadID, title("Hydra did not merge: a rebase or merge is underway."), "The team's work is in the checkout; finish that first and merge by hand.")
             return .failed
         }
@@ -149,6 +153,7 @@ extension AppModel {
         let conflicted = await Self.pathsWithConflictMarkers(sorted, in: checkout)
         guard conflicted.isEmpty else {
             let files = conflicted.map { "`\($0)`" }.joined(separator: ", ")
+            runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .failed, project: project.name, label: nil, url: nil, files: 0, detail: title("Hydra did not merge: conflict markers in \(conflicted.count == 1 ? "a file" : "\(conflicted.count) files").") + ": \(files) still \(conflicted.count == 1 ? "holds" : "hold") conflict markers from a head's landing."))
             note(leadID, title("Hydra did not merge: conflict markers in \(conflicted.count == 1 ? "a file" : "\(conflicted.count) files")."), "\(files) still \(conflicted.count == 1 ? "holds" : "hold") conflict markers from a head's landing. Resolve them, then ask for the merge again.")
             return .failed
         }
@@ -184,6 +189,7 @@ extension AppModel {
             // and the move itself names the value it expects, so git refuses the write
             // outright if the branch shifts in the moment between the two.
             guard try await git.commitHash() == head else {
+                runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .failed, project: project.name, label: nil, url: nil, files: 0, detail: title("Hydra did not merge: the checkout moved while it worked.") + ": A commit landed on `\(current ?? target)` while the team's work was being prepared."))
                 note(leadID, title("Hydra did not merge: the checkout moved while it worked."), "A commit landed on `\(current ?? target)` while the team's work was being prepared, and moving the branch now would orphan it. The work is still in the checkout; ask for the merge again.")
                 return .failed
             }
@@ -204,11 +210,13 @@ extension AppModel {
             do {
                 requestURL = try await hydraCreateMergeRequest(git: git, title: subject, body: body, source: branch, target: target)
             } catch {
+                runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .failed, project: project.name, label: nil, url: nil, files: 0, detail: title("Hydra pushed \(branch) but could not open a merge request.") + ": \(error.localizedDescription)"))
                 note(leadID, title("Hydra pushed \(branch) but could not open a merge request."), "\(error.localizedDescription)\n\nOpen one for `\(branch)` into `\(target)` and merge it from there. The work is still in the checkout.")
                 return .failed
             }
             guard let url = requestURL,
                   let link = MergeRequestLink(url: url) else {
+                runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .failed, project: project.name, label: nil, url: nil, files: 0, detail: title("Hydra pushed \(branch) but could not open a merge request.")))
                 note(leadID, title("Hydra pushed \(branch) but could not open a merge request."), "Open one for `\(branch)` into `\(target)` and merge it from there.")
                 return .failed
             }
@@ -216,6 +224,7 @@ extension AppModel {
             do {
                 try await git.mergePullRequest(link)
             } catch {
+                runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .failed, project: project.name, label: link.label, url: url, files: 0, detail: title("Hydra opened \(link.label) but could not merge it.") + ": \(error.localizedDescription)"))
                 note(leadID, title("Hydra opened \(link.label) but could not merge it."), "\(url.absoluteString)\n\n\(error.localizedDescription)\n\nMerge it from the link once it is ready; the branch `\(branch)` has the team's work.")
                 return .failed
             }
@@ -248,10 +257,12 @@ extension AppModel {
                     if (try? await main.pullFastForward()) != nil { lines.append("The project checkout is up to date.") }
                 }
             }
+            runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .merged, project: project.name, label: link.label, url: url, files: files.count, detail: nil))
             note(leadID, title("Hydra merged \(link.label)"), lines.joined(separator: "\n"))
             existingRuntime(for: leadID)?.noteDiffChanged()
             return .merged
         } catch {
+            runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .failed, project: project.name, label: nil, url: nil, files: 0, detail: "Hydra could not merge the team's work: \(error.localizedDescription)"))
             note(leadID, title("Hydra could not merge the team's work."), "\(error.localizedDescription)\n\nThe work is still in the checkout.")
             return .failed
         }

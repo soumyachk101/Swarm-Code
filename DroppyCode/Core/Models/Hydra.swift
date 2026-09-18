@@ -577,7 +577,7 @@ enum HydraPrompts {
     /// What a lead is told when the setting has Droppy Code land the work: the merge is
     /// the app's, not the lead's, whatever else it has been told about merging, and asking
     /// for one is a job it finishes by replying.
-    private static let autoMergeRule = "Droppy Code merges your finished work itself: the moment you answer and every head is back, the files the team changed go out as a merge request on a branch of their own, it is merged, and the checkout is brought up to date. So never commit, push, make a branch, or open or merge a merge request yourself, and never send out a head to, whatever the project's guidelines or the user's standing instructions say about merging. When the user asks you to merge, there is nothing to run: make sure the work is complete, reply that it lands by itself as soon as you finish, and stop."
+    private static let autoMergeRule = "Droppy Code merges your finished work itself: the moment you answer and every head is back, the files the team changed go out as a merge request on a branch of their own, it is merged, and the checkout is brought up to date. So never commit, push, make a branch, or open or merge a merge request yourself, and never send out a head to, whatever the project's guidelines or the user's standing instructions say about merging. Every message from the user opens with a [Hydra] note that carries the merge state: what already merged (with its merge request link), how many files are still unmerged, or why the last merge failed. When the user asks you to merge, or asks whether the work is done or merged, answer from that note and nothing else: if it says the work already went out, say so with the merge request link and stop; if it says files are still unmerged, say they land by themselves the moment you finish this answer, and stop; if it says the last merge failed or left files outside every project, repeat the reason and what the user must do about it. Never say a merge is coming when the note says nothing is pending, and never claim the work merged when the note does not say so."
 
     /// What a lead is told when the setting has it check the heads' work: a quick read of
     /// every file a report names, with the fixes made by the lead itself, so the check
@@ -844,30 +844,62 @@ enum HydraPrompts {
         fallbackPolicy(maxHeads: launch.maxHeads, isolated: launch.isolatesHeads, autoMerges: launch.autoMerges, reviewsHeads: launch.reviewsHeads, heads: launch.headsLabel, projects: launch.projects, profiles: launch.headProfiles)
     }
 
+    /// The true merge state for the front of a lead's message, so it never promises a merge that already happened or claims one that failed.
+    static func mergeStatus(merges: [HydraMergeRecord], unmergedFiles: Int, now: Date = .now) -> String? {
+        func files(_ count: Int) -> String { count == 1 ? "1 file" : "\(count) files" }
+        func when(_ date: Date) -> String { date.formatted(date: .omitted, time: .shortened) }
+        func merged(_ record: HydraMergeRecord) -> String {
+            let link = [record.label, record.url?.absoluteString].compactMap { $0 }.joined(separator: " ")
+            let scope = record.project.map { " in \($0)" } ?? ""
+            return "the team's work already merged as \(link)\(scope) at \(when(record.at)) (\(files(record.files)))."
+        }
+        let pending = unmergedFiles > 0
+            ? "\(files(unmergedFiles)) changed since then are not merged yet; they go out by themselves once you finish this answer with every head back."
+            : "Nothing has changed since, so no merge is pending and none is coming."
+        guard let last = merges.last else {
+            guard unmergedFiles > 0 else { return nil }
+            return "Merge state: \(files(unmergedFiles)) changed in this chat are not merged yet; they go out by themselves once you finish this answer with every head back."
+        }
+        switch last.outcome {
+        case .merged:
+            return "Merge state: \(merged(last)) \(pending)"
+        case .failed:
+            return "Merge state: the last merge failed at \(when(last.at)): \(last.detail ?? "no reason recorded"). The work is still in the checkout and is retried once you finish this answer; if the reason needs the user (a sign-in, a conflict), say exactly that."
+        case .stray:
+            // A stray note right after a merge is a footnote to it: the merge is the news.
+            var parts = ["Merge state:"]
+            if let landed = merges.last(where: { $0.outcome == .merged }) { parts.append(merged(landed)) }
+            parts.append("At \(when(last.at)) \(last.detail ?? "files were changed outside every project")")
+            parts.append(pending)
+            return parts.joined(separator: " ")
+        }
+    }
+
     /// In front of the user's own message: the team so far, when there is one.
-    static func fallbackTurnNote(team: String?) -> String {
-        guard let team else { return "" }
-        return "[Hydra] \(team)\n\n---\n\n"
+    static func fallbackTurnNote(team: String?, merge: String? = nil) -> String {
+        let parts = [team, merge].compactMap { $0 }
+        guard !parts.isEmpty else { return "" }
+        return "[Hydra] " + parts.joined(separator: " ") + "\n\n---\n\n"
     }
 
     /// In front of a report message: the heads are back, and the lead's job is to
     /// finish, not to send out more. `canDelegate` says a round of heads is still left
     /// for what failed or turned out to be missing; otherwise the block is not offered.
-    static func fallbackReportNote(team: String?, canDelegate: Bool) -> String {
+    static func fallbackReportNote(team: String?, merge: String? = nil, canDelegate: Bool) -> String {
         let more = canDelegate
             ? "If the reports open up the next stage of the work, or a head failed, or a piece of the user's request is still undone, send heads out again for exactly that, with the same ```hydra block at the end of your reply; never for verifying, redoing or finishing what a head already did."
             : "Send out no more heads for this request; whatever is left, do yourself."
-        return "[Hydra] Your heads reported back below.\(team.map { " " + $0 } ?? "") \(more)\n\n---\n\n"
+        return "[Hydra] Your heads reported back below." + (team.map { " " + $0 } ?? "") + (merge.map { " " + $0 } ?? "") + " " + more + "\n\n---\n\n"
     }
 
     /// Policy and note together, for a CLI provider with no system prompt to keep the
     /// policy in.
-    static func fallbackPreamble(_ launch: HydraLaunch, team: String?) -> String {
-        fallbackPolicy(launch) + "\n\n" + (fallbackTurnNote(team: team).isEmpty ? "---\n\n" : fallbackTurnNote(team: team))
+    static func fallbackPreamble(_ launch: HydraLaunch, team: String?, merge: String? = nil) -> String {
+        fallbackPolicy(launch) + "\n\n" + (fallbackTurnNote(team: team, merge: merge).isEmpty ? "---\n\n" : fallbackTurnNote(team: team, merge: merge))
     }
 
-    static func fallbackReportPreamble(_ launch: HydraLaunch, team: String?, canDelegate: Bool) -> String {
-        fallbackPolicy(launch) + "\n\n" + fallbackReportNote(team: team, canDelegate: canDelegate)
+    static func fallbackReportPreamble(_ launch: HydraLaunch, team: String?, merge: String? = nil, canDelegate: Bool) -> String {
+        fallbackPolicy(launch) + "\n\n" + fallbackReportNote(team: team, merge: merge, canDelegate: canDelegate)
     }
 
     /// What the lead hears when its delegation block is refused: the request has had its

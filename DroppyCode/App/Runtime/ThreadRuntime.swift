@@ -205,6 +205,7 @@ final class ThreadRuntime {
             if let edit = followUpEdit, !followUps.contains(where: { $0.id == edit.id }) { followUpEdit = nil }
         }
     }
+    private(set) var hydraMerges: [HydraMergeRecord] = []
     /// The queued follow-up being edited, with the edit so far. Lives on the thread rather
     /// than in the editor, so leaving the thread mid-edit and coming back finds the editor
     /// open where it was left.
@@ -524,6 +525,7 @@ final class ThreadRuntime {
         turns = document.turns + turns
         usage = usage ?? document.usage
         followUps = document.followUps.filter { !$0.isEmpty } + followUps
+        hydraMerges = document.hydraMerges + hydraMerges
         // Thinking with no text is nothing to show or keep: Claude Code redacts its
         // reasoning and streams only empty deltas, which older builds stored as blank
         // entries. They are dropped here and never created below. Threads stored before
@@ -577,7 +579,7 @@ final class ThreadRuntime {
         // document needs no write at quit; one just repaired is written once more.
         saveRevision += 1
         let installed = snapshotForPersistence()
-        if installed.items == document.items, installed.turns == document.turns, installed.followUps == document.followUps {
+        if installed.items == document.items, installed.turns == document.turns, installed.followUps == document.followUps, installed.hydraMerges == document.hydraMerges {
             lastSavedRevision = saveRevision
         }
     }
@@ -1208,15 +1210,20 @@ final class ThreadRuntime {
             // the providers with heads of their own sending them out elsewhere) gets only
             // the note on its team in front of a message; every other CLI gets the policy
             // in front of every message, having nowhere else to keep it.
-            if let launch = app.hydraLaunch(for: thread), !launch.runsNatively {
-                let team = HydraPrompts.teamStatus(app.hydraTeam(of: threadID).compactMap(\.hydra))
-                let canDelegate = hydraDelegationRounds < HydraPrompts.maxDelegationRounds
-                if Self.keepsHydraPolicyInSystemPrompt(thread.provider) {
-                    prompt = (hydraHeads == nil ? HydraPrompts.fallbackTurnNote(team: team) : HydraPrompts.fallbackReportNote(team: team, canDelegate: canDelegate)) + prompt
-                } else if hydraHeads == nil {
-                    prompt = HydraPrompts.fallbackPreamble(launch, team: team) + prompt
-                } else {
-                    prompt = HydraPrompts.fallbackReportPreamble(launch, team: team, canDelegate: canDelegate) + prompt
+            if let launch = app.hydraLaunch(for: thread) {
+                let merge = launch.autoMerges ? HydraPrompts.mergeStatus(merges: hydraMerges, unmergedFiles: hydraUnmergedFileCount) : nil
+                if !launch.runsNatively {
+                    let team = HydraPrompts.teamStatus(app.hydraTeam(of: threadID).compactMap(\.hydra))
+                    let canDelegate = hydraDelegationRounds < HydraPrompts.maxDelegationRounds
+                    if Self.keepsHydraPolicyInSystemPrompt(thread.provider) {
+                        prompt = (hydraHeads == nil ? HydraPrompts.fallbackTurnNote(team: team, merge: merge) : HydraPrompts.fallbackReportNote(team: team, merge: merge, canDelegate: canDelegate)) + prompt
+                    } else if hydraHeads == nil {
+                        prompt = HydraPrompts.fallbackPreamble(launch, team: team, merge: merge) + prompt
+                    } else {
+                        prompt = HydraPrompts.fallbackReportPreamble(launch, team: team, merge: merge, canDelegate: canDelegate) + prompt
+                    }
+                } else if merge != nil {
+                    prompt = HydraPrompts.fallbackTurnNote(team: nil, merge: merge) + prompt
                 }
             }
             phase = .running
@@ -2305,6 +2312,19 @@ final class ThreadRuntime {
         turns.filter { !$0.hydraMerged }
     }
 
+    /// The auto-merge's latest outcome for this thread, kept for the lead's next message.
+    func recordHydraMerge(_ record: HydraMergeRecord) {
+        hydraMerges.append(record)
+        if hydraMerges.count > 20 { hydraMerges.removeFirst(hydraMerges.count - 20) }
+        saveRevision += 1
+        saveNow()
+    }
+
+    /// How many distinct files the finished, unmerged turns of this thread touched.
+    var hydraUnmergedFileCount: Int {
+        Set(hydraUnmergedTurns.filter { $0.status != .running }.flatMap { $0.touchedPaths ?? [] }).count
+    }
+
     /// The head a tool row in this timeline sent out, if any.
     func hydraHead(forTool toolID: String) -> UUID? {
         hydraToolHeads[toolID]
@@ -3373,6 +3393,7 @@ final class ThreadRuntime {
         document.turns = turns
         document.usage = usage
         document.followUps = followUps
+        document.hydraMerges = hydraMerges
         return document
     }
 }
