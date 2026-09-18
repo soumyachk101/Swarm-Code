@@ -18,9 +18,9 @@ All notable changes to Droppy Code are documented here, newest first. The format
 - The diff panel builds a file's rows once per change and drops a scroll request a newer one has replaced, the model list keeps its measured row heights without re-evaluating the page for every measurement, a pre-measured popover lays its content out once instead of on every parent update, the update notes on the About page scroll with the page instead of inside a scroller of their own, and the shortcuts page lays out whole so its scroller knows its content height.
 
 ### Refinements
-- Ending a turn no longer folds it away: a finished turn keeps every reply, tool run, note, head and its changed-files card in the open column, in the order they arrived, and only the agent's thinking stays behind the working line's chevron.
-- A running turn keeps those same rows on screen while it works, so prose that arrives between tool calls stays visible instead of waiting for the turn to end.
-- The Chronological order switch is gone from Settings › Conversation: the order it asked for is what a running turn always does now, so the switch had nothing left to change.
+- A finished turn reads folded: it shows its final reply with the turn's plans and any warning, and the steps it took, its heads and its changed-files card wait behind the "Worked for …" line, which opens them in a card of their own.
+- A running turn keeps its work on the working line: the progress card carries the steps the turn is taking, with the agent's thinking and what it says between them behind its chevron, and the reply that concludes the turn lands in the chat once the turn ends.
+- The Chronological order switch is gone from Settings › Conversation: a turn reads folded until its line is clicked, which is what the app always does now, so the switch had nothing left to change.
 
 ### Thanks
 - René (@diazdesandi): confined `search_text` to the project root with a `--` guard against flag smuggling, kept plan mode blocking edits after approve-for-turn, cleared the save timer handle before `saveNow` bails and stopped `WorkingTreeWatch` tearing down the registered watch when a second caller lost the race (!307); one OpenAI-compatible session and one Keychain behind the DeepSeek, Meta and Z.ai providers (!308).
