@@ -172,6 +172,10 @@ final class VeilClock {
         deadline = max(deadline ?? date, date)
         guard link == nil, let screen = NSScreen.main else { return }
         let link = screen.displayLink(target: self, selector: #selector(tick))
+        // A veil is a short opacity ramp, not motion: half the display's rate is
+        // indistinguishable here and halves the per-frame `Text` rebuilds for every
+        // paragraph of a reply that is still dissolving.
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 60, preferred: 30)
         link.add(to: .main, forMode: .common)
         self.link = link
     }
