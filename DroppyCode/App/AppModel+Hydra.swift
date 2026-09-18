@@ -114,7 +114,7 @@ extension AppModel {
     /// heads stay on the lead's provider until it is.
     func hydraHeadsProvider(of pair: HydraPair) -> ProviderKind {
         guard let provider = pair.workerProvider, provider != pair.provider,
-              providers.status(provider).isInstalled, settings.isEnabled(provider) else { return pair.provider }
+              providers.countsAsInstalled(provider), settings.isEnabled(provider) else { return pair.provider }
         return provider
     }
 

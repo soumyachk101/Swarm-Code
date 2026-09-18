@@ -9,9 +9,11 @@ import Foundation
 
 extension AppModel {
     /// The pairs the model picker offers: the ones whose provider is installed and
-    /// switched on, in the order they were set up.
+    /// switched on, in the order they were set up. A provider no check has looked at yet
+    /// counts as installed (`countsAsInstalled`): the chat a launch opens is built before
+    /// the providers are probed, and it must still find the pair it was last worked in.
     var hydraPickerPairs: [HydraPair] {
-        settings.hydraPairs.filter { providers.status($0.provider).isInstalled && settings.isEnabled($0.provider) }
+        settings.hydraPairs.filter { providers.countsAsInstalled($0.provider) && settings.isEnabled($0.provider) }
     }
 
     /// Whether a chat leads with this pair right now: Hydra on, and the pair the one picked

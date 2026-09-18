@@ -176,7 +176,15 @@ final class ProviderRegistry {
     }
 
     var availableProviders: [ProviderKind] {
-        ProviderKind.allCases.filter { settings.isEnabled($0) && (statuses[$0]?.isInstalled ?? true) }
+        ProviderKind.allCases.filter { settings.isEnabled($0) && countsAsInstalled($0) }
+    }
+
+    /// Whether a provider counts as installed with its first check still out: a check that
+    /// has not happened yet is not a "no". The launch screen builds its first chat before
+    /// `bootstrap()` probes the providers (see `AppDelegate`), so a strict read there found
+    /// no pair and no provider: every one of them read as missing.
+    func countsAsInstalled(_ provider: ProviderKind) -> Bool {
+        statuses[provider]?.isInstalled ?? true
     }
 
     func status(_ provider: ProviderKind) -> ProviderStatus {
