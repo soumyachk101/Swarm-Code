@@ -95,13 +95,16 @@ final class WorkingTreeWatch: Sendable {
             return nil
         }
         let watch = WorkingTreeWatch(directory: directory, gitDirectory: gitDirectory)
-        let evicted: WorkingTreeWatch? = watches.withLock { watches in
-            if let existing = watches.first(where: { $0.directory == directory })?.watch { return existing }
+        // Whoever reached the register first keeps it; the stream built here is then the one
+        // to take down, never the registered one. Tearing that one down instead stopped its
+        // stream and deleted the scratch index a capture may be writing through.
+        let (shared, dropped): (WorkingTreeWatch, WorkingTreeWatch?) = watches.withLock { watches in
+            if let existing = watches.first(where: { $0.directory == directory })?.watch { return (existing, watch) }
             watches.append((directory, watch))
-            return watches.count > limit ? watches.removeFirst().watch : nil
+            return (watch, watches.count > limit ? watches.removeFirst().watch : nil)
         }
-        if let evicted, evicted !== watch { evicted.tearDown() }
-        return watches.withLock { $0.first { $0.directory == directory }?.watch }
+        if let dropped, dropped !== shared { dropped.tearDown() }
+        return shared
     }
 
     let directory: String

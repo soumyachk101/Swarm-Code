@@ -13,7 +13,10 @@ struct NativeFileTools: Sendable {
     }
     private static let skippedDirectories: Set<String> = [".git", "node_modules", ".build", "build", "dist", "DerivedData", "Pods", "target", ".venv", "venv"]
 
-    private func resolveURL(_ path: String) throws -> URL {
+    /// The absolute URL a model-supplied path refers to, refused when it leaves the
+    /// project. Module-visible because `search_text` needs the same answer: it hands its
+    /// path to grep instead of to a method on this type.
+    func resolveURL(_ path: String) throws -> URL {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ProviderError.failed("A file path is required.") }
         let root = URL(fileURLWithPath: workingDirectory).standardizedFileURL
