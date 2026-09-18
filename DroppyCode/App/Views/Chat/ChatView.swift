@@ -1460,6 +1460,11 @@ private struct ScriptsMenu: View {
         .sheet(isPresented: $isEditing) {
             ScriptsEditor(projectID: project.id)
                 .presentedChrome()
+                // The panel is a sheet, so the Settings window's own backdrop is not under it:
+                // it paints the same glass at the same setting, clipped to the same curve, so
+                // the two panels read as one window's worth of chrome.
+                .presentationCornerRadius(Chrome.windowCornerRadius)
+                .presentationBackground { WindowBackdrop(opacity: model.settings.backdropOpacity) }
         }
     }
 }
