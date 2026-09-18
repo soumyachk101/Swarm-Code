@@ -888,12 +888,16 @@ enum HydraPrompts {
             let scope = record.project.map { " in \($0)" } ?? ""
             return "the team's work already merged as \(link)\(scope) at \(when(record.at)) (\(files(record.files)))."
         }
+        func pendingLine(_ prefix: String) -> String {
+            let one = unmergedFiles == 1
+            return "\(prefix) \(one ? "is" : "are") not merged yet; \(one ? "it goes" : "they go") out by \(one ? "itself" : "themselves") once you finish this answer with every head back."
+        }
         let pending = unmergedFiles > 0
-            ? "\(files(unmergedFiles)) changed since then are not merged yet; they go out by themselves once you finish this answer with every head back."
+            ? pendingLine("\(files(unmergedFiles)) changed since then")
             : "Nothing has changed since, so no merge is pending and none is coming."
         guard let last = merges.last else {
             guard unmergedFiles > 0 else { return nil }
-            return "Merge state: \(files(unmergedFiles)) changed in this chat are not merged yet; they go out by themselves once you finish this answer with every head back."
+            return "Merge state: \(pendingLine("\(files(unmergedFiles)) changed in this chat"))"
         }
         switch last.outcome {
         case .merged:
