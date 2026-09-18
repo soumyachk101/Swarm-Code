@@ -106,7 +106,7 @@ private struct MCPLeadCard: View {
                         .padding(14)
                     }
                 }
-                Text("When you connect a server here, it is the only MCP server your threads use. Anything set up in a terminal or another app's config is left exactly as it is, and stays out of the way until you disconnect.")
+                Text("Connect a server here and every thread can use it. Anything set up in a terminal or another app stays just as it is.")
                     .font(.system(size: 12))
                     .foregroundStyle(Chrome.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -521,17 +521,18 @@ private struct MCPInfoPopover: View {
         case .http(let url, _):
             return "Remote server at \(Self.host(of: url))."
         case .oauth(let url):
-            return "Remote server at \(Self.host(of: entry.fill(url, values: [:]))); signs in through your browser the first time."
+            return "Remote server at \(Self.host(of: entry.fill(url, values: [:]))). You sign in once in your browser."
         }
     }
 
     private var needs: String {
         let required = entry.fields.filter(\.isRequired).map(\.label)
         let optional = entry.fields.filter { !$0.isRequired }.map(\.label)
-        if required.isEmpty && optional.isEmpty { return entry.isOAuth ? "An account to sign in with." : "Nothing, it works right away." }
-        var parts: [String] = []
-        if !required.isEmpty { parts.append(required.joined(separator: ", ")) }
-        if !optional.isEmpty { parts.append("optionally " + optional.joined(separator: ", ").lowercased()) }
+        if required.isEmpty && optional.isEmpty {
+            return entry.isOAuth ? "Only your sign-in." : "Nothing — press Connect."
+        }
+        var parts = required
+        if !optional.isEmpty { parts.append("optional: " + optional.joined(separator: ", ").lowercased()) }
         return parts.joined(separator: "; ") + "."
     }
 

@@ -19,7 +19,7 @@ enum MCPProbeError: LocalizedError, Sendable {
             switch name {
             case "npx": return "npx isn't installed. Install Node.js from nodejs.org, then try again."
             case "uvx": return "uvx isn't installed. Run `brew install uv` in Terminal, then try again."
-            default: return "\(name) isn't installed."
+            default: return "\(name) isn't installed. Install it, then try again."
             }
         case .exited(let code, let stderr):
             let last = stderr
@@ -32,7 +32,7 @@ enum MCPProbeError: LocalizedError, Sendable {
             return "The server didn't answer in time."
         case .http(let status, _):
             switch status {
-            case 401, 403: return "The key was rejected. Check it and try again."
+            case 401, 403: return "That key was refused. Press Try again and paste a new one."
             case 404: return "Nothing answered at that address. Check the address and try again."
             default: return "The server answered \(status)."
             }
@@ -41,7 +41,7 @@ enum MCPProbeError: LocalizedError, Sendable {
         case .needsSetup(let guide):
             return guide.reason
         case .unavailable(let host):
-            return "\(host) didn't answer its MCP address (404). If the address is right, it's a hiccup on their side: try again in a few minutes."
+            return "\(host) didn't answer (404). If the address is right, try again in a few minutes."
         case .malformed(let detail):
             return "The server sent something unexpected: \(detail)"
         }
@@ -363,7 +363,7 @@ enum MCPProbe {
         }()
         return MCPSetupGuide(
             title: "Turn on GitLab's MCP server",
-            reason: "You're signed in, but GitLab keeps its MCP server off until a group Owner allows it. Until then its address answers not found, whatever the sign-in.",
+            reason: "You're signed in, but GitLab keeps its MCP server off until a group owner turns it on. Until then, the address answers not found.",
             steps: [
                 "Open your groups and pick the top-level group your projects live in",
                 "Go to Settings › General and expand Permissions and group features",
