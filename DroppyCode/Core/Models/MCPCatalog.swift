@@ -66,12 +66,12 @@ enum MCPCatalog {
             category: .knowledge,
             asset: "mcp-context7",
             colorValue: 0x5B8DEF,
-            transport: .http(url: "https://mcp.context7.com/mcp", headers: ["CONTEXT7_API_KEY": "{key}"]),
+            transport: .http(url: "https://mcp.context7.com/mcp", headers: ["Authorization": "Bearer {key}"]),
             fields: [
                 MCPField(key: "key", label: "API key", placeholder: "ctx7sk-…", kind: .secret, help: "Optional, lifts the rate limit", isRequired: false)
             ],
             docsURL: "https://github.com/upstash/context7",
-            sampleTools: ["resolve-library-id", "get-library-docs"],
+            sampleTools: ["resolve-library-id", "query-docs"],
             keysURL: "https://context7.com/dashboard"
         ),
         MCPCatalogEntry(
@@ -87,7 +87,7 @@ enum MCPCatalog {
                 MCPField(key: "root", label: "Folder", placeholder: "/Users/you/Projects", kind: .path, help: "The folder the server may use", defaultValue: NSHomeDirectory())
             ],
             docsURL: "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
-            sampleTools: ["read_file", "write_file", "list_directory", "search_files"]
+            sampleTools: ["read_text_file", "write_file", "list_directory", "search_files"]
         ),
         MCPCatalogEntry(
             id: "fetch",
@@ -184,7 +184,7 @@ enum MCPCatalog {
                 MCPField(key: "key", label: "API key", placeholder: "…", kind: .secret, help: "Copy your API key")
             ],
             docsURL: "https://github.com/exa-labs/exa-mcp-server",
-            sampleTools: ["web_search_exa", "get_code_context_exa", "crawling_exa"],
+            sampleTools: ["web_search_exa", "web_fetch_exa", "agent_run"],
             keysURL: "https://dashboard.exa.ai/api-keys"
         ),
         MCPCatalogEntry(
@@ -200,7 +200,7 @@ enum MCPCatalog {
                 MCPField(key: "key", label: "API key", placeholder: "fc-…", kind: .secret, help: "Copy your API key")
             ],
             env: ["FIRECRAWL_API_KEY": "{key}"],
-            docsURL: "https://github.com/mendableai/firecrawl-mcp-server",
+            docsURL: "https://github.com/firecrawl/firecrawl-mcp-server",
             sampleTools: ["firecrawl_scrape", "firecrawl_search", "firecrawl_crawl", "firecrawl_map"],
             keysURL: "https://www.firecrawl.dev/app/api-keys"
         ),
@@ -212,14 +212,14 @@ enum MCPCatalog {
             category: .search,
             asset: "mcp-perplexity",
             colorValue: 0x20808D,
-            transport: .stdio(command: "npx", args: ["-y", "server-perplexity-ask"]),
+            transport: .stdio(command: "npx", args: ["-y", "@perplexity-ai/mcp-server"]),
             fields: [
                 MCPField(key: "key", label: "API key", placeholder: "pplx-…", kind: .secret, help: "Copy your API key")
             ],
             env: ["PERPLEXITY_API_KEY": "{key}"],
             docsURL: "https://github.com/perplexityai/modelcontextprotocol",
-            sampleTools: ["perplexity_ask", "perplexity_research", "perplexity_reason"],
-            keysURL: "https://www.perplexity.ai/settings/api"
+            sampleTools: ["perplexity_search", "perplexity_ask", "perplexity_research", "perplexity_reason"],
+            keysURL: "https://console.perplexity.ai"
         ),
         MCPCatalogEntry(
             id: "slack",
@@ -229,14 +229,13 @@ enum MCPCatalog {
             category: .work,
             asset: "mcp-slack",
             colorValue: 0x4A154B,
-            transport: .stdio(command: "npx", args: ["-y", "@modelcontextprotocol/server-slack"]),
+            transport: .stdio(command: "npx", args: ["-y", "slack-mcp-server@latest", "--transport", "stdio"]),
             fields: [
-                MCPField(key: "token", label: "Bot token", placeholder: "xoxb-…", kind: .secret, help: "Bot token from OAuth & Permissions"),
-                MCPField(key: "team", label: "Team ID", placeholder: "T0123456789", kind: .text, help: "Workspace ID, starts with T")
+                MCPField(key: "token", label: "Bot token", placeholder: "xoxb-…", kind: .secret, help: "Bot token from OAuth & Permissions; invite the bot to the channels it should see")
             ],
-            env: ["SLACK_BOT_TOKEN": "{token}", "SLACK_TEAM_ID": "{team}"],
-            docsURL: "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/slack",
-            sampleTools: ["slack_list_channels", "slack_post_message", "slack_get_channel_history"],
+            env: ["SLACK_MCP_XOXB_TOKEN": "{token}", "SLACK_MCP_ADD_MESSAGE_TOOL": "true"],
+            docsURL: "https://github.com/korotovsky/slack-mcp-server",
+            sampleTools: ["channels_list", "conversations_history", "conversations_search_messages", "conversations_add_message"],
             keysURL: "https://api.slack.com/apps"
         ),
         MCPCatalogEntry(
@@ -272,9 +271,9 @@ enum MCPCatalog {
             category: .work,
             asset: "mcp-atlassian",
             colorValue: 0x0052CC,
-            transport: .oauth(url: "https://mcp.atlassian.com/v1/mcp"),
+            transport: .oauth(url: "https://mcp.atlassian.com/v2/mcp"),
             docsURL: "https://developer.atlassian.com/cloud/rovo-mcp/",
-            sampleTools: ["searchJiraIssuesUsingJql", "createJiraIssue", "getConfluencePage"]
+            sampleTools: ["searchJiraIssuesUsingJql", "createJiraIssue", "getConfluenceContent"]
         ),
         MCPCatalogEntry(
             id: "figma",
@@ -297,7 +296,7 @@ enum MCPCatalog {
             asset: "mcp-sentry",
             colorValue: 0x7B61FF,
             transport: .oauth(url: "https://mcp.sentry.dev/mcp"),
-            docsURL: "https://docs.sentry.io/product/sentry-mcp/",
+            docsURL: "https://mcp.sentry.dev",
             sampleTools: ["search_issues", "get_issue_details", "find_projects"]
         ),
         MCPCatalogEntry(
@@ -310,7 +309,7 @@ enum MCPCatalog {
             colorValue: 0x000000,
             isMonochrome: true,
             transport: .oauth(url: "https://mcp.vercel.com"),
-            docsURL: "https://vercel.com/docs/mcp/vercel-mcp",
+            docsURL: "https://vercel.com/docs/agent-resources/vercel-mcp",
             sampleTools: ["list_projects", "list_deployments", "get_deployment_build_logs"]
         ),
         MCPCatalogEntry(
@@ -334,8 +333,8 @@ enum MCPCatalog {
             asset: "mcp-supabase",
             colorValue: 0x3ECF8E,
             transport: .oauth(url: "https://mcp.supabase.com/mcp"),
-            docsURL: "https://supabase.com/docs/guides/getting-started/mcp",
-            sampleTools: ["list_projects", "execute_sql", "apply_migration", "get_logs"]
+            docsURL: "https://supabase.com/docs/guides/ai-tools/mcp",
+            sampleTools: ["list_projects", "execute_sql", "apply_migration", "query_logs"]
         ),
         MCPCatalogEntry(
             id: "stripe",
@@ -360,22 +359,22 @@ enum MCPCatalog {
             isMonochrome: true,
             transport: .oauth(url: "https://mcp.resend.com/mcp"),
             docsURL: "https://github.com/resend/resend-mcp",
-            sampleTools: ["send_email", "list_contacts", "create_broadcast", "list_domains"]
+            sampleTools: ["send-email", "list-contacts", "create-broadcast", "list-domains"]
         ),
         MCPCatalogEntry(
             id: "postgres",
             name: "PostgreSQL",
             vendor: "PostgreSQL",
-            summary: "Runs read queries against a Postgres database",
+            summary: "Runs SQL and explores the schema of a Postgres database",
             category: .data,
             asset: "mcp-postgres",
             colorValue: 0x4169E1,
-            transport: .stdio(command: "npx", args: ["-y", "@modelcontextprotocol/server-postgres", "{url}"]),
+            transport: .stdio(command: "npx", args: ["-y", "@bytebase/dbhub@latest", "--transport", "stdio", "--dsn", "{url}"]),
             fields: [
                 MCPField(key: "url", label: "Connection string", placeholder: "postgresql://user:pass@host:5432/db", kind: .secret, help: "A read-only role is safest")
             ],
-            docsURL: "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/postgres",
-            sampleTools: ["query"]
+            docsURL: "https://github.com/bytebase/dbhub",
+            sampleTools: ["execute_sql", "search_objects"]
         ),
         MCPCatalogEntry(
             id: "sqlite",
@@ -390,7 +389,7 @@ enum MCPCatalog {
                 MCPField(key: "path", label: "Database file", placeholder: "/path/to/app.db", kind: .path, help: "Created if it does not exist")
             ],
             docsURL: "https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sqlite",
-            sampleTools: ["read_query", "write_query", "list_tables", "describe_table"]
+            sampleTools: ["read_query", "write_query", "list_tables", "describe-table"]
         ),
         MCPCatalogEntry(
             id: "mongodb",
@@ -422,7 +421,7 @@ enum MCPCatalog {
                 MCPField(key: "token", label: "Access token", placeholder: "hf_…", kind: .secret, help: "Optional, raises the limits", isRequired: false)
             ],
             docsURL: "https://github.com/huggingface/hf-mcp-server",
-            sampleTools: ["model_search", "dataset_search", "paper_search", "hub_repo_details"],
+            sampleTools: ["hub_repo_search", "hub_repo_details", "hf_fs", "hf_whoami"],
             keysURL: "https://huggingface.co/settings/tokens"
         ),
         MCPCatalogEntry(
