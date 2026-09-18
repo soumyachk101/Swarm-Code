@@ -415,7 +415,6 @@ final class ProviderRegistry {
         defer { loadingCatalogs.remove(provider) }
         await LoginEnvironment.load()
         guard let executable = executable(for: provider) else { return }
-        attemptedCatalogs.insert(provider)
         let environment = environment(for: provider)
         let list: [ModelOption]? = switch provider {
         case .claude: await loadClaudeCatalog(executable: executable, environment: environment)
@@ -427,7 +426,13 @@ final class ProviderRegistry {
         case .cursor, .opencode, .grok, .devin: try? await ACPSession.probeModels(provider: provider, executable: executable, environment: environment)
         case .deepseek, .meta, .zai: nil
         }
-        if let list, !list.isEmpty { updateCatalog(list, for: provider) }
+        if let list, !list.isEmpty {
+            updateCatalog(list, for: provider)
+            // Only a delivered catalog closes the attempt: a probe that came back with
+            // nothing (a cold CLI losing to its handshake timeout, say) is tried again
+            // on the next ask rather than leaving the provider empty for the whole run.
+            attemptedCatalogs.insert(provider)
+        }
     }
 
     /// An OpenCode list cached before the catalog probe walked the models for their
