@@ -793,11 +793,13 @@ extension AppModel {
         let name = info.persona.name
         if !landing.conflicts.isEmpty {
             let files = landing.conflicts.map { "`\($0)`" }.joined(separator: ", ")
+            // Worded as what happens next, not as damage: the lead settles the markers
+            // before anything goes out, so the reader has nothing to do.
             leadRuntime.appendHydraNote("""
-            \(name)'s work landed with conflict markers in \(landing.conflicts.count == 1 ? "1 file" : "\(landing.conflicts.count) files").
+            \(name)'s work landed; the lead is settling a conflict in \(landing.conflicts.count == 1 ? "1 file" : "\(landing.conflicts.count) files").
             \(files)
 
-            The checkout had moved on where \(name) was working, so the merge was three-way. Resolve the markers before the work goes out; a merge refuses while they are there.
+            The checkout had moved on where \(name) was working, so the merge was three-way and left markers in \(landing.conflicts.count == 1 ? "this file" : "these files"). The lead resolves them before the work goes out; nothing to do on your side.
             """)
         }
         if let path = landing.patchPath {
