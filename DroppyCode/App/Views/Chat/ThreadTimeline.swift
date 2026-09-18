@@ -1876,8 +1876,9 @@ private struct DisplayBlockView: View, Equatable {
 
 /// A turn while it runs (or one that ended without its marker, the app having quit under
 /// it): its prompt and anything sent to steer it as rows of their own in order, each
-/// arriving like a row of the stack, then the working line, then whatever the agent has
-/// said since its last step. The working line carries the turn's work so far, every tool
+/// arriving like a row of the stack, then the working line, then the reply since its last
+/// step, which streams below the card and which the card takes back when a tool call
+/// follows. The working line carries the turn's work so far, every tool
 /// run and the prose between runs (its summary beside the spinner, the steps behind the
 /// chevron), the same way the folded turn keeps them behind its chevron once it is over
 /// (see `TurnFinishedBlock.Derived`): what follows the last tool call is the answer taking
@@ -1893,6 +1894,14 @@ private struct TurnRunningBlock: View {
     /// only, so it changes when a row comes or goes and never while one streams.
     @State private var groupCache = TurnGroupCache()
 
+    /// The tail's own arrival and departure. It arrives like every other row; when a tool
+    /// call turns it into narration the card above takes the words back, so they leave in
+    /// one short move rather than blinking out.
+    private static let tailTransition: AnyTransition = .asymmetric(
+        insertion: .modifier(active: SoftAppearModifier(isVisible: false), identity: SoftAppearModifier(isVisible: true)).animation(.softAppear),
+        removal: .opacity.combined(with: .scale(scale: 0.97, anchor: .top)).animation(.easeOut(duration: 0.18))
+    )
+
     var body: some View {
         var groups = groupCache.groups(for: entries)
         // The heads the turn sent out come last from the build; they render below the
@@ -1902,6 +1911,10 @@ private struct TurnRunningBlock: View {
             heads = groups.removeLast()
         }
         var liveWork: [TimelineEntry] = []
+        // The reply since the last step is the tail: it renders below the working line, so
+        // the card sits above what the agent is saying right now, the way the folded turn
+        // reads. Everything else the fold leaves stays a row above the card.
+        var trail: [TimelineGroup] = []
         // Chronological on: every group stays a row in arrival order and the working line
         // carries nothing; off, the steps before the last tool call move into the line.
         if !context.chronological, showsWorking, let lastWork = groups.lastIndex(where: { if case .work = $0 { return true } else { return false } }) {
@@ -1916,7 +1929,11 @@ private struct TurnRunningBlock: View {
                 case .single(let entry) where index < lastWork && entry.kind == .assistant:
                     liveWork.append(entry)
                 default:
-                    rows.append(group)
+                    if index > lastWork, case .single(let entry) = group, entry.kind == .assistant {
+                        trail.append(group)
+                    } else {
+                        rows.append(group)
+                    }
                 }
             }
             groups = rows
@@ -1937,6 +1954,11 @@ private struct TurnRunningBlock: View {
             if showsWorking {
                 WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
                     .transition(ThreadTimeline.rowTransition)
+            }
+            ForEach(trail) { group in
+                TurnRow(group: group, runtime: runtime, context: context)
+                    .equatable()
+                    .transition(Self.tailTransition)
             }
         }
     }

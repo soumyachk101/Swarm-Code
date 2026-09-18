@@ -6,6 +6,9 @@ All notable changes to Droppy Code are documented here, newest first. The format
 
 ## [Unreleased]
 
+### Bug fixes
+- The GitLab MCP server no longer looks like a hiccup on GitLab's side: a top-level group that hasn't allowed MCP client access is answered by GitLab 19.4 and earlier with 404 instead of "MCP server disabled", so connecting ended in "gitlab.com didn't answer its MCP address (404), try again in a few minutes". That answer now opens the steps to turn MCP on for the group, and the app's own MCP proxy answers a path it has no route for with 502 rather than a 404 that reads as the server's reply.
+
 ### Thanks
 - René (@diazdesandi): confined `search_text` to the project root with a `--` guard against flag smuggling, kept plan mode blocking edits after approve-for-turn, cleared the save timer handle before `saveNow` bails and stopped `WorkingTreeWatch` tearing down the registered watch when a second caller lost the race (!307); one OpenAI-compatible session and one Keychain behind the DeepSeek, Meta and Z.ai providers (!308).
 - Bryan Galdámez (@JosueGalRe): finished turns open chronologically and a head wears its profile (!283); native heads routed to head profiles on Claude, Codex and Copilot (!285); the pair editor keeps its effort row for a model whose catalog entry declares no efforts yet (!304); a model catalog probe that came back empty is tried again on the next ask instead of closing the provider's list for the rest of the run (!306).

@@ -25,6 +25,11 @@
 - There is no test target and no test scripts; the build is the check
   (`xcodebuild -project DroppyCode.xcodeproj -scheme DroppyCode -configuration Debug build`).
 
+## Hydra heads (the chat team)
+
+- A head never builds or otherwise verifies: no `xcodebuild`, no `scripts/quick_run.sh`, no check command. It edits the files the lead briefed it on and reports, nothing more.
+- The lead runs the one build that proves the change, in the checkout, after the heads report.
+
 ## Relaunching (never unprompted)
 
 - NEVER run `scripts/quick_run.sh` or otherwise quit/relaunch Droppy Code unless Jordy explicitly asks for it in that moment.

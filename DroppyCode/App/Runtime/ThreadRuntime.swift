@@ -2817,6 +2817,9 @@ final class ThreadRuntime {
         if entryIndex[id] == nil {
             switch kind {
             case .message:
+                // Not until there is something to read: some providers open a text
+                // block with an empty delta, which would leave a blank reply row behind.
+                guard !text.isEmpty else { return }
                 append(TimelineItem(id: id, turnID: turnIDForNewRows, content: .assistant(AssistantMessage(text: "", isStreaming: true))))
             case .reasoning:
                 // Not until there is something to read: a redacted thinking block
