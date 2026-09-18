@@ -6,6 +6,10 @@ enum MCPProbeError: LocalizedError, Sendable {
     case timedOut
     case http(status: Int, body: String)
     case unauthorizedOAuth
+    /// The sign-in is fine but the server itself is switched off on the
+    /// remote side (GitLab answers 403 "MCP server disabled" until the
+    /// top-level group allows MCP clients).
+    case serverDisabled
     case malformed(String)
 
     var errorDescription: String? {
@@ -33,6 +37,8 @@ enum MCPProbeError: LocalizedError, Sendable {
             }
         case .unauthorizedOAuth:
             return "Sign-in was rejected. Sign in again in your browser."
+        case .serverDisabled:
+            return "Signed in, but the MCP server is switched off on the server side. A group Owner turns it on under the group's Settings › General › Permissions and group features › MCP client access."
         case .malformed(let detail):
             return "The server sent something unexpected: \(detail)"
         }
@@ -238,7 +244,10 @@ enum MCPProbe {
                 let posted = try await postJSON(to: url, headers: server.headers, sessionID: sessionID, payload: payload)
                 sessionID = posted.sessionID ?? sessionID
                 return posted.body
-            } catch MCPProbeError.http(let status, _) where (status == 401 || status == 403) && server.oauthUpstream != nil {
+            } catch MCPProbeError.http(let status, let body) where (status == 401 || status == 403) && server.oauthUpstream != nil {
+                if status == 403, body.localizedCaseInsensitiveContains("MCP server disabled") {
+                    throw MCPProbeError.serverDisabled
+                }
                 throw MCPProbeError.unauthorizedOAuth
             }
         }
