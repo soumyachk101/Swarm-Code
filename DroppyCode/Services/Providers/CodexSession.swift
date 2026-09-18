@@ -241,6 +241,15 @@ final class CodexSession: ProviderSession {
                 params["developerInstructions"] = .string(HydraPrompts.fallbackPolicy(hydra))
             }
         }
+        // Anti-slop guidance rides along for every thread, Hydra or not, and combines with
+        // whatever developer instructions are already set (nil for an ordinary chat). The
+        // off notice still goes out, so a resumed thread cannot keep earlier guidance alive.
+        let existingInstructions = params["developerInstructions"]?.string
+        params["developerInstructions"] = .string(
+            [existingInstructions, AntiSlopPolicy.instructions(enabled: configuration.antiSlopEnabled)]
+                .compactMap { $0 }
+                .joined(separator: "\n\n")
+        )
         // Connected MCP servers from Settings ride along at launch; no file means none.
         // Merged into whatever config is already there, never replacing it.
         if let servers = MCPProviderConfig.codexOverrides() {

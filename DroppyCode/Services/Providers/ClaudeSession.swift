@@ -95,18 +95,18 @@ final class ClaudeSession: ProviderSession {
         // --strict-mcp-config leaves the user's own Claude config files alone but out of this session; with none connected, the flag is not passed and Claude reads its own config as usual.
         if let mcpConfig = MCPProviderConfig.claudeConfigPath() { arguments += ["--mcp-config", mcpConfig, "--strict-mcp-config"] }
         var environment = configuration.environment
-        let options: Set<String> = configuration.hydra == nil ? [] : await Self.knownOptions(of: executable, environment: environment)
+        let options = await Self.knownOptions(of: executable, environment: environment)
+        // Resumed chats must use the current setting, even with Hydra off.
+        if options.contains("--system-prompt-snapshot") { arguments += ["--system-prompt-snapshot", "off"] }
+        var hydraPolicy: String?
         if let hydra = configuration.hydra {
             // The system prompt is rendered fresh rather than replayed from the
             // conversation's first request, so switching Hydra on for an existing chat
             // reaches the model.
             if hydra.runsNatively {
                 // The heads and the lead's brief.
-                arguments += [
-                    "--agents", HydraPrompts.claudeAgents(hydra).compactString,
-                    "--append-system-prompt", HydraPrompts.policy(for: .claude, hydra),
-                ]
-                if options.contains("--system-prompt-snapshot") { arguments += ["--system-prompt-snapshot", "off"] }
+                arguments += ["--agents", HydraPrompts.claudeAgents(hydra).compactString]
+                hydraPolicy = HydraPrompts.policy(for: .claude, hydra)
                 if options.contains("--forward-subagent-text") { arguments.append("--forward-subagent-text") }
                 // Uncapped, the CLI keeps its own limit on heads at once.
                 if let cap = hydra.maxHeads { environment["CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS"] = String(cap) }
@@ -114,11 +114,18 @@ final class ClaudeSession: ProviderSession {
                 // The heads run on another provider, as threads Droppy Code starts: the
                 // lead asks for them with the delegation block, and its own agent tool goes,
                 // since a head it spawned itself would run on its own model.
-                arguments += ["--append-system-prompt", HydraPrompts.fallbackPolicy(hydra)]
-                if options.contains("--system-prompt-snapshot") { arguments += ["--system-prompt-snapshot", "off"] }
+                hydraPolicy = HydraPrompts.fallbackPolicy(hydra)
                 arguments += ["--disallowedTools", "Agent", "Task"]
             }
         }
+        // Exactly one combined system prompt segment for every session, Hydra or not. The
+        // off notice goes out too, so a resumed thread cannot keep earlier guidance alive.
+        arguments += [
+            "--append-system-prompt",
+            [hydraPolicy, AntiSlopPolicy.instructions(enabled: configuration.antiSlopEnabled)]
+                .compactMap { $0 }
+                .joined(separator: "\n\n"),
+        ]
         if let resumeID = configuration.resumeID {
             arguments += ["--resume", resumeID]
             if let anchor = configuration.resumeAt { arguments += ["--resume-session-at", anchor] }

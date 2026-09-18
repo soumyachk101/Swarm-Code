@@ -306,6 +306,9 @@ struct ThreadDocument: Codable, Equatable, Sendable {
     var usage: ContextUsage?
     var followUps: [FollowUpPrompt] = []
     var hydraMerges: [HydraMergeRecord] = []
+    /// The forwarded chat this thread continues, when the user opened it with one. Nil for
+    /// a thread that started here. Optional, so threads stored before it still decode.
+    var continuation: ThreadContinuation? = nil
 
     init(threadID: UUID) {
         self.threadID = threadID
@@ -319,5 +322,6 @@ struct ThreadDocument: Codable, Equatable, Sendable {
         usage = container.value(.usage, default: nil)
         followUps = container.value(.followUps, default: [Lenient<FollowUpPrompt>]()).compactMap(\.value)
         hydraMerges = container.value(.hydraMerges, default: [Lenient<HydraMergeRecord>]()).compactMap(\.value)
+        continuation = container.value(.continuation, default: nil)
     }
 }

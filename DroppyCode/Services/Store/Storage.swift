@@ -4,6 +4,16 @@ import Synchronization
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Just enough of a stored thread to read the files a forwarded continuation points at:
+/// the sweep runs over whole files as text, so only this key is ever decoded.
+private struct StoredContinuation: Decodable {
+    struct Continuation: Decodable {
+        var attachments: [Attachment]?
+    }
+
+    var continuation: Continuation?
+}
+
 /// Where the app keeps its library, thread histories and attachments.
 enum Storage {
     static let root: URL = {
@@ -118,6 +128,14 @@ enum Storage {
                 // The encoder writes the path's slashes as `\/`.
                 for match in text.matches(of: #/attachments\\?\/([0-9A-Fa-f-]{36}\.[A-Za-z0-9]+)/#) {
                     referenced.insert(String(match.output.1))
+                }
+                // A forwarded continuation keeps its own copy of the metadata, and the
+                // files it names stay referenced while the thread holding it is on disk.
+                if text.contains("\"continuation\""),
+                   let stored = try? JSONDecoder.storage.decode(StoredContinuation.self, from: data) {
+                    for attachment in stored.continuation?.attachments ?? [] {
+                        referenced.insert(attachment.url.lastPathComponent)
+                    }
                 }
             }
             let cutoff = Date.now.addingTimeInterval(-24 * 60 * 60)
