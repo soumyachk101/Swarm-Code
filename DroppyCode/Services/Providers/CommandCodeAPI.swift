@@ -124,12 +124,31 @@ enum CommandCodeAPI {
         )
     }
 
-    /// "GOAT" from `individual-goat`, "Max 20×" from `individual-max-20x`, "Teams Pro" from
-    /// `teams-pro`: the plan names commandcode.ai/pricing uses.
+    /// The plan names commandcode.ai/pricing sells, keyed by the plan id the billing API
+    /// reports in `data.planId`. The ids do not carry the tier's multiplier — "Max 10×" is
+    /// `individual-max` and "Max 20×" is `individual-ultra`, and both Pro ids are sold as
+    /// "Pro" — so the pricing page's own names are the only place the two Max tiers can be
+    /// told apart.
+    private static let planNames: [String: String] = [
+        "individual-go": "Go",
+        "individual-goat": "GOAT",
+        "individual-pro": "Pro",
+        "individual-pro-v1": "Pro",
+        "individual-provider": "Provider",
+        "individual-max": "Max 10×",
+        "individual-ultra": "Max 20×",
+        "teams-pro": "Teams Pro",
+    ]
+
+    /// "GOAT" from `individual-goat`, "Max 20×" from `individual-ultra`: the plan names
+    /// commandcode.ai/pricing uses. An id the table does not know — a tier added later, or
+    /// one that spells its own multiplier out (`individual-max-20x`) — is still read out of
+    /// its own words, so an unfamiliar plan never shows as nothing.
     static func planName(_ planID: String?) -> String? {
         guard let planID, !planID.isEmpty else { return nil }
+        if let known = planNames[planID.lowercased()] { return known }
         var parts = planID.split(separator: "-").map(String.init)
-        if parts.first == "individual" { parts.removeFirst() }
+        if parts.first?.lowercased() == "individual" { parts.removeFirst() }
         guard !parts.isEmpty else { return nil }
         return parts.map { part -> String in
             switch part.lowercased() {
