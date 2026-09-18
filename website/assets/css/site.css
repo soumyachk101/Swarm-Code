@@ -1570,45 +1570,91 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 .faq {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px 20px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
   margin-top: var(--gap-heading);
 }
 .faq__item {
+  position: relative;
   min-width: 0;
-  border-radius: 22px;
-  background: var(--bg-well);
+  border-radius: 0;
+  background: none;
   display: flex;
   flex-direction: column;
 }
 .faq__question {
+  position: relative;
   width: 100%;
-  flex: 1;
+  flex: 0 0 auto;
   display: flex;
-  flex-direction: row-reverse;
   align-items: center;
-  justify-content: flex-end;
-  gap: 18px;
-  padding: 26px 28px;
+  justify-content: space-between;
+  gap: 64px;
+  margin: 0;
+  padding: 12px 0 12px 32px;
   background: none;
   border: none;
   text-align: left;
   font-size: var(--text-base);
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text-primary);
+  cursor: pointer;
+}
+/* The pill is drawn by a pseudo-element so the round button can sit
+   outside it on the page canvas, and so the row still works when a
+   page ships the question as a bare text node. Negative z-index keeps
+   it behind the question text. */
+.faq__question::before {
+  content: '';
+  position: absolute;
+  inset: 0 64px 0 0;
+  border-radius: var(--radius-full);
+  background: var(--bg-well-raised);
+  z-index: -1;
+}
+/* Every second question is a content-sized pill pushed to the right so
+   the list reads as a back-and-forth. */
+.faq__item:nth-child(even) .faq__question {
+  width: fit-content;
+  margin-left: auto;
 }
 .faq__question-icon {
+  position: relative;
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-quaternary);
   color: var(--text-tertiary);
-  transition: transform var(--dur-base) var(--ease-out);
+  transition: background var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
 }
-.faq__question-icon > svg { display: block; }
-.faq__item.is-open .faq__question-icon { transform: rotate(45deg); color: var(--accent-text); }
+.faq__question-icon > svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
+/* The minus bar of the open state. */
+.faq__question-icon::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--text-on-dark);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.faq__item.is-open .faq__question-icon {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.faq__item.is-open .faq__question-icon > svg { visibility: hidden; }
+.faq__item.is-open .faq__question-icon::after { opacity: 1; }
 .faq__answer {
   display: grid;
   grid-template-rows: 0fr;
@@ -1617,10 +1663,52 @@ html.nav-intro-done .nav__pill { animation: none; }
 .faq__item.is-open .faq__answer { grid-template-rows: 1fr; }
 .faq__answer-inner { overflow: hidden; }
 .faq__answer-content {
-  padding: 0 28px 26px;
+  position: relative;
+  margin: 16px 18% 0 72px;
+  padding: 24px 28px;
+  border-radius: 24px;
+  background: var(--bg-well-raised);
   font-size: var(--text-sm);
   color: var(--text-tertiary);
   line-height: 1.65;
+}
+/* The dot that marks an open answer, sitting in the side margin. */
+.faq__answer-content::before {
+  content: '';
+  position: absolute;
+  left: -48px;
+  top: 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.faq__item.is-open .faq__answer-content::before { opacity: 1; }
+/* Mirrored: a right-hand question gets a left-hand answer card. */
+.faq__item:nth-child(even) .faq__answer-content {
+  margin: 16px 72px 0 18%;
+}
+.faq__item:nth-child(even) .faq__answer-content::before {
+  left: auto;
+  right: -48px;
+}
+@media (max-width: 760px) {
+  .faq__item:nth-child(even) .faq__question {
+    width: 100%;
+    margin-left: 0;
+  }
+  .faq__question {
+    gap: 46px;
+    padding: 14px 0 14px 22px;
+  }
+  .faq__question::before { inset: 0 46px 0 0; }
+  .faq__question-icon { width: 34px; height: 34px; }
+  .faq__answer-content,
+  .faq__item:nth-child(even) .faq__answer-content { margin: 14px 0 0 0; }
+  .faq__answer-content::before,
+  .faq__item:nth-child(even) .faq__answer-content::before { display: none; }
 }
 .faq__answer-content a { color: var(--accent-text); }
 .faq__answer-content code {
@@ -1630,7 +1718,6 @@ html.nav-intro-done .nav__pill { animation: none; }
   padding: 1px 6px;
   border-radius: 5px;
 }
-@media (max-width: 760px) { .faq { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---------------------------------------------------------------------- */
 /* Outro                                                                   */
