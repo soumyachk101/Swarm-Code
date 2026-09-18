@@ -298,7 +298,7 @@ struct SidebarView: View {
 
     /// How a row enters and leaves the list. A settled thread's row, the Settled header and
     /// the gaps ride the list's own motion: they change in the same pass the space opens and
-    /// the count rolls, so none of them waits out the handover delay that covers a reopen's
+    /// the count updates, so none of them waits out the handover delay that covers a reopen's
     /// ghost. Every other row keeps that delay.
     private func rowTransition(_ item: SidebarItem) -> AnyTransition {
         switch item.kind {
@@ -1880,7 +1880,7 @@ private struct SidebarThreadRow: View, Equatable {
     // MARK: Settling
 
     /// The row's exit on a settle: the check pops and the thread changes in the same pass, so
-    /// the space closes, the rows below make room and the Settled header's count rolls as one
+    /// the space closes, the rows below make room and the Settled header moves as one
     /// motion. The row itself leaves on the list's removal fade (see `AnyTransition.sidebarRow`).
     private func settle() {
         guard !isSettling, !thread.isSettled else { return }
@@ -2339,15 +2339,14 @@ private struct SettledHeader: View {
                     .animation(Chrome.panelSlide, value: collapsed)
                 Text(verbatim: "Settled")
                     .font(.system(size: 12, weight: .semibold))
-                // Bound straight to the list's count and carrying no animation of its own: the
-                // roll rides the same transaction the thread's change was committed in, so the
-                // number and the rows move on one curve.
+                // Update the digits without a separate roll while the whole header moves.
+                // Keep the inherited layout animation so the count travels with the title.
                 Text(verbatim: "\(count)")
                     .font(.system(size: 12))
                     .monospacedDigit()
                     .opacity(0.8)
                     .fixedSize()
-                    .contentTransition(.numericText(value: Double(count)))
+                    .contentTransition(.identity)
                 Spacer(minLength: 4)
             }
             .foregroundStyle(Chrome.secondaryText)
