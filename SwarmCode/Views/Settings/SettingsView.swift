@@ -736,8 +736,8 @@ private struct AboutSettingsPage: View {
                 ChromeCard {
                     MadeByRow()
                     ChromeRowDivider()
-                    ChromeRow(title: "Website", detail: "swarmcode.antideploy.com") {
-                        CreditLink(title: "Open website", url: URL(string: "https://swarmcode.antideploy.com")!)
+                    ChromeRow(title: "Website", detail: "swarmcode.vercel.app") {
+                        CreditLink(title: "Open website", url: URL(string: "https://swarmcode.vercel.app")!)
                     }
                     ChromeRowDivider()
                     ChromeRow(title: "GitHub Profile", detail: "Soumya Chakraborty on GitHub (@soumyachk101)") {
@@ -873,7 +873,7 @@ private struct MadeByRow: View {
             }
             Spacer(minLength: 12)
             HStack(spacing: 10) {
-                CreditLink(title: "Website", url: URL(string: "https://swarmcode.antideploy.com")!)
+                CreditLink(title: "Website", url: URL(string: "https://swarmcode.vercel.app")!)
                 CreditLink(title: "GitHub", url: URL(string: "https://github.com/soumyachk101")!)
             }
         }

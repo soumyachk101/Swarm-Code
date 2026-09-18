@@ -141,7 +141,7 @@
 		<section class="settings-section">
 			<h3 class="settings-section-title">Links</h3>
 			<div class="about-links">
-				<a href="https://swarmcode.antideploy.com" target="_blank" rel="noopener" class="about-link">
+				<a href="https://swarmcode.vercel.app" target="_blank" rel="noopener" class="about-link">
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<circle cx="12" cy="12" r="10"/>
 						<line x1="2" y1="12" x2="22" y2="12"/>

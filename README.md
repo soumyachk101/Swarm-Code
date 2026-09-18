@@ -78,7 +78,7 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 
 Swarm Code is made by [Soumya Chakraborty](https://github.com/soumyachk101) for Mac.
 
-Website: [swarmcode.antideploy.com](https://swarmcode.antideploy.com) | [swarmcode.dev](https://swarmcode.dev)
+Website: [swarmcode.vercel.app](https://swarmcode.vercel.app) | [swarmcode.dev](https://swarmcode.dev)
 
 ## Acknowledgements
 
