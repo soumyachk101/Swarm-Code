@@ -1,5 +1,59 @@
 import Foundation
 
+/// The mark a project wears in the activity list's icon style: an emoji, or the name of an
+/// SF Symbol. Stored as one string, `emoji:\U0001F528` or `symbol:hammer`, so the library needs no
+/// shape of its own and a library written before the field reads straight through.
+enum ProjectIcon: Hashable, Sendable, Codable {
+    case emoji(String)
+    case symbol(String)
+
+    /// The emoji, when the mark is one.
+    var emoji: String? {
+        if case .emoji(let value) = self { return value }
+        return nil
+    }
+
+    /// The symbol's name, when the mark is one.
+    var symbolName: String? {
+        if case .symbol(let name) = self { return name }
+        return nil
+    }
+
+    /// The stored form: the kind, a colon, the value.
+    var storage: String {
+        switch self {
+        case .emoji(let value): "emoji:\(value)"
+        case .symbol(let name): "symbol:\(name)"
+        }
+    }
+
+    /// Reads the stored form. A value with no kind in front of it is a symbol's name, so a
+    /// library written by hand still reads.
+    init?(storage: String) {
+        guard !storage.isEmpty else { return nil }
+        if storage.hasPrefix("emoji:") {
+            self = .emoji(String(storage.dropFirst("emoji:".count)))
+        } else if storage.hasPrefix("symbol:") {
+            self = .symbol(String(storage.dropFirst("symbol:".count)))
+        } else {
+            self = .symbol(storage)
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        guard let icon = ProjectIcon(storage: raw) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "An empty project icon"))
+        }
+        self = icon
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(storage)
+    }
+}
+
 struct Project: Codable, Identifiable, Hashable, Sendable {
     var id: UUID
     var name: String
@@ -11,6 +65,9 @@ struct Project: Codable, Identifiable, Hashable, Sendable {
     /// starts on the pair the app remembers (see `AppModel.newThread`). The pair must be
     /// in Settings and its provider must be on, or the rule does not apply.
     var hydraPairID: UUID?
+    /// The project's mark in the activity list's icon style: its emoji or SF Symbol. Nil
+    /// draws the folder mark, so a project reads at a glance before one has been picked.
+    var icon: ProjectIcon?
 
     init(name: String, path: String) {
         id = UUID()
@@ -30,6 +87,7 @@ struct Project: Codable, Identifiable, Hashable, Sendable {
         isExpanded = container.value(.isExpanded, default: true)
         scripts = container.value(.scripts, default: [])
         hydraPairID = container.value(.hydraPairID, default: nil)
+        icon = container.value(.icon, default: nil)
     }
 
     var url: URL { URL(fileURLWithPath: path) }

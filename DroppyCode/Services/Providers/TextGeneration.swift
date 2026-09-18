@@ -12,6 +12,9 @@ enum TextGeneration {
         Write a title for this coding task so the user can recognize it weeks later.
         Rules: 3 to 7 words, under 40 characters, sentence case, no quotes, no trailing punctuation.
         Name the subject and the outcome. Do not copy the request word for word.
+        The request may be a word or two, or come with attachments; even then, reply with
+        your single best title and nothing else. Never ask a question, never explain,
+        never mention the request or the word title.
         Reply with the title only.
 
         Request:
@@ -20,9 +23,34 @@ enum TextGeneration {
         guard let text = await run(prompt, engine: engine, directory: FileManager.default.temporaryDirectory) else {
             return nil
         }
-        let title = TextCleanup.singleLine(text, limit: 60)
+        let cleaned = TextCleanup.singleLine(text, limit: 60)
             .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`*#. "))
-        return title.isEmpty ? nil : title
+        if let title = usable(cleaned) { return title }
+        // A model that answers with a sentence usually puts the title on its first
+        // non-empty line; that line is worth keeping on its own.
+        let firstLine = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        return firstLine.flatMap { usable($0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`*#. "))) }
+    }
+
+    /// A reply that reads as a title, or nil when the model answered with a sentence or a
+    /// question instead - 'I need more context to create a meaningful title. What spec…'
+    /// is one such reply that reached a chat's name.
+    private static func usable(_ candidate: String) -> String? {
+        let title = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, title.count <= 64 else { return nil }
+        guard title.split(whereSeparator: \.isWhitespace).count <= 9 else { return nil }
+        guard !title.contains("\n"), !title.contains("?") else { return nil }
+        guard let last = title.last, !":;,!…".contains(last) else { return nil }
+        let lower = title.lowercased()
+        let openers = ["i ", "i'", "sorry", "sure", "here", "please", "could you", "can you",
+                       "what ", "it seems", "it looks", "unfortunately", "there is no",
+                       "not enough", "need more", "maybe ", "the request", "this request"]
+        guard !openers.contains(where: { lower.hasPrefix($0) }) else { return nil }
+        let phrases = ["more context", "meaningful title", "as an ai", "cannot", "can't", "unable to"]
+        guard !phrases.contains(where: { lower.contains($0) }) else { return nil }
+        return title
     }
 
     static func commitMessage(summary: String, patch: String, instructions: String, engine: Engine, directory: URL) async -> String? {

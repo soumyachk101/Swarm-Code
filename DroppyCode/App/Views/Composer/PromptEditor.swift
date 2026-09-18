@@ -150,6 +150,10 @@ final class PromptEditorPopover<Content: View>: NSObject {
     }
     private var isShown: Bool { shownPopover?.isShown == true }
     private var anchor: WeakView?
+    /// The anchor as a rect in its window, for a view that must not mount an AppKit view
+    /// (the follow-up queue tab): where it sits, reported by the view's own geometry
+    /// (see `WindowRectAnchor`).
+    private var anchorRect: CGRect?
     private var monitors: [Any] = []
     /// Clears the thread's edit, for the dismissals the popover sees itself.
     private var dismiss: () -> Void = {}
@@ -162,6 +166,11 @@ final class PromptEditorPopover<Content: View>: NSObject {
         anchor = WeakView(view)
     }
 
+    /// The anchor's frame in its window, for the follow-up queue tab's pencil.
+    func setAnchor(windowRect: CGRect) {
+        anchorRect = windowRect
+    }
+
     /// Shows the popover on `edit`, or closes it when there is none. Safe to call
     /// as often as the state or the anchor changes: an open popover stays put.
     func sync(_ edit: PromptEdit?, dismiss: @escaping () -> Void, content: @escaping (PromptEdit) -> Content) {
@@ -170,7 +179,8 @@ final class PromptEditorPopover<Content: View>: NSObject {
             close()
             return
         }
-        guard !isShown, anchor?.value?.window != nil else { return }
+        let hasAnchor = anchor?.value?.window != nil || anchorRect != nil
+        guard !isShown, hasAnchor else { return }
         // Off the current pass: the anchor reports from inside a SwiftUI update, and
         // hosting the editor there would lay out a view tree inside another's update.
         let generation = generation
@@ -181,7 +191,15 @@ final class PromptEditorPopover<Content: View>: NSObject {
     }
 
     private func show(_ edit: PromptEdit, dismiss: @escaping () -> Void, content: (PromptEdit) -> Content) {
-        guard !isShown, let anchor = anchor?.value, anchor.window != nil else { return }
+        guard !isShown else { return }
+        let target: (view: NSView, rect: NSRect)
+        if let anchor = anchor?.value, anchor.window != nil {
+            target = (anchor, anchor.bounds)
+        } else if let anchorRect, let resolved = WindowRectAnchor.target(for: anchorRect) {
+            target = resolved
+        } else {
+            return
+        }
         self.dismiss = dismiss
         let host = NSHostingController(rootView: content(edit)
             .fixedSize(horizontal: false, vertical: true)
@@ -193,7 +211,7 @@ final class PromptEditorPopover<Content: View>: NSObject {
         host.sizingOptions = []
         popover.contentViewController = host
         popover.contentSize = host.view.fittingSize
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+        popover.show(relativeTo: target.rect, of: target.view, preferredEdge: .maxY)
         startMonitors()
     }
 
@@ -238,9 +256,20 @@ final class PromptEditorPopover<Content: View>: NSObject {
     /// are windows of their own, so clicks there pass, as does the pencil
     /// (which toggles on its own).
     private func handleMouseDown(_ event: NSEvent) -> NSEvent? {
-        guard let window = event.window, let anchor = anchor?.value, window === anchor.window else { return event }
-        if anchor.bounds.contains(anchor.convert(event.locationInWindow, from: nil)) { return event }
-        dismiss()
+        if let anchor = anchor?.value {
+            guard let window = event.window, window === anchor.window else { return event }
+            if anchor.bounds.contains(anchor.convert(event.locationInWindow, from: nil)) { return event }
+            dismiss()
+            return event
+        }
+        // A rect anchor (the follow-up queue tab): a click in that window dismisses the
+        // editor and still reaches what it hit. A click on the anchor itself passes
+        // through, so the pencil's own toggle closes the editor (see
+        // `AttachmentPreviewPanel.handleMouseDown`).
+        if let anchorRect, let target = WindowRectAnchor.target(for: anchorRect), event.window === target.view.window,
+           !target.rect.contains(target.view.convert(event.locationInWindow, from: nil)) {
+            dismiss()
+        }
         return event
     }
 

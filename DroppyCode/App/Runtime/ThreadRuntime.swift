@@ -210,6 +210,16 @@ final class ThreadRuntime {
     /// than in the editor, so leaving the thread mid-edit and coming back finds the editor
     /// open where it was left.
     var followUpEdit: PromptEdit?
+    /// Whether the queue tab's rows are folded away under its title. Lives on the thread
+    /// like `followUpEdit` does: the tab leaves the screen whenever the queue empties, and
+    /// a fold the reader set must not spring back open on the next queued prompt.
+    var followUpsCollapsed = false
+
+    /// Counts the turns that start on their own — a queued follow-up, a head's report, the
+    /// budget note — rather than on a message the reader just sent. The timeline compares it
+    /// with the value it last saw, so an unattended turn never drags a reader who scrolled up
+    /// down to the end. Never observed: the timeline reads it directly.
+    @ObservationIgnored private(set) var autoStartedTurnToken = 0
     /// The sent message being edited (by its turn), the same way.
     var messageEdit: PromptEdit?
 
@@ -1061,6 +1071,8 @@ final class ThreadRuntime {
         if handleLocalCommand(next.text.trimmingCharacters(in: .whitespacesAndNewlines)) {
             return drainFollowUps(after: status)
         }
+        // This turn starts on its own (see autoStartedTurnToken).
+        autoStartedTurnToken &+= 1
         Task { await ensureLoaded(); await startTurn(text: next.text, attachments: next.attachments) }
         return true
     }
@@ -1159,7 +1171,10 @@ final class ThreadRuntime {
             }
         }
         scheduleSave()
-        let isFirstTurn = turns.count == 1
+        // The chat is named as its first message goes in, not when the session finally
+        // takes it: a cold session can take seconds, and a first send that fails must
+        // not leave the chat nameless for good.
+        generateTitle(from: text, attachments: attachments)
 
         await ensureModel(initialThread)
 
@@ -1245,7 +1260,6 @@ final class ThreadRuntime {
                 app.updateThread(threadID) { $0.providerSessionID = unsentSessionID }
             }
             if let command { app.providers.recordCommand(command.name, for: thread.provider) }
-            if isFirstTurn { generateTitle(from: text) }
         } catch {
             guard currentTurnID == turn.id else { return }
             appendNotice(.error, error.localizedDescription)
@@ -2254,6 +2268,8 @@ final class ThreadRuntime {
             headBudgetSpent = false
             if status == .interrupted, thread?.hydra?.kind == .droppy {
                 headReportsNext = true
+                // This turn starts on its own (see autoStartedTurnToken).
+                autoStartedTurnToken &+= 1
                 Task { await ensureLoaded(); await startTurn(text: HydraBudget.finalNote, attachments: []) }
                 continues = true
             }
@@ -2509,6 +2525,8 @@ final class ThreadRuntime {
     private func flushHydraReports() -> Bool {
         guard phase == .idle, !hydraFlushScheduled, !flushableHydraReports().isEmpty else { return false }
         hydraFlushScheduled = true
+        // This turn starts on its own (see autoStartedTurnToken).
+        autoStartedTurnToken &+= 1
         Task { await startHydraReportTurn() }
         return true
     }
@@ -3309,13 +3327,19 @@ final class ThreadRuntime {
         saveRevision += 1
     }
 
-    private func generateTitle(from text: String) {
+    /// Names the chat the moment its first message goes in, so the row never sits at
+    /// 'New thread' while a session starts. Only a chat with no name of its own is ever
+    /// named here, so a later turn cannot overwrite a title.
+    private func generateTitle(from text: String, attachments: [Attachment]) {
         guard let app, let thread = app.thread(threadID), !thread.hasCustomTitle else { return }
+        guard turns.count == 1 || thread.title == ChatThread.untitled else { return }
+        let names = attachments.map(\.name)
+        let input = names.isEmpty ? text : text + "\nAttached: " + names.joined(separator: ", ")
         app.updateThread(threadID) { $0.title = TextCleanup.singleLine(text, limit: 48) }
         guard let engine = app.textEngine(preferring: thread.provider) else { return }
         let threadID = threadID
         Task {
-            guard let title = await TextGeneration.threadTitle(for: text, engine: engine) else { return }
+            guard let title = await TextGeneration.threadTitle(for: input, engine: engine) else { return }
             app.updateThread(threadID) { thread in
                 if !thread.hasCustomTitle { thread.title = title }
             }

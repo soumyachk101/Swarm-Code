@@ -954,6 +954,9 @@ class OpenAICompatibleSession: ProviderSession {
         - Prefer the provided tools over asking the user to run things. Read files before editing them.
         - Keep file paths relative to the project root and never touch paths outside it.
         - Explain briefly what you did after tool calls; keep chat replies concise markdown.
+        - Never hard-wrap prose at a fixed column: write each paragraph of a reply as one unbroken
+          line, however long, so a copied reply keeps its full line length wherever it is pasted.
+          Lines inside a fenced code block keep their own breaks.
         - If a tool result shows the user declined an action, do not retry it: ask how to proceed.
         - Today's date is \(ISO8601DateFormatter().string(from: Date())).
         \(configuration.hydra.map { "\n" + HydraPrompts.fallbackPolicy($0) } ?? "")

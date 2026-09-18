@@ -193,23 +193,33 @@ struct HydraProgressBar: View {
     private func stepsCard(for stave: Stave, at index: Int) -> some View {
         let centre = CGFloat(index) * Self.pitch + Self.staveWidth / 2
         let x = min(max(0, centre - Self.cardWidth / 2), max(0, width - Self.cardWidth))
-        return Text(verbatim: stave.step)
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(Chrome.primaryText)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(width: Self.cardWidth, alignment: .leading)
-            .modifier(ProgressCardSurface(isOnGlassPanel: isOnGlassPanel, isDark: colorScheme == .dark))
-            // Hung from a zero-height frame at the bar's top edge, so the card's bottom sits 8
-            // points above the bar whatever its height: an alignment guide on the overlay
-            // was not honoured and left the card over the staves.
-            .padding(.bottom, 8)
-            .frame(height: 0, alignment: .bottom)
-            .offset(x: x)
-            .allowsHitTesting(false)
-            .transition(.opacity)
+        return HStack(spacing: 8) {
+            if let entry = stave.mcp {
+                MCPGlyph(entry: entry, size: 14)
+            } else if let name = stave.symbol {
+                Image(systemName: name)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Chrome.secondaryText)
+                    .frame(width: 14)
+            }
+            Text(verbatim: stave.step)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Chrome.primaryText)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .frame(width: Self.cardWidth, alignment: .leading)
+        .modifier(ProgressCardSurface(isOnGlassPanel: isOnGlassPanel, isDark: colorScheme == .dark))
+        // Hung from a zero-height frame at the bar's top edge, so the card's bottom sits 8
+        // points above the bar whatever its height: an alignment guide on the overlay
+        // was not honoured and left the card over the staves.
+        .padding(.bottom, 8)
+        .frame(height: 0, alignment: .bottom)
+        .offset(x: x)
+        .allowsHitTesting(false)
+        .transition(.opacity)
     }
 
     // MARK: - Steps
@@ -228,6 +238,11 @@ struct HydraProgressBar: View {
         let arrivedAt: Date
         /// What the stave stands for, for the card under the pointer.
         let step: String
+
+        /// The step's own mark, where it has one: an MCP server's brand icon, or the
+        /// kind's SF Symbol. Nil never happens; a reply wears a bubble.
+        let mcp: MCPCatalogEntry?
+        let symbol: String?
 
         /// The stave's share of the bar's height.
         var height: CGFloat {
@@ -286,13 +301,15 @@ struct HydraProgressBar: View {
                 case .command: call.edits.isEmpty ? .command : .edit
                 default: call.edits.isEmpty ? .lookup : .edit
                 }
-                return Stave(kind: kind, arrivedAt: entry.item.date, step: ToolPresentation.label(for: call))
+                let mcp = ToolPresentation.mcpParts(call)?.entry
+                let symbol = mcp == nil ? ToolPresentation.symbol(for: call.kind) : nil
+                return Stave(kind: kind, arrivedAt: entry.item.date, step: ToolPresentation.label(for: call), mcp: mcp, symbol: symbol)
             case .assistant:
                 guard case .assistant(let message) = entry.item.content else { return nil }
                 // The first line of the reply is all the stave shows, so only the head of the
                 // text is split, not the whole reply on every streamed flush.
                 let words = TextCleanup.singleLine(String(message.text.prefix(600)), limit: 60)
-                return Stave(kind: .reply, arrivedAt: entry.item.date, step: words.isEmpty ? "Replied" : "Replied: \(words)")
+                return Stave(kind: .reply, arrivedAt: entry.item.date, step: words.isEmpty ? "Replied" : "Replied: \(words)", mcp: nil, symbol: "bubble.left")
             default:
                 return nil
             }

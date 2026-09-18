@@ -102,6 +102,12 @@ final class AppModel {
     @ObservationIgnored private var runtimes: [UUID: ThreadRuntime] = [:]
     @ObservationIgnored private var idleSessionStops: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    /// The repeating merge sweep started at bootstrap. A chat whose automatic merge never
+    /// got its moment while the app stayed open (a report batch left half-finished, a
+    /// dialog never answered, a turn that ended in a way the trigger skipped) would sit on
+    /// its files forever, with the merge note still promising they go out. The sweep asks
+    /// again every few minutes; it skips anything still running, so a busy chat is left alone.
+    @ObservationIgnored private var hydraMergeSweepTask: Task<Void, Never>?
     @ObservationIgnored private var persistenceEnabled = true
     @ObservationIgnored private var didRequestNotifications = false
 
@@ -235,6 +241,18 @@ final class AppModel {
         sweepHydraCopies()
         // A merge the last run did not finish (the app was quit under it) goes out now.
         await resumeHydraMerges()
+        // The launch sweep alone is not enough: a merge can also be missed while the app
+        // stays up, and then nothing asks again until the next launch. This task asks every
+        // five minutes for as long as the app runs; the sweep itself skips chats with a turn
+        // or a head still running, so it is safe to repeat.
+        hydraMergeSweepTask?.cancel()
+        hydraMergeSweepTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(300))
+                guard !Task.isCancelled, let self else { return }
+                await self.resumeHydraMerges()
+            }
+        }
         await providers.refreshAll()
         // The catalogs a fresh install starts without, or with only a seed of: one CLI and
         // two HTTPS calls, overlapped. Claude's brings its slash commands too, so the picker

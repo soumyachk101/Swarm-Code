@@ -67,6 +67,31 @@ enum SidebarMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the activity list shows which project a thread belongs to: the project's own mark
+/// in front of the thread's name on one line, or the project's name under it.
+enum ActivityThreadStyle: String, CaseIterable, Identifiable {
+    /// The project's emoji or SF Symbol before the thread's name: one line per thread.
+    case icon
+    /// The project's name, with a folder mark, on a line under the thread's title.
+    case projectName
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .icon: "Icon"
+        case .projectName: "Project name"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .icon: "Each project's emoji or symbol before the thread's name, one line per thread"
+        case .projectName: "The project's name, with a folder mark, on a line under the thread's title"
+        }
+    }
+}
+
 /// A model the composer's picker offers.
 struct ModelPin: Codable, Hashable, Identifiable, Sendable {
     var provider: ProviderKind
@@ -104,6 +129,7 @@ final class AppSettings {
         static let showsWorkingCard = "showsWorkingCard"
         static let chatZoom = "chatZoom"
         static let sidebarActivityView = "sidebarActivityView"
+        static let activityThreadStyle = "activityThreadStyle"
         static let settledCollapsed = "settledSectionCollapsed"
         static let appTheme = "appTheme"
         static let backdropOpacity = "backdropOpacity"
@@ -239,6 +265,12 @@ final class AppSettings {
         didSet { defaults.set(sidebarActivityView, forKey: Key.sidebarActivityView) }
     }
 
+    /// How the activity list marks each thread's project: the project's own icon before
+    /// the title on one line, or the project's name under it. The icon style is the default.
+    var activityThreadStyle: ActivityThreadStyle {
+        didSet { defaults.set(activityThreadStyle.rawValue, forKey: Key.activityThreadStyle) }
+    }
+
     /// The sidebar's Settled section is folded away. Expanded by default.
     var settledCollapsed: Bool {
         didSet { defaults.set(settledCollapsed, forKey: Key.settledCollapsed) }
@@ -252,7 +284,8 @@ final class AppSettings {
     }
 
     /// How solid the window's backdrop is, 0 (clear glass, the desktop shows through) to
-    /// 1 (a solid base colour). The midpoint is the stock look.
+    /// 1 (a solid base). With a wallpaper the backdrop is the picture, drawn at this same
+    /// value, so the desktop shows through the picture below the solid end.
     var backdropOpacity: Double {
         didSet { defaults.set(backdropOpacity, forKey: Key.backdropOpacity) }
     }
@@ -669,6 +702,7 @@ final class AppSettings {
         showsWorkingCard = defaults.object(forKey: Key.showsWorkingCard) as? Bool ?? true
         chatZoom = ChatZoom.clamped(defaults.object(forKey: Key.chatZoom) as? Int ?? ChatZoom.defaultIndex)
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
+        activityThreadStyle = ActivityThreadStyle(rawValue: defaults.string(forKey: Key.activityThreadStyle) ?? "") ?? .icon
         settledCollapsed = defaults.object(forKey: Key.settledCollapsed) as? Bool ?? true
         backdropOpacity = defaults.object(forKey: Key.backdropOpacity) as? Double ?? Self.defaultBackdropOpacity
         // The old System/Light/Dark choice maps straight onto the same themes.
