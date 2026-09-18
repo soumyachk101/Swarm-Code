@@ -163,7 +163,7 @@ onMount(() => {
         <div style="margin-top: 20px;">
             <h3 style="margin-bottom: 12px;">Found Devices</h3>
             {#each discoveryResults as result}
-                <div class="glass thread-item" on:click={() => selectDiscovery(result.host, result.port)}>
+                <div class="glass thread-item" onclick={() => selectDiscovery(result.host, result.port)}>
                     <div class="thread-item-title">{result.name}</div>
                     <div class="thread-item-meta">
                         <span>{result.host}:{result.port}</span>
@@ -178,7 +178,7 @@ onMount(() => {
         <div style="margin-top: 20px;">
             <h3 style="margin-bottom: 12px;">Recent Connections</h3>
             {#each $pairings as pairing}
-                <div class="glass thread-item" on:click={() => {
+                <div class="glass thread-item" onclick={() => {
                     hostInput = pairing.host;
                     portInput = String(pairing.port);
                     handleConnect();

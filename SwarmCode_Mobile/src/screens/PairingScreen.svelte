@@ -54,7 +54,7 @@ const goBack = () => view.set('connect');
 </script>
 
 <div class="screen" style="align-items: center; justify-content: center; padding: 24px;">
-    <button class="header-back" style="position: absolute; top: 12px; left: 16px;" on:click={goBack}>
+    <button class="header-back" style="position: absolute; top: 12px; left: 16px;" onclick={goBack}>
         <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
 
@@ -73,8 +73,8 @@ const goBack = () => view.set('connect');
                 maxlength="1"
                 value={digit}
                 bind:this={inputRefs[i]}
-                on:input={(e) => handleInput(i, (e.target as HTMLInputElement).value)}
-                on:keydown={(e) => handleKeyDown(i, e)}
+                oninput={(e) => handleInput(i, (e.target as HTMLInputElement).value)}
+                onkeydown={(e) => handleKeyDown(i, e)}
                 disabled={isSubmitting}
             />
         {/each}

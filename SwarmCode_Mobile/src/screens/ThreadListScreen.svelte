@@ -56,7 +56,7 @@ const formatTime = (dateStr: string) => {
                 </span>
             </div>
         </div>
-        <button class="btn btn-sm btn-secondary" on:click={handleDisconnect}>Disconnect</button>
+        <button class="btn btn-sm btn-secondary" onclick={handleDisconnect}>Disconnect</button>
     </div>
 
     <div class="divider"></div>
@@ -71,7 +71,7 @@ const formatTime = (dateStr: string) => {
     {:else}
         <div class="scrollable">
             {#each $threads as thread}
-                <div class="thread-item" on:click={() => selectThread(thread.id)}>
+                <div class="thread-item" onclick={() => selectThread(thread.id)}>
                     <div style="display: flex; align-items: center; justify-content: space-between;">
                         <div class="thread-item-title">{thread.title || 'Untitled Thread'}</div>
                         {#if thread.hasUnread}
@@ -102,7 +102,7 @@ const formatTime = (dateStr: string) => {
             <span class="tab-icon">💬</span>
             <span>Threads</span>
         </div>
-        <div class="tab-item" on:click={() => view.set('settings')}>
+        <div class="tab-item" onclick={() => view.set('settings')}>
             <span class="tab-icon">⚙️</span>
             <span>Settings</span>
         </div>

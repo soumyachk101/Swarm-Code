@@ -7,6 +7,10 @@ export default defineConfig({
 	resolve: {
 		alias: {
 			$lib: resolve(__dirname, './src'),
+			$stores: resolve(__dirname, './src/stores'),
+			$screens: resolve(__dirname, './src/screens'),
+			$api: resolve(__dirname, './src/api'),
+			$styles: resolve(__dirname, './src/styles'),
 		},
 	},
 	server: {

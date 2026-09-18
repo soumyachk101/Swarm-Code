@@ -49,7 +49,7 @@ const goBack = () => view.set('threads');
 
 <div class="screen">
     <div class="header" style="padding-top: calc(12px + var(--safe-top));">
-        <button class="header-back" on:click={goBack}>
+        <button class="header-back" onclick={goBack}>
             <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <div>
@@ -76,7 +76,7 @@ const goBack = () => view.set('threads');
                     <span style="font-size: 14px; font-family: 'SF Mono', monospace;">{$currentHost}:{$currentPort}</span>
                 </div>
             {/if}
-            <button class="btn btn-danger btn-full btn-sm" on:click={handleDisconnect}>
+            <button class="btn btn-danger btn-full btn-sm" onclick={handleDisconnect}>
                 Disconnect
             </button>
         </div>
@@ -86,7 +86,7 @@ const goBack = () => view.set('threads');
             <h3 style="margin-bottom: 14px;">Models</h3>
             {#if Object.keys($models.providers).length === 0}
                 <p class="text-secondary" style="font-size: 13px; margin-bottom: 12px;">No models fetched yet. Pull them from your Mac.</p>
-                <button class="btn btn-secondary btn-full btn-sm" on:click={handleFetchModels}>
+                <button class="btn btn-secondary btn-full btn-sm" onclick={handleFetchModels}>
                     Refresh Models
                 </button>
             {:else}
@@ -100,7 +100,7 @@ const goBack = () => view.set('threads');
                                 {/each}
                                 {#if info.models.length > 6}
                                     <span class="text-muted" style="font-size: 12px;">+{info.models.length - 6} more</span>
-                                {/each}
+                                {/if}
                             </div>
                         </div>
                     {/each}
@@ -120,7 +120,7 @@ const goBack = () => view.set('threads');
 
     <!-- Bottom Nav -->
     <nav class="tab-bar">
-        <div class="tab-item" on:click={() => view.set('threads')}>
+        <div class="tab-item" onclick={() => view.set('threads')}>
             <span class="tab-icon">💬</span>
             <span>Threads</span>
         </div>

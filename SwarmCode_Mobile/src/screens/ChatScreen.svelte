@@ -71,7 +71,7 @@ const getRoleLabel = (kind: string) => {
 <div class="screen">
     <!-- Header -->
     <div class="header" style="padding-top: calc(12px + var(--safe-top));">
-        <button class="header-back" on:click={goBack}>
+        <button class="header-back" onclick={goBack}>
             <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
         </button>
         <div style="flex: 1; margin-left: 12px; min-width: 0;">
@@ -153,12 +153,12 @@ const getRoleLabel = (kind: string) => {
             placeholder="Message..."
             bind:value={inputText}
             bind:this={messageInput}
-            on:keydown={handleKeyDown}
+            onkeydown={handleKeyDown}
         />
         <button
             class="composer-send"
             disabled={!inputText.trim()}
-            on:click={sendMessage}
+            onclick={sendMessage}
         >
             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
