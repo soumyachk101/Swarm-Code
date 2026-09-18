@@ -61,7 +61,12 @@ struct MarkdownView: View, Equatable {
     }
 
     var body: some View {
-        let blocks = Self.blocks(for: text, streaming: isStreaming)
+        // While the text streams, the parse also says how many of its leading blocks are
+        // final; those are the ones a flush cannot change, and the views for them are
+        // compared by that fact alone (see `MarkdownBlockView.settled`).
+        let parse = isStreaming ? Self.streamingParse(for: text) : (blocks: Self.blocks(for: text), stable: 0)
+        let blocks = parse.blocks
+        let stable = parse.stable
         let last = blocks.count - 1
         if !isStreaming && proseRuns {
             VStack(alignment: .leading, spacing: 12) {
@@ -81,7 +86,7 @@ struct MarkdownView: View, Equatable {
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
-                    MarkdownBlockView(block: block)
+                    MarkdownBlockView(block: block, settled: index < stable)
                         .equatable()
                         // Only the block still being written is streaming; the ones above it are
                         // settled and cache like any finished text.
@@ -109,16 +114,27 @@ struct MarkdownView: View, Equatable {
     /// render parsed its reply from the start again, on the main thread.
     private static let streamingSlots = 48
 
+    /// The parse of a streaming text together with how many of its leading blocks are
+    /// final: the parser decides each line from that line and the next, so a block that
+    /// starts two lines or more above the still-being-written last line cannot change as
+    /// more text arrives (see `MarkdownParser.Parse.stable`). The views for those blocks
+    /// are equal by that count alone, which is what keeps a flush from deep-comparing
+    /// every earlier block of a long reply.
+    @MainActor
+    static func streamingParse(for text: String) -> (blocks: [MarkdownBlock], stable: Int) {
+        if let parse = streamingParses.last(where: { $0.text.utf8.count == text.utf8.count && $0.text == text }) {
+            return (parse.parse.blocks, parse.parse.stable)
+        }
+        let slot = streamingParses.lastIndex { extends($0.text, to: text) }
+        let parsed = MarkdownParser.parse(text, extending: slot.map { streamingParses[$0] })
+        if let slot { streamingParses.remove(at: slot) } else if streamingParses.count == streamingSlots { streamingParses.removeFirst() }
+        streamingParses.append((text, parsed))
+        return (parsed.blocks, parsed.stable)
+    }
+
     @MainActor
     static func blocks(for text: String, streaming: Bool = false) -> [MarkdownBlock] {
-        if streaming {
-            if let parse = streamingParses.last(where: { $0.text.utf8.count == text.utf8.count && $0.text == text }) { return parse.parse.blocks }
-            let slot = streamingParses.lastIndex { extends($0.text, to: text) }
-            let parsed = MarkdownParser.parse(text, extending: slot.map { streamingParses[$0] })
-            if let slot { streamingParses.remove(at: slot) } else if streamingParses.count == streamingSlots { streamingParses.removeFirst() }
-            streamingParses.append((text, parsed))
-            return parsed.blocks
-        }
+        if streaming { return streamingParse(for: text).blocks }
         if let cached = blockCache.value(for: text) { return cached }
         // A message that just finished streaming is already parsed; keep that parse.
         let parsed: [MarkdownBlock]
@@ -261,6 +277,11 @@ struct MarkdownView: View, Equatable {
 
 struct MarkdownBlockView: View, Equatable {
     let block: MarkdownBlock
+    /// The parser said this block is final: no later flush of the same streaming reply can
+    /// change it (see `MarkdownParser.Parse.stable`). Two settled views in the same slot
+    /// are therefore the same block, and comparing their content -- every byte of every
+    /// earlier block of the reply, on every flush -- is work the flush does not need.
+    var settled = false
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.markdownListDepth) private var listDepth
     @Environment(\.chatZoom) private var zoom
@@ -269,8 +290,12 @@ struct MarkdownBlockView: View, Equatable {
     @Environment(\.hydraMentionTargets) private var hydraMentionTargets
 
     /// Blocks compare by content, so a finished block is skipped while the reply keeps streaming.
+    /// A settled pair skips that comparison: the position and the parser's own word are
+    /// enough (see `settled`). Anything not settled -- the block still being written, and
+    /// every block of a finished message -- compares as it always has.
     nonisolated static func == (lhs: MarkdownBlockView, rhs: MarkdownBlockView) -> Bool {
-        lhs.block == rhs.block
+        if lhs.settled, rhs.settled { return true }
+        return lhs.block == rhs.block
     }
 
     var body: some View {
@@ -1133,6 +1158,78 @@ struct TableBlock: View {
     }
 }
 
+/// Unwraps prose that the model hard-wrapped at a fixed column before the text
+/// reaches the pasteboard. Anything that could be code is left untouched.
+enum ProseReflow {
+    static func reflowed(_ text: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+        var output: [String] = []
+        var paragraph: [String] = []
+        var fenceOpen = false
+        var fenceLanguage = ""
+
+        func flushParagraph() {
+            guard !paragraph.isEmpty else { return }
+            let trimmed = paragraph.map { $0.trimmingCharacters(in: .whitespaces) }
+            let canReflow = trimmed.count >= 2
+                && fenceLanguage.isEmpty
+                && zip(paragraph, trimmed).allSatisfy { raw, trimmedLine in
+                    !trimmedLine.isEmpty && raw.first?.isWhitespace != true
+                }
+                && trimmed.allSatisfy { line in
+                    guard let first = line.first else { return false }
+                    if "#>-*+|".contains(first) { return false }
+                    if let d = first.wholeNumberValue, d >= 0, line.count > 1,
+                       line[line.index(after: line.startIndex)] == "." || line[line.index(after: line.startIndex)] == ")" {
+                        return false
+                    }
+                    return true
+                }
+                && trimmed.dropLast().allSatisfy { $0.count >= 45 }
+                && trimmed.dropLast().allSatisfy { line in
+                    if let last1 = line.last {
+                        if "{};:=([\\|".contains(last1) { return false }
+                        if line.hasSuffix("->") || line.hasSuffix("=>") { return false }
+                    }
+                    return true
+                }
+                && trimmed.allSatisfy { !$0.contains("  ") && !$0.contains("\t") }
+                && trimmed.joined(separator: " ").range(of: #"[.!?] "#, options: .regularExpression) != nil
+            if canReflow {
+                output.append(trimmed.joined(separator: " "))
+            } else {
+                output.append(contentsOf: paragraph)
+            }
+            paragraph = []
+        }
+
+        for line in lines {
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            if trimmedLine.hasPrefix("```") {
+                flushParagraph()
+                output.append(line)
+                if fenceOpen {
+                    fenceOpen = false
+                    fenceLanguage = ""
+                } else {
+                    fenceOpen = true
+                    fenceLanguage = String(trimmedLine.dropFirst(3)).lowercased()
+                }
+            } else if trimmedLine.isEmpty {
+                flushParagraph()
+                output.append(line)
+            } else if fenceOpen {
+                flushParagraph()
+                output.append(line)
+            } else {
+                paragraph.append(line)
+            }
+        }
+        flushParagraph()
+        return output.joined(separator: "\n")
+    }
+}
+
 struct CopyButton: View {
     let text: String
     var label = "Copy"
@@ -1142,7 +1239,7 @@ struct CopyButton: View {
     var body: some View {
         Button {
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
+            NSPasteboard.general.setString(ProseReflow.reflowed(text), forType: .string)
             didCopy = true
             // The binding alone: the delayed reset must not keep this button (and its
             // whole text) alive.

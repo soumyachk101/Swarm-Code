@@ -78,6 +78,10 @@ struct ThreadTimeline: View, Equatable {
     /// Lazy-loading window: only the newest groups are materialized, so opening a long
     /// thread and scrolling through it stays instant no matter how much history it holds.
     @State private var visibleCount = TimelineWindow.firstPaint
+    /// The runtime's unattended-turn token as this view last saw it (see
+    /// `ThreadRuntime.autoStartedTurnToken`). Nil until the first turn this view sees
+    /// start, so a view that appears mid-conversation reads its next turn as a send.
+    @State private var seenAutoStartedTurnToken: Int?
     /// Changes to rebuild the lazy stack from scratch: the second repair for a viewport
     /// the stack has built nothing for (see `repairLayout`).
     @State private var stackGeneration = 0
@@ -92,7 +96,6 @@ struct ThreadTimeline: View, Equatable {
 
     var body: some View {
         let entries = runtime.entries
-        let heads = model.hydraHeads(of: runtime.threadID)
         // Nothing here reads an entry's content: the cache keys on identities and kinds,
         // so a streaming row redraws itself and never brings this body with it.
         // Every unarchived head, in the panel or not: a finished head that has already left
@@ -415,8 +418,14 @@ struct ThreadTimeline: View, Equatable {
         .defaultScrollAnchor(.bottom, for: .alignment)
         .defaultScrollAnchor(anchorsBottomOnGrowth ? .bottom : .top, for: .sizeChanges)
         // One value per frame, and only when it moved: `onGeometryChange` fires solely
-        // on change, and the settle below runs once when the resize ends.
-        .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { viewportHeight = $0 }
+        // on change, and the settle below runs once when the resize ends. The height is
+        // quantized like `layoutWidth`: the body reads it (the short-thread filler, the
+        // jump tolerance), so an unquantized write re-evaluated the whole timeline on
+        // every frame of a resize drag, and a step of `resizeStep` is invisible there.
+        .onGeometryChange(for: CGFloat.self, of: Self.visibleHeight) { height in
+            let stepped = (height / Self.resizeStep).rounded(.down) * Self.resizeStep
+            if stepped != viewportHeight { viewportHeight = stepped }
+        }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { paneWidth = $0 }
         // No animation inside the timeline while the window is being dragged; a spring
         // restarted every frame is what made rows lag behind the window and land somewhere else.
@@ -611,13 +620,21 @@ struct ThreadTimeline: View, Equatable {
             // is over: the turn's own scroll below must not be read as its continuation.
             tracking.notePhase(.idle)
             let wasAtEnd = tracking.isPinnedToBottom
-            tracking.isPinnedToBottom = true
-            anchorsBottomOnGrowth = true
-            if wasAtEnd {
-                // Already there: the message and the working line appear in place.
-                withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
-            } else {
-                withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+            // A turn nothing was sent for is not the reader's send: for a reader who scrolled
+            // up it is a row arriving like any other, and the jump button tells them about it,
+            // the way the `lastEntryID` branch below treats a new row. A send, and any turn
+            // for a reader already at the end, still brings them down.
+            let unattended = seenAutoStartedTurnToken.map { $0 != runtime.autoStartedTurnToken } ?? false
+            seenAutoStartedTurnToken = runtime.autoStartedTurnToken
+            if wasAtEnd || !unattended {
+                tracking.isPinnedToBottom = true
+                anchorsBottomOnGrowth = true
+                if wasAtEnd {
+                    // Already there: the message and the working line appear in place.
+                    withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
+                } else {
+                    withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+                }
             }
             tracking.armViewportRefresh()
         }
@@ -636,6 +653,17 @@ struct ThreadTimeline: View, Equatable {
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
             withAnimation(.smooth(duration: 0.35)) { position.scrollTo(edge: .bottom) }
+        }
+        .onChange(of: scrollState.areaGrowthRequest) {
+            // The composer area took height from the viewport's bottom edge: a reader at the
+            // end keeps the end, snapped unanimated as the area grows, and a reader who
+            // scrolled up to read is left exactly where they are. Mid-resize this waits for
+            // the settle, like the geometry branch above.
+            guard !liveResize.isActive else { return }
+            guard tracking.isPinnedToBottom || tracking.distanceFromBottom < 48 else { return }
+            tracking.isPinnedToBottom = true
+            anchorsBottomOnGrowth = true
+            withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
         }
         .onChange(of: lastEntryID) {
             // A message, tool row or turn landing at the end of the conversation brings
@@ -2057,6 +2085,9 @@ private struct WorkingIndicator: View {
     @Environment(\.revealTimelineEnd) private var revealBox
     @State private var now = Date.now
     @State private var isExpanded = false
+    @State private var showsAllSteps = false
+    @State private var isFadingSteps = false
+    @State private var collapseTask: Task<Void, Never>?
 
     /// The one motion for whatever changes on the line: the words, the chevron.
     private static let change = Animation.smooth(duration: 0.3)
@@ -2071,9 +2102,27 @@ private struct WorkingIndicator: View {
         VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
             Button {
                 guard canExpand else { return }
-                withAnimation(.snappy(duration: 0.24)) {
-                    isExpanded.toggle()
-                    if isExpanded { revealBox?.follow() }
+                if isExpanded {
+                    collapseTask?.cancel()
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        isFadingSteps = true
+                    }
+                    collapseTask = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(0.12))
+                        guard !Task.isCancelled else { return }
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) {
+                            isExpanded = false
+                            isFadingSteps = false
+                        }
+                    }
+                } else {
+                    collapseTask?.cancel()
+                    withAnimation(.snappy(duration: 0.24)) {
+                        isExpanded = true
+                        revealBox?.follow()
+                    }
                 }
             } label: {
                 VStack(alignment: .leading, spacing: 10) {
@@ -2115,22 +2164,25 @@ private struct WorkingIndicator: View {
             .accessibilityHint(canExpand ? Text("Shows what the agent is doing") : Text(""))
 
             if isExpanded, canExpand {
-                if !thinkingSteps.isEmpty {
-                    VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
-                        ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
-                            MarkdownView(text: step.text, isStreaming: step.isStreaming).equatable()
+                VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+                    if !thinkingSteps.isEmpty {
+                        VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+                            ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
+                                MarkdownView(text: step.text, isStreaming: step.isStreaming).equatable()
+                            }
                         }
-                    }
-                    .foregroundStyle(.secondary)
-                    .environment(\.markdownPointSize, 12)
-                    .environment(\.markdownDimmed, true)
-                    .padding(.leading, TimelineMetrics.iconWidth + TimelineMetrics.iconSpacing)
-                    .transition(.softAppear)
-                }
-                if !liveWork.isEmpty {
-                    WorkSteps(entries: liveWork, runtime: runtime, workingDirectory: workingDirectory)
+                        .foregroundStyle(.secondary)
+                        .environment(\.markdownPointSize, 12)
+                        .environment(\.markdownDimmed, true)
+                        .padding(.leading, TimelineMetrics.iconWidth + TimelineMetrics.iconSpacing)
                         .transition(.softAppear)
+                    }
+                    if !liveWork.isEmpty {
+                        WorkSteps(entries: liveWork, runtime: runtime, workingDirectory: workingDirectory, showsAll: $showsAllSteps)
+                            .transition(.softAppear)
+                    }
                 }
+                .opacity(isFadingSteps ? 0 : 1)
             }
         }
         .animation(Self.change, value: label)
@@ -2159,9 +2211,20 @@ struct ThinkingStep: Equatable {
 final class TimelineScrollState {
     var showsJumpButton = false
     private(set) var jumpRequest = 0
+    /// The composer area over the timeline changed height (the queued follow-ups tab
+    /// opening, a follow-up being queued, an approval card arriving): the viewport lost
+    /// that height from its bottom edge. Kept apart from `jumpRequest`, which the reader's
+    /// own jump button fires: a growth must never move a reader who scrolled up to read.
+    private(set) var areaGrowthRequest = 0
 
     func jumpToLatest() {
         jumpRequest += 1
+    }
+
+    /// The composer area's height changed under the timeline. Only a reader who is at the
+    /// end is pulled to the new edge.
+    func noteComposerAreaGrowth() {
+        areaGrowthRequest += 1
     }
 }
 

@@ -316,6 +316,18 @@ enum MCPCatalog {
             sampleTools: ["workers_list", "kv_namespaces_list", "r2_buckets_list", "d1_databases_list"]
         ),
         MCPCatalogEntry(
+            id: "netlify",
+            name: "Netlify",
+            vendor: "Netlify",
+            summary: "Sites, deploys, forms and environment variables",
+            category: .cloud,
+            asset: "mcp-netlify",
+            colorValue: 0x00C7B7,
+            transport: .oauth(url: "https://netlify-mcp.netlify.app/mcp"),
+            docsURL: "https://docs.netlify.com/welcome/build-with-ai/netlify-mcp-server/",
+            sampleTools: ["get-projects", "deploy-site", "manage-env-vars", "get-deploy"]
+        ),
+        MCPCatalogEntry(
             id: "supabase",
             name: "Supabase",
             vendor: "Supabase",

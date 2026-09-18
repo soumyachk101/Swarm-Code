@@ -6,6 +6,9 @@ All notable changes to Droppy Code are documented here, newest first. The format
 
 ## [Unreleased]
 
+### New features
+- Netlify joins the MCP catalog: sign in with your Netlify account and a thread can create projects, deploy sites and manage environment variables.
+
 ### Bug fixes
 - The GitLab MCP server no longer looks like a hiccup on GitLab's side: a top-level group that hasn't allowed MCP client access is answered by GitLab 19.4 and earlier with 404 instead of "MCP server disabled", so connecting ended in "gitlab.com didn't answer its MCP address (404), try again in a few minutes". That answer now opens the steps to turn MCP on for the group, and the app's own MCP proxy answers a path it has no route for with 502 rather than a 404 that reads as the server's reply.
 
