@@ -223,6 +223,10 @@ final class MCPStore {
                 save()
                 exportAll()
             } catch is CancellationError {
+            } catch MCPProbeError.needsSetup(let guide) {
+                // The token is good; the server needs a step on its side. Keep the sign-in so
+                // Check again re-probes without another browser round trip.
+                states[entry.id] = .needsSetup(guide)
             } catch {
                 states[entry.id] = .failed(message: error.localizedDescription)
             }

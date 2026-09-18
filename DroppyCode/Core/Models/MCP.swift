@@ -198,12 +198,30 @@ struct MCPConnection: Codable, Sendable, Hashable, Identifiable {
     var id: String { catalogID }
 }
 
+/// A step the user must take outside the app before the server will answer: why it
+/// refused, what to do, and the page to do it on. The card offers it as a floating panel.
+struct MCPSetupGuide: Sendable, Hashable {
+    /// Short headline, e.g. "Turn on GitLab's MCP server".
+    var title: String
+    /// One line saying why the server refused.
+    var reason: String
+    /// Plain-language steps, in order.
+    var steps: [String]
+    /// Label of the button that opens `pageURL`, e.g. "Open my groups".
+    var pageLabel: String
+    var pageURL: String
+    /// Shown under the buttons after a check that still fails, e.g. why it may take a minute.
+    var note: String?
+}
+
 /// The connection's state as the page and the composer show it.
 enum MCPConnectionState: Sendable, Hashable {
     case notConnected
     case connecting
     case connected(toolCount: Int)
     case failed(message: String)
+    /// Signed in or keyed correctly, but the server itself needs a step on its side first.
+    case needsSetup(MCPSetupGuide)
 
     var isConnected: Bool {
         if case .connected = self { return true }

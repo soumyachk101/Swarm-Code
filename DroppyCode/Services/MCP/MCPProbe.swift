@@ -6,10 +6,11 @@ enum MCPProbeError: LocalizedError, Sendable {
     case timedOut
     case http(status: Int, body: String)
     case unauthorizedOAuth
-    /// The sign-in is fine but the server itself is switched off on the
-    /// remote side (GitLab answers 403 "MCP server disabled" until the
-    /// top-level group allows MCP clients).
-    case serverDisabled
+    /// The sign-in is fine but the server needs a step on its side first (GitLab answers
+    /// 403 "MCP server disabled" until the top-level group allows MCP clients).
+    case needsSetup(MCPSetupGuide)
+    /// A signed-in server answered 404 at its own MCP address: a hiccup on their side.
+    case unavailable(host: String)
     case malformed(String)
 
     var errorDescription: String? {
@@ -37,8 +38,10 @@ enum MCPProbeError: LocalizedError, Sendable {
             }
         case .unauthorizedOAuth:
             return "Sign-in was rejected. Sign in again in your browser."
-        case .serverDisabled:
-            return "Signed in, but the MCP server is switched off on the server side. A group Owner turns it on under the group's Settings › General › Permissions and group features › MCP client access."
+        case .needsSetup(let guide):
+            return guide.reason
+        case .unavailable(let host):
+            return "\(host) didn't answer its MCP address (404). If the address is right, it's a hiccup on their side: try again in a few minutes."
         case .malformed(let detail):
             return "The server sent something unexpected: \(detail)"
         }
@@ -246,9 +249,11 @@ enum MCPProbe {
                 return posted.body
             } catch MCPProbeError.http(let status, let body) where (status == 401 || status == 403) && server.oauthUpstream != nil {
                 if status == 403, body.localizedCaseInsensitiveContains("MCP server disabled") {
-                    throw MCPProbeError.serverDisabled
+                    throw MCPProbeError.needsSetup(Self.gitLabServerDisabled(upstream: server.oauthUpstream ?? urlString))
                 }
                 throw MCPProbeError.unauthorizedOAuth
+            } catch MCPProbeError.http(let status, _) where status == 404 && server.oauthUpstream != nil {
+                throw MCPProbeError.unavailable(host: URL(string: server.oauthUpstream ?? urlString)?.host ?? "The server")
             }
         }
 
@@ -332,6 +337,29 @@ enum MCPProbe {
             return value
         }
         return nil
+    }
+
+    // MARK: - Setup guides
+
+    /// GitLab keeps its MCP server off until an Owner allows it on the top-level group.
+    static func gitLabServerDisabled(upstream: String) -> MCPSetupGuide {
+        let origin: String = {
+            guard let url = URL(string: upstream), let host = url.host else { return "https://gitlab.com" }
+            return "\(url.scheme ?? "https")://\(host)"
+        }()
+        return MCPSetupGuide(
+            title: "Turn on GitLab's MCP server",
+            reason: "You're signed in, but GitLab keeps its MCP server off until a group Owner allows it.",
+            steps: [
+                "Open your groups and pick the top-level group your projects live in",
+                "Go to Settings › General and expand Permissions and group features",
+                "Under MCP client access, tick Allow connection to GitLab and save",
+                "Come back here and press Check again",
+            ],
+            pageLabel: "Open my groups",
+            pageURL: origin + "/dashboard/groups",
+            note: "GitLab can take a minute to apply the change."
+        )
     }
 }
 
