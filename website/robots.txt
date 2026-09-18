@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://swarmcode.dev/sitemap.xml
+Sitemap: https://swarmcode.antideploy.com/sitemap.xml
