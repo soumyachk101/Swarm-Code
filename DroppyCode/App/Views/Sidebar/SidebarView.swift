@@ -338,6 +338,10 @@ struct SidebarView: View {
             ).equatable()))
             .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.note(item.id, $0) }
             .modifier(RidesWithDraggedParent(parentID: thread.parentThreadID, drag: drag))
+        case .headCards(let parent, let heads):
+            HeadCardsRow(parentSnapshot: parent, headSnapshots: heads, menuRequests: menuRequests, onFold: { fold(parent.id) })
+                .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.note(item.id, $0) }
+                .modifier(RidesWithDraggedParent(parentID: parent.id, drag: drag))
         case .helperStub(let parent, let helpers):
             HelperStubRow(parentSnapshot: parent, helperSnapshots: helpers) { fold(parent.id) }
                 .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { rowHeights.note(item.id, $0) }
@@ -410,8 +414,25 @@ struct SidebarView: View {
         if thread.foldsHelpers {
             return [SidebarItem(id: "helpers-\(thread.id)", kind: .helperStub(parent: thread, helpers: helpers))]
         }
-        return helpers.map { helper in
-            SidebarItem(id: helper.id.uuidString, kind: .helper(helper, isLast: helper.id == helpers.last?.id))
+        let plain = helpers.filter { !$0.isHydraHead }
+        let heads = Self.orderedHeads(helpers.filter(\.isHydraHead))
+        var items = plain.map { helper in
+            SidebarItem(id: helper.id.uuidString, kind: .helper(helper, isLast: helper.id == plain.last?.id && heads.isEmpty))
+        }
+        if !heads.isEmpty {
+            items.append(SidebarItem(id: "heads-\(thread.id)", kind: .headCards(parent: thread, heads: heads)))
+        }
+        return items
+    }
+
+    /// Hydra heads in card order: running heads first, newest `createdAt` first among
+    /// them, then finished heads, newest first.
+    fileprivate static func orderedHeads(_ heads: [ChatThread]) -> [ChatThread] {
+        heads.sorted { lhs, rhs in
+            let lhsRunning = lhs.hydra?.status == .running
+            let rhsRunning = rhs.hydra?.status == .running
+            if lhsRunning != rhsRunning { return lhsRunning }
+            return lhs.createdAt > rhs.createdAt
         }
     }
 
@@ -754,8 +775,13 @@ struct SidebarView: View {
                 if model.thread(id)?.foldsHelpers == true {
                     height += (rowHeights.values["helpers-\(id)"] ?? ThreadRowMetrics.helperHeight) + 1
                 } else {
-                    for helper in helpers {
+                    for helper in helpers where !helper.isHydraHead {
                         height += (rowHeights.values[helper.id.uuidString] ?? ThreadRowMetrics.helperHeight) + 1
+                    }
+                    let headCount = helpers.count(where: \.isHydraHead)
+                    if headCount > 0 {
+                        let cards = (headCount + 5) / 6
+                        height += (rowHeights.values["heads-\(id)"] ?? ThreadRowMetrics.headCardHeight * CGFloat(cards)) + 1
                     }
                 }
             }
@@ -951,6 +977,8 @@ private struct SidebarItem: Identifiable {
         case thread(ChatThread, projectName: String?, peers: [UUID]?, hasHelpers: Bool)
         /// A helper under its parent thread; the last one ends the connector.
         case helper(ChatThread, isLast: Bool)
+        /// The parent's Hydra heads as glyph cards, ending the connector.
+        case headCards(parent: ChatThread, heads: [ChatThread])
         /// A parent's folded helpers, as one line that unfolds them.
         case helperStub(parent: ChatThread, helpers: [ChatThread])
     }
@@ -1192,6 +1220,11 @@ private enum ThreadRowMetrics {
     /// The connector's column: the dotted line runs down it, under the parent's badge.
     static let connectorWidth: CGFloat = 28
     static let connectorLineX: CGFloat = 18
+    static let headGlyphSize: CGFloat = 18
+    /// A head glyph plus its gap.
+    static let headGlyphPitch: CGFloat = 26
+    /// A glyph row over an 11 pt caption line, padded 6 top and bottom.
+    static let headCardHeight: CGFloat = 46
 }
 
 /// A helper under the thread it was spawned from: one small line, joined to its parent by a
@@ -1305,6 +1338,119 @@ private struct SidebarHelperRow: View, Equatable {
 
     private func makeActions() -> [RowAction] {
         ThreadActions.make(model: model, thread: thread, onRename: onRename, onDelete: onDelete)
+    }
+}
+
+private struct HeadCardsRow: View {
+    @Environment(AppModel.self) private var model
+    let parentSnapshot: ChatThread
+    let headSnapshots: [ChatThread]
+    let menuRequests: SidebarMenuRequests
+    let onFold: () -> Void
+
+    @State private var width: CGFloat = 0
+    @State private var hoveredID: UUID?
+
+    var body: some View {
+        let heads = SidebarView.orderedHeads(headSnapshots.map { model.thread($0.id) ?? $0 })
+        // The glyphs' room: the row's width less the connector's column and the card's own
+        // padding. Six per card until the row has been measured.
+        let cardInner = width - ThreadRowMetrics.connectorWidth - 14
+        let perCard = width == 0 ? 6 : max(1, Int(cardInner / ThreadRowMetrics.headGlyphPitch))
+        let cards = Self.chunk(heads, by: perCard)
+        VStack(spacing: 2) {
+            ForEach(Array(cards.enumerated()), id: \.offset) { index, card in
+                let isLastCard = index == cards.count - 1
+                HStack(spacing: 0) {
+                    HelperConnector(endsHere: isLastCard, action: onFold)
+                        .frame(width: ThreadRowMetrics.connectorWidth, height: ThreadRowMetrics.headCardHeight)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: ThreadRowMetrics.headGlyphPitch - ThreadRowMetrics.headGlyphSize) {
+                            ForEach(card, id: \.id) { head in
+                                if let info = head.hydra {
+                                    Button {
+                                        model.selectedThreadID = head.id
+                                    } label: {
+                                        HydraGlyph(persona: info.persona, size: ThreadRowMetrics.headGlyphSize, isRunning: info.status == .running, status: info.status)
+                                            .background {
+                                                if model.isSelected(head.id) {
+                                                    Circle().fill(Chrome.overlay(0.14)).padding(-3)
+                                                }
+                                            }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .scaleEffect(hoveredID == head.id ? 1.18 : 1)
+                                    .animation(Chrome.hover, value: hoveredID == head.id)
+                                    .onHover { hovering in
+                                        withAnimation(Chrome.hover) { hoveredID = hovering ? head.id : (hoveredID == head.id ? nil : hoveredID) }
+                                        if hovering { model.warmDocuments([head.id]) }
+                                    }
+                                    .help("\(info.persona.name) · \(info.task)")
+                                    // Snapshots only: the menu builder must not capture the row, so the AppKit menu
+                                    // it builds cannot pin the row's state storage (and its responder with it).
+                                    .contextMenu { [head, model, menuRequests] in
+                                        let threadSnapshot = head
+                                        let modelSnapshot = model
+                                        let requestsSnapshot = menuRequests
+                                        RowActionMenuButtons(actions: ThreadActions.makeContextMenu(
+                                            model: modelSnapshot,
+                                            thread: threadSnapshot,
+                                            settleFirst: false,
+                                            requests: requestsSnapshot
+                                        ))
+                                    }
+                                    .accessibilityLabel(Text("\(info.persona.name), \(info.task)"))
+                                    .accessibilityAddTraits(.isButton)
+                                }
+                            }
+                        }
+                        Text(cardCaption(card))
+                            .font(.system(size: 11))
+                            .foregroundStyle(Chrome.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .padding(.leading, 6)
+                    .padding(.trailing, 8)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background {
+                        RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous).fill(Chrome.overlay(0.04))
+                    }
+                }
+            }
+        }
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
+        // A helper goes out of sight the moment its parent's ghost takes off, so it never
+        // lingers under the rows closing up.
+        .opacity(RowGlideAnimator.shared.isHiding(parentSnapshot.id) ? 0 : 1)
+        .animation(Chrome.panelSlide, value: heads.map(\.id))
+    }
+
+    /// The heads in cards of `size`, in the order given; the last card takes the rest.
+    private static func chunk(_ heads: [ChatThread], by size: Int) -> [[ChatThread]] {
+        stride(from: 0, to: heads.count, by: size).map { Array(heads[$0 ..< min($0 + size, heads.count)]) }
+    }
+
+    private func cardCaption(_ card: [ChatThread]) -> String {
+        if let hovered = card.first(where: { $0.id == hoveredID }), let info = hovered.hydra {
+            return "\(info.persona.name) · \(info.task)"
+        }
+        let working = card.count { $0.hydra?.status == .running }
+        let done = card.count { $0.hydra?.status == .completed }
+        let failed = card.count { $0.hydra?.status == .failed }
+        let stopped = card.count { $0.hydra?.status == .stopped }
+        var parts: [String] = []
+        if working > 0 { parts.append("\(working) working") }
+        if done > 0 { parts.append("\(done) done") }
+        if failed > 0 { parts.append("\(failed) failed") }
+        if stopped > 0 { parts.append("\(stopped) stopped") }
+        if parts.isEmpty {
+            let finished = card.count { $0.hydra?.status.isFinished ?? true }
+            if finished > 0 { return "\(finished) done" }
+            return "\(card.count) working"
+        }
+        return parts.joined(separator: " · ")
     }
 }
 

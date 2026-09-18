@@ -165,6 +165,12 @@ final class PiSession: ProviderSession {
         if let wanted = input.model, !wanted.isEmpty, wanted != model, let slash = wanted.firstIndex(of: "/") {
             process.send(["type": .string("set_model"), "provider": .string(String(wanted[..<slash])), "modelId": .string(String(wanted[wanted.index(after: slash)...]))])
             model = wanted
+            // The context window was read with the model Pi started on; the usage panel's
+            // fraction wants the one it runs on now.
+            let state = await request(["type": .string("get_state")])
+            if let window = (state["data"] ?? state)["model"]?["contextWindow"]?.int {
+                contextWindow = window
+            }
         }
         if let wanted = input.effort, !wanted.isEmpty, wanted != effort, PiCLI.thinkingLevels.contains(wanted) {
             process.send(["type": .string("set_thinking_level"), "level": .string(wanted)])

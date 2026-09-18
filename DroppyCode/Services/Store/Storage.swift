@@ -22,6 +22,9 @@ enum Storage {
 
     static let attachmentsDirectory: URL = directory("attachments")
 
+    /// The user's window wallpaper, one file at a time.
+    static let wallpaperDirectory: URL = directory("wallpaper")
+
     static let worktreesDirectory: URL = stateDirectory("worktrees")
 
     /// Where a head's work is kept as a patch when it would not land in the checkout.

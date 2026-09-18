@@ -197,6 +197,8 @@ struct WindowBackdrop: View {
     @Environment(\.colorScheme) private var colorScheme
     /// The backdrop setting, 0 for bare glass and 1 for a solid base.
     let opacity: Double
+    /// The user's wallpaper, painted edge to edge under the scrim; nil for the stock glass.
+    var wallpaper: NSImage? = nil
 
     /// The scrim over the glass for a backdrop setting: the stock scrim at the
     /// midpoint, none at 0, a solid base at 1, linear either side.
@@ -215,7 +217,26 @@ struct WindowBackdrop: View {
         // scrim, the tint and the hairline stay exactly as they are.
         let isSolid = opacity >= 0.98
         Group {
-            if isSolid {
+            if let wallpaper {
+                // No glassEffect here: a window-sized glass over an in-window image
+                // would be a full-window sample every frame and would only blur the
+                // picture; the capsules, cards and panels already draw their own
+                // Liquid Glass and refract the wallpaper through it.
+                shape.fill(.clear)
+                    .overlay {
+                        Image(nsImage: wallpaper)
+                            .resizable()
+                            .interpolation(.high)
+                            .aspectRatio(contentMode: .fill)
+                    }
+                    .clipShape(shape)
+                    .overlay {
+                        shape
+                            .fill(isDark ? Color.black : Color.white)
+                            .opacity(Self.scrim(for: opacity, isDark: isDark))
+                    }
+                    .transition(.opacity)
+            } else if isSolid {
                 shape.fill(isDark ? Color.black : Color.white)
             } else {
                 shape
@@ -228,6 +249,7 @@ struct WindowBackdrop: View {
                     }
             }
         }
+        .animation(.easeInOut(duration: 0.3), value: wallpaper != nil)
         .overlay {
             shape.fill(Chrome.glassTint.opacity(0.12))
         }

@@ -266,6 +266,7 @@ struct MarkdownBlockView: View, Equatable {
     @Environment(\.chatZoom) private var zoom
     @Environment(\.markdownStreaming) private var streaming
     @Environment(\.hydraMentionPersonas) private var hydraMentionPersonas
+    @Environment(\.hydraMentionTargets) private var hydraMentionTargets
 
     /// Blocks compare by content, so a finished block is skipped while the reply keeps streaming.
     nonisolated static func == (lhs: MarkdownBlockView, rhs: MarkdownBlockView) -> Bool {
@@ -281,7 +282,12 @@ struct MarkdownBlockView: View, Equatable {
         case .paragraph(let text):
             // Every head named anywhere in the paragraph is decorated inline: glyph +
             // coloured bold name inside one flowing Text, with only the prose veiled.
+            // Only the AppKit paragraph can say what is under the pointer, so a finished
+            // paragraph naming a head takes that path; while streaming the SwiftUI path
+            // keeps its veil and still opens the chat on click.
             if RichLink.containsLinks(in: text, streaming: streaming) {
+                InlineText(text, hasLinks: true)
+            } else if !streaming, listDepth == 0, mentionsTarget(in: text) {
                 InlineText(text, hasLinks: true)
             } else if listDepth == 0, let segments = mentionSegments(in: text) {
                 VeiledText(segments: segments)
@@ -378,6 +384,37 @@ struct MarkdownBlockView: View, Equatable {
     /// Every head name mentioned anywhere in the paragraph, as prose/fixed segments so
     /// each renders as glyph + coloured bold name inline in one flowing Text. Matches are
     /// word-bounded (never another letter) and longest-name-first, so 'Hank 2' beats 'Hank'.
+    private func mentionsTarget(in text: String) -> Bool {
+        guard !hydraMentionTargets.isEmpty else { return false }
+        return !Self.mentionRanges(in: text, names: Array(hydraMentionTargets.keys)).isEmpty
+    }
+
+    /// Word-bounded ranges of any of `names` in `text`, longest-name-first, so
+    /// 'Hank 2' beats 'Hank'.
+    nonisolated static func mentionRanges(in text: String, names: [String]) -> [Range<String.Index>] {
+        let ordered = names.sorted { $0.count > $1.count }
+        var out: [Range<String.Index>] = []
+        var i = text.startIndex
+        while i < text.endIndex {
+            var hit: String?
+            for name in ordered where text[i...].hasPrefix(name) {
+                let after = text.index(i, offsetBy: name.count, limitedBy: text.endIndex) ?? text.endIndex
+                let beforeOK: Bool
+                if i == text.startIndex { beforeOK = true } else { let c = text[text.index(before: i)]; beforeOK = !c.isLetter && !c.isNumber }
+                let afterOK: Bool
+                if after == text.endIndex { afterOK = true } else { let c = text[after]; afterOK = !c.isLetter && !c.isNumber }
+                if beforeOK && afterOK { hit = name; break }
+            }
+            if let hit {
+                let end = text.index(i, offsetBy: hit.count)
+                out.append(i..<end)
+                i = end
+            } else {
+                i = text.index(after: i)
+            }
+        }
+        return out
+    }
     private func mentionSegments(in text: String) -> [VeiledText.Segment]? {
         let pretty = RichLink.prettyAttributed(text, streaming: streaming)
         let chars = String(pretty.characters)
@@ -430,6 +467,14 @@ struct MarkdownBlockView: View, Equatable {
         let glyph = Text(Self.mentionGlyph(persona, size: size))
             .foregroundColor(persona.color)
             .baselineOffset(Self.mentionGlyphOffset(size: size))
+        // A link in a Text keeps the colour the attribute sets and opens through the environment.
+        if let target = hydraMentionTargets[persona.name] {
+            var name = AttributedString(persona.name)
+            name.link = target.url
+            name.foregroundColor = persona.color
+            name.inlinePresentationIntent = .stronglyEmphasized
+            return Text("\(glyph) \(Text(name))")
+        }
         let name = Text(verbatim: persona.name).fontWeight(.bold).foregroundColor(persona.color)
         return Text("\(glyph) \(name)")
     }
@@ -476,6 +521,8 @@ private struct MarkdownListDepthKey: EnvironmentKey {
 
 extension EnvironmentValues {
     @Entry var hydraMentionPersonas: [HydraPersona] = []
+    /// The heads this chat sent out, by persona name, for the hover card and the click.
+    @Entry var hydraMentionTargets: [String: HydraMentionTarget] = [:]
 
     var markdownListDepth: Int {
         get { self[MarkdownListDepthKey.self] }
@@ -802,11 +849,15 @@ struct InlineText: View {
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.markdownStreaming) private var streaming
     @Environment(\.hydraMentionPersonas) private var hydraMentionPersonas
+    @Environment(\.hydraMentionTargets) private var hydraMentionTargets
+    @Environment(\.openURL) private var openURL
     @State private var faviconRevision = 0
     /// The link paragraph's text view, for the hover that sets the cursor.
     @State private var linkView = WeakView()
     /// Whether the pointing hand is up over a link, so hover only sets the cursor on change.
     @State private var showsHand = false
+    /// The head whose card is up, so hover only re-shows the card on change.
+    @State private var hoveredHeadID: UUID?
 
     init(_ source: String, hasLinks: Bool? = nil) {
         self.source = source
@@ -837,25 +888,48 @@ struct InlineText: View {
             // paragraph (and its styled text) alive after it scrolls away.
             let linkBox = linkView
             let hand = $showsHand
-            LinkParagraphView(source: source, pointSize: scaled, dimmed: dimmed, streaming: streaming, revision: faviconRevision, mentions: hydraMentionPersonas, onHost: { [weak linkBox] view in linkBox?.value = view })
+            let hoveredHead = $hoveredHeadID
+            let personasByName = Dictionary(hydraMentionPersonas.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+            let targets = hydraMentionTargets
+            LinkParagraphView(source: source, pointSize: scaled, dimmed: dimmed, streaming: streaming, revision: faviconRevision, mentions: hydraMentionPersonas, targets: hydraMentionTargets, onOpenHead: { url in openURL(url) }, onHost: { [weak linkBox] view in linkBox?.value = view })
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .alignmentGuide(.firstTextBaseline) { _ in ascender }
                 .alignmentGuide(.lastTextBaseline) { $0.height - lineHeight + ascender }
                 // The pointing hand over links, from here rather than the text view's own
                 // tracking (which AppKit would rebuild every scrolled frame). Hover is off
                 // while the timeline scrolls, so this costs nothing then.
-                .onContinuousHover(coordinateSpace: .local) { [weak linkBox, hand] phase in
-                    let overLink: Bool
+                .onContinuousHover(coordinateSpace: .local) { [weak linkBox, hand, hoveredHead, personasByName, targets] phase in
+                    guard let view = linkBox?.value as? LinkTextView else { return }
                     switch phase {
-                    case .active(let point): overLink = (linkBox?.value as? LinkTextView)?.hasLink(at: point) ?? false
-                    case .ended: overLink = false
+                    case .active(let point):
+                        let overLink = view.hasLink(at: point)
+                        if overLink != hand.wrappedValue {
+                            hand.wrappedValue = overLink
+                            if overLink { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                        }
+                        if let (name, url, rect) = view.headMentionRect(at: point),
+                           let target = targets[name], target.url == url,
+                           let persona = personasByName[name] {
+                            if hoveredHead.wrappedValue != target.threadID {
+                                hoveredHead.wrappedValue = target.threadID
+                                HydraHeadHoverPopover.shared.show(persona: persona, target: target, relativeTo: rect, of: view)
+                            }
+                        } else {
+                            if hoveredHead.wrappedValue != nil {
+                                hoveredHead.wrappedValue = nil
+                                HydraHeadHoverPopover.shared.hide()
+                            }
+                        }
+                    case .ended:
+                        if hand.wrappedValue { NSCursor.pop(); hand.wrappedValue = false }
+                        hoveredHead.wrappedValue = nil
+                        HydraHeadHoverPopover.shared.hide()
                     }
-                    guard overLink != hand.wrappedValue else { return }
-                    hand.wrappedValue = overLink
-                    if overLink { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                 }
-                .onDisappear { [hand] in
+                .onDisappear { [hand, hoveredHead] in
                     if hand.wrappedValue { NSCursor.pop(); hand.wrappedValue = false }
+                    hoveredHead.wrappedValue = nil
+                    HydraHeadHoverPopover.shared.hide()
                 }
                 // Stable hosts key the favicon work, so a streamed token with no new link
                 // leaves the task alone.
