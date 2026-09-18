@@ -920,11 +920,9 @@ enum FaviconCache {
             return nil
         }
         if let task = inFlight[key] { return await task.value }
-        guard let url = URL(string: "https://www.google.com/s2/favicons?domain=\(key)&sz=64") else { return nil }
         let task = Task { () -> NSImage? in
-            guard let (data, _) = try? await URLSession.shared.data(from: url),
-                  let raw = NSImage(data: data) else { return nil }
-            return resizedIcon(raw)
+            guard let data = await iconData(for: key), let clean = cleaned(data) else { return nil }
+            return resizedIcon(clean)
         }
         inFlight[key] = task
         let image = await task.value
@@ -936,6 +934,115 @@ enum FaviconCache {
             failed.insert(key)
         }
         return image
+    }
+
+    private static func iconData(for host: String) async -> Data? {
+        if let url = URL(string: "https://icons.duckduckgo.com/ip3/\(host).ico"),
+           let (data, response) = try? await URLSession.shared.data(from: url),
+           let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+           NSImage(data: data) != nil {
+            return data
+        }
+        if let url = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=64"),
+           let (data, _) = try? await URLSession.shared.data(from: url) {
+            return data
+        }
+        return nil
+    }
+
+    private static func cleaned(_ data: Data) -> NSImage? {
+        guard let image = NSImage(data: data), image.size.width > 0, image.size.height > 0 else { return nil }
+        let long = max(image.size.width, image.size.height)
+        let scale = long > 64 ? 64 / long : 1
+        let width = max(1, Int((image.size.width * scale).rounded()))
+        let height = max(1, Int((image.size.height * scale).rounded()))
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(x: 0, y: 0, width: width, height: height),
+                   from: NSRect(origin: .zero, size: image.size),
+                   operation: .copy, fraction: 1)
+        NSGraphicsContext.restoreGraphicsState()
+        removeWhitePlate(in: rep)
+        let out = NSImage(size: NSSize(width: width, height: height))
+        out.addRepresentation(rep)
+        return out
+    }
+
+    private static func removeWhitePlate(in rep: NSBitmapImageRep) {
+        let width = rep.pixelsWide
+        let height = rep.pixelsHigh
+        guard width > 0, height > 0 else { return }
+        func channels(_ x: Int, _ y: Int) -> (r: Int, g: Int, b: Int, a: Int)? {
+            guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return nil }
+            return (Int((c.redComponent * 255).rounded()), Int((c.greenComponent * 255).rounded()),
+                    Int((c.blueComponent * 255).rounded()), Int((c.alphaComponent * 255).rounded()))
+        }
+        func isWhite(_ p: (r: Int, g: Int, b: Int, a: Int)) -> Bool {
+            guard p.a > 200 else { return false }
+            let lo = min(p.r, min(p.g, p.b))
+            let hi = max(p.r, max(p.g, p.b))
+            return lo >= 236 && hi - lo <= 20
+        }
+        var plate = [Bool](repeating: false, count: width * height)
+        var stack: [Int] = []
+        for x in 0..<width {
+            for y in [0, height - 1] {
+                if let p = channels(x, y), isWhite(p), !plate[y * width + x] {
+                    plate[y * width + x] = true
+                    stack.append(y * width + x)
+                }
+            }
+        }
+        for y in 0..<height {
+            for x in [0, width - 1] {
+                if let p = channels(x, y), isWhite(p), !plate[y * width + x] {
+                    plate[y * width + x] = true
+                    stack.append(y * width + x)
+                }
+            }
+        }
+        while let idx = stack.popLast() {
+            let x = idx % width
+            let y = idx / width
+            let neighbours = [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
+            for (nx, ny) in neighbours {
+                guard nx >= 0, nx < width, ny >= 0, ny < height, !plate[ny * width + nx] else { continue }
+                guard let p = channels(nx, ny), isWhite(p) else { continue }
+                plate[ny * width + nx] = true
+                stack.append(ny * width + nx)
+            }
+        }
+        for y in 0..<height {
+            for x in 0..<width {
+                guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                let r = Int((c.redComponent * 255).rounded())
+                let g = Int((c.greenComponent * 255).rounded())
+                let b = Int((c.blueComponent * 255).rounded())
+                let lo = min(r, min(g, b))
+                if plate[y * width + x] {
+                    rep.setColor(NSColor(deviceRed: c.redComponent, green: c.greenComponent, blue: c.blueComponent, alpha: 0), atX: x, y: y)
+                    continue
+                }
+                let hasPlateNeighbour = (x + 1 < width && plate[y * width + x + 1])
+                    || (x - 1 >= 0 && plate[y * width + x - 1])
+                    || (y + 1 < height && plate[(y + 1) * width + x])
+                    || (y - 1 >= 0 && plate[(y - 1) * width + x])
+                guard hasPlateNeighbour, lo >= 160 else { continue }
+                let alpha = 1 - Double(lo) / 255
+                guard alpha > 0.02 else {
+                    rep.setColor(NSColor(deviceRed: c.redComponent, green: c.greenComponent, blue: c.blueComponent, alpha: 0), atX: x, y: y)
+                    continue
+                }
+                func unpremult(_ v: Double) -> Double {
+                    min(1, max(0, (v / 255 - (1 - alpha)) / alpha))
+                }
+                rep.setColor(NSColor(deviceRed: unpremult(Double(r)), green: unpremult(Double(g)), blue: unpremult(Double(b)), alpha: alpha), atX: x, y: y)
+            }
+        }
     }
 
     /// Suffixes that only ever name something inside a network, never a site on the web.
@@ -973,14 +1080,18 @@ enum FaviconCache {
     }
 
     private static func resizedIcon(_ image: NSImage) -> NSImage {
-        let size = NSSize(width: 14, height: 14)
-        let out = NSImage(size: size)
-        out.lockFocus()
+        guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 28, pixelsHigh: 28,
+                                         bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+                                         colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return image }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
         NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(in: NSRect(origin: .zero, size: size),
+        image.draw(in: NSRect(x: 0, y: 0, width: 28, height: 28),
                    from: NSRect(origin: .zero, size: image.size),
                    operation: .copy, fraction: 1)
-        out.unlockFocus()
+        NSGraphicsContext.restoreGraphicsState()
+        let out = NSImage(size: NSSize(width: 14, height: 14))
+        out.addRepresentation(rep)
         return out
     }
 }
