@@ -307,8 +307,8 @@ struct SidebarView: View {
             ActivityHeader(title: title, isFirst: isFirst)
         case .settledHeader(let count, let isFirst):
             SettledHeader(count: count, isFirst: isFirst)
-        case .thread(let thread, let projectName, let peers, let hasHelpers):
-            reorderableRow(thread, projectName: projectName, peers: peers, hasHelpers: hasHelpers)
+        case .thread(let thread, let projectName, let projectIcon, let peers, let hasHelpers):
+            reorderableRow(thread, projectName: projectName, projectIcon: projectIcon, peers: peers, hasHelpers: hasHelpers)
                 .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(Self.listSpace)) }) { frame in
                     rowHeights.note(item.id, frame.height)
                     // A settled row keeps its place among the settled; there is nothing to reorder.
@@ -403,6 +403,7 @@ struct SidebarView: View {
             projects: model.projects,
             attention: activity ? Set(model.threads.filter { needsAttention($0) }.map(\.id)) : [],
             activityView: activity,
+            activityThreadStyle: model.settings.activityThreadStyle,
             settledCollapsed: model.settings.settledCollapsed
         )
         return itemCache.items(for: key) {
@@ -504,7 +505,7 @@ struct SidebarView: View {
                 let own = helpers[thread.id] ?? []
                 items.append(SidebarItem(
                     id: SidebarItem.id(for: thread),
-                    kind: .thread(thread, projectName: nil, peers: nil, hasHelpers: !thread.isSettled && !own.isEmpty)
+                    kind: .thread(thread, projectName: nil, projectIcon: nil, peers: nil, hasHelpers: !thread.isSettled && !own.isEmpty)
                 ))
                 items.append(contentsOf: helperItems(under: thread, helpers: own))
             }
@@ -548,9 +549,11 @@ struct SidebarView: View {
             items.append(SidebarItem(id: "settled", kind: .settledHeader(count: settled.count, isFirst: items.isEmpty)))
             if !model.settings.settledCollapsed {
                 for thread in settled {
+                    let project = model.project(thread.projectID)
+                    let compact = model.settings.activityThreadStyle == .icon
                     items.append(SidebarItem(
                         id: SidebarItem.id(for: thread),
-                        kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: nil, hasHelpers: false)
+                        kind: .thread(thread, projectName: compact ? nil : (project?.name ?? ""), projectIcon: compact ? project?.icon : nil, peers: nil, hasHelpers: false)
                     ))
                 }
             }
@@ -564,9 +567,11 @@ struct SidebarView: View {
         let peers = threads.map(\.id)
         return threads.flatMap { thread in
             let own = helpers[thread.id] ?? []
+            let project = model.project(thread.projectID)
+            let compact = model.settings.activityThreadStyle == .icon
             return [SidebarItem(
                 id: thread.id.uuidString,
-                kind: .thread(thread, projectName: model.project(thread.projectID)?.name ?? "", peers: peers, hasHelpers: !thread.isSettled && !own.isEmpty)
+                kind: .thread(thread, projectName: compact ? nil : (project?.name ?? ""), projectIcon: compact ? project?.icon : nil, peers: peers, hasHelpers: !thread.isSettled && !own.isEmpty)
             )] + helperItems(under: thread, helpers: own)
         }
     }
@@ -650,7 +655,7 @@ struct SidebarView: View {
                 ProjectRow(snapshot: result.project, count: result.count, togglesExpansion: false)
                 // Keyed like the main list, so a thread settled from here changes rows too.
                 ForEach(result.threads, id: \.sidebarItemID) { thread in
-                    threadRow(thread, projectName: nil, hasHelpers: !thread.isSettled && !(helpers[thread.id] ?? []).isEmpty)
+                    threadRow(thread, projectName: nil, projectIcon: nil, hasHelpers: !thread.isSettled && !(helpers[thread.id] ?? []).isEmpty)
                 }
             }
         }
@@ -695,9 +700,9 @@ struct SidebarView: View {
     /// layout, within its group in the activity layout. The list's one gesture drives it
     /// (see `body`), ahead of the row's own click, so a drag never selects the thread on
     /// release; a plain click still does. The row only lifts and follows here.
-    private func reorderableRow(_ thread: ChatThread, projectName: String?, peers: [UUID]?, hasHelpers: Bool) -> some View {
+    private func reorderableRow(_ thread: ChatThread, projectName: String?, projectIcon: ProjectIcon?, peers: [UUID]?, hasHelpers: Bool) -> some View {
         let isDragged = drag.id == thread.id
-        return threadRow(thread, projectName: projectName, hasHelpers: hasHelpers, isDragged: isDragged)
+        return threadRow(thread, projectName: projectName, projectIcon: projectIcon, hasHelpers: hasHelpers, isDragged: isDragged)
             .offset(y: isDragged ? drag.visualOffset : 0)
             .zIndex(isDragged ? 1 : 0)
     }
@@ -757,7 +762,7 @@ struct SidebarView: View {
         if model.settings.sidebarActivityView {
             let placements = threadPlacements
             for item in listItems(placements: placements, helpers: helpersByParent(placements: placements)) {
-                if case .thread(let thread, _, let peers, _) = item.kind, thread.id == id, let peers {
+                if case .thread(let thread, _, _, let peers, _) = item.kind, thread.id == id, let peers {
                     return (peers, peers)
                 }
             }
@@ -808,13 +813,14 @@ struct SidebarView: View {
         }
     }
 
-    private func threadRow(_ thread: ChatThread, projectName: String?, hasHelpers: Bool, isDragged: Bool = false) -> some View {
+    private func threadRow(_ thread: ChatThread, projectName: String?, projectIcon: ProjectIcon?, hasHelpers: Bool, isDragged: Bool = false) -> some View {
         // A thread with helpers under it gets the fold button; a settled one shows none.
         // `.equatable()` skips the parent's re-evaluation for rows whose value inputs did
         // not change; the row still observes the model's per-thread cells inside its body.
         return archivePopover(for: thread, on: renamePopover(for: thread, on: deletePopover(for: thread, on: SidebarThreadRow(
             snapshot: thread,
             projectName: projectName,
+            projectIcon: projectIcon,
             menuRequests: menuRequests,
             isDragged: isDragged,
             // The popover is another window: no glide can cross into the main one from it.
@@ -978,7 +984,7 @@ private struct SidebarItem: Identifiable {
         case settledHeader(count: Int, isFirst: Bool)
         /// A thread, with its project's name in the activity layout, the threads it can be
         /// reordered among, and whether it has helpers to fold away.
-        case thread(ChatThread, projectName: String?, peers: [UUID]?, hasHelpers: Bool)
+        case thread(ChatThread, projectName: String?, projectIcon: ProjectIcon?, peers: [UUID]?, hasHelpers: Bool)
         /// A helper under its parent thread; the last one ends the connector.
         case helper(ChatThread, isLast: Bool)
         /// The parent's Hydra heads as glyph cards, ending the connector.
@@ -1044,7 +1050,13 @@ private struct ProjectRow: View {
                 }
             },
             icon: {
-                SidebarIconBadge { SidebarSymbol("folder.fill") }
+                SidebarIconBadge {
+                    if let icon = project.icon {
+                        ProjectIconMark(icon: icon, size: 12)
+                    } else {
+                        SidebarSymbol("folder.fill")
+                    }
+                }
             },
             accessory: { hovering in
                 if hovering || isMenuPresented {
@@ -1591,6 +1603,8 @@ private struct SidebarThreadRow: View, Equatable {
     private var thread: ChatThread { model.thread(snapshot.id) ?? snapshot }
     /// The project shown under the title in the activity layout; nil in the project layout.
     let projectName: String?
+    /// The project's mark shown in front of the title in the compact activity layout; nil otherwise.
+    let projectIcon: ProjectIcon?
     /// Carries rename/delete intents out of the AppKit menu without retaining row state.
     /// Held strongly: the box is the list's, not the row's, so holding it pins no row
     /// state, and a weak one could go nil under a menu still on screen.
@@ -1639,6 +1653,7 @@ private struct SidebarThreadRow: View, Equatable {
             ThreadRowFace(
                 thread: thread,
                 projectName: projectName,
+                projectIcon: projectIcon,
                 isSelected: isSelected,
                 trailingClearance: Self.trailingClearance(isSettled: isSettled, isDetailed: isDetailed, showsActions: showsActions || isSettling, showsFold: showsFold),
                 mergeStage: mergeStage
@@ -1685,6 +1700,13 @@ private struct SidebarThreadRow: View, Equatable {
                     }
                 } else if isDetailed || isSettled {
                     ActivityStatus(thread: thread)
+                } else if projectIcon != nil {
+                    // The project's mark holds the badge's place at the front in the compact
+                    // layout, so the thread's own state reads at the back, beside the time.
+                    HStack(spacing: 6) {
+                        ActivityStatus(thread: thread)
+                        RelativeTimeLabel(date: thread.updatedAt)
+                    }
                 } else {
                     RelativeTimeLabel(date: thread.updatedAt)
                 }
@@ -1880,10 +1902,10 @@ private struct SidebarThreadRow: View, Equatable {
         let departureClearance = Self.trailingClearance(isSettled: thread.isSettled, isDetailed: projectName != nil, showsActions: true)
         let arrivalClearance = Self.trailingClearance(isSettled: settled, isDetailed: !settled && projectName != nil, showsActions: false)
         guard let departure = animator.render(
-            ThreadRowFace(thread: thread, projectName: projectName, isSelected: isSelected, trailingClearance: departureClearance) { badge },
+            ThreadRowFace(thread: thread, projectName: projectName, projectIcon: projectIcon, isSelected: isSelected, trailingClearance: departureClearance) { badge },
             size: from.size, colorScheme: colorScheme
         ), let arrival = animator.render(
-            ThreadRowFace(thread: arriving, projectName: projectName, isSelected: isSelected, trailingClearance: arrivalClearance) { badge },
+            ThreadRowFace(thread: arriving, projectName: projectName, projectIcon: projectIcon, isSelected: isSelected, trailingClearance: arrivalClearance) { badge },
             size: CGSize(width: from.width, height: arrivalHeight), colorScheme: colorScheme
         ) else { return }
         animator.launch(
@@ -1915,7 +1937,7 @@ private struct SidebarThreadRow: View, Equatable {
         let shape = RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous)
         let badge = ThreadGhostBadge(thread: thread, runtime: model.existingRuntime(for: thread.id))
         GenieAnimator.shared.launch(frame: windowFrame.frame, colorScheme: colorScheme) {
-            ThreadRowFace(thread: thread, projectName: projectName, isSelected: isSelected, trailingClearance: 52) { badge }
+            ThreadRowFace(thread: thread, projectName: projectName, projectIcon: projectIcon, isSelected: isSelected, trailingClearance: 52) { badge }
                 .background { shape.fill(fill) }
         }
         withAnimation(Chrome.panelSlide) { model.archive(thread.id) }
@@ -1929,6 +1951,7 @@ private struct ThreadRowFace<Badge: View>: View {
     let thread: ChatThread
     /// The project under the title in the activity layout; nil in the project layout.
     let projectName: String?
+    var projectIcon: ProjectIcon? = nil
     let isSelected: Bool
     /// The room left at the trailing end for the row's status, time or buttons.
     let trailingClearance: CGFloat
@@ -1942,9 +1965,15 @@ private struct ThreadRowFace<Badge: View>: View {
         let isDetailed = projectName != nil && !isSettled
         HStack(spacing: 8) {
             if !isDetailed, !isSettled {
-                badge
-                    .frame(width: Chrome.iconSize)
-                    .transition(.opacity)
+                Group {
+                    if let projectIcon {
+                        ProjectIconMark(icon: projectIcon, size: 12)
+                    } else {
+                        badge
+                    }
+                }
+                .frame(width: Chrome.iconSize)
+                .transition(.opacity)
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(verbatim: thread.title)
@@ -2528,6 +2557,7 @@ private final class SidebarItemCache {
         /// The threads heading the activity layout under "Needs attention".
         var attention: Set<UUID>
         var activityView: Bool
+        var activityThreadStyle: ActivityThreadStyle
         var settledCollapsed: Bool
     }
 
