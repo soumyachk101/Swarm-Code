@@ -272,6 +272,7 @@ struct DiffLinesView: View, Equatable {
     /// Large files render collapsed: materializing thousands of rows at once is what
     /// makes opening a diff feel laggy. The full diff is one instant tap away.
     private static let collapsedLineLimit = 200
+    private static let tintedChunk = 40
 
     private var totalLines: Int {
         file.hunks.reduce(0) { $0 + $1.lines.count }
@@ -283,13 +284,13 @@ struct DiffLinesView: View, Equatable {
     /// A header that would land inside a merged run is redundant, so it is dropped.
     enum Section: Identifiable, Equatable {
         case header(String, Int)
-        case tinted([DiffLine])
+        case tinted(lines: [DiffLine], offset: Int, count: Int)
         case plain([DiffLine])
 
         var id: String {
             switch self {
             case .header(let text, let index): "h\(index)-\(text)"
-            case .tinted(let lines): "t\(lines.first?.id ?? 0)"
+            case .tinted(let lines, _, _): "t\(lines.first?.id ?? 0)"
             case .plain(let lines): "p\(lines.first?.id ?? 0)"
             }
         }
@@ -302,7 +303,10 @@ struct DiffLinesView: View, Equatable {
         var remaining = limit
         func flush() {
             if !pending.isEmpty {
-                sections.append(.tinted(pending))
+                for start in stride(from: 0, to: pending.count, by: Self.tintedChunk) {
+                    let end = min(start + Self.tintedChunk, pending.count)
+                    sections.append(.tinted(lines: Array(pending[start..<end]), offset: start, count: pending.count))
+                }
                 pending = []
             }
         }
@@ -352,13 +356,13 @@ struct DiffLinesView: View, Equatable {
                         .padding(.vertical, 3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.accentColor.opacity(0.06))
-                case .tinted(let lines):
-                    LazyVStack(alignment: .leading, spacing: 0) {
+                case .tinted(let lines, let offset, let count):
+                    VStack(alignment: .leading, spacing: 0) {
                         ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
                             DiffLineRow(
                                 line: line,
                                 showsLineNumbers: showsLineNumbers,
-                                rounding: DiffLineRow.blockRounding(index: index, count: lines.count)
+                                rounding: DiffLineRow.blockRounding(index: offset + index, count: count)
                             )
                         }
                     }

@@ -1951,7 +1951,15 @@ private struct TurnRunningBlock: View {
         var trail: [TimelineGroup] = []
         // Chronological on: every group stays a row in arrival order and the working line
         // carries nothing; off, the steps before the last tool call move into the line.
-        if !context.chronological, showsWorking, let lastWork = groups.lastIndex(where: { if case .work = $0 { return true } else { return false } }) {
+        if !context.chronological, showsWorking {
+            // The last tool run, or none: a turn whose first words are still coming has no
+            // run for them to be work of, and with no run the partition was skipped whole,
+            // so those words sat as a row where the working line was about to appear — above
+            // it, and outside the box that takes them back the moment the first call lands.
+            // Through -1 every reply is the tail instead: the words stream below the line
+            // from the first one, the same place the line keeps an answer that turns out to
+            // be an answer.
+            let lastWork = groups.lastIndex(where: { if case .work = $0 { return true } else { return false } }) ?? -1
             // Everything up to the last tool run is the turn's work: the runs themselves and
             // the replies between them. The prompt, a steer, a notice or a plan stay rows.
             var rows: [TimelineGroup] = []
