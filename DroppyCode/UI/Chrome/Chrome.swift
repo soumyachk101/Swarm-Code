@@ -218,10 +218,9 @@ struct WindowBackdrop: View {
         let isSolid = opacity >= 0.98
         Group {
             if let wallpaper {
-                // No glassEffect here: a window-sized glass over an in-window image
-                // would be a full-window sample every frame and would only blur the
-                // picture; the capsules, cards and panels already draw their own
-                // Liquid Glass and refract the wallpaper through it.
+                // The picture takes the desktop's place behind the glass: the transparency
+                // setting keeps working the way it does without one, and the glass over the
+                // picture is the same Liquid Glass the cards and capsules already draw.
                 shape.fill(.clear)
                     .overlay {
                         Image(nsImage: wallpaper)
@@ -231,9 +230,18 @@ struct WindowBackdrop: View {
                     }
                     .clipShape(shape)
                     .overlay {
-                        shape
-                            .fill(isDark ? Color.black : Color.white)
-                            .opacity(Self.scrim(for: opacity, isDark: isDark))
+                        if isSolid {
+                            shape.fill(isDark ? Color.black : Color.white)
+                        } else {
+                            shape
+                                .fill(.clear)
+                                .glassEffect(in: shape)
+                                .overlay {
+                                    shape
+                                        .fill(isDark ? Color.black : Color.white)
+                                        .opacity(Self.scrim(for: opacity, isDark: isDark))
+                                }
+                        }
                     }
                     .transition(.opacity)
             } else if isSolid {

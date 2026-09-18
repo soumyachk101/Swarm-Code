@@ -132,7 +132,8 @@ struct WallpaperCard: View {
                     .help("Sharp")
                 Slider(
                     value: Binding(get: { store.softness }, set: { store.softness = $0 }),
-                    in: 0...1
+                    in: 0...1,
+                    onEditingChanged: { editing in store.isAdjustingSoftness = editing }
                 )
                 .controlSize(.small)
                 .frame(width: 140)
@@ -144,7 +145,7 @@ struct WallpaperCard: View {
             .overlay(alignment: .leading) {
                 if isOffStock {
                     Button {
-                        withAnimation(.snappy(duration: 0.2)) { store.softness = 0 }
+                        store.softness = 0
                     } label: {
                         Image(systemName: "arrow.counterclockwise")
                             .font(.system(size: 11, weight: .medium))

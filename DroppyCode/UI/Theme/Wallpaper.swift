@@ -35,8 +35,9 @@ final class WallpaperStore {
     /// A short sentence for the settings card when a pick fails. Nil otherwise.
     private(set) var lastError: String?
 
-    /// How soft the picture renders, 0 crisp to 1 fully blurred. Saved, and a change
-    /// re-renders shortly after while the current picture stays on screen.
+    /// How soft the picture renders, 0 crisp to 1 fully blurred. Saved at once, and a
+    /// change re-renders: live from the small copy while the slider is dragged and at
+    /// full size when the drag ends.
     var softness: Double {
         didSet {
             // Writing the property from its own observer calls the observer again, and an
@@ -55,11 +56,31 @@ final class WallpaperStore {
 
     var hasWallpaper: Bool { image != nil || fileURL != nil }
 
+    /// True while the softness slider is being dragged: each change renders live from the
+    /// small copy, and the full-size render happens once when the drag ends.
+    var isAdjustingSoftness = false {
+        didSet {
+            guard isAdjustingSoftness != oldValue, fileURL != nil else { return }
+            if isAdjustingSoftness {
+                renderLive()
+            } else {
+                liveRequested = nil
+                render()
+            }
+        }
+    }
+
     /// The installed file inside the library. Ignored by observation: views watch `image`.
     @ObservationIgnored private var fileURL: URL?
     @ObservationIgnored private let defaults = WebsiteCaptures.defaults ?? .standard
-    @ObservationIgnored private var softnessTask: Task<Void, Never>?
     @ObservationIgnored private var renderTask: Task<Void, Never>?
+    @ObservationIgnored private var liveTask: Task<Void, Never>?
+    // The live softness render in flight; one at a time, newest value wins.
+    @ObservationIgnored private var liveRequested: Double?
+    // The downsampled picture the renders start from, unblurred.
+    @ObservationIgnored private var baseImage: CGImage?
+    // A half-size copy of the same picture, so a drag renders live in half the time.
+    @ObservationIgnored private var previewBase: CGImage?
 
     private init() {
         let stored = defaults.object(forKey: Key.softness) as? Double ?? 0
@@ -97,7 +118,6 @@ final class WallpaperStore {
         isInstalling = true
         lastError = nil
         renderTask?.cancel()
-        softnessTask?.cancel()
         let softness = self.softness
         Task.detached(priority: .userInitiated) { [softness] in
             // The panel hands over a scoped URL, which dies with the panel, so the copy
@@ -126,7 +146,6 @@ final class WallpaperStore {
     /// Drops the wallpaper: the file goes, the backdrop clears, the complaint clears.
     func remove() {
         renderTask?.cancel()
-        softnessTask?.cancel()
         if let fileURL { try? FileManager.default.removeItem(at: fileURL) }
         self.fileURL = nil
         defaults.removeObject(forKey: Key.file)
@@ -136,33 +155,65 @@ final class WallpaperStore {
         lastError = nil
     }
 
-    /// Re-decodes the installed file off the main actor and swaps it in when ready, so the
-    /// old picture stays up until the new one exists. A newer render cancels this one.
+    /// Renders the wallpaper at full size from the installed file: downsample, then blur.
+    /// A newer render cancels this one; a cancelled or failed render leaves the picture alone.
     private func render() {
         guard let fileURL else { return }
         let softness = self.softness
         renderTask?.cancel()
         renderTask = Task { [weak self, fileURL, softness] in
-            let carried = await Task.detached(priority: .userInitiated) {
-                Self.decode(fileURL, softness: softness).map(DecodedPicture.init)
+            let bases = await Task.detached(priority: .userInitiated) { () -> (CGImage?, CGImage?) in
+                (Self.thumbnail(fileURL, maxPixel: 3200), Self.thumbnail(fileURL, maxPixel: 1600))
             }.value
-            guard let self, !Task.isCancelled, self.fileURL == fileURL else { return }
-            withAnimation(.easeInOut(duration: 0.25)) {
-                self.image = carried?.image
-            }
+            guard let base = bases.0 else { return }
+            let rendered = await Task.detached(priority: .userInitiated) { () -> CGImage? in
+                softness > 0 ? Self.blurred(base, softness: softness) : base
+            }.value
+            guard let self, !Task.isCancelled, self.fileURL == fileURL, let rendered else { return }
+            self.baseImage = base
+            self.previewBase = bases.1
+            // Deliberately no animation here: an animated bitmap swap makes the picture flash.
+            self.image = NSImage(cgImage: rendered, size: NSSize(width: rendered.width, height: rendered.height))
         }
     }
 
-    /// A softness change waits a beat before re-rendering, so a slider drag renders once.
     private func scheduleRerender() {
-        softnessTask?.cancel()
         guard fileURL != nil else { return }
-        softnessTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(120))
-            guard let self, !Task.isCancelled else { return }
-            self.softnessTask = nil
-            self.render()
+        if isAdjustingSoftness {
+            renderLive()
+        } else {
+            render()
         }
+    }
+
+    /// Renders the live preview for the current drag: one render at a time, and a softness
+    /// that arrives while one is in flight is rendered as soon as it finishes, so a fast
+    /// drag never queues work or stalls the slider.
+    private func renderLive() {
+        guard let previewBase, let baseImage else {
+            render()
+            return
+        }
+        liveRequested = softness
+        guard liveTask == nil else { return }
+        let scale = CGFloat(previewBase.width) / CGFloat(baseImage.width)
+        liveTask = Task { [weak self] in
+            while let value = self?.takeLiveRequest() {
+                let rendered = await Task.detached(priority: .userInitiated) {
+                    WallpaperStore.blurred(previewBase, softness: value, radiusScale: scale)
+                }.value
+                guard let self, let rendered, self.isAdjustingSoftness else { break }
+                self.image = NSImage(cgImage: rendered, size: NSSize(width: rendered.width, height: rendered.height))
+            }
+            self?.liveTask = nil
+        }
+    }
+
+    /// The newest softness asked for since the last live render, or nil when the drag is over.
+    private func takeLiveRequest() -> Double? {
+        guard isAdjustingSoftness, let value = liveRequested else { return nil }
+        liveRequested = nil
+        return value
     }
 
     private func finishInstall(file: URL, picture: DecodedPicture) {
@@ -180,27 +231,40 @@ final class WallpaperStore {
         lastError = "Could not use that picture."
     }
 
-    /// Downsamples the file to at most 3200 px and softens it per `softness`. Runs anywhere:
-    /// ImageIO and Core Image do the work, and nothing here touches the main actor.
-    nonisolated static func decode(_ url: URL, softness: Double) -> NSImage? {
+    /// Downsamples the file to at most `maxPixel` px. Runs anywhere: ImageIO does the work,
+    /// and nothing here touches the main actor.
+    nonisolated static func thumbnail(_ url: URL, maxPixel: Int) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 3200,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
             kCGImageSourceShouldCacheImmediately: true,
         ]
-        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        let size = NSSize(width: CGFloat(thumbnail.width), height: CGFloat(thumbnail.height))
-        guard softness > 0 else { return NSImage(cgImage: thumbnail, size: size) }
-        guard let blur = CIFilter(name: "CIGaussianBlur") else { return NSImage(cgImage: thumbnail, size: size) }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    /// Softens the base picture per `softness`, scaled by `radiusScale` so a smaller copy
+    /// gets a proportionally smaller radius. Runs anywhere: Core Image does the work.
+    nonisolated static func blurred(_ base: CGImage, softness: Double, radiusScale: CGFloat = 1) -> CGImage? {
+        let radius = softness * 28 * radiusScale
+        guard radius > 0.01 else { return base }
+        guard let blur = CIFilter(name: "CIGaussianBlur") else { return base }
         // The blur shrinks opaque edges toward transparent, so the image is clamped first
         // and cropped back to its own extent: the middle softens while the frame stays solid.
-        let extent = CGRect(origin: .zero, size: CGSize(width: thumbnail.width, height: thumbnail.height))
-        blur.setValue(CIImage(cgImage: thumbnail).clampedToExtent(), forKey: kCIInputImageKey)
-        blur.setValue(softness * 28, forKey: kCIInputRadiusKey)
-        guard let output = blur.outputImage?.cropped(to: extent),
-              let rendered = ciContext.createCGImage(output, from: extent) else { return nil }
-        return NSImage(cgImage: rendered, size: NSSize(width: CGFloat(rendered.width), height: CGFloat(rendered.height)))
+        let extent = CGRect(origin: .zero, size: CGSize(width: base.width, height: base.height))
+        blur.setValue(CIImage(cgImage: base).clampedToExtent(), forKey: kCIInputImageKey)
+        blur.setValue(radius, forKey: kCIInputRadiusKey)
+        guard let output = blur.outputImage?.cropped(to: extent) else { return nil }
+        return ciContext.createCGImage(output, from: extent)
+    }
+
+    /// Downsamples the file to at most 3200 px and softens it per `softness`. Runs anywhere:
+    /// ImageIO and Core Image do the work, and nothing here touches the main actor.
+    nonisolated static func decode(_ url: URL, softness: Double) -> NSImage? {
+        guard let base = thumbnail(url, maxPixel: 3200) else { return nil }
+        let rendered = softness > 0 ? blurred(base, softness: softness) : base
+        guard let rendered else { return nil }
+        return NSImage(cgImage: rendered, size: NSSize(width: rendered.width, height: rendered.height))
     }
 }
