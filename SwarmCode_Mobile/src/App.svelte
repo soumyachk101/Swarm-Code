@@ -6,14 +6,12 @@ import ChatScreen from '$screens/ChatScreen.svelte';
 import PairingScreen from '$screens/PairingScreen.svelte';
 </script>
 
-<div id="app">
-    {#if $view === 'connect'}
-        <ConnectScreen />
-    {:else if $view === 'threads'}
-        <ThreadListScreen />
-    {:else if $view === 'chat'}
-        <ChatScreen />
-    {:else if $view === 'pair'}
-        <PairingScreen />
-    {/if}
-</div>
+{#if $view === 'connect'}
+    <ConnectScreen />
+{:else if $view === 'threads'}
+    <ThreadListScreen />
+{:else if $view === 'chat'}
+    <ChatScreen />
+{:else if $view === 'pair'}
+    <PairingScreen />
+{/if}
