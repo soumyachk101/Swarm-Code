@@ -21,13 +21,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		D316607E993AEB4CB4FF2F06 /* SwarmAI */ = {
+		D316607E993AEB4CB4FF2F06 /* SwarmCode */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			explicitFileTypes = {
 			};
 			explicitFolders = (
 			);
-			path = SwarmAI;
+			path = SwarmCode;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -58,7 +58,7 @@
 				AE8B6A92FB544EA3A8C2FF3A /* LICENSE */,
 				F27C3C109E48B14D114F56CA /* THIRD_PARTY_NOTICES.md */,
 				407374162B673FE1CFDB0507 /* TRADEMARK.md */,
-				D316607E993AEB4CB4FF2F06 /* SwarmAI */,
+				D316607E993AEB4CB4FF2F06 /* SwarmCode */,
 				D704310475EAFAAE7FA6AD13 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -79,7 +79,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				D316607E993AEB4CB4FF2F06 /* SwarmAI */,
+				D316607E993AEB4CB4FF2F06 /* SwarmCode */,
 			);
 			name = SwarmAI;
 			packageProductDependencies = (

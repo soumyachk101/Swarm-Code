@@ -2,7 +2,7 @@
 
 # Swarm Code
 
-The coding app by Soumya Chakraborty. A native macOS app for your coding agents. Written entirely in Swift and SwiftUI with Liquid Glass, for Macs with Apple silicon on macOS 26 and later.
+The coding app by Soumya Chakraborty. A native macOS app for your coding agents, built in Swift and SwiftUI with Liquid Glass. Apple silicon, macOS 26 and later.
 
 It drives the coding agents you already have installed and signed in, on your own subscriptions:
 
@@ -14,7 +14,8 @@ It drives the coding agents you already have installed and signed in, on your ow
 | OpenCode | `opencode` | Agent Client Protocol |
 | Grok | `grok` | Agent Client Protocol |
 | Antigravity | `agy` | stream-json headless |
-| Copilot | `copilot` | headless JSON-RPC (the Copilot SDK protocol) |
+| Copilot | `copilot` | headless JSON-RPC (Copilot SDK protocol) |
+| Devin | `devin` | Agent Client Protocol |
 | DeepSeek | `DEEPSEEK_API_KEY` | native API (OpenAI-compatible) |
 | Meta | `MODEL_API_KEY` | native API at `api.meta.ai/v1` (Muse Spark) |
 
@@ -31,6 +32,8 @@ It drives the coding agents you already have installed and signed in, on your ow
 - Commit, push and pull requests, with generated commit messages and thread titles.
 - A command palette, keyboard shortcuts and notifications when work finishes.
 - Hydra: one chat, many heads. Switch it on and the agent leads a team of helper agents on big jobs, each in a floating panel, on the model and effort you pair it with. A pair can cross providers: a strong lead on one, quick heads on another.
+- Model Context Protocol (MCP) server integration with MCP Hub, local proxy, OAuth authentication, and a catalog of 30+ preconfigured tools.
+- Hydra Head Profiles: purpose-named dispatch configurations (quick, deep, visual) that route tasks to tailored models and reasoning levels.
 
 Remote access, mobile apps, cloud sync, telemetry and a web client are left out on purpose.
 
@@ -58,19 +61,24 @@ SwiftTerm, the only dependency, is fetched by Swift Package Manager. Xcode asks 
 
 | Folder | Contents |
 | --- | --- |
-| `SwarmAI/App` | App entry, commands, settings and the project library |
-| `SwarmAI/Providers` | Codex, Claude, ACP, Antigravity and Copilot adapters behind one event model |
-| `SwarmAI/Runtime` | Per-thread state, streaming, checkpoints and rewind |
-| `SwarmAI/Git` | Git, worktrees, checkpoints and diff parsing |
-| `SwarmAI/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
-| `SwarmAI/Support` | Process I/O, JSON-RPC and the login shell environment |
+| `SwarmCode/App` | App entry, commands, settings and the project library |
+| `SwarmCode/Providers` | Codex, Claude, ACP, Antigravity and Copilot adapters behind one event model |
+| `SwarmCode/Runtime` | Per-thread state, streaming, checkpoints and rewind |
+| `SwarmCode/Git` | Git, worktrees, checkpoints and diff parsing |
+| `SwarmCode/Views` | Window chrome, sidebar, timeline, composer, changes, terminal, palette and settings |
+| `SwarmCode/Support` | Process I/O, JSON-RPC and the login shell environment |
 | `website` | The marketing site, a static page published by Netlify (`netlify.toml`) |
+| `SwarmAI-Release` | Release notes for each version |
+| `SwarmAI_tauri` | Tauri-based cross-platform desktop port (Rust + Svelte 5) |
+| `SwarmAI_Mobile` | Mobile frontend (Svelte 5 + Tauri) |
 
 ## Made by Soumya Chakraborty
 
-<a href="https://github.com/soumya-chakraborty"><img src="docs/icon.png" width="64" alt="Swarm Code icon"></a>
+<a href="https://github.com/soumyachk101"><img src="docs/icon.png" width="64" alt="Swarm Code icon"></a>
 
-Swarm Code is made by [Soumya Chakraborty](https://github.com/soumya-chakraborty) for Mac.
+Swarm Code is made by [Soumya Chakraborty](https://github.com/soumyachk101) for Mac.
+
+Website: [swarmcode.antideploy.com](https://swarmcode.antideploy.com) | [swarmcode.dev](https://swarmcode.dev)
 
 ## Acknowledgements
 

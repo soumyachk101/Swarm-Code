@@ -23,7 +23,7 @@ targets:
     type: application
     platform: macOS
     sources:
-      - path: SwarmAI
+      - path: SwarmCode
         type: syncedFolder
       # The license, the third-party notices and the trademark policy travel with every copy of
       # the app; About shows them under Licenses.

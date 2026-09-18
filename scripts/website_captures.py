@@ -5,7 +5,7 @@
     scripts/website_captures.py --encode   # encode again from the last capture run
     scripts/website_captures.py --upload   # push the encoded set to R2 (with either of the above)
 
-The app runs once in its capture mode (see SwarmAI/Support/WebsiteCaptures.swift): it
+The app runs once in its capture mode (see SwarmCode/Support/WebsiteCaptures.swift): it
 opens the real window over this Mac's wallpaper with mock data, plays each scene, writes
 stills and 60 fps HEVC film masters to build.noindex/website-captures, and quits. This
 script then cuts what the site shows (whole windows, or one self-contained region on empty

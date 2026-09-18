@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Renders the onboarding tour's captures from the real app, then imports them as assets.
 
-The app runs once in its tour capture mode (see SwarmAI/Support/TourCaptures.swift):
+The app runs once in its tour capture mode (see SwarmCode/Support/TourCaptures.swift):
 it opens the real window with mock data over a curated gradient backdrop, photographs
 each tour scene as a 16:10 still into build.noindex/tour-captures, and quits. This
 script then resizes every still to exactly 1320x824 and writes it into the tour
@@ -26,7 +26,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 CAPTURES = ROOT / "build.noindex" / "tour-captures"
 DERIVED = ROOT / "build.noindex" / "tour"
 APP = DERIVED / "Build/Products/Debug/SwarmAI.app"
-ASSETS = ROOT / "SwarmAI" / "Resources" / "Assets.xcassets"
+ASSETS = ROOT / "SwarmCode" / "Resources" / "Assets.xcassets"
 
 WIDTH = 1320
 HEIGHT = 824

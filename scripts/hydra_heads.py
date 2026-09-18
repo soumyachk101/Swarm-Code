@@ -10,7 +10,7 @@ holes by winding. Run it to regenerate the assets; pass --render for a contact s
 """
 import math, os, sys, subprocess, json, shutil
 
-ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "SwarmAI", "Resources", "Assets.xcassets")
+ASSETS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "SwarmCode", "Resources", "Assets.xcassets")
 OUT = "/tmp/hydra-svg/out"
 os.makedirs(OUT, exist_ok=True)
 
