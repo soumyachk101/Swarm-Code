@@ -108,7 +108,7 @@ struct SettingsView: View {
                 .padding(.trailing, Chrome.sheetInset)
                 .padding(.vertical, Chrome.sheetInset)
         }
-        .background { WindowBackdrop(opacity: model.settings.backdropOpacity) }
+        .background { WindowBackdrop(opacity: model.settings.backdropOpacity, wallpaper: WallpaperStore.shared.image) }
         .background { WindowChromeConfigurator() }
         .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))
         .ignoresSafeArea()
@@ -407,6 +407,7 @@ private struct GeneralSettingsPage: View {
                 .disabled(settings.sidebarMode == .panelOnly)
                 .opacity(settings.sidebarMode == .panelOnly ? 0.5 : 1)
             }
+            WallpaperCard()
             ChatTextSizeCard(index: $settings.chatZoom)
         }
     }

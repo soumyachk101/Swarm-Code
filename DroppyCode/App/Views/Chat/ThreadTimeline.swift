@@ -5,6 +5,8 @@ struct ThreadTimeline: View, Equatable {
     @Environment(AppModel.self) private var model
     @Environment(\.chatZoom) private var zoom
     @Environment(WindowLiveResize.self) private var liveResize
+    @Environment(\.reserveSlideLeading) private var reserveSlideLeading
+    @Environment(\.reserveSlideOffset) private var reserveSlideOffset
     let runtime: ThreadRuntime
     let scrollChrome: ChromeScrollModel
     let scrollState: TimelineScrollState
@@ -114,10 +116,15 @@ struct ThreadTimeline: View, Equatable {
         // Hydra on, the whole roster besides: the lead names its heads in the prose before
         // the block that sends them out, so a name is drawn as its head from the first
         // frame rather than as plain text until the spawn lands.
+        let headThreads = model.children(of: runtime.threadID).filter(\.isHydraHead)
         let hydraMentionPersonas = blockCache.mentionPersonas(
-            for: model.children(of: runtime.threadID).filter(\.isHydraHead),
+            for: headThreads,
             roster: model.thread(runtime.threadID).map(model.hydraIsOn) ?? false
         )
+        // A head's name in the prose leads to its own chat. A reused name points at the
+        // newest head, so the oldest heads lose: iterate oldest first and let each write
+        // over the last.
+        let hydraMentionTargets = Self.mentionTargets(for: headThreads)
         // A history still being read off the main thread is not an empty thread: the
         // prompt for a new one would flash for the frames before it lands.
         if runtime.isLoadingHistory {
@@ -129,11 +136,21 @@ struct ThreadTimeline: View, Equatable {
                     scrollState.showsJumpButton = false
                 }
         } else {
-            timeline(blocks, hydraMentionPersonas: hydraMentionPersonas)
+            timeline(blocks, hydraMentionPersonas: hydraMentionPersonas, hydraMentionTargets: hydraMentionTargets)
         }
     }
 
-    private func timeline(_ blocks: [DisplayBlock], hydraMentionPersonas: [HydraPersona]) -> some View {
+    /// Every head by its persona name, oldest first so a reused name lands on the newest head.
+    private static func mentionTargets(for heads: [ChatThread]) -> [String: HydraMentionTarget] {
+        var targets: [String: HydraMentionTarget] = [:]
+        for head in heads.sorted(by: { $0.createdAt < $1.createdAt }) {
+            guard let info = head.hydra else { continue }
+            targets[info.persona.name] = HydraMentionTarget(threadID: head.id, task: info.task, status: info.status)
+        }
+        return targets
+    }
+
+    private func timeline(_ blocks: [DisplayBlock], hydraMentionPersonas: [HydraPersona], hydraMentionTargets: [String: HydraMentionTarget]) -> some View {
         // Only the newest window of blocks is rendered. Older history loads on demand,
         // so the view count stays bounded even for very long threads.
         let hidden = max(0, blocks.count - visibleCount)
@@ -175,8 +192,23 @@ struct ThreadTimeline: View, Equatable {
             // The rail fades with the slide of the panel that takes its edge. Held mid-resize:
             // a fresh slide every frame lagged the whole chat behind the window.
             .animation(liveResize.isReshaping ? nil : Chrome.panelSlide, value: showsMinimap)
+            // The rail belongs to the column's leading edge, not to the conversation that
+            // re-centres beside a docked panel: the padding the slide adds is cancelled
+            // without animation, the way the slide itself adds it, and the glide that
+            // carries the rows is cancelled in step with them.
+            .offset(x: -reserveSlideLeading)
+            .animation(nil, value: reserveSlideLeading)
+            .offset(x: -reserveSlideOffset)
         }
         .environment(\.hydraMentionPersonas, hydraMentionPersonas)
+        .environment(\.hydraMentionTargets, hydraMentionTargets)
+        // A head's name in the prose opens the head's chat; every other link keeps the
+        // system's handling.
+        .environment(\.openURL, OpenURLAction { url in
+            guard let headID = HydraMentionTarget.threadID(in: url) else { return .systemAction }
+            model.selectedThreadID = headID
+            return .handled
+        })
     }
 
     /// Jump the timeline to a minimap block. A target above the loaded

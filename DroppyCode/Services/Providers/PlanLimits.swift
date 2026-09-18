@@ -60,10 +60,11 @@ enum ResetCreditError: LocalizedError {
 
 @MainActor
 enum PlanLimitsReader {
-    /// Codex, Claude, Antigravity, Copilot, Command Code and Z.ai report plan limits. Cursor,
+    /// Codex, Claude, Antigravity, Copilot, Command Code, Z.ai and Pi report plan limits.
+    /// Pi reports the limits of the providers it is signed into. Cursor,
     /// OpenCode, Grok, DeepSeek, Meta and Devin expose none.
     static func exposesLimits(_ provider: ProviderKind) -> Bool {
-        provider == .codex || provider == .claude || provider == .antigravity || provider == .copilot || provider == .commandcode || provider == .zai
+        provider == .codex || provider == .claude || provider == .antigravity || provider == .copilot || provider == .commandcode || provider == .zai || provider == .pi
     }
 
     static func read(_ provider: ProviderKind, executable: URL, environment: [String: String]) async -> PlanLimits? {
@@ -73,7 +74,8 @@ enum PlanLimitsReader {
         case .antigravity: try? await AntigravitySession.readPlanLimits(executable: executable, environment: environment)
         case .copilot: try? await CopilotSession.readPlanLimits(executable: executable, environment: environment)
         case .commandcode: await CommandCodeAPI.planLimits(environment: environment)
-        case .cursor, .opencode, .grok, .deepseek, .meta, .zai, .devin, .pi: nil
+        case .pi: await PiPlanLimits.read(environment: environment)
+        case .cursor, .opencode, .grok, .deepseek, .meta, .zai, .devin: nil
         }
     }
 
@@ -266,19 +268,21 @@ enum PlanLimitsReader {
 
     /// The `limits` rows (session, weekly, weekly per model), falling back to the top-level
     /// `five_hour` and `seven_day` windows, plus extra usage when it is turned on.
-    private static func parseClaudeUsage(_ root: JSONValue, limits: [JSONValue], planName: String?) -> PlanLimits? {
+    nonisolated static func parseClaudeUsage(_ root: JSONValue, limits: [JSONValue], planName: String?, titlePrefix: String? = nil) -> PlanLimits? {
         var windows = limits.enumerated().compactMap { index, limit -> PlanLimits.Window? in
             guard let percent = limit["percent"]?.double else { return nil }
             let kind = limit["kind"]?.string ?? ""
             let group = self.planName(limit["group"]?.string) ?? "Usage"
             let scope = limit["scope"]?["model"]?["display_name"]?.string
-            let title = switch kind {
+            let baseTitle = switch kind {
             case "session": "5-hour limit"
             case "weekly_all": "Weekly · all models"
             default: scope.map { "\(group) · \($0)" } ?? group
             }
+            let title = titlePrefix.map { "\($0) · \(baseTitle)" } ?? baseTitle
+            let idPrefix = titlePrefix.map { $0.lowercased() + "-" } ?? ""
             return PlanLimits.Window(
-                id: "\(kind)-\(index)",
+                id: "\(idPrefix)\(kind)-\(index)",
                 title: title,
                 percent: percent,
                 resetsAt: limit["resets_at"]?.string.flatMap(parseDate)
@@ -287,18 +291,22 @@ enum PlanLimitsReader {
         if windows.isEmpty {
             for (key, title) in [("five_hour", "5-hour limit"), ("seven_day", "Weekly · all models")] {
                 guard let window = root[key], let percent = window["utilization"]?.double else { continue }
-                windows.append(PlanLimits.Window(id: key, title: title, percent: percent, resetsAt: window["resets_at"]?.string.flatMap(parseDate)))
+                let fullTitle = titlePrefix.map { "\($0) · \(title)" } ?? title
+                let idPrefix = titlePrefix.map { $0.lowercased() + "-" } ?? ""
+                windows.append(PlanLimits.Window(id: "\(idPrefix)\(key)", title: fullTitle, percent: percent, resetsAt: window["resets_at"]?.string.flatMap(parseDate)))
             }
         }
         if let extra = root["extra_usage"], extra["is_enabled"]?.bool == true, let percent = extra["utilization"]?.double {
-            windows.append(PlanLimits.Window(id: "extra-usage", title: "Extra usage", percent: percent, resetsAt: nil))
+            let title = titlePrefix.map { "\($0) · Extra usage" } ?? "Extra usage"
+            let idPrefix = titlePrefix.map { $0.lowercased() + "-" } ?? ""
+            windows.append(PlanLimits.Window(id: "\(idPrefix)extra-usage", title: title, percent: percent, resetsAt: nil))
         }
         guard !windows.isEmpty else { return nil }
         return PlanLimits(planName: planName, windows: windows)
     }
 
     /// Claude writes microsecond timestamps, which the ISO 8601 parser does not take, so the fraction is dropped.
-    private static func parseDate(_ text: String) -> Date? {
+    nonisolated static func parseDate(_ text: String) -> Date? {
         let trimmed = text.replacingOccurrences(of: #"\.\d+"#, with: "", options: .regularExpression)
         return ISO8601DateFormatter().date(from: trimmed)
     }

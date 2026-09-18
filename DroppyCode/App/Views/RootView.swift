@@ -61,7 +61,7 @@ struct RootView: View {
             .frame(width: SidebarResizeHandle.hitWidth)
             .padding(.top, Chrome.trafficLightTop + Chrome.trafficLightDiameter)
         }
-        .background { WindowBackdrop(opacity: model.settings.backdropOpacity) }
+        .background { WindowBackdrop(opacity: model.settings.backdropOpacity, wallpaper: WallpaperStore.shared.image) }
         .background { WindowChromeConfigurator(sidebarVisible: sidebar.holdsTrafficLights, sidebarDragging: sidebar.isDragging) }
         // Clipped after the backdrop is painted, so the glass and its edge stop at the window's own curve.
         .clipShape(RoundedRectangle(cornerRadius: Chrome.windowCornerRadius, style: .continuous))

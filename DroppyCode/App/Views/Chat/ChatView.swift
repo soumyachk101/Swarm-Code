@@ -728,6 +728,16 @@ private struct HydraPresence: Equatable {
     let present: Bool
 }
 
+extension EnvironmentValues {
+    /// How far `ReserveSlide` has pushed its content off the column's leading edge right
+    /// now: the leading room a docked panel takes plus the glide that carries the rows
+    /// there. The minimap rail cancels it, so it stays on the edge while the rows move.
+    @Entry var reserveSlideLeading: CGFloat = 0
+    /// The glide alone, so a view can follow the snap and the glide with the rows but
+    /// ignore the padding.
+    @Entry var reserveSlideOffset: CGFloat = 0
+}
+
 private struct ReserveSlide: ViewModifier {
     let reserve: PanelReserve
     let slides: Bool
@@ -740,6 +750,8 @@ private struct ReserveSlide: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .environment(\.reserveSlideLeading, reserve.leading)
+            .environment(\.reserveSlideOffset, offset)
             .padding(.leading, reserve.leading)
             .padding(.trailing, reserve.trailing)
             // Only a dock or undock glides; while a panel is dragged or resized the room

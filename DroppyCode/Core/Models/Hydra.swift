@@ -391,6 +391,23 @@ struct HydraHeadInfo: Codable, Hashable, Sendable {
     }
 }
 
+/// Where a head named in a lead's prose leads: its own chat, and what it was sent to do,
+/// so the name in the text can be hovered and opened. Keyed by persona name in the
+/// timeline's environment.
+struct HydraMentionTarget: Hashable, Sendable {
+    var threadID: UUID
+    var task: String
+    var status: HydraHeadInfo.Status
+    /// The link a mention carries; the timeline opens it as the head's chat.
+    static let scheme = "droppycode-head"
+    var url: URL { URL(string: "\(Self.scheme)://\(threadID.uuidString)") ?? URL(fileURLWithPath: "/") }
+    /// The head a mention link points at, or nil for any other URL.
+    static func threadID(in url: URL) -> UUID? {
+        guard url.scheme == scheme, let host = url.host() else { return nil }
+        return UUID(uuidString: host)
+    }
+}
+
 /// Where a Droppy-run head's work went when it reported: into the lead's checkout, into
 /// it with conflicts left to settle, or into a patch file when it would not apply.
 struct HydraLanding: Codable, Hashable, Sendable {

@@ -15,6 +15,8 @@ struct LinkParagraphView: NSViewRepresentable {
     /// Bumped when favicons finish loading, so the icons appear.
     var revision: Int = 0
     var mentions: [HydraPersona] = []
+    var targets: [String: HydraMentionTarget] = [:]
+    var onOpenHead: ((URL) -> Void)?
 
     /// Receives the text view, so the hover that sets the cursor can ask it what is under
     /// the pointer. The closure lives as long as the representable: capture only a weak
@@ -26,12 +28,14 @@ struct LinkParagraphView: NSViewRepresentable {
         view.delegate = context.coordinator
         view.mergeTarget = context.environment.mergeRequestTarget
         view.passesProseThrough = !context.environment.markdownBlockSelection
+        view.onOpenHead = onOpenHead
         onHost?(view)
         return view
     }
 
     func updateNSView(_ view: LinkTextView, context: Context) {
         view.passesProseThrough = !context.environment.markdownBlockSelection
+        view.onOpenHead = onOpenHead
         // Read so a favicon-load bump rebuilds the string with icons.
         _ = revision
         let coordinator = context.coordinator
@@ -39,7 +43,7 @@ struct LinkParagraphView: NSViewRepresentable {
         if coordinator.lastSource != source || coordinator.lastPointSize != pointSize
             || coordinator.lastDimmed != dimmed || coordinator.lastStreaming != streaming
             || coordinator.lastRevision != revision || coordinator.lastVeiled != veiled
-            || coordinator.lastMentions != mentions.map(\.name) {
+            || coordinator.lastMentions != mentions.map(\.name) || coordinator.lastTargets != targets {
             coordinator.lastSource = source
             coordinator.lastPointSize = pointSize
             coordinator.lastDimmed = dimmed
@@ -47,7 +51,8 @@ struct LinkParagraphView: NSViewRepresentable {
             coordinator.lastRevision = revision
             coordinator.lastVeiled = veiled
             coordinator.lastMentions = mentions.map(\.name)
-            view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming, mentions: mentions))
+            coordinator.lastTargets = targets
+            view.render(Self.attributed(source: source, pointSize: pointSize, dimmed: dimmed, streaming: streaming, mentions: mentions, targets: targets))
             // After the text is in place: the veil reads what the storage holds now.
             view.streamVeil.update(view, active: veiled)
         }
@@ -80,6 +85,7 @@ struct LinkParagraphView: NSViewRepresentable {
         var lastRevision: Int = 0
         var lastVeiled = false
         var lastMentions: [String] = []
+        var lastTargets: [String: HydraMentionTarget] = [:]
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             if let url = link as? URL {
                 NSWorkspace.shared.open(url)
@@ -101,7 +107,7 @@ struct LinkParagraphView: NSViewRepresentable {
     @MainActor private static var fonts: [CGFloat: (base: NSFont, bold: NSFont, italic: NSFont, mono: NSFont)] = [:]
 
     @MainActor
-    static func attributed(source: String, pointSize: CGFloat, dimmed: Bool, streaming: Bool = false, mentions: [HydraPersona] = []) -> NSAttributedString {
+    static func attributed(source: String, pointSize: CGFloat, dimmed: Bool, streaming: Bool = false, mentions: [HydraPersona] = [], targets: [String: HydraMentionTarget] = [:]) -> NSAttributedString {
         let pretty = RichLink.prettyAttributed(source, streaming: streaming)
         let (base, bold, italic, mono) = fonts[pointSize] ?? {
             let base = NSFont.systemFont(ofSize: pointSize)
@@ -142,7 +148,7 @@ struct LinkParagraphView: NSViewRepresentable {
                     .link: url,
                 ]))
             } else {
-                appendProse(string, font: font, color: textColor, base: base, bold: bold, mentions: mentions, into: out)
+                appendProse(string, font: font, color: textColor, base: base, bold: bold, mentions: mentions, targets: targets, into: out)
             }
         }
         return out
@@ -169,7 +175,7 @@ struct LinkParagraphView: NSViewRepresentable {
         return image
     }
 
-    @MainActor private static func appendProse(_ string: String, font: NSFont, color: NSColor, base: NSFont, bold: NSFont, mentions: [HydraPersona], into out: NSMutableAttributedString) {
+    @MainActor private static func appendProse(_ string: String, font: NSFont, color: NSColor, base: NSFont, bold: NSFont, mentions: [HydraPersona], targets: [String: HydraMentionTarget], into out: NSMutableAttributedString) {
         if mentions.isEmpty {
             out.append(NSAttributedString(string: string, attributes: [
                 .font: font,
@@ -213,9 +219,21 @@ struct LinkParagraphView: NSViewRepresentable {
             let attachment = NSTextAttachment()
             attachment.image = dragonImage(persona, size: glyphSize)
             attachment.bounds = NSRect(x: 0, y: base.descender + 1, width: glyphSize, height: glyphSize)
-            out.append(NSAttributedString(attachment: attachment))
+            if let target = targets[persona.name] {
+                // Custom attribute, not .link: linkTextAttributes would recolour the name in the accent.
+                let headAttributes: [NSAttributedString.Key: Any] = [.hydraHead: target.url, .cursor: NSCursor.pointingHand]
+                let attach = NSMutableAttributedString(attachment: attachment)
+                attach.addAttributes(headAttributes, range: NSRange(location: 0, length: attach.length))
+                out.append(attach)
+            } else {
+                out.append(NSAttributedString(attachment: attachment))
+            }
             out.append(NSAttributedString(string: " ", attributes: [.font: base, .foregroundColor: color]))
-            out.append(NSAttributedString(string: persona.name, attributes: [.font: bold, .foregroundColor: nsColor(persona)]))
+            if let target = targets[persona.name] {
+                out.append(NSAttributedString(string: persona.name, attributes: [.font: bold, .foregroundColor: nsColor(persona), .hydraHead: target.url, .cursor: NSCursor.pointingHand]))
+            } else {
+                out.append(NSAttributedString(string: persona.name, attributes: [.font: bold, .foregroundColor: nsColor(persona)]))
+            }
             i = string.index(i, offsetBy: persona.name.count)
             runStart = i
         }
@@ -223,9 +241,12 @@ struct LinkParagraphView: NSViewRepresentable {
     }
 }
 
+extension NSAttributedString.Key {
+    static let hydraHead = NSAttributedString.Key("droppycode.hydraHead")
+}
+
 /// What a merge or pull request link in a chat hands its request to, set by a chat that can
 /// spawn a merge helper; a link then offers "Merge" at the top of its menu. Compared by the
-/// chat it stands for, so a chat setting it on every render never re-renders a link paragraph.
 struct MergeRequestTarget: Equatable {
     let chatID: UUID
     let merge: @MainActor (MergeRequestLink) -> Void
@@ -259,6 +280,8 @@ final class LinkTextView: NSTextView {
     /// Inside a finished reply the prose passes the mouse through to SwiftUI, whose drag
     /// swaps in the whole-reply selection; links still take the click and open.
     var passesProseThrough = false
+
+    var onOpenHead: ((URL) -> Void)?
 
     /// Fades streamed characters in over the laid-out text (see `StreamVeil`).
     let streamVeil = LinkTextVeil()
@@ -323,14 +346,64 @@ final class LinkTextView: NSTextView {
 
     override func resetCursorRects() {}
 
-    /// Whether `point`, in this view's coordinates, is over a link.
+    /// Whether `point`, in this view's coordinates, is over a link or a head mention.
     func hasLink(at point: CGPoint) -> Bool {
-        link(at: point) != nil
+        link(at: point) != nil || headMention(at: point) != nil
     }
 
     /// The link under `point`, in this view's coordinates.
     func link(at point: CGPoint) -> URL? {
         linkAndRange(at: point)?.url
+    }
+
+    /// The head mention under `point`, and the run of characters it covers.
+    func headMention(at point: CGPoint) -> (url: URL, range: NSRange)? {
+        guard let layoutManager, let textContainer, let textStorage, textStorage.length > 0 else { return nil }
+        let glyph = layoutManager.glyphIndex(for: point, in: textContainer)
+        guard glyph < layoutManager.numberOfGlyphs,
+              layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: textContainer).contains(point) else { return nil }
+        let index = layoutManager.characterIndexForGlyph(at: glyph)
+        var range = NSRange(location: 0, length: 0)
+        guard index < textStorage.length,
+              let link = textStorage.attribute(.hydraHead, at: index, longestEffectiveRange: &range, in: NSRange(location: 0, length: textStorage.length)) else { return nil }
+        let url: URL?
+        if let value = link as? URL { url = value } else if let string = link as? String { url = URL(string: string) } else { url = nil }
+        guard let url else { return nil }
+        return (url, range)
+    }
+
+    /// The persona name and the bounding rect of the head run under `point`, for the popover anchor.
+    func headMentionRect(at point: CGPoint) -> (name: String, url: URL, rect: NSRect)? {
+        guard let (url, range) = headMention(at: point),
+              let layoutManager, let textContainer, let textStorage else { return nil }
+        // The glyph is an attachment run of its own, so a hover over it names nothing;
+        // step past it (and the space after it) to the name run beside it.
+        var nameRange = range
+        // The attachment character is what the glyph run is made of; it is no name.
+        func runName(_ range: NSRange) -> String {
+            (textStorage.string as NSString).substring(with: range)
+                .replacingOccurrences(of: "\u{FFFC}", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var name = runName(nameRange)
+        if name.isEmpty {
+            let full = NSRange(location: 0, length: textStorage.length)
+            var index = range.location + range.length
+            while index < textStorage.length,
+                  textStorage.attribute(.hydraHead, at: index, effectiveRange: nil) == nil {
+                index += 1
+            }
+            guard index < textStorage.length else { return nil }
+            var next = NSRange(location: 0, length: 0)
+            guard textStorage.attribute(.hydraHead, at: index, longestEffectiveRange: &next, in: full) != nil else { return nil }
+            nameRange = next
+            name = runName(nameRange)
+            guard !name.isEmpty else { return nil }
+        }
+        let glyphs = layoutManager.glyphRange(forCharacterRange: nameRange, actualCharacterRange: nil)
+        var rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+        if rect.isEmpty { rect = NSRect(x: point.x, y: point.y, width: 1, height: 1) }
+        return (name, url, rect)
     }
 
     /// The link under `point` and the run of characters it covers.
@@ -359,7 +432,17 @@ final class LinkTextView: NSTextView {
         guard passesProseThrough, let superview else { return super.hitTest(point) }
         // `hitTest` gets the superview's coordinates; the link lookup wants this view's.
         let local = convert(point, from: superview)
-        return linkAndRange(at: local) == nil ? nil : super.hitTest(point)
+        if linkAndRange(at: local) != nil || headMention(at: local) != nil { return super.hitTest(point) }
+        return nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if let (url, _) = headMention(at: point) {
+            onOpenHead?(url)
+            return
+        }
+        super.mouseDown(with: event)
     }
 
     override func rightMouseDown(with event: NSEvent) {
