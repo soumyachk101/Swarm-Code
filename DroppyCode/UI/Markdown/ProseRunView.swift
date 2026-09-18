@@ -17,7 +17,7 @@ struct ProseRunView: View {
     var body: some View {
         let scaled = (pointSize * zoom * 2).rounded() / 2
         let sources = ProseRunRepresentable.joinedSources(blocks)
-        let linkKey = RichLink.linkHosts(for: sources, streaming: false).joined(separator: ",")
+        let linkKey = RichLink.linkAssetKey(for: sources)
         let linkBox = linkView
         let hand = $showsHand
         let hoveredHead = $hoveredHeadID
@@ -60,7 +60,7 @@ struct ProseRunView: View {
             }
             .task(id: linkKey) { [sources, linkKey, revision = $faviconRevision] in
                 if !linkKey.isEmpty {
-                    await InlineText.fetchFavicons(source: sources, streaming: false, revision: revision)
+                    await InlineText.fetchLinkAssets(source: sources, streaming: false, revision: revision)
                 }
             }
     }

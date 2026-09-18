@@ -633,11 +633,43 @@ enum RichLink {
         return hosts
     }
 
+    /// The video ids a paragraph's links carry, first-seen order, each once.
+    @MainActor
+    static func videoIDs(for source: String, streaming: Bool = false) -> [String] {
+        let pretty = prettyAttributed(source, streaming: streaming)
+        var ids: [String] = []
+        var seen = Set<String>()
+        for run in pretty.runs {
+            guard let link = run.link, let id = LinkTitles.videoID(for: link), seen.insert(id).inserted else { continue }
+            ids.append(id)
+        }
+        return ids
+    }
+
+    /// What keys the paragraph's link work: hosts and video ids together, empty when
+    /// there is neither, so a caller's `isEmpty` test still means something.
+    @MainActor
+    static func linkAssetKey(for source: String, streaming: Bool = false) -> String {
+        let hosts = linkHosts(for: source, streaming: streaming)
+        let videos = videoIDs(for: source, streaming: streaming)
+        guard !(hosts.isEmpty && videos.isEmpty) else { return "" }
+        return hosts.joined(separator: ",") + "|" + videos.joined(separator: ",")
+    }
+
+    /// Drops a paragraph's warmed pretty strings, so a landed video title shows.
+    @MainActor
+    static func invalidate(_ source: String) {
+        prettyCache.removeValue(for: source)
+        streamingPretty.removeAll { $0.source == source }
+    }
+
     /// Short display title for a bare URL. Forge links collapse to their
-    /// native reference (`!3190`, `#123`); everything else keeps the host
+    /// native reference (`!3190`, `#123`); a video link reads as the video's
+    /// own title once it has been fetched; everything else keeps the host
     /// plus the last path segment, so a deep path never spills into chat.
     static func prettyTitle(for url: URL) -> String {
         if let reference = forgeReference(for: url) { return reference }
+        if let title = LinkTitles.cached(for: url) { return capped(title, at: 48) }
         guard var host = url.host?.lowercased(), !host.isEmpty else {
             return compactFallback(url.absoluteString)
         }
@@ -647,12 +679,24 @@ enum RichLink {
             .map(String.init)
             .filter { !$0.isEmpty }
         guard let last = segments.last else { return host }
+        if namelessSegments.contains(last.lowercased()) { return host }
         let tail = last.count > 24 ? String(last.prefix(21)) + "…" : last
         let title = segments.count == 1 ? host + "/" + tail : host + "/…/" + tail
         if title.count > 40 {
             return String(title.prefix(19)) + "…" + String(title.suffix(18))
         }
         return title
+    }
+
+    /// Path tails that carry no name of their own, so a URL ending in one shows its host alone.
+    private static let namelessSegments: Set<String> = [
+        "watch", "view", "index", "index.html", "index.php", "home", "default", "page"
+    ]
+
+    /// Titles past the limit keep their head and end in a single ellipsis.
+    private static func capped(_ title: String, at limit: Int) -> String {
+        guard title.count > limit else { return title }
+        return String(title.prefix(limit - 3)) + "…"
     }
 
     /// `!3190` for merge requests, `#123` for issues and pull requests.
@@ -984,9 +1028,9 @@ struct InlineText: View {
             let metrics = Self.metrics(pointSize: scaled)
             let ascender = metrics.ascender
             let lineHeight = metrics.lineHeight
-            // Stable hosts key the favicon work, so a streamed token with no new link
-            // leaves the task alone.
-            let hostKey = hosts.joined(separator: ",")
+            // Stable hosts and video ids key the link work, so a streamed token with no
+            // new link leaves the task alone.
+            let hostKey = RichLink.linkAssetKey(for: source, streaming: streaming)
             // The hover and the host callback keep only the text view's weak box and the
             // hand binding: the hover responder and the representable must not keep this
             // paragraph (and its styled text) alive after it scrolls away.
@@ -1035,10 +1079,10 @@ struct InlineText: View {
                     hoveredHead.wrappedValue = nil
                     HydraHeadHoverPopover.shared.hide()
                 }
-                // Stable hosts key the favicon work, so a streamed token with no new link
-                // leaves the task alone.
+                // Stable hosts and video ids key the link work, so a streamed token with no
+                // new link leaves the task alone.
                 .task(id: hostKey) { [source, streaming, revision = $faviconRevision] in
-                    await Self.fetchFavicons(source: source, streaming: streaming, revision: revision)
+                    await Self.fetchLinkAssets(source: source, streaming: streaming, revision: revision)
                 }
         } else {
             // Link-free, so the attributed string renders as one Text; bold, italic and
@@ -1066,13 +1110,18 @@ struct InlineText: View {
 
     /// Static so the `.task` above keeps only the paragraph's source and the refresh
     /// binding, never the whole view value (and its styled text) after it goes away.
-    static func fetchFavicons(source: String, streaming: Bool, revision: Binding<Int>) async {
+    /// Fetches favicons for each link host and video titles for each video link.
+    static func fetchLinkAssets(source: String, streaming: Bool, revision: Binding<Int>) async {
         let hosts = await MainActor.run { RichLink.linkHosts(for: source, streaming: streaming) }
         var changed = false
         for host in hosts where FaviconCache.cached(host: host) == nil {
             if await FaviconCache.image(for: host) != nil { changed = true }
         }
-        if changed { await MainActor.run { revision.wrappedValue += 1 } }
+        let videos = await MainActor.run { RichLink.videoIDs(for: source, streaming: streaming) }
+        for id in videos {
+            if await LinkTitles.title(forVideo: id) != nil { changed = true }
+        }
+        if changed { await MainActor.run { RichLink.invalidate(source); revision.wrappedValue += 1 } }
     }
 
     @MainActor
