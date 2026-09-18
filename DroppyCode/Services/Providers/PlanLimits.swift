@@ -106,6 +106,27 @@ enum PlanLimitsReader {
         return raw.prefix(1).uppercased() + raw.dropFirst()
     }
 
+    /// Codex's plan names the way OpenAI sells them. The `pro` account type is the $200 Pro
+    /// tier, whose limits are 20x Plus's, and `prolite` is its $100 sibling at 5x (the ChatGPT
+    /// help article names them "Pro $200 (Pro 20x)" and "Pro $100"); plan types only Codex
+    /// spells get the wording its own CLI uses. Anything else falls back to `planName(_:)`.
+    nonisolated static func codexPlanName(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "pro": return "Pro 20x"
+        case "prolite", "pro lite": return "Pro 5x"
+        case "ent26", "hc": return "Enterprise"
+        case "self_serve_business_prolite": return "Business Premium"
+        case "self_serve_business_usage_based": return "Business"
+        case "enterprise_cbp_automation": return "Enterprise (Automation)"
+        case "enterprise_cbp_usage_based": return "Enterprise"
+        case "education": return "Edu"
+        case "edu_plus": return "Edu Plus"
+        case "edu_pro": return "Edu Pro"
+        default: return planName(raw)
+        }
+    }
+
     // MARK: - Claude
 
     /// Claude Code's own OAuth usage endpoint first, the way it reads limits itself; the CLI's
