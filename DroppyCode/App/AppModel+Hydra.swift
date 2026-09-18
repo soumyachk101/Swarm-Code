@@ -232,6 +232,22 @@ extension AppModel {
         hydraHeads(of: parentID).count { $0.hydra?.status == .running }
     }
 
+    /// How many distinct files this lead's finished, unmerged work touched: the lead's
+    /// own turns and every head whose landing no merge has taken yet. Feeds the
+    /// merge-state note in front of the lead's messages, so it never says nothing
+    /// changed while heads' files sit in the checkout.
+    func hydraUnmergedFileCount(of leadID: UUID) -> Int {
+        guard let runtime = existingRuntime(for: leadID) else { return 0 }
+        var paths = Set(runtime.hydraUnmergedTurns.filter { $0.status != .running }.flatMap { $0.touchedPaths ?? [] })
+        let lastMergedTurnStart = runtime.turns.last { $0.hydraMerged }?.startedAt
+        for head in hydraTeam(of: leadID) {
+            guard let info = head.hydra, info.mergedAt == nil else { continue }
+            if let lastMergedTurnStart, let finished = info.finishedAt, finished < lastMergedTurnStart { continue }
+            for file in info.landing?.files ?? [] { paths.insert(file.path) }
+        }
+        return paths.count
+    }
+
     /// Every head a lead has sent out, in the panel or not, in the order they went.
     func hydraTeam(of parentID: UUID) -> [ChatThread] {
         children(of: parentID)

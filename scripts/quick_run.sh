@@ -58,8 +58,9 @@ else
 fi
 
 step "Relaunching"
-osascript -e "tell application \"$APP_NAME\" to quit" 2>/dev/null || true
-for _ in $(seq 1 20); do
+osascript -e "with timeout of 300 seconds" -e "tell application \"$APP_NAME\" to quit" -e "end timeout" 2>/dev/null || true
+# The app holds its quit while a Hydra merge is going out (up to four minutes): wait for it.
+for _ in $(seq 1 300); do
   ps aux | grep -F "$APP_NAME.app/Contents/MacOS" | grep -v grep >/dev/null || break
   sleep 1
 done

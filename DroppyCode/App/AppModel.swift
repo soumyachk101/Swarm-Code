@@ -233,6 +233,8 @@ final class AppModel {
         await LoginEnvironment.load()
         // After the login environment, so git runs with the user's PATH.
         sweepHydraCopies()
+        // A merge the last run did not finish (the app was quit under it) goes out now.
+        await resumeHydraMerges()
         await providers.refreshAll()
         // The catalogs a fresh install starts without, or with only a seed of: one CLI and
         // two HTTPS calls, overlapped. Claude's brings its slash commands too, so the picker
@@ -402,6 +404,9 @@ final class AppModel {
     func existingRuntime(for id: UUID) -> ThreadRuntime? {
         runtimes[id]
     }
+
+    /// Every runtime alive right now, for checks that span chats (a merge still in flight at quit).
+    var liveRuntimes: [ThreadRuntime] { Array(runtimes.values) }
 
     /// Decodes threads' histories ahead of time, off the main thread, so opening one costs no
     /// parse on the click. Threads already open have their history in memory and are skipped.
