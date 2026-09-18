@@ -3,6 +3,7 @@
 
 Run: python3 scripts/build_changelog.py
 Idempotent: rewrites website/changelog.json from scratch each run.
+### Thanks bullets land in the `thanks` list, not in the sections.
 """
 
 import datetime
@@ -24,6 +25,7 @@ HEADING_MAP = {
     "bug fixes": "Bug fixes",
     "refinements": "Refinements",
 }
+# ### Thanks bullets land in the `thanks` list, not in the sections.
 SECTION_ORDER = ["New features", "Bug fixes", "Refinements"]
 
 
@@ -73,11 +75,15 @@ def split_releases(text):
 def parse_notes(lines):
     summary_lines = []
     sections = {}
+    thanks = []
     current = None
     for line in lines:
         m = SECTION_RE.match(line)
         if m:
             key = m.group(1).strip().lower()
+            if key == "thanks":
+                current = "thanks"
+                continue
             current = HEADING_MAP.get(key)
             if current and current not in sections:
                 sections[current] = []
@@ -92,14 +98,17 @@ def parse_notes(lines):
             if m2:
                 item = strip_emphasis(m2.group(1).strip())
                 if item:
-                    sections[current].append(item)
+                    if current == "thanks":
+                        thanks.append(item)
+                    else:
+                        sections[current].append(item)
     summary = " ".join(summary_lines)
     ordered = [
         {"title": title, "items": sections[title]}
         for title in SECTION_ORDER
         if title in sections and sections[title]
     ]
-    return summary, ordered
+    return summary, ordered, thanks
 
 
 def extract_section(version):
@@ -132,7 +141,7 @@ def build_releases():
     releases = []
     for rel in split_releases(text):
         version = rel["version"]
-        summary, sections = parse_notes(rel["lines"])
+        summary, sections, thanks = parse_notes(rel["lines"])
         releases.append(
             {
                 "version": version,
@@ -140,6 +149,7 @@ def build_releases():
                 "platform": "mac",
                 "summary": summary,
                 "sections": sections,
+                "thanks": thanks,
             }
         )
     releases.sort(key=lambda r: version_key(r["version"]), reverse=True)

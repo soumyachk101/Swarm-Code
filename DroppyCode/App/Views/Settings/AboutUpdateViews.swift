@@ -61,8 +61,9 @@ enum ReleaseNoteCategory: CaseIterable, Identifiable {
 
 /// A release's notes read into the three sections. The notes are the release description on
 /// GitLab: a `## New features`, `## Bug fixes`, `## Refinements` heading each, bullets under
-/// them. A section that is missing or empty is simply absent; notes in any other shape read
-/// as nothing, and the page shows them as they are instead.
+/// them. A section that is missing or empty is simply absent; bullets under any other heading,
+/// such as the release's Thanks to contributors, are left out of the cards; notes in any other
+/// shape read as nothing, and the page shows them as they are instead.
 struct UpdateReleaseNotesDigest: Equatable {
     struct Section: Equatable, Identifiable {
         let category: ReleaseNoteCategory
@@ -110,6 +111,10 @@ struct UpdateReleaseNotesDigest: Equatable {
             }
             if let category = category(forHeader: trimmed) {
                 current = category
+            } else if isHeader(trimmed) {
+                // Any other heading, such as the release's Thanks to contributors, closes
+                // the card before it so its bullets are left out rather than appended.
+                current = nil
             }
         }
         let sections = ReleaseNoteCategory.allCases.compactMap { category -> Section? in
@@ -130,6 +135,18 @@ struct UpdateReleaseNotesDigest: Equatable {
         guard let next = rest.first, next == " " || next == "\t" else { return nil }
         let body = rest.trimmingCharacters(in: .whitespaces)
         return body.isEmpty ? nil : body
+    }
+
+    /// True for any line shaped like a heading: one or more `#` followed by a space, or a
+    /// bold-only line. Plain text lines are not headings, even with a trailing colon.
+    private static func isHeader(_ line: String) -> Bool {
+        if line.hasPrefix("#") {
+            var rest = line
+            while rest.hasPrefix("#") { rest.removeFirst() }
+            return rest.isEmpty || rest.first == " " || rest.first == "\t"
+        }
+        if line.hasPrefix("**") && line.hasSuffix("**") && line.count > 4 { return true }
+        return false
     }
 
     /// The three section names, bare or in Markdown heading or bold chrome.

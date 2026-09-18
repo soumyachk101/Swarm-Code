@@ -5,7 +5,7 @@
 #   scripts/publish_release.sh [path/to/Droppy-Code-1.2.3.dmg]
 #
 # The version is project.yml's MARKETING_VERSION; the disk image defaults to
-# the one scripts/release.sh leaves in build.noindex. The notes are the ## [<version>] section of CHANGELOG.md, written as "### New features", "### Bug fixes" and "### Refinements" headings with a bullet per change; scripts/build_changelog.py --section extracts it with the headings promoted to "## ", which is what the app reads into its cards. The tag goes on HEAD, or on RELEASE_REF when
+# the one scripts/release.sh leaves in build.noindex. The notes are the ## [<version>] section of CHANGELOG.md, written as "### New features", "### Bug fixes" and "### Refinements" headings with a bullet per change; scripts/build_changelog.py --section extracts it with the headings promoted to "## ", which is what the app reads into its cards. A `### Thanks` heading under the version names every outside contributor whose merge request shipped in it, and publishing stops until `scripts/release_credits.py --check` finds them all named. The tag goes on HEAD, or on RELEASE_REF when
 # the version bump has landed on main from elsewhere. Needs glab signed in as
 # a maintainer.
 # The site's changelog is rebuilt from CHANGELOG.md and deployed here too.
@@ -29,6 +29,12 @@ step() { printf '\n==> %s\n' "$1"; }
 [ -f "$NOTES" ] || { echo "No release notes at $NOTES."; exit 1; }
 if ! grep -qE '^## (New features|Bug fixes|Refinements)' "$NOTES"; then
   echo "$NOTES needs at least one of the three headings: ## New features, ## Bug fixes, ## Refinements."
+  exit 1
+fi
+
+step "Checking every contributor is thanked"
+if ! python3 scripts/release_credits.py --check "$NOTES"; then
+  echo "Add a ### Thanks section to the ## [$VERSION] entry in CHANGELOG.md naming them (python3 scripts/release_credits.py prints it), then publish again."
   exit 1
 fi
 
