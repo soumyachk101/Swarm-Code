@@ -271,9 +271,22 @@ private struct MCPServerCard: View {
                         .foregroundStyle(Chrome.danger)
                         .lineLimit(3)
                 }
+                if case .needsSetup(let guide) = state {
+                    Text(verbatim: guide.title)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.warning)
+                        .lineLimit(2)
+                }
             }
         }
         .padding(14)
+        .onChange(of: state) { _, now in
+            // The moment the server asks for a step on its side, the panel with the steps
+            // opens by itself: the user came back from the browser expecting a result.
+            if case .needsSetup(let guide) = now {
+                MCPSetupPanel.shared.present(entry: entry, guide: guide, model: model)
+            }
+        }
         // The cell fills its row: a card whose fields are open makes its neighbour as tall.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(
@@ -324,6 +337,10 @@ private struct MCPServerCard: View {
             }
         case .connected:
             EmptyView()
+        case .needsSetup(let guide):
+            Button("Fix it") { MCPSetupPanel.shared.present(entry: entry, guide: guide, model: model) }
+                .buttonStyle(.glassProminent)
+                .controlSize(.small)
         case .failed:
             Button(entry.isOAuth ? "Sign in again" : "Try again") { begin() }
                 .buttonStyle(.glass)
