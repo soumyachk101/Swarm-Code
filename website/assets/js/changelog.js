@@ -218,6 +218,41 @@
     return block;
   }
 
+  function buildThanks(items) {
+    var block = document.createElement("div");
+    block.className = "changelog-thanks";
+
+    var label = document.createElement("p");
+    label.className = "changelog-thanks__label";
+    label.textContent = "Thanks";
+    block.appendChild(label);
+
+    var list = document.createElement("ul");
+    list.className = "changelog-thanks-list";
+
+    items.forEach(function (item) {
+      var li = document.createElement("li");
+      li.className = "changelog-thanks-item";
+      String(item).split(/@([A-Za-z0-9_.-]+)/g).forEach(function (piece, i) {
+        if (i % 2 === 1) {
+          var link = document.createElement("a");
+          link.className = "changelog-thanks__handle";
+          link.textContent = "@" + piece;
+          link.href = "https://gitlab.com/" + piece;
+          link.rel = "noopener";
+          link.target = "_blank";
+          li.appendChild(link);
+        } else {
+          li.appendChild(document.createTextNode(piece));
+        }
+      });
+      list.appendChild(li);
+    });
+
+    block.appendChild(list);
+    return block;
+  }
+
   function buildEntry(release, index) {
     var entry = document.createElement("article");
     entry.className = "changelog-entry reveal is-stable";
@@ -279,6 +314,15 @@
         body.appendChild(block);
       }
     });
+
+    if (Array.isArray(release.thanks)) {
+      var thanksItems = release.thanks.filter(function (item) {
+        return typeof item === "string" && item.trim() !== "";
+      });
+      if (thanksItems.length) {
+        body.appendChild(buildThanks(thanksItems));
+      }
+    }
 
     entry.appendChild(body);
     return entry;

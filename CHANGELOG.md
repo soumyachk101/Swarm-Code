@@ -2,7 +2,14 @@
 
 All notable changes to Droppy Code are documented here, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions are the release tags without the `v`.
 
-`scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date.
+`scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
+
+## [Unreleased]
+
+### Thanks
+- René (@diazdesandi): confined `search_text` to the project root with a `--` guard against flag smuggling, kept plan mode blocking edits after approve-for-turn, cleared the save timer handle before `saveNow` bails and stopped `WorkingTreeWatch` tearing down the registered watch when a second caller lost the race (!307); one OpenAI-compatible session and one Keychain behind the DeepSeek, Meta and Z.ai providers (!308).
+- Bryan Galdámez (@JosueGalRe): finished turns open chronologically and a head wears its profile (!283); native heads routed to head profiles on Claude, Codex and Copilot (!285); the pair editor keeps its effort row for a model whose catalog entry declares no efforts yet (!304); a model catalog probe that came back empty is tried again on the next ask instead of closing the provider's list for the rest of the run (!306).
+- Nikita Tsyganov (@nik1tsyganov): named the parts of the Pi usage sum so it type-checks (!293).
 
 ## [1.5.6] - 2026-09-17
 

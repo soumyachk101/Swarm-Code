@@ -46,3 +46,11 @@
 - Do not rewrite existing history (`rebase -i`, `filter-branch`,
   `filter-repo`, force-push to `main`) to "fix" the 4,292 commits; squash
   applies to new merges only.
+
+## Releasing (credit every contributor)
+
+- Every `## [x.y.z]` entry in CHANGELOG.md that ships outside work carries a `### Thanks` section, one bullet per person in the form `- Name (@gitlab-handle): what they did (!MR).`, after Refinements.
+- `python3 scripts/release_credits.py` prints the block for everything merged since the previous `v*` tag (run it while writing the entry).
+- `scripts/publish_release.sh` runs `scripts/release_credits.py --check` on the notes and refuses to publish while anyone is missing.
+- The app's About cards ignore the Thanks heading, so it changes nothing there.
+- When a merge request from outside merges between releases, add the person to the `## [Unreleased]` entry's Thanks right away rather than at release time.

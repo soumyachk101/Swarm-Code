@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-17T15:30:00+00:00",
+  "generated_at": "2026-09-18T05:58:15.223299+00:00",
   "releases": [
     {
       "version": "1.5.6",
@@ -19,7 +19,8 @@
             "The Heads at once row on the Hydra page shows the uncapped choice as an infinity sign instead of the word Off; it reads as \"No cap\" to VoiceOver, the wording a pair's own editor uses."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.5.5",
@@ -57,7 +58,8 @@
             "Head popovers now open on the head itself when a head's name or mention is clicked in the timeline: a finished head's pill opens its report under a header with the head's glyph, name, status and task, and a brief's pill opens the brief the same way, while the delegation card names each head it summons with its glyph and the project it goes to."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.5.4",
@@ -88,7 +90,8 @@
             "The source is arranged in four layers, Core, Services, UI and App, so a change to a model, a provider or a view has one home."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.5.3",
@@ -128,7 +131,8 @@
             "Landing a head's work skips the build output when it makes its patch, so large teams merge faster."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.5.2",
@@ -143,7 +147,8 @@
             "Switching to a chat with a different set of floating panels no longer glides the conversation, fades the panels and shifts the chat box all at once: the column snaps to the new chat's layout in one step, and a team panel held over from the previous chat no longer lingers on the new one."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.5.1",
@@ -170,7 +175,8 @@
             "The lead is told that heads and the merge only see the chat's own project, so it says so and asks you to open the chat there rather than working in another repository unmerged."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.5.0",
@@ -199,7 +205,8 @@
             "File attachments fill their chip with the file's icon, the way photos do, instead of a small icon over a truncated name."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.4.1",
@@ -229,7 +236,8 @@
             "Text in a reply is selected within a paragraph again; the whole-reply drag mode from 1.4.0 is gone."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.4.0",
@@ -249,7 +257,8 @@
             "Selecting text in a reply just works: drag anywhere on a finished reply and the selection runs across the whole of it, paragraphs, lists, code and links alike; links still open on a click. The right-click Select text item is gone, since the drag does its job."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.3.1",
@@ -265,7 +274,8 @@
             "The Z.ai mark takes the label colour like the other provider marks; it drew black on a dark card."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.3.0",
@@ -338,7 +348,8 @@
             "The changelog page on the site is redesigned, its picture tiles take a top-copy, bottom-picture layout, and the composer tour gains scenes for notifications, commands and quotes."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.2.0",
@@ -383,7 +394,8 @@
             "The sidebar's traffic lights move to it only once it can hold them, and the rail only answers over its ticks."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.1.1",
@@ -411,7 +423,8 @@
             "About no longer repeats the version above the release cards."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.1.0",
@@ -458,7 +471,8 @@
             "Popover buttons are the window's capsules, the chat box grows smoothly to five lines, and suggestions anchor to the caret."
           ]
         }
-      ]
+      ],
+      "thanks": []
     },
     {
       "version": "1.0.0",
@@ -482,7 +496,8 @@
             "A terminal under every thread."
           ]
         }
-      ]
+      ],
+      "thanks": []
     }
   ]
 }

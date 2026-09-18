@@ -90,3 +90,7 @@ GNU AGPL v3.0 with additional attribution terms: see [LICENSE](LICENSE). You may
 ## Credit
 
 If you build on Droppy Code, keep the line "Droppy Code by Jordy Spruit (Droppy), https://getdroppycode.app" in your About screen, your README and your source headers, and keep THIRD_PARTY_NOTICES.md. That is the whole ask.
+
+## Contributors
+
+Every release names the people whose merge requests shipped in it, in the Thanks section of the release entry in CHANGELOG.md, the GitLab release notes and the changelog page on getdroppycode.app; a merge request that lands is credited under the author's name and GitLab handle in the next release.
