@@ -98,53 +98,66 @@ struct SidebarView: View {
             .padding(.horizontal, Chrome.listInset)
             .padding(.top, inPopover ? 12 : 14)
 
-            ScrollView(.vertical) {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    if query.isEmpty {
-                        // One list for both layouts: a thread keeps its row when the layout changes, so the
-                        // row grows or shrinks and slides to its new place instead of being replaced.
-                        ForEach(listItems(placements: placements, helpers: helpers)) { item in
-                            itemView(item)
-                                .transition(rowTransition(item))
+            ScrollViewReader { proxy in
+                ScrollView(.vertical) {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        if query.isEmpty {
+                            // One list for both layouts: a thread keeps its row when the layout changes, so the
+                            // row grows or shrinks and slides to its new place instead of being replaced.
+                            ForEach(listItems(placements: placements, helpers: helpers)) { item in
+                                itemView(item)
+                                    .transition(rowTransition(item))
+                            }
+                        } else {
+                            searchList(helpers: helpers)
                         }
+                    }
+                    .allowsHitTesting(!isListScrolling)
+                    // Adding or deleting a thread opens and closes its space with the same motion as every other row.
+                    .animation(Chrome.panelSlide, value: model.threads.count)
+                    .animation(Chrome.panelSlide, value: model.projects.map(\.isExpanded))
+                    .animation(Chrome.panelSlide, value: model.settings.settledCollapsed)
+                    .padding(.horizontal, Chrome.listInset)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
+                    .coordinateSpace(name: Self.listSpace)
+                    // One drag gesture for the whole list, ahead of every row's own click: the
+                    // row under the pointer at the grab is the one that moves (a settled or
+                    // helper row reports no frame, so a drag from one goes nowhere), and a
+                    // plain click still reaches the row. Off while searching: nothing to reorder.
+                    .highPriorityGesture(
+                        DragGesture(minimumDistance: 4, coordinateSpace: .named(Self.listSpace))
+                            .onChanged { value in
+                                guard let id = drag.id ?? rowFrames.thread(at: value.startLocation) else { return }
+                                dragChanged(id, translation: value.translation.height)
+                            }
+                            .onEnded { _ in dragEnded() },
+                        isEnabled: query.isEmpty
+                    )
+                }
+                .scrollIndicators(.never)
+                .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { listFrame.note($0) }
+                .onScrollPhaseChange { _, phase in
+                    if phase == .idle {
+                        scrollSettle?.cancel()
+                        isListScrolling = false
                     } else {
-                        searchList(helpers: helpers)
+                        noteListScroll()
                     }
                 }
-                .allowsHitTesting(!isListScrolling)
-                // Adding or deleting a thread opens and closes its space with the same motion as every other row.
-                .animation(Chrome.panelSlide, value: model.threads.count)
-                .animation(Chrome.panelSlide, value: model.settings.settledCollapsed)
-                .padding(.horizontal, Chrome.listInset)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-                .coordinateSpace(name: Self.listSpace)
-                // One drag gesture for the whole list, ahead of every row's own click: the
-                // row under the pointer at the grab is the one that moves (a settled or
-                // helper row reports no frame, so a drag from one goes nowhere), and a
-                // plain click still reaches the row. Off while searching: nothing to reorder.
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 4, coordinateSpace: .named(Self.listSpace))
-                        .onChanged { value in
-                            guard let id = drag.id ?? rowFrames.thread(at: value.startLocation) else { return }
-                            dragChanged(id, translation: value.translation.height)
-                        }
-                        .onEnded { _ in dragEnded() },
-                    isEnabled: query.isEmpty
-                )
-            }
-            .scrollIndicators(.never)
-            .onGeometryChange(for: CGRect.self, of: Self.windowFrame) { listFrame.note($0) }
-            .onScrollPhaseChange { _, phase in
-                if phase == .idle {
-                    scrollSettle?.cancel()
-                    isListScrolling = false
-                } else {
-                    noteListScroll()
+                .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { old, new in
+                    if old != new { noteListScroll() }
                 }
-            }
-            .onScrollGeometryChange(for: CGFloat.self, of: { $0.contentOffset.y }) { old, new in
-                if old != new { noteListScroll() }
+                // A thread that has just moved to another project is brought into view, so the
+                // list shows where it landed instead of only closing up where it was.
+                .onChange(of: model.sidebarRevealThreadID) { _, reveal in
+                    guard let reveal else { return }
+                    model.sidebarRevealThreadID = nil
+                    guard let thread = model.thread(reveal) else { return }
+                    withAnimation(Chrome.panelSlide) {
+                        proxy.scrollTo(SidebarItem.id(for: thread), anchor: .center)
+                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 1) {

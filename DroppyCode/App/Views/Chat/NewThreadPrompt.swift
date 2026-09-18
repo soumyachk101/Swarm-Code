@@ -65,21 +65,17 @@ struct NewThreadPrompt: View {
             }
             PopoverDivider()
             PopoverItem("Add project…", symbol: "plus") {
-                model.chooseProjectFolder()
+                guard let added = model.addProjectsFromPanel() else { return }
+                move(to: added)
             }
         }
     }
 
     private func move(to project: Project) {
         guard let thread = model.thread(threadID), thread.projectID != project.id else { return }
-        model.existingRuntime(for: threadID)?.stopSession()
-        model.updateThread(threadID) { thread in
-            thread.projectID = project.id
-            thread.worktreePath = nil
-            thread.branch = nil
-            thread.providerSessionID = nil
-            thread.providerResumeAt = nil
+        isChoosingProject = false
+        withAnimation(Chrome.panelSlide) {
+            model.moveThread(threadID, toProject: project)
         }
-        model.updateProject(project.id) { $0.isExpanded = true }
     }
 }
