@@ -74,7 +74,7 @@ enum PiPlanLimits {
             codexWindow(id: "codex-secondary", raw: rateLimit["secondary_window"]),
         ].compactMap { $0 }
         guard !windows.isEmpty else { return nil }
-        let name = json["plan_type"]?.string.flatMap(PlanLimitsReader.planName).map { "Codex \($0)" } ?? "Codex"
+        let name = json["plan_type"]?.string.flatMap(PlanLimitsReader.codexPlanName).map { "Codex \($0)" } ?? "Codex"
         return PlanLimits(planName: name, windows: windows)
     }
 

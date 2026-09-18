@@ -9,6 +9,7 @@ All notable changes to Droppy Code are documented here, newest first. The format
 ### Bug fixes
 - A framework's own raise while a notification is posted no longer ends the app: on macOS 27 a popover's window coming on screen can make the framework's remote view throw from inside the notification that announces it, and because that happens during a SwiftUI layout pass AppKit catches the exception and stops the app, which is how both reports of September 18 read, both from the release-notes cards on Settings › About. The app's notification posts now catch such a raise, log it with the raising observer's frames, and carry on, so the popover's window ordering and the popover itself still finish.
 - The New features, Bug fixes and Refinements cards on Settings › About open their section in a card under the row instead of in a popover: the notes read in the page and scroll with it, and tapping the card again, or the card's close button, folds them away.
+- The Codex usage panel names the ChatGPT plan the way OpenAI sells it: the `pro` account type is the $200 Pro tier and now reads "Pro 20x" where the panel showed "Pro", and `prolite` reads "Pro 5x" where it showed "Prolite"; plan types only Codex spells get its own CLI wording, so the self-serve business Pro Lite entitlement reads "Business Premium" instead of "self_serve_business_prolite".
 
 ## [1.6.0] - 2026-09-18
 

@@ -414,12 +414,12 @@ final class CodexSession: ProviderSession {
         }
         guard !windows.isEmpty else {
             return PlanLimits(
-                planName: PlanLimitsReader.planName(plan),
+                planName: PlanLimitsReader.codexPlanName(plan),
                 windows: [],
                 problem: "Codex reported no usage windows for this account."
             )
         }
-        return PlanLimits(planName: PlanLimitsReader.planName(plan), windows: windows, resetCredits: parseResetCredits(result["rateLimitResetCredits"] ?? result["rate_limit_reset_credits"]))
+        return PlanLimits(planName: PlanLimitsReader.codexPlanName(plan), windows: windows, resetCredits: parseResetCredits(result["rateLimitResetCredits"] ?? result["rate_limit_reset_credits"]))
     }
 
     private static func plainProblem(_ error: Error) -> String {
