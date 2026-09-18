@@ -618,6 +618,19 @@ final class ThreadRuntime {
         (app?.runningHydraHeads(of: threadID) ?? 0) > 0
     }
 
+    /// Whether any helper of this lead — a head or a plain helper — is at work: the same
+    /// question the folded-helpers line asks about the same helpers, so a lead's own row,
+    /// its badge and the line under it never disagree.
+    var hasWorkingHelpers: Bool {
+        guard let app else { return false }
+        for helper in app.children(of: threadID) {
+            if let runtime = app.existingRuntime(for: helper.id), runtime.isRunning || runtime.isHydraMerging {
+                return true
+            }
+        }
+        return false
+    }
+
     /// Whether any native head of this lead is still at work: those are the ones stopping
     /// the lead's turn would take down. A Droppy-run head lives in a thread of its own and
     /// reports to whatever turn the lead is on, so it survives the lead being stopped.

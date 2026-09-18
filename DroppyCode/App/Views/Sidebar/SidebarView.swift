@@ -2059,7 +2059,7 @@ private struct ThreadGhostBadge: View {
     init(thread: ChatThread, runtime: ThreadRuntime?) {
         self.thread = thread
         needsInput = !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true)
-        isRunning = runtime?.isRunning == true || runtime?.isHydraMerging == true
+        isRunning = runtime?.isRunning == true || runtime?.isHydraMerging == true || runtime?.hasWorkingHelpers == true
     }
 
     var body: some View {
@@ -2119,7 +2119,7 @@ private struct ThreadBadge: View {
         let runtime = model.existingRuntime(for: thread.id)
         let needsInput = !(runtime?.approvals.isEmpty ?? true) || !(runtime?.questions.isEmpty ?? true)
         let mergeStage = SidebarThreadRow.mergeStage(of: runtime)
-        let isRunning = runtime?.isRunning == true || mergeStage != nil
+        let isRunning = runtime?.isRunning == true || mergeStage != nil || runtime?.hasWorkingHelpers == true
         SidebarIconBadge {
             if needsInput {
                 SidebarSymbol("hand.raised.fill")
@@ -2376,7 +2376,7 @@ private struct ActivityStatus: View {
             Image(systemName: "hand.raised.fill")
                 .font(.system(size: 11))
                 .foregroundStyle(Chrome.warning)
-        } else if runtime?.isRunning == true || runtime?.isHydraMerging == true {
+        } else if runtime?.isRunning == true || runtime?.isHydraMerging == true || runtime?.hasWorkingHelpers == true {
             MiniSpinner(cellSize: 2.4)
                 .help(SidebarThreadRow.mergeStage(of: runtime) ?? "")
         } else if thread.hasUnread {
