@@ -9,9 +9,18 @@ All notable changes to Droppy Code are documented here, newest first. The format
 ### New features
 - Netlify joins the MCP catalog: sign in with your Netlify account and a thread can create projects, deploy sites and manage environment variables.
 - Projects wear a mark: each project can be given an emoji or an SF Symbol in Settings, General, Projects, and the activity list can draw that mark in front of a thread's name in place of the line that named the project, one line per thread, while what the thread is doing still reads at the end of the row. The choice of list sits on the General page and on the welcome screen, and a new install starts on the compact one.
+- A chat that stops on its provider's usage limit now leaves a notice with two ways out beside it: Cancel stops the automatic continue and leaves the chat to you, and New thread stops the wait and opens a new chat of the same project holding a hand-off of the request and of what the stopped turn had already done, so another model can be picked there and sent it.
+- Heads can leave the sidebar by themselves: with Auto-hide heads in the sidebar on (Settings, Hydra, Heads), a chat's head card shows while one of them runs and goes once every head of that chat has finished, coming back on its own when one starts again. Off by default, so heads stay where they are.
 
 ### Bug fixes
 - The GitLab MCP server no longer looks like a hiccup on GitLab's side: a top-level group that hasn't allowed MCP client access is answered by GitLab 19.4 and earlier with 404 instead of "MCP server disabled", so connecting ended in "gitlab.com didn't answer its MCP address (404), try again in a few minutes". That answer now opens the steps to turn MCP on for the group, and the app's own MCP proxy answers a path it has no route for with 502 rather than a 404 that reads as the server's reply.
+- Scrolling through the chat and its panels no longer fights the reader: the timeline reads wheel ticks and a viewport that changes height as the reader's own movement rather than as content arriving, so rows landing or the composer growing never tugs anyone who is still scrolling, and the Settings pages settle a scroll burst without re-evaluating the page on every frame.
+- The diff panel builds a file's rows once per change and drops a scroll request a newer one has replaced, the model list keeps its measured row heights without re-evaluating the page for every measurement, a pre-measured popover lays its content out once instead of on every parent update, the update notes on the About page scroll with the page instead of inside a scroller of their own, and the shortcuts page lays out whole so its scroller knows its content height.
+
+### Refinements
+- Ending a turn no longer folds it away: a finished turn keeps every reply, tool run, note, head and its changed-files card in the open column, in the order they arrived, and only the agent's thinking stays behind the working line's chevron.
+- A running turn keeps those same rows on screen while it works, so prose that arrives between tool calls stays visible instead of waiting for the turn to end.
+- The Chronological order switch is gone from Settings › Conversation: the order it asked for is what a running turn always does now, so the switch had nothing left to change.
 
 ### Thanks
 - René (@diazdesandi): confined `search_text` to the project root with a `--` guard against flag smuggling, kept plan mode blocking edits after approve-for-turn, cleared the save timer handle before `saveNow` bails and stopped `WorkingTreeWatch` tearing down the registered watch when a second caller lost the race (!307); one OpenAI-compatible session and one Keychain behind the DeepSeek, Meta and Z.ai providers (!308).

@@ -17,6 +17,16 @@ final class AutoContinue {
     /// The chats waiting for their limit, and when they go on.
     private(set) var resumesAt: [UUID: Date] = [:]
 
+    /// How a chat's wait ended, once it is over. The notice's row reads this for its words
+    /// after the wait; a fresh wait clears it.
+    enum LimitOutcome: Equatable, Sendable {
+        case cancelled
+        case handedOff(UUID)
+        case resumed
+    }
+
+    private(set) var outcomes: [UUID: LimitOutcome] = [:]
+
     @ObservationIgnored private weak var app: AppModel?
     /// Limits hit by the running turn: the thread and the reset time, when the provider said.
     @ObservationIgnored private var noted: [UUID: Date?] = [:]
@@ -43,6 +53,7 @@ final class AutoContinue {
         guard let app, app.settings.autoContinueAfterLimit, status == .failed, !continues,
               let thread = app.thread(threadID), !thread.isHydraHead else { return false }
         waits[threadID]?.cancel()
+        outcomes[threadID] = nil
         let turnID = app.existingRuntime(for: threadID)?.turns.last?.id
         let token = UUID()
         waitTokens[threadID] = token
@@ -58,6 +69,19 @@ final class AutoContinue {
         waits[threadID] = nil
         waitTokens[threadID] = nil
         resumesAt[threadID] = nil
+        outcomes[threadID] = .cancelled
+    }
+
+    /// Cancels the wait and picks the work up in a new chat of the same project, whose
+    /// composer holds a hand-off of the turn that stopped. The user chooses the model
+    /// there and sends it themselves.
+    func handOff(_ threadID: UUID) {
+        guard let app, let thread = app.thread(threadID), let runtime = app.existingRuntime(for: threadID) else { return }
+        let text = LimitHandoff.text(for: runtime, title: thread.title)
+        cancel(threadID)
+        guard let project = app.project(thread.projectID), let made = app.newThread(in: project) else { return }
+        outcomes[threadID] = .handedOff(made.id)
+        app.runtime(for: made.id).draft.text = text
     }
 
     private func wait(_ threadID: UUID, turnID: UUID?, resetsAt: Date?, provider: ProviderKind, token: UUID) async {
@@ -76,7 +100,7 @@ final class AutoContinue {
         let resumeAt = max(resetsAt.addingTimeInterval(Self.margin), Date.now.addingTimeInterval(5))
         resumesAt[threadID] = resumeAt
         let when = Self.format(resumeAt)
-        notice(threadID, .info, "Usage limit reached. Continuing automatically at \(when).")
+        notice(threadID, .info, "Usage limit reached. Continuing automatically at \(when).", limitMark: true)
         notify(threadID, "Usage limit reached. Continuing at \(when).")
         try? await Task.sleep(for: .seconds(resumeAt.timeIntervalSinceNow))
         // A wait that was cancelled or replaced while it slept leaves the countdown and
@@ -89,6 +113,7 @@ final class AutoContinue {
               let runtime = app.existingRuntime(for: threadID), !runtime.isRunning,
               // The user has since picked the chat up themselves: nothing to continue.
               runtime.turns.last?.id == turnID else { return }
+        outcomes[threadID] = .resumed
         runtime.enqueueFollowUp(text: Self.continueMessage, attachments: [])
         if let prompt = runtime.followUps.last(where: { $0.text == Self.continueMessage }) {
             runtime.sendFollowUpNow(prompt.id)
@@ -116,8 +141,10 @@ final class AutoContinue {
         return spent.resetsAt
     }
 
-    private func notice(_ threadID: UUID, _ level: Notice.Level, _ message: String) {
-        app?.existingRuntime(for: threadID)?.rehearse(.notice(Notice(level: level, message: message)))
+    private func notice(_ threadID: UUID, _ level: Notice.Level, _ message: String, limitMark: Bool = false) {
+        var notice = Notice(level: level, message: message)
+        if limitMark { notice.limit = LimitNotice(threadID: threadID) }
+        app?.existingRuntime(for: threadID)?.rehearse(.notice(notice))
     }
 
     private func notify(_ threadID: UUID, _ body: String) {

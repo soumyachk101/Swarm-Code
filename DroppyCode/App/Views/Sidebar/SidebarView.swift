@@ -413,17 +413,29 @@ struct SidebarView: View {
     /// (see `SidebarThreadRow.thread`) without the list being built again.
     private func listItems(placements: [ThreadPlacement], helpers: [UUID: [ChatThread]]) -> [SidebarItem] {
         let activity = model.settings.sidebarActivityView
+        let autoHidesIdleHeads = model.settings.hydraAutoHidesIdleHeads
+        let parentsShowingHeads = autoHidesIdleHeads
+            ? Set(helpers.compactMap { parent, heads in hasRunningHead(heads) ? parent : nil })
+            : []
         let key = SidebarItemCache.Key(
             placements: placements,
             projects: model.projects,
             attention: activity ? Set(model.threads.filter { needsAttention($0) }.map(\.id)) : [],
             activityView: activity,
             activityThreadStyle: model.settings.activityThreadStyle,
-            settledCollapsed: model.settings.settledCollapsed
+            settledCollapsed: model.settings.settledCollapsed,
+            autoHidesIdleHeads: autoHidesIdleHeads,
+            parentsShowingHeads: parentsShowingHeads
         )
         return itemCache.items(for: key) {
             activity ? activityItems(helpers: helpers) : projectItems(helpers: helpers)
         }
+    }
+
+    /// Whether any of these heads is still running. Read through the model rather than the
+    /// snapshot, so a head that has just finished is not counted by a stale copy.
+    private func hasRunningHead(_ heads: [ChatThread]) -> Bool {
+        heads.contains { (model.thread($0.id) ?? $0).hydra?.status == .running }
     }
 
     /// The helpers under a thread: one small row each, or a single line naming them while
@@ -436,10 +448,11 @@ struct SidebarView: View {
         }
         let plain = helpers.filter { !$0.isHydraHead }
         let heads = Self.orderedHeads(helpers.filter(\.isHydraHead))
+        let showsHeads = !heads.isEmpty && !(model.settings.hydraAutoHidesIdleHeads && !hasRunningHead(heads))
         var items = plain.map { helper in
-            SidebarItem(id: helper.id.uuidString, kind: .helper(helper, isLast: helper.id == plain.last?.id && heads.isEmpty))
+            SidebarItem(id: helper.id.uuidString, kind: .helper(helper, isLast: helper.id == plain.last?.id && !showsHeads))
         }
-        if !heads.isEmpty {
+        if showsHeads {
             items.append(SidebarItem(id: "heads-\(thread.id)", kind: .headCards(parent: thread, heads: heads)))
         }
         return items
@@ -813,7 +826,9 @@ struct SidebarView: View {
                     for helper in helpers where !helper.isHydraHead {
                         height += (rowHeights.values[helper.id.uuidString] ?? ThreadRowMetrics.helperHeight) + 1
                     }
-                    let headCount = helpers.count(where: \.isHydraHead)
+                    let headCount = model.settings.hydraAutoHidesIdleHeads && !hasRunningHead(helpers.filter(\.isHydraHead))
+                        ? 0
+                        : helpers.count(where: \.isHydraHead)
                     if headCount > 0 {
                         let rows = (headCount + 5) / 6
                         height += (rowHeights.values["heads-\(id)"] ?? ThreadRowMetrics.headCardHeight(rows: rows)) + 1
@@ -2555,6 +2570,9 @@ private final class SidebarItemCache {
         var activityView: Bool
         var activityThreadStyle: ActivityThreadStyle
         var settledCollapsed: Bool
+        /// The sidebar's head-card option, and the parents that still draw a card under it.
+        var autoHidesIdleHeads: Bool
+        var parentsShowingHeads: Set<UUID>
     }
 
     struct SearchKey: Equatable {
