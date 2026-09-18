@@ -86,6 +86,7 @@ struct LinkParagraphView: NSViewRepresentable {
         var lastVeiled = false
         var lastMentions: [String] = []
         var lastTargets: [String: HydraMentionTarget] = [:]
+        var lastHeads: [String: URL] = [:]
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             if let url = link as? URL {
                 NSWorkspace.shared.open(url)
