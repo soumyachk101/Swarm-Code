@@ -1,21 +1,21 @@
-# AGENTS.md — SwarmAI agent workflow
+# AGENTS.md — Swarm Code agent workflow
 
 ## Worktrees (mandatory for coding)
 
-- Never code directly in `/Users/soumyachakraborty/Documents/droppy-code/SwarmAI` (main checkout).
+- Never code directly in `/Users/soumyachakraborty/Documents/Swarm-Code` (main checkout).
 - For every coding task: first create your own worktree, then work there.
 - Setup per task:
  1. `git fetch origin --prune`
- 2. `git worktree add -b <branch> ~/.swarmai/worktrees/agent-<slug> origin/main`
+ 2. `git worktree add -b <branch> ~/.swarmcode/worktrees/agent-<slug> origin/main`
  (or from the agreed base branch instead of `origin/main`)
  3. Do all edits, builds and `scripts/quick_run.sh` runs inside that worktree.
 - Cleanup only when the task is done/merged:
- `git worktree remove --force ~/.swarmai/worktrees/agent-<slug>` + `git worktree prune`.
+ `git worktree remove --force ~/.swarmcode/worktrees/agent-<slug>` + `git worktree prune`.
 - Never delete the main checkout, never touch another agent's worktree.
 
 ## Relaunching (never unprompted)
 
-- NEVER run `scripts/quick_run.sh` or otherwise quit/relaunch SwarmAI unless explicitly asked for it in that moment.
+- NEVER run `scripts/quick_run.sh` or otherwise quit/relaunch Swarm Code unless explicitly asked for it in that moment.
 - Building inside the worktree is fine; installing to /Applications and relaunching is not.
 - "Finish", "merge", "done" or "test it" do not imply relaunch — only an explicit request to run/relaunch the app does.
 
