@@ -1584,7 +1584,9 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 .faq__question {
   position: relative;
-  width: 100%;
+  /* Content-sized, so a left-hand question is a pill and never a banner.
+     Only the phones rule below takes the full width back. */
+  width: fit-content;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -1613,10 +1615,9 @@ html.nav-intro-done .nav__pill { animation: none; }
   background: var(--bg-well-raised);
   z-index: -1;
 }
-/* Every second question is a content-sized pill pushed to the right so
-   the list reads as a back-and-forth. */
+/* The list reads as a back-and-forth: only every second pill is pushed
+   to the right, and every question keeps its own content-sized width. */
 .faq__item:nth-child(even) .faq__question {
-  width: fit-content;
   margin-left: auto;
 }
 .faq__question-icon {
@@ -1700,6 +1701,8 @@ html.nav-intro-done .nav__pill { animation: none; }
     margin-left: 0;
   }
   .faq__question {
+    /* Phones get the full-width pill back for both sides. */
+    width: 100%;
     gap: 46px;
     padding: 14px 0 14px 22px;
   }
