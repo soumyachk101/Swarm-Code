@@ -330,7 +330,7 @@ struct WelcomeView: View {
                     ChromeCard {
                         ChromeRow(title: "Project mark", detail: settings.activityThreadStyle.detail) {
                             ChromeVisualPicker(options: ActivityThreadStyle.allCases.map { ($0, $0.title) }, selection: $settings.activityThreadStyle) { style in
-                                ActivityThreadStylePreview(style: style)
+                                Image(systemName: style == .icon ? "list.bullet" : "text.alignleft")
                             }
                         }
                     }

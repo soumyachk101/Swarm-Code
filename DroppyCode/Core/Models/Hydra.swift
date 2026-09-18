@@ -220,6 +220,20 @@ struct HydraPersona: Hashable, Sendable {
             blue: Double(hex & 0xFF) / 255
         )
     }
+
+    /// The name without a trailing round number, or the whole name when there is none.
+    var baseName: String {
+        let tokens = name.split(separator: " ")
+        guard let last = tokens.last, Int(last) != nil, tokens.count > 1 else { return name }
+        return tokens.dropLast().joined(separator: " ")
+    }
+
+    /// The round number carried by the name, if any: 'Hank 2' has round 2.
+    var round: Int? {
+        let tokens = name.split(separator: " ")
+        guard tokens.count > 1, let last = tokens.last else { return nil }
+        return Int(last)
+    }
 }
 
 /// The names heads are given, in the order they are sent out, each with a dragon head

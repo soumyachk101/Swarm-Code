@@ -553,7 +553,7 @@ struct SidebarView: View {
                     let compact = model.settings.activityThreadStyle == .icon
                     items.append(SidebarItem(
                         id: SidebarItem.id(for: thread),
-                        kind: .thread(thread, projectName: compact ? nil : (project?.name ?? ""), projectIcon: compact ? project?.icon : nil, peers: nil, hasHelpers: false)
+                        kind: .thread(thread, projectName: compact ? nil : (project?.name ?? ""), projectIcon: activityMark(project, compact: compact), peers: nil, hasHelpers: false)
                     ))
                 }
             }
@@ -571,9 +571,20 @@ struct SidebarView: View {
             let compact = model.settings.activityThreadStyle == .icon
             return [SidebarItem(
                 id: thread.id.uuidString,
-                kind: .thread(thread, projectName: compact ? nil : (project?.name ?? ""), projectIcon: compact ? project?.icon : nil, peers: peers, hasHelpers: !thread.isSettled && !own.isEmpty)
+                kind: .thread(thread, projectName: compact ? nil : (project?.name ?? ""), projectIcon: activityMark(project, compact: compact), peers: peers, hasHelpers: !thread.isSettled && !own.isEmpty)
             )] + helperItems(under: thread, helpers: own)
         }
+    }
+
+    /// A thread's project mark in the activity layout. In the icon style the slot in front
+    /// of the title belongs to the project — the mark picked for it, or the folder mark
+    /// until one is — so no thread wears a provider badge there and the thread's own state
+    /// reads at the back instead. In the project-name style a picked mark leads the title
+    /// and the project line below it drops (see `ThreadRowFace`); with none picked, the row
+    /// keeps the folder line exactly as it was.
+    private func activityMark(_ project: Project?, compact: Bool) -> ProjectIcon? {
+        guard compact else { return project?.icon }
+        return project?.icon ?? .symbol("folder.fill")
     }
 
     private func needsAttention(_ thread: ChatThread) -> Bool {
@@ -1236,9 +1247,15 @@ private enum ThreadRowMetrics {
     /// The connector's column: the dotted line runs down it, under the parent's badge.
     static let connectorWidth: CGFloat = 28
     static let connectorLineX: CGFloat = 18
-    static let headGlyphSize: CGFloat = 18
-    /// A head glyph plus its gap.
-    static let headGlyphPitch: CGFloat = 26
+    /// A head's mark is the size of the project icon that leads a thread title, so one
+    /// mark size reads down the whole sidebar.
+    static let headGlyphSize: CGFloat = 14
+    /// A head glyph plus the gap a card row keeps at its tightest.
+    static let headGlyphPitch: CGFloat = 22
+    /// The room a glyph's outcome badge takes past its frame: HydraGlyph rides the disc
+    /// `0.3 × its diameter` out, a shade under 3 pt at this glyph size. A card row keeps
+    /// it clear on its trailing side, so a badge never eats the card's own padding.
+    static let headBadgeOverhang: CGFloat = 3
     /// Between a head card's glyph rows, and the card's own padding all round.
     static let headRowGap: CGFloat = 6
     static let headCardPadding: CGFloat = 6
@@ -1291,9 +1308,10 @@ private struct SidebarHelperRow: View, Equatable {
                 model.selectedThreadID = thread.id
             } label: {
                 HStack(spacing: 6) {
-                    // A head keeps its glyph, so the team reads at a glance under its lead.
+                    // A head keeps its glyph, so the team reads at a glance under its lead,
+                    // at the same size the card draws it.
                     if let head = thread.hydra {
-                        HydraGlyph(persona: head.persona, size: 12, status: head.status)
+                        HydraGlyph(persona: head.persona, size: ThreadRowMetrics.headGlyphSize, status: head.status)
                     }
                     Text(verbatim: thread.title)
                         .font(.system(size: 12, weight: isSelected || thread.hasUnread ? .medium : .regular))
@@ -1374,9 +1392,6 @@ private struct HeadCardsRow: View {
 
     @State private var width: CGFloat = 0
     @State private var hoveredID: UUID?
-    /// The card's own height as it lays out: the connector's dotted line runs the
-    /// card's whole depth, however many rows the heads need.
-    @State private var cardHeight: CGFloat = 0
     /// The card shows the first twelve faces and keeps the rest behind the chevron: a
     /// long-running chat's team must not push the card half the sidebar tall.
     @State private var showsAllHeads = false
@@ -1386,22 +1401,33 @@ private struct HeadCardsRow: View {
         let capped = heads.count > 12
         let visible = showsAllHeads ? heads : Array(heads.prefix(12))
         // The glyphs' room: the row's width less the connector's column and the card's
-        // own padding, which is the same on both sides. The last glyph of a row needs
-        // its own 18 pt, not a whole 26 pt pitch, so six glyphs (6 x 18 + 5 x 8 = 148)
-        // fit the 150 pt the card has at the sidebar's 210 pt minimum. Six to a row
-        // until the row has been measured.
+        // own padding, which is the same on both sides, less the room the last mark's
+        // badge needs. The last glyph of a row needs its own 14 pt, not a whole 22 pt
+        // pitch, so seven glyphs (7 x 14 + 6 x 8 = 146) and the badge's 3 pt fit the
+        // 170 pt the card has at the sidebar's 210 pt minimum. Seven to a row until
+        // the row has been measured.
         let cardInner = width - ThreadRowMetrics.connectorWidth - 2 * ThreadRowMetrics.headCardPadding
-        let perRow = width == 0 ? 6 : max(1, Int((cardInner + ThreadRowMetrics.headGlyphPitch - ThreadRowMetrics.headGlyphSize) / ThreadRowMetrics.headGlyphPitch))
+        let usable = cardInner - ThreadRowMetrics.headBadgeOverhang
+        let perRow = width == 0 ? 7 : max(1, Int((usable + ThreadRowMetrics.headGlyphPitch - ThreadRowMetrics.headGlyphSize) / ThreadRowMetrics.headGlyphPitch))
+        // The marks share the card's inner width: a row stretches its gaps past the
+        // tightest one until the last mark's badge sits on the card's padding, so the
+        // room left of the first mark and right of the last one come out the same. A
+        // short last row keeps the step of the rows above it.
+        let tightGap = ThreadRowMetrics.headGlyphPitch - ThreadRowMetrics.headGlyphSize
+        let rowGap = perRow > 1 && width > 0
+            ? max(tightGap, (usable - CGFloat(perRow) * ThreadRowMetrics.headGlyphSize) / CGFloat(perRow - 1))
+            : tightGap
         let rows = Self.chunk(visible, by: perRow)
+        let cardRows = rows.count + (capped ? 1 : 0)
         HStack(spacing: 0) {
             HelperConnector(endsHere: true, action: onFold)
                 .frame(
                     width: ThreadRowMetrics.connectorWidth,
-                    height: cardHeight > 0 ? cardHeight : ThreadRowMetrics.headCardHeight(rows: rows.count + (capped ? 1 : 0))
+                    height: ThreadRowMetrics.headCardHeight(rows: cardRows)
                 )
             VStack(alignment: .leading, spacing: ThreadRowMetrics.headRowGap) {
-                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                    HStack(spacing: ThreadRowMetrics.headGlyphPitch - ThreadRowMetrics.headGlyphSize) {
+                ForEach(rows, id: \.first?.id) { row in
+                    HStack(spacing: rowGap) {
                         ForEach(row, id: \.id) { head in
                             if let info = head.hydra {
                                 Button {
@@ -1440,6 +1466,9 @@ private struct HeadCardsRow: View {
                             }
                         }
                     }
+                    // The last mark's badge rides past its frame: the row trails it so the
+                    // card's padding stays whole on that side.
+                    .padding(.trailing, ThreadRowMetrics.headBadgeOverhang)
                 }
                 if capped {
                     Button {
@@ -1457,12 +1486,12 @@ private struct HeadCardsRow: View {
             }
             .padding(ThreadRowMetrics.headCardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { height in
-                if height > 0 { cardHeight = height }
-            }
+            .frame(height: ThreadRowMetrics.headCardHeight(rows: cardRows), alignment: .top)
             .background {
                 RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous).fill(Chrome.overlay(0.04))
             }
+            .clipShape(RoundedRectangle(cornerRadius: Chrome.rowCornerRadius, style: .continuous))
+            .animation(.snappy(duration: 0.18), value: cardRows)
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { width = $0 }
         // A helper goes out of sight the moment its parent's ghost takes off, so it never
@@ -1621,7 +1650,9 @@ private struct SidebarThreadRow: View, Equatable {
     private var thread: ChatThread { model.thread(snapshot.id) ?? snapshot }
     /// The project shown under the title in the activity layout; nil in the project layout.
     let projectName: String?
-    /// The project's mark shown in front of the title in the compact activity layout; nil otherwise.
+    /// The project's mark: the folder or the picked emoji or symbol. In the icon style it
+    /// holds the slot in front of the title; in the project-name style it leads the title
+    /// once a mark has been picked, and the project line below drops.
     let projectIcon: ProjectIcon?
     /// Carries rename/delete intents out of the AppKit menu without retaining row state.
     /// Held strongly: the box is the list's, not the row's, so holding it pins no row
@@ -1994,12 +2025,25 @@ private struct ThreadRowFace<Badge: View>: View {
                 .transition(.opacity)
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(verbatim: thread.title)
-                    .font(.system(size: isSettled ? 12 : 13, weight: !isSettled && (isSelected || thread.hasUnread) ? .medium : .regular))
-                    .foregroundStyle(Chrome.primaryText.opacity(Self.titleOpacity(isSettled: isSettled, isSelected: isSelected)))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if let projectName, !isSettled {
+                // A project with a picked icon leads the title with it and drops the project
+                // line below; without one the row is exactly as it was.
+                if isDetailed, let projectIcon {
+                    HStack(spacing: 6) {
+                        ProjectIconMark(icon: projectIcon, size: 14)
+                        Text(verbatim: thread.title)
+                            .font(.system(size: isSettled ? 12 : 13, weight: !isSettled && (isSelected || thread.hasUnread) ? .medium : .regular))
+                            .foregroundStyle(Chrome.primaryText.opacity(Self.titleOpacity(isSettled: isSettled, isSelected: isSelected)))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                } else {
+                    Text(verbatim: thread.title)
+                        .font(.system(size: isSettled ? 12 : 13, weight: !isSettled && (isSelected || thread.hasUnread) ? .medium : .regular))
+                        .foregroundStyle(Chrome.primaryText.opacity(Self.titleOpacity(isSettled: isSettled, isSelected: isSelected)))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                if let projectName, !isSettled, projectIcon == nil {
                     HStack(spacing: 4) {
                         Image(systemName: thread.worktreePath == nil ? "folder" : "arrow.triangle.branch")
                             .font(.system(size: 10))

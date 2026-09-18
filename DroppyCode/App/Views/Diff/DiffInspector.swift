@@ -342,51 +342,65 @@ struct DiffLinesView: View, Equatable {
         return sections
     }
 
-    var body: some View {
-        // Lazy so a 200-line file only materializes the rows actually on screen;
-        // an eager VStack here built every row during the panel-slide animation.
-        LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(sections) { section in
-                switch section {
-                case .header(let text, _):
-                    Text(text)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.accentColor.opacity(0.06))
-                case .tinted(let lines, let offset, let count):
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
-                            DiffLineRow(
-                                line: line,
-                                showsLineNumbers: showsLineNumbers,
-                                rounding: DiffLineRow.blockRounding(index: offset + index, count: count)
-                            )
-                        }
+    @ViewBuilder private func rowList(_ rows: [Section]) -> some View {
+        ForEach(rows) { section in
+            switch section {
+            case .header(let text, _):
+                Text(text)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.accentColor.opacity(0.06))
+            case .tinted(let lines, let offset, let count):
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(lines.enumerated()), id: \.element.id) { index, line in
+                        DiffLineRow(
+                            line: line,
+                            showsLineNumbers: showsLineNumbers,
+                            rounding: DiffLineRow.blockRounding(index: offset + index, count: count)
+                        )
                     }
-                case .plain(let lines):
-                    ForEach(lines) { line in
-                        DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
-                    }
+                }
+            case .plain(let lines):
+                ForEach(lines) { line in
+                    DiffLineRow(line: line, showsLineNumbers: showsLineNumbers)
                 }
             }
-            if !showsAll, totalLines > Self.collapsedLineLimit {
-                Button {
-                    showsAll.toggle()
-                } label: {
-                    Text("Show all \(totalLines) lines")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.quaternary.opacity(0.5), in: Capsule(style: .continuous))
-                        .contentShape(.capsule)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+        }
+        if !showsAll, totalLines > Self.collapsedLineLimit {
+            Button {
+                showsAll.toggle()
+            } label: {
+                Text("Show all \(totalLines) lines")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(.quaternary.opacity(0.5), in: Capsule(style: .continuous))
+                    .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+    }
+
+    var body: some View {
+        let budget = showsAll ? Int.max : Self.collapsedLineLimit
+        // Built here as well as in the onChange below, so a card the panel materializes
+        // mid-scroll draws its rows on its first frame instead of one empty frame.
+        let rows = sections.isEmpty ? Self.makeSections(file: file, showsLineNumbers: showsLineNumbers, limit: budget) : sections
+        Group {
+            if showsAll, totalLines > Self.collapsedLineLimit {
+                // Only a diff the reader asked to see in full stays lazy: the collapsed
+                // view is built at once so the panel's outer lazy stack gets the exact
+                // height of every card and no row goes missing while scrolling.
+                LazyVStack(alignment: .leading, spacing: 0) { rowList(rows) }
+            } else {
+                VStack(alignment: .leading, spacing: 0) { rowList(rows) }
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .font(.system(size: 11.5, design: .monospaced))

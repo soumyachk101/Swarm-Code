@@ -43,6 +43,12 @@ extension AppModel {
             guard runtime.phase == .idle, !runtime.isHydraMerging, runningHydraHeads(of: lead.id) == 0 else { continue }
             let finished = runtime.hydraUnmergedTurns.filter { $0.status == .completed }
             guard !finished.isEmpty, runtime.turns.last?.status == .completed else { continue }
+            // A chat with nothing of its own to show never merges: Hydra merely being
+            // switched on is not work, and the checkout sweep would otherwise take whatever
+            // else in that checkout had changed, another chat's files or the user's own.
+            let hasOwnWork = finished.contains { !($0.touchedPaths ?? []).isEmpty }
+                || hydraTeam(of: lead.id).contains { $0.hydra.map { $0.mergedAt == nil && !($0.landing?.files ?? []).isEmpty } ?? false }
+            guard hasOwnWork else { continue }
             await autoMergeHydraWork(of: lead.id)
         }
     }
@@ -137,6 +143,7 @@ extension AppModel {
                   let changed = try? await git.changedPaths(from: "HEAD", to: tree) else { continue }
             var leftover = Set(changed.filter { !TouchedPaths.isBuildOutput($0) })
             leftover.subtract(await git.ignoredPaths(among: leftover.sorted()))
+            leftover.subtract(siblingOwnedPaths(in: group.checkout, projectID: group.project.id, excluding: leadID))
             guard !leftover.isEmpty else { continue }
             let shown = leftover.sorted().prefix(6).map { "`\($0)`" }.joined(separator: ", ") + (leftover.count > 6 ? " and \(leftover.count - 6) more" : "")
             note(leadID, "Hydra merged \(group.project.name), but left \(leftover.count == 1 ? "a changed file" : "\(leftover.count) changed files") no turn or head recorded.", "\(shown). Still uncommitted in that checkout: name them in a brief, or commit them there by hand.")
@@ -247,7 +254,7 @@ extension AppModel {
             advance(.pushing)
             try await git.pushBranch(branch)
 
-            let body = mergeRequestBody(for: lead, files: files, runtime: runtime)
+            let body = mergeRequestBody(for: lead, files: files, through: Set(work.turnIDs), runtime: runtime)
             advance(.opening)
             let requestURL: URL?
             do {
@@ -505,22 +512,7 @@ extension AppModel {
         // yet: that chat's merge carries them, never this one's. Without this, the
         // sweep below took a sibling's landed files along, and the sibling's own merge
         // then found nothing left and said nothing.
-        let team = Set(hydraTeam(of: leadID).map(\.id))
-        var siblingPaths = Set<String>()
-        for other in threads where other.id != leadID && other.projectID == projectID && !team.contains(other.id) {
-            if other.isHydraHead {
-                guard let info = other.hydra, info.mergedAt == nil else { continue }
-                for file in info.landing?.files ?? [] {
-                    if let relative = TouchedPaths.relative(file.path, root: checkout) { siblingPaths.insert(relative) }
-                }
-            } else if let live = existingRuntime(for: other.id) {
-                for turn in live.hydraUnmergedTurns {
-                    for path in turn.touchedPaths ?? [] {
-                        if let relative = TouchedPaths.relative(path, root: checkout) { siblingPaths.insert(relative) }
-                    }
-                }
-            }
-        }
+        let siblingPaths = siblingOwnedPaths(in: checkout, projectID: projectID, excluding: leadID)
         if sweepsCheckout,
            let base = turns.first?.baseCheckpoint,
            let alreadyDirty = try? await git.changedPaths(from: "HEAD", to: base),
@@ -528,9 +520,13 @@ extension AppModel {
            let changedSince = try? await git.changedPaths(from: base, to: now) {
             let theirs = Set(alreadyDirty)
             let fresh = changedSince.filter { !theirs.contains($0) }
-            paths.formUnion(fresh.filter { !siblingPaths.contains($0) || paths.contains($0) })
+            paths.formUnion(fresh.filter { !siblingPaths.contains($0) })
         }
 
+        // A file a live sibling head or chat owns never goes out under this chat, even
+        // when this chat's own records list it: a turn's touched paths are read off the
+        // checkout's diff, and so can hold a file another chat made while the turn ran.
+        paths.subtract(siblingPaths)
         paths = paths.filter { !TouchedPaths.isBuildOutput($0) }
         paths.subtract(await git.ignoredPaths(among: paths.sorted()))
         let tracked = await git.trackedPaths(among: paths.sorted())
@@ -544,6 +540,30 @@ extension AppModel {
             HydraMergeHead(name: entry.name, index: entry.index, task: entry.task, files: entry.paths.filter { paths.contains($0) })
         }
         return (paths.sorted(), turns.map(\.id), headIDs, outside.sorted(), heads)
+    }
+
+    /// Files another chat's team put or is still putting in this same checkout that no
+    /// merge has taken yet. That chat's own merge carries them, so a note here must not
+    /// call them unrecorded. The checkout sweep in `hydraWork` keeps them out of a merge
+    /// the same way.
+    private func siblingOwnedPaths(in checkout: String, projectID: UUID, excluding leadID: UUID) -> Set<String> {
+        let team = Set(hydraTeam(of: leadID).map(\.id))
+        var paths = Set<String>()
+        for other in threads where other.id != leadID && other.projectID == projectID && !team.contains(other.id) {
+            if other.isHydraHead {
+                guard let info = other.hydra, info.mergedAt == nil else { continue }
+                for file in info.landing?.files ?? [] {
+                    if let relative = TouchedPaths.relative(file.path, root: checkout) { paths.insert(relative) }
+                }
+            } else if let live = existingRuntime(for: other.id) {
+                for turn in live.hydraUnmergedTurns {
+                    for path in turn.touchedPaths ?? [] {
+                        if let relative = TouchedPaths.relative(path, root: checkout) { paths.insert(relative) }
+                    }
+                }
+            }
+        }
+        return paths
     }
 
     /// Brings the checkout's default branch up to the merge without touching the working
@@ -603,7 +623,7 @@ extension AppModel {
     }
 
     /// The request's description: what the team did and how the lead summed it up.
-    private func mergeRequestBody(for lead: ChatThread, files: [DiffFile], runtime: ThreadRuntime) -> String {
+    private func mergeRequestBody(for lead: ChatThread, files: [DiffFile], through: Set<UUID>, runtime: ThreadRuntime) -> String {
         var lines = ["Opened by Droppy Code once its Hydra team finished.", ""]
         let heads = hydraTeam(of: lead.id).compactMap(\.hydra).filter { !$0.task.isEmpty }
         if !heads.isEmpty {
@@ -617,7 +637,7 @@ extension AppModel {
             }
             lines.append("")
         }
-        if let reply = runtime.entries.last(where: { $0.kind == .assistant }).flatMap({ entry -> String? in
+        if let reply = runtime.entries.last(where: { $0.kind == .assistant && $0.item.turnID.map(through.contains) == true }).flatMap({ entry -> String? in
             guard case .assistant(let message) = entry.item.content else { return nil }
             return message.text.trimmingCharacters(in: .whitespacesAndNewlines)
         }), !reply.isEmpty {

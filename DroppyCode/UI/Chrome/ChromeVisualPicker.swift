@@ -1,33 +1,20 @@
 import SwiftUI
 
-// A row control of two or three tiles, each a zoomed-in mock of what the option does with a
-// short caption under it, the way macOS Appearance offers Light / Dark / Auto; the chosen
-// tile wears an accent ring. The mocks live in `SettingsPreviewMocks.swift`.
+// A row control of two or three tiles, each a single symbol standing for what the option
+// does, the way macOS Appearance offers Light / Dark / Auto; the chosen tile wears an accent
+// ring and takes the accent on its symbol. The symbol is the caller's: every picker hands in
+// one `Image` and the option's name shows on hover.
 
-/// The tile's measures: two options get the regular width, three the dense one, so a
-/// three-tile row still leaves room for the row's title.
+/// The tile's measures: every tile is the same size, so a picker of two options and a picker
+/// of three line up with each other and with the rows around them.
 enum ChromeVisualTileMetrics {
     static let height: CGFloat = 48
-    static let regularWidth: CGFloat = 100
-    static let denseWidth: CGFloat = 72
+    static let regularWidth: CGFloat = 76
+    static let denseWidth: CGFloat = 76
     static let cornerRadius: CGFloat = 6
     static let ringInset: CGFloat = 3
     static let ringWidth: CGFloat = 2
     static let spacing: CGFloat = 12
-    static let captionGap: CGFloat = 5
-}
-
-/// Whether the mock is drawn on the chosen tile, so it can pick out in accent the part the
-/// option changes. Set by `ChromeVisualTile`, read by the mocks.
-private struct ChromeVisualTileSelectedKey: EnvironmentKey {
-    static let defaultValue = false
-}
-
-extension EnvironmentValues {
-    var chromeTileIsSelected: Bool {
-        get { self[ChromeVisualTileSelectedKey.self] }
-        set { self[ChromeVisualTileSelectedKey.self] = newValue }
-    }
 }
 
 /// The row control: one tile per option, the chosen one ringed.
@@ -61,7 +48,7 @@ struct ChromeVisualPicker<Value: Hashable, Preview: View>: View {
     }
 }
 
-/// One tile: the mock on a stage, the caption under it.
+/// One tile: a single symbol on a stage, accent on the symbol the chosen option carries.
 struct ChromeVisualTile<Content: View>: View {
     let title: String
     let isSelected: Bool
@@ -72,12 +59,10 @@ struct ChromeVisualTile<Content: View>: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: ChromeVisualTileMetrics.captionGap) {
-                stage
-                caption
-            }
+            stage
         }
         .buttonStyle(.plain)
+        .help(Text(verbatim: title))
         .onHover { hovering in
             withAnimation(Chrome.hover) { isHovering = hovering }
         }
@@ -87,7 +72,8 @@ struct ChromeVisualTile<Content: View>: View {
 
     private var stage: some View {
         content()
-            .environment(\.chromeTileIsSelected, isSelected)
+            .font(.system(size: 17, weight: .medium))
+            .foregroundStyle(isSelected ? Chrome.accent : Chrome.secondaryText)
             .frame(width: width, height: ChromeVisualTileMetrics.height)
             .background(
                 RoundedRectangle(cornerRadius: ChromeVisualTileMetrics.cornerRadius, style: .continuous)
@@ -103,13 +89,5 @@ struct ChromeVisualTile<Content: View>: View {
                 .strokeBorder(isSelected ? Chrome.accent : Color.clear, lineWidth: ChromeVisualTileMetrics.ringWidth)
             )
             .contentShape(Rectangle())
-    }
-
-    private var caption: some View {
-        Text(verbatim: title)
-            .font(.system(size: 11, weight: isSelected ? .medium : .regular))
-            .foregroundStyle(isSelected ? Chrome.primaryText : Chrome.secondaryText)
-            .lineLimit(1)
-            .frame(width: width + ChromeVisualTileMetrics.ringInset * 2)
     }
 }

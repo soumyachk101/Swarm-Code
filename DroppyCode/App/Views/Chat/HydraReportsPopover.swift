@@ -299,9 +299,8 @@ struct HydraReportsPopover: View {
                     }
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(Self.cleanedTitle(title, names: personas.map(\.name)))
+                    HydraNameStyle.label(Self.cleanedTitle(title, names: personas.map(\.name)), personas: personas, base: Chrome.primaryText)
                         .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Chrome.primaryText)
                         .lineLimit(2)
                     Text(Self.totalsLine(for: digest))
                         .font(.system(size: 11))

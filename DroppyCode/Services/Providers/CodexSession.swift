@@ -360,7 +360,16 @@ final class CodexSession: ProviderSession {
             configure: { _ in }
         )
         defer { connection.close() }
-        let result = try await connection.request("account/rateLimits/read")
+        let result: JSONValue
+        do {
+            result = try await connection.request("account/rateLimits/read")
+        } catch {
+            return PlanLimits(
+                planName: PlanLimitsReader.planName(Self.storedLoginPlan(environment: environment)),
+                windows: [],
+                problem: Self.plainProblem(error)
+            )
+        }
         var snapshots: [JSONValue] = []
         if let byID = result["rateLimitsByLimitId"]?.object, !byID.isEmpty {
             snapshots = byID.keys.sorted().compactMap { byID[$0] }
@@ -384,8 +393,41 @@ final class CodexSession: ProviderSession {
                 ))
             }
         }
-        guard !windows.isEmpty else { return nil }
-        return PlanLimits(planName: PlanLimitsReader.planName(plan), windows: windows, resetCredits: parseResetCredits(result["rateLimitResetCredits"] ?? result["rate_limit_reset_credits"]))
+        guard !windows.isEmpty else {
+            return PlanLimits(
+                planName: PlanLimitsReader.planName(plan ?? Self.storedLoginPlan(environment: environment)),
+                windows: [],
+                problem: "Codex reported no usage windows for this account."
+            )
+        }
+        return PlanLimits(planName: PlanLimitsReader.planName(plan ?? storedLoginPlan(environment: environment)), windows: windows, resetCredits: parseResetCredits(result["rateLimitResetCredits"] ?? result["rate_limit_reset_credits"]))
+    }
+
+    /// The plan name recorded in the CLI's own login, read from the `chatgpt_plan_type` claim of the stored id_token.
+    private static func storedLoginPlan(environment: [String: String]) -> String? {
+        let home = environment["CODEX_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? "~/.codex"
+        let authURL = URL(fileURLWithPath: (home as NSString).expandingTildeInPath).appendingPathComponent("auth.json")
+        guard let data = try? Data(contentsOf: authURL),
+              let auth = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let token = (auth["tokens"] as? [String: Any])?["id_token"] as? String else { return nil }
+        let segments = token.split(separator: ".")
+        guard segments.count >= 2 else { return nil }
+        var encoded = String(segments[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        if encoded.count % 4 != 0 { encoded.append(String(repeating: "=", count: 4 - encoded.count % 4)) }
+        guard let payloadData = Data(base64Encoded: encoded),
+              let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
+              let authClaims = payload["https://api.openai.com/auth"] as? [String: Any] else { return nil }
+        return authClaims["chatgpt_plan_type"] as? String
+    }
+
+    private static func plainProblem(_ error: Error) -> String {
+        let text = TextCleanup.singleLine(String(describing: error), limit: 300)
+        if text.contains("token_expired") || text.contains("401") {
+            return "Codex's stored login has expired. Run `codex login` in a terminal, then check again."
+        }
+        return text.isEmpty ? "Codex could not be asked for its usage." : text
     }
 
     /// The banked resets in a rate-limits answer: a count, plus the credits it described that are still spendable.

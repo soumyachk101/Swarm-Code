@@ -54,7 +54,7 @@ struct HydraSettingsPage: View {
                             : "Heads work in the chat's checkout itself."
                     ) {
                         ChromeVisualPicker(options: [(true, "Own copy"), (false, "Shared")], selection: $settings.hydraIsolateHeads) { isolated in
-                            HeadCheckoutPreview(isolated: isolated)
+                            Image(systemName: isolated ? "doc.on.doc" : "folder")
                         }
                     }
                     ChromeRowDivider()
@@ -73,7 +73,7 @@ struct HydraSettingsPage: View {
                     ChromeRowDivider()
                     ChromeRow(title: "Head panel", detail: "The head's progress bar, or each of its steps as it goes.") {
                         ChromeVisualPicker(options: [(false, "Progress"), (true, "Every step")], selection: $settings.hydraShowsHeadDetails) { showsSteps in
-                            HeadPanelPreview(showsSteps: showsSteps)
+                            Image(systemName: showsSteps ? "list.number" : "chart.bar")
                         }
                     }
                     ChromeRowDivider()
@@ -82,7 +82,7 @@ struct HydraSettingsPage: View {
                         detail: settings.hydraAutoPopsHeads ? "Each head after the first gets a panel of its own beside the chat while there is room, left and right until each side is full; the usage panel keeps its spot." : "One panel over the chat lists every head."
                     ) {
                         ChromeVisualPicker(options: [(false, "One panel"), (true, "A panel each")], selection: $settings.hydraAutoPopsHeads) { popped in
-                            HeadsPlacementPreview(popped: popped)
+                            Image(systemName: popped ? "square.grid.2x2" : "rectangle")
                         }
                     }
                     ChromeRowDivider()
