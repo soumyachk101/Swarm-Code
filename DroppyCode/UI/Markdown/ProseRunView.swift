@@ -7,14 +7,57 @@ struct ProseRunView: View {
     @Environment(\.chatZoom) private var zoom
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.hydraMentionPersonas) private var hydraMentionPersonas
+    @Environment(\.hydraMentionTargets) private var hydraMentionTargets
+    @Environment(\.openURL) private var openURL
+    @State private var linkView = WeakView()
+    @State private var showsHand = false
+    @State private var hoveredHeadID: UUID?
     @State private var faviconRevision = 0
 
     var body: some View {
         let scaled = (pointSize * zoom * 2).rounded() / 2
         let sources = ProseRunRepresentable.joinedSources(blocks)
         let linkKey = RichLink.linkHosts(for: sources, streaming: false).joined(separator: ",")
-        ProseRunRepresentable(blocks: blocks, pointSize: scaled, dimmed: dimmed, revision: faviconRevision, mentions: hydraMentionPersonas)
+        let linkBox = linkView
+        let hand = $showsHand
+        let hoveredHead = $hoveredHeadID
+        let personasByName = Dictionary(hydraMentionPersonas.map { ($0.name, $0) }, uniquingKeysWith: { first, _ in first })
+        let targets = hydraMentionTargets
+        ProseRunRepresentable(blocks: blocks, pointSize: scaled, dimmed: dimmed, revision: faviconRevision, mentions: hydraMentionPersonas, targets: hydraMentionTargets, onOpenHead: { url in openURL(url) }, onHost: { [weak linkBox] view in linkBox?.value = view })
             .frame(maxWidth: .infinity, alignment: .leading)
+            .onContinuousHover(coordinateSpace: .local) { [weak linkBox, hand, hoveredHead, personasByName, targets] phase in
+                guard let view = linkBox?.value as? LinkTextView else { return }
+                switch phase {
+                case .active(let point):
+                    let overLink = view.hasLink(at: point)
+                    if overLink != hand.wrappedValue {
+                        hand.wrappedValue = overLink
+                        if overLink { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                    }
+                    if let (name, url, rect) = view.headMentionRect(at: point),
+                       let target = targets[name], target.url == url,
+                       let persona = personasByName[name] {
+                        if hoveredHead.wrappedValue != target.threadID {
+                            hoveredHead.wrappedValue = target.threadID
+                            HydraHeadHoverPopover.shared.show(persona: persona, target: target, relativeTo: rect, of: view)
+                        }
+                    } else {
+                        if hoveredHead.wrappedValue != nil {
+                            hoveredHead.wrappedValue = nil
+                            HydraHeadHoverPopover.shared.hide()
+                        }
+                    }
+                case .ended:
+                    if hand.wrappedValue { NSCursor.pop(); hand.wrappedValue = false }
+                    hoveredHead.wrappedValue = nil
+                    HydraHeadHoverPopover.shared.hide()
+                }
+            }
+            .onDisappear { [hand, hoveredHead] in
+                if hand.wrappedValue { NSCursor.pop(); hand.wrappedValue = false }
+                hoveredHead.wrappedValue = nil
+                HydraHeadHoverPopover.shared.hide()
+            }
             .task(id: linkKey) { [sources, linkKey, revision = $faviconRevision] in
                 if !linkKey.isEmpty {
                     await InlineText.fetchFavicons(source: sources, streaming: false, revision: revision)
@@ -29,6 +72,9 @@ struct ProseRunRepresentable: NSViewRepresentable {
     var dimmed: Bool = false
     var revision: Int = 0
     var mentions: [HydraPersona] = []
+    var targets: [String: HydraMentionTarget] = [:]
+    var onOpenHead: ((URL) -> Void)?
+    var onHost: ((LinkTextView) -> Void)?
 
     func makeCoordinator() -> LinkParagraphView.Coordinator {
         LinkParagraphView.Coordinator()
@@ -38,6 +84,7 @@ struct ProseRunRepresentable: NSViewRepresentable {
         let view = LinkTextView()
         view.delegate = context.coordinator
         view.passesProseThrough = false
+        onHost?(view)
         view.mergeTarget = context.environment.mergeRequestTarget
         return view
     }
@@ -47,16 +94,21 @@ struct ProseRunRepresentable: NSViewRepresentable {
         let coordinator = context.coordinator
         let source = Self.joinedSources(blocks)
         let mentionNames = mentions.map(\.name)
+        let headLinks = targets.mapValues(\.url)
         if coordinator.lastSource != source || coordinator.lastPointSize != pointSize
             || coordinator.lastDimmed != dimmed || coordinator.lastRevision != revision
-            || coordinator.lastMentions != mentionNames {
+            || coordinator.lastMentions != mentionNames || coordinator.lastHeads != headLinks {
             coordinator.lastSource = source
             coordinator.lastPointSize = pointSize
             coordinator.lastDimmed = dimmed
             coordinator.lastRevision = revision
             coordinator.lastMentions = mentionNames
-            view.render(Self.attributed(blocks: blocks, pointSize: pointSize, dimmed: dimmed, mentions: mentions))
+            coordinator.lastHeads = headLinks
+            view.render(Self.attributed(blocks: blocks, pointSize: pointSize, dimmed: dimmed, mentions: mentions, targets: targets))
         }
+        // Outside the render check: the click handler is the environment's, and a new one
+        // must land even on an update that drew nothing.
+        view.onOpenHead = onOpenHead
         view.mergeTarget = context.environment.mergeRequestTarget
     }
 
@@ -67,6 +119,7 @@ struct ProseRunRepresentable: NSViewRepresentable {
 
     static func dismantleNSView(_ view: LinkTextView, coordinator: LinkParagraphView.Coordinator) {
         view.delegate = nil
+        view.onOpenHead = nil
         view.mergeTarget = nil
     }
 
@@ -95,22 +148,22 @@ struct ProseRunRepresentable: NSViewRepresentable {
     }
 
     @MainActor
-    static func attributed(blocks: [MarkdownBlock], pointSize: CGFloat, dimmed: Bool, mentions: [HydraPersona]) -> NSAttributedString {
+    static func attributed(blocks: [MarkdownBlock], pointSize: CGFloat, dimmed: Bool, mentions: [HydraPersona], targets: [String: HydraMentionTarget] = [:]) -> NSAttributedString {
         let out = NSMutableAttributedString()
         for block in blocks {
-            append(block, depth: 0, indent: 0, dimmed: dimmed, spacing: 12, pointSize: pointSize, mentions: mentions, to: out)
+            append(block, depth: 0, indent: 0, dimmed: dimmed, spacing: 12, pointSize: pointSize, mentions: mentions, targets: targets, to: out)
         }
         return out
     }
 
     @MainActor
-    private static func append(_ block: MarkdownBlock, depth: Int, indent: CGFloat, dimmed: Bool, spacing: CGFloat, pointSize: CGFloat, mentions: [HydraPersona], to out: NSMutableAttributedString) {
+    private static func append(_ block: MarkdownBlock, depth: Int, indent: CGFloat, dimmed: Bool, spacing: CGFloat, pointSize: CGFloat, mentions: [HydraPersona], targets: [String: HydraMentionTarget], to out: NSMutableAttributedString) {
         let base = NSFont.systemFont(ofSize: pointSize)
         let color = dimmed ? NSColor.secondaryLabelColor : NSColor.labelColor
         switch block {
         case .paragraph(let text):
             separate(to: out, font: base, color: color)
-            let line = NSMutableAttributedString(attributedString: LinkParagraphView.attributed(source: text, pointSize: pointSize, dimmed: dimmed, mentions: mentions))
+            let line = NSMutableAttributedString(attributedString: LinkParagraphView.attributed(source: text, pointSize: pointSize, dimmed: dimmed, mentions: mentions, targets: targets))
             let style = NSMutableParagraphStyle()
             style.firstLineHeadIndent = indent
             style.headIndent = indent
@@ -126,7 +179,7 @@ struct ProseRunRepresentable: NSViewRepresentable {
             case 3: size = (pointSize * 1.08).rounded()
             default: size = pointSize
             }
-            let line = NSMutableAttributedString(attributedString: LinkParagraphView.attributed(source: text, pointSize: size, dimmed: dimmed, mentions: mentions))
+            let line = NSMutableAttributedString(attributedString: LinkParagraphView.attributed(source: text, pointSize: size, dimmed: dimmed, mentions: mentions, targets: targets))
             let semibold = NSFont.systemFont(ofSize: size, weight: .semibold)
             line.enumerateAttribute(.font, in: NSRange(location: 0, length: line.length), options: []) { value, range, _ in
                 guard let font = value as? NSFont else { return }
@@ -158,7 +211,7 @@ struct ProseRunRepresentable: NSViewRepresentable {
                     .foregroundColor: color,
                 ])
                 if !item.text.isEmpty {
-                    line.append(LinkParagraphView.attributed(source: item.text, pointSize: pointSize, dimmed: dimmed, mentions: mentions))
+                    line.append(LinkParagraphView.attributed(source: item.text, pointSize: pointSize, dimmed: dimmed, mentions: mentions, targets: targets))
                 }
                 let style = NSMutableParagraphStyle()
                 style.firstLineHeadIndent = indent
@@ -169,12 +222,12 @@ struct ProseRunRepresentable: NSViewRepresentable {
                 line.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: line.length))
                 out.append(line)
                 for child in item.children {
-                    append(child, depth: depth + 1, indent: indent + 18, dimmed: dimmed, spacing: 6, pointSize: pointSize, mentions: mentions, to: out)
+                    append(child, depth: depth + 1, indent: indent + 18, dimmed: dimmed, spacing: 6, pointSize: pointSize, mentions: mentions, targets: targets, to: out)
                 }
             }
         case .quote(let inner):
             for child in inner {
-                append(child, depth: depth, indent: indent + 14, dimmed: true, spacing: spacing, pointSize: pointSize, mentions: mentions, to: out)
+                append(child, depth: depth, indent: indent + 14, dimmed: true, spacing: spacing, pointSize: pointSize, mentions: mentions, targets: targets, to: out)
             }
         case .code, .table, .rule:
             break
