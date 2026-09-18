@@ -24,6 +24,7 @@ struct CommandPalette: View {
         let id: String
         let title: String
         var subtitle: String?
+        var icon: ProjectIcon?
         let symbol: String
         var shortcut: String?
         let perform: () -> Void
@@ -108,9 +109,15 @@ struct CommandPalette: View {
 
     private func row(_ item: Item, isSelected: Bool) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: item.symbol)
-                .frame(width: 18)
-                .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+            Group {
+                if item.icon != nil {
+                    ProjectIconMark(icon: item.icon, size: 13)
+                } else {
+                    Image(systemName: item.symbol)
+                        .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                }
+            }
+            .frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .lineLimit(1)
@@ -183,7 +190,7 @@ struct CommandPalette: View {
         let projects = needle.isEmpty ? [] : model.projects
             .filter { $0.name.lowercased().contains(needle) }
             .map { project in
-                Item(id: project.id.uuidString, title: "New thread in \(project.name)", subtitle: project.path, symbol: "folder") {
+                Item(id: project.id.uuidString, title: "New thread in \(project.name)", subtitle: project.path, icon: project.icon, symbol: "folder") {
                     model.newThread(in: project)
                 }
             }

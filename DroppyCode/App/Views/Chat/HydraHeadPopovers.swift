@@ -17,7 +17,7 @@ struct HydraPopoverHeader: View {
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    HydraNameText(persona: persona, size: 14, weight: .semibold, color: persona.color)
+                    HydraNameText(persona: persona, size: 14, weight: .semibold, color: Chrome.primaryText)
                     if let caption, !caption.isEmpty {
                         Text(caption)
                             .font(.system(size: 11, weight: .medium))

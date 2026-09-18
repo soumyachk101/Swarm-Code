@@ -61,6 +61,10 @@ enum Chrome {
     static let contentHorizontalPadding: CGFloat = 16
     /// The gap between a row's trailing control and the card edge.
     static let rowControlTrailingPadding: CGFloat = 10
+    /// The height a settings row's trailing button label is held to. A monospaced `> agy`
+    /// copy button drew a taller capsule than the plain "Sign in" beside it, so the two
+    /// read as two sizes; one clamped label height keeps the controls in a row even.
+    static let rowButtonLabelHeight: CGFloat = 16
 
     // MARK: Color and motion
 

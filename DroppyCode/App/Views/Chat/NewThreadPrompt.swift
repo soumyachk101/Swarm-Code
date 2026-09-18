@@ -59,7 +59,7 @@ struct NewThreadPrompt: View {
         return PopoverMenu {
             PopoverSectionHeader("Projects")
             ForEach(model.projects) { project in
-                PopoverItem(project.name, symbol: "folder", isChecked: project.id == current) {
+                PopoverItem(project.name, leading: AnyView(ProjectIconMark(icon: project.icon, size: 12)), isChecked: project.id == current) {
                     move(to: project)
                 }
             }

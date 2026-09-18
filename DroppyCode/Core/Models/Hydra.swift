@@ -221,19 +221,6 @@ struct HydraPersona: Hashable, Sendable {
         )
     }
 
-    /// The name without a trailing round number, or the whole name when there is none.
-    var baseName: String {
-        let tokens = name.split(separator: " ")
-        guard let last = tokens.last, Int(last) != nil, tokens.count > 1 else { return name }
-        return tokens.dropLast().joined(separator: " ")
-    }
-
-    /// The round number carried by the name, if any: 'Hank 2' has round 2.
-    var round: Int? {
-        let tokens = name.split(separator: " ")
-        guard tokens.count > 1, let last = tokens.last else { return nil }
-        return Int(last)
-    }
 }
 
 /// The names heads are given, in the order they are sent out, each with a dragon head
@@ -288,6 +275,18 @@ enum HydraRoster {
             bare = String(bare[..<space]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return personas.firstIndex { $0.name.compare(bare, options: .caseInsensitive) == .orderedSame }
+    }
+
+    /// The roster persona for an announced head name, its round kept: "Nova 3" is the
+    /// third Nova, "otto" the first Otto. Nil when the name is not on the roster.
+    static func persona(named name: String) -> HydraPersona? {
+        guard let index = index(named: name) else { return nil }
+        let bare = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let space = bare.lastIndex(of: " "),
+           let round = Int(bare[bare.index(after: space)...]), round > 1 {
+            return persona(at: index + (round - 1) * personas.count)
+        }
+        return persona(at: index)
     }
 }
 

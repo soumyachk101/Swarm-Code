@@ -436,8 +436,13 @@ struct CopyCommandButton: View {
                 didCopy = false
             }
         } label: {
-            Label(didCopy ? "Copied" : command, systemImage: didCopy ? "checkmark" : "terminal")
-                .font(.system(size: 11, design: .monospaced))
+            HStack(spacing: 4) {
+                Image(systemName: didCopy ? "checkmark" : "terminal")
+                    .font(.system(size: 10))
+                Text(verbatim: didCopy ? "Copied" : command)
+                    .font(.system(size: 11, design: .monospaced))
+            }
+            .frame(height: Chrome.rowButtonLabelHeight)
         }
         .buttonStyle(.glass)
         .help("Copy the sign-in command, then run it in Terminal")

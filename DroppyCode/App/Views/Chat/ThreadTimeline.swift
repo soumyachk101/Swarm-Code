@@ -743,7 +743,7 @@ struct ThreadTimeline: View, Equatable {
     /// a fourth blank in a row is left alone.
     private func repairLayout() {
         guard viewportHeight > 0 else { return }
-        guard !tracking.isUserScrolling, !tracking.isCoasting else {
+        guard !tracking.isUserScrolling, !tracking.isCoasting, !tracking.isReaderScrolling else {
             tracking.repairSkippedWhileScrolling = true
             return
         }
@@ -812,7 +812,10 @@ struct ThreadTimeline: View, Equatable {
     /// end, otherwise the top anchor already held the top-most row each frame. Unanimated,
     /// so no glide restarts per frame mid-drag; the stack is told where the viewport is.
     private func settleAfterResize() {
-        guard !tracking.isUserScrolling, !tracking.isCoasting else { return }
+        guard !tracking.isUserScrolling, !tracking.isCoasting, !tracking.isReaderScrolling else {
+            tracking.armViewportRefresh()
+            return
+        }
         if tracking.isPinnedToBottom {
             withTransaction(Self.unanimated) { position.scrollTo(edge: .bottom) }
         } else {
@@ -832,7 +835,7 @@ struct ThreadTimeline: View, Equatable {
     /// differently from what the stack had guessed.
     private func refreshViewport() {
         guard viewportHeight > 0, !tracking.isNudging else { return }
-        guard !tracking.isUserScrolling, !tracking.isCoasting else {
+        guard !tracking.isUserScrolling, !tracking.isCoasting, !tracking.isReaderScrolling else {
             tracking.refreshSkippedWhileScrolling = true
             return
         }
@@ -1010,10 +1013,12 @@ final class TimelineScrollTracking: ScrollActivityReporter {
     }
 
     func noteGeometry(offset: CGFloat, distanceFromBottom: CGFloat, travel: CGFloat) {
-        if offset != self.offset { lastOffsetChangeAt = CACurrentMediaTime() }
-        self.offset = offset
-        self.distanceFromBottom = distanceFromBottom
-        self.travel = travel
+        if offset != self.offset {
+            lastOffsetChangeAt = CACurrentMediaTime()
+            self.offset = offset
+        }
+        if distanceFromBottom != self.distanceFromBottom { self.distanceFromBottom = distanceFromBottom }
+        if travel != self.travel { self.travel = travel }
     }
 
     /// The timeline this object last reported under, so the report can be withdrawn when
