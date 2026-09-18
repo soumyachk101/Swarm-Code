@@ -43,6 +43,8 @@ SOURCES=(
   # Services/Providers
   DroppyCode/Services/Providers/ProviderSession.swift
   DroppyCode/Services/Providers/NativeFileTools.swift
+  DroppyCode/Services/Providers/OpenAICompatibleSession.swift
+  DroppyCode/Services/Providers/APIKeychain.swift
   DroppyCode/Services/Providers/DeepSeekSession.swift
   DroppyCode/Services/Providers/DeepSeekAPI.swift
   DroppyCode/Services/Providers/DeepSeekKeychain.swift
