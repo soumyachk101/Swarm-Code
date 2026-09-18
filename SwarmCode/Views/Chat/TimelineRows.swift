@@ -19,6 +19,7 @@ enum TimelineMetrics {
 }
 
 struct UserMessageRow: View {
+    @Environment(\.chatZoom) private var zoom
     let entry: TimelineEntry
     let runtime: ThreadRuntime
     /// Whether the message's turn can be reverted right now. Decided by the timeline, which
@@ -38,6 +39,7 @@ struct UserMessageRow: View {
                 }
                 if !message.text.isEmpty {
                     Text(message.text)
+                        .font(.chat(.body, zoom: zoom))
                         .textSelection(.enabled)
                         .padding(.leading, 14)
                         // The tail hangs past the body; the text keeps its inset from the body.
@@ -268,11 +270,12 @@ private struct HydraShimmer: ViewModifier {
 /// A head's report in the popover its pill opens: the markdown at reading width, scrolling
 /// past the panel's height rather than pushing the timeline apart.
 private struct HydraReportPopover: View {
+    @Environment(\.chatZoom) private var zoom
     let text: String
 
     var body: some View {
         ScrollView {
-            MarkdownView(text: text)
+            MarkdownView(text: text, zoom: zoom)
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -578,7 +581,7 @@ struct AssistantMessageRow: View {
     var body: some View {
         if case .assistant(let message) = entry.item.content {
             VStack(alignment: .leading, spacing: 2) {
-                MarkdownView(text: message.text, isStreaming: message.isStreaming).equatable()
+                MarkdownView(text: message.text, isStreaming: message.isStreaming, zoom: zoom).equatable()
                 // One side for both kinds of message: the copy control sits on the trailing
                 // edge. On the leading edge it landed in the tool rows' icon column, where a
                 // step below the answer drew right under it.
@@ -1319,7 +1322,7 @@ struct PlanCard: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    MarkdownView(text: plan.markdown, isStreaming: plan.state == .drafting).equatable()
+                    MarkdownView(text: plan.markdown, isStreaming: plan.state == .drafting, zoom: zoom).equatable()
                 }
                 if plan.state == .proposed {
                     // The controls stay where they are while the thread is busy, greyed
@@ -1624,7 +1627,7 @@ struct TurnFinishedBlock: View {
                 VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(derived.answerEntries) { entry in
                         if case .assistant(let message) = entry.item.content, !message.text.isEmpty {
-                            MarkdownView(text: message.text).equatable()
+                            MarkdownView(text: message.text, zoom: zoom).equatable()
                         }
                     }
                     ForEach(derived.collapsedPlans) { entry in

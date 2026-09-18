@@ -86,16 +86,28 @@ struct ChatZoomSlider: View {
 
     var body: some View {
         ChromeCapsule {
-            Image(systemName: "textformat.size")
-                .font(Chrome.iconFont)
-                .foregroundStyle(Chrome.secondaryText)
-                .frame(width: Chrome.capsuleContentHeight, height: Chrome.capsuleContentHeight)
+            Button {
+                guard index != ChatZoom.defaultIndex else { return }
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+                    index = ChatZoom.defaultIndex
+                }
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            } label: {
+                Image(systemName: "textformat.size")
+                    .font(Chrome.iconFont)
+                    .foregroundStyle(index == ChatZoom.defaultIndex ? Chrome.secondaryText : Chrome.primaryText)
+                    .frame(width: Chrome.capsuleContentHeight, height: Chrome.capsuleContentHeight)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help(index == ChatZoom.defaultIndex ? "Conversation zoom (100%)" : "Reset zoom to 100%")
+
             track
                 .frame(width: Self.trackWidth, height: Chrome.capsuleContentHeight)
                 // Room for the knob at the far end to sit clear of the capsule's curve.
                 .padding(.trailing, 8)
         }
-        .help("Zoom the conversation")
+        .help("Zoom: \(ChatZoom.percentage(at: index))%")
         .accessibilityElement()
         .accessibilityLabel(Text("Conversation zoom"))
         .accessibilityValue(Text(verbatim: "\(ChatZoom.percentage(at: index))%"))
@@ -118,35 +130,35 @@ struct ChatZoomSlider: View {
 
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
-                    .fill(Chrome.overlay(0.1))
+                    .fill(Chrome.overlay(0.12))
                     .frame(width: width, height: Self.trackHeight)
                 Capsule(style: .continuous)
                     .fill(Chrome.primaryText.opacity(0.35))
                     .frame(width: x + inset, height: Self.trackHeight)
                 // The knob is a Liquid Glass lens over the track, as the effort slider's is.
-                // It gets a glass group of its own: in the row's shared pass a lens inside the
-                // capsule would be folded into the capsule's shape and vanish.
                 GlassEffectContainer {
                     Circle()
-                        .fill(.clear)
-                        .glassEffect(.regular.interactive(), in: Circle())
+                        .fill(Chrome.overlay(0.18))
+                        .glassEffect(.regular, in: Circle())
                 }
                 .frame(width: Self.knobSize, height: Self.knobSize)
-                .scaleEffect(dragX == nil ? 1 : 1.12)
+                .scaleEffect(dragX == nil ? 1 : 1.15)
                 .position(x: x, y: proxy.size.height / 2)
             }
             .frame(width: width, height: proxy.size.height, alignment: .leading)
-            .contentShape(.rect)
-            // The catcher sits behind the track and owns its presses and drags in AppKit:
+            .allowsHitTesting(false)
+            // The catcher sits as an overlay on top of the track and owns its presses and drags in AppKit:
             // the chrome row lives under the window's extended title bar, which moves the
-            // window for any view that lets it, and a SwiftUI gesture alone does not stop
-            // it. Handling mouse down here captures the drag exclusively for zoom.
-            .background {
+            // window for any view that lets it. Handling mouse down here captures the drag exclusively for zoom.
+            .overlay {
                 ChatZoomTrackCatcher(
                     onPress: { press(at: $0, inset: inset, step: step) },
                     onDrag: { move(to: $0, inset: inset, step: step) },
                     onEnd: {
                         withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { dragX = nil }
+                    },
+                    onStepDelta: { delta in
+                        stepDelta(delta)
                     }
                 )
                 .frame(width: width, height: proxy.size.height)
@@ -172,6 +184,16 @@ struct ChatZoomSlider: View {
         }
     }
 
+    private func stepDelta(_ delta: Int) {
+        let newIndex = ChatZoom.clamped(index + delta)
+        if newIndex != index {
+            withAnimation(.spring(response: 0.22, dampingFraction: 0.8)) {
+                index = newIndex
+            }
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+    }
+
     private func nearestStep(to x: CGFloat, inset: CGFloat, step: CGFloat) -> Int {
         guard step > 0 else { return 0 }
         return ChatZoom.clamped(Int(((x - inset) / step).rounded()))
@@ -185,6 +207,7 @@ private struct ChatZoomTrackCatcher: NSViewRepresentable {
     var onPress: (CGFloat) -> Void
     var onDrag: (CGFloat) -> Void
     var onEnd: () -> Void
+    var onStepDelta: (Int) -> Void
 
     func makeNSView(context: Context) -> ChatZoomTrackCatcherView {
         let view = ChatZoomTrackCatcherView()
@@ -200,6 +223,7 @@ private struct ChatZoomTrackCatcher: NSViewRepresentable {
         view.onPress = onPress
         view.onDrag = onDrag
         view.onEnd = onEnd
+        view.onStepDelta = onStepDelta
     }
 }
 
@@ -207,9 +231,19 @@ private final class ChatZoomTrackCatcherView: NSView {
     var onPress: ((CGFloat) -> Void)?
     var onDrag: ((CGFloat) -> Void)?
     var onEnd: (() -> Void)?
+    var onStepDelta: ((Int) -> Void)?
+
+    private var scrollAccumulator: CGFloat = 0
 
     /// A press on the track zooms the conversation; the window stays put.
     override var mouseDownCanMoveWindow: Bool { false }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        addCursorRect(bounds, cursor: .arrow)
+    }
 
     override func mouseDown(with event: NSEvent) {
         onPress?(x(of: event))
@@ -221,6 +255,16 @@ private final class ChatZoomTrackCatcherView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         onEnd?()
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        let delta = event.scrollingDeltaX != 0 ? event.scrollingDeltaX : event.scrollingDeltaY
+        scrollAccumulator += delta
+        if abs(scrollAccumulator) >= 8 {
+            let steps = Int(scrollAccumulator / 8)
+            scrollAccumulator -= CGFloat(steps) * 8
+            onStepDelta?(steps > 0 ? 1 : -1)
+        }
     }
 
     private func x(of event: NSEvent) -> CGFloat {

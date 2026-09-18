@@ -209,6 +209,7 @@ struct SubagentPanel: View {
     var body: some View {
         let runtime = model.runtime(for: thread.id)
         let shape = RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+        let zoomScale = ChatZoom.scale(at: model.settings.chatZoom)
         ThreadTimeline(
             runtime: runtime,
             scrollChrome: scrollChrome,
@@ -216,9 +217,11 @@ struct SubagentPanel: View {
             projectName: projectName,
             workingDirectory: workingDirectory,
             supportsRewind: false,
-            columnHeight: size.height
+            columnHeight: size.height,
+            zoom: zoomScale
         )
         .equatable()
+        .environment(\.chatZoom, zoomScale)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             ComposerArea(runtime: runtime, workingDirectory: workingDirectory, compactModelChip: true, takesFocusOnAppear: false)
                 .overlay(alignment: .top) {

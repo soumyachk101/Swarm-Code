@@ -3,7 +3,6 @@ import SwiftUI
 
 struct ThreadTimeline: View, Equatable {
     @Environment(AppModel.self) private var model
-    @Environment(\.chatZoom) private var zoom
     let runtime: ThreadRuntime
     let scrollChrome: ChromeScrollModel
     let scrollState: TimelineScrollState
@@ -18,6 +17,7 @@ struct ThreadTimeline: View, Equatable {
     let columnHeight: CGFloat
     /// Whether the rail is shown at all; a panel docked on the left takes its edge.
     var showsMinimap = true
+    var zoom: CGFloat = 1
 
     /// The chat re-renders whenever its thread changes (a title, the effort, a mode); the
     /// timeline only follows when what it was handed changed.
@@ -30,6 +30,7 @@ struct ThreadTimeline: View, Equatable {
             && lhs.supportsRewind == rhs.supportsRewind
             && lhs.columnHeight == rhs.columnHeight
             && lhs.showsMinimap == rhs.showsMinimap
+            && lhs.zoom == rhs.zoom
     }
 
     /// Everything the scroll view and the rows report while the reader scrolls: which blocks
@@ -253,7 +254,8 @@ struct ThreadTimeline: View, Equatable {
                     ForEach(visible) { block in
                         let context = RowContext(
                             workingDirectory: workingDirectory,
-                            canRewind: block.turnID.map(rewindable.contains) ?? false
+                            canRewind: block.turnID.map(rewindable.contains) ?? false,
+                            zoom: zoom
                         )
                         DisplayBlockView(block: block, runtime: runtime, context: context)
                             .equatable()
@@ -1257,6 +1259,7 @@ struct RowContext: Equatable {
     var workingDirectory: String?
     /// Whether the block's turn can be reverted right now.
     var canRewind: Bool
+    var zoom: CGFloat = 1
 }
 
 private struct DisplayBlockView: View, Equatable {
@@ -1459,7 +1462,7 @@ private struct WorkingIndicator: View {
                 if !thinkingSteps.isEmpty {
                     VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                         ForEach(Array(thinkingSteps.enumerated()), id: \.offset) { _, step in
-                            MarkdownView(text: step.text, isStreaming: step.isStreaming).equatable()
+                            MarkdownView(text: step.text, isStreaming: step.isStreaming, zoom: zoom).equatable()
                         }
                     }
                     .foregroundStyle(.secondary)

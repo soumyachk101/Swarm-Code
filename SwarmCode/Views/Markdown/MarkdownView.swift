@@ -8,11 +8,12 @@ struct MarkdownView: View, Equatable {
     /// would otherwise take a cache entry away from a finished message that scrolling back
     /// through the thread will ask for again.
     var isStreaming = false
+    var zoom: CGFloat = 1
 
     /// Equal text renders equally, so finished replies are skipped entirely while a
     /// new reply streams or the timeline rebuilds around them.
     nonisolated static func == (lhs: MarkdownView, rhs: MarkdownView) -> Bool {
-        lhs.text == rhs.text && lhs.isStreaming == rhs.isStreaming
+        lhs.text == rhs.text && lhs.isStreaming == rhs.isStreaming && lhs.zoom == rhs.zoom
     }
 
     var body: some View {
@@ -20,7 +21,7 @@ struct MarkdownView: View, Equatable {
         let last = blocks.count - 1
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { index, block in
-                MarkdownBlockView(block: block)
+                MarkdownBlockView(block: block, zoom: zoom)
                     .equatable()
                     // Only the block still being written is streaming; the ones above it are
                     // settled and cache like any finished text.
@@ -29,6 +30,7 @@ struct MarkdownView: View, Equatable {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .environment(\.chatZoom, zoom)
     }
 
     /// Parsed blocks by source. Rows are rebuilt as they scroll into view, but a finished
@@ -103,13 +105,13 @@ struct MarkdownView: View, Equatable {
 
 struct MarkdownBlockView: View, Equatable {
     let block: MarkdownBlock
+    var zoom: CGFloat = 1
     @Environment(\.markdownDimmed) private var dimmed
     @Environment(\.markdownListDepth) private var listDepth
-    @Environment(\.chatZoom) private var zoom
 
     /// Blocks compare by content, so a finished block is skipped while the reply keeps streaming.
     nonisolated static func == (lhs: MarkdownBlockView, rhs: MarkdownBlockView) -> Bool {
-        lhs.block == rhs.block
+        lhs.block == rhs.block && lhs.zoom == rhs.zoom
     }
 
     var body: some View {
@@ -136,7 +138,7 @@ struct MarkdownBlockView: View, Equatable {
                         VStack(alignment: .leading, spacing: 6) {
                             if !item.text.isEmpty { InlineText(item.text) }
                             ForEach(Array(item.children.enumerated()), id: \.offset) { _, child in
-                                MarkdownBlockView(block: child)
+                                MarkdownBlockView(block: child, zoom: zoom)
                             }
                         }
                         // Nested lists read one level deeper, so their dots turn into rings.
@@ -149,7 +151,7 @@ struct MarkdownBlockView: View, Equatable {
                 Capsule().fill(.quaternary).frame(width: 3)
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(blocks.enumerated()), id: \.offset) { _, child in
-                        MarkdownBlockView(block: child)
+                        MarkdownBlockView(block: child, zoom: zoom)
                     }
                 }
             }
@@ -579,6 +581,7 @@ struct InlineText: View {
                 .task(id: source) { await fetchFavicons() }
         } else {
             RichInlineBuilder.text(for: source, streaming: streaming)
+                .font(.system(size: scaled))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -735,6 +738,7 @@ struct TableBlock: View {
                         }
                     }
                 }
+                .font(.chat(.callout, zoom: zoom))
                 .textSelection(.enabled)
                 .padding(12)
             }
