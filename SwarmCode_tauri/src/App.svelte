@@ -2,10 +2,8 @@
 	import { onMount, onDestroy } from 'svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import ChatView from '$lib/components/ChatView.svelte';
-	import Composer from '$lib/components/Composer.svelte';
 	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import Tour from '$lib/components/Tour.svelte';
-	import TerminalPanel from '$lib/components/TerminalPanel.svelte';
 	import SettingsView from '$lib/components/settings/SettingsView.svelte';
 	import AboutView from '$lib/components/settings/AboutView.svelte';
 	import { appStore } from '$lib/stores/appStore';
@@ -52,7 +50,7 @@
 
 		if (selectedThread) {
 			items.push({ id: 'toggle-terminal', label: 'Toggle Terminal', desc: 'Show/hide terminal panel', action: () => { terminalVisible = !terminalVisible; }, icon: 'terminal', shortcut: '⌘T', category: 'Navigation', keywords: ['shell', 'bash'] });
-			items.push({ id: 'toggle-hydra', label: 'Toggle Hydra Panel', desc: 'Show/hide hydra heads', action: () => {}, icon: 'hydra', category: 'Actions', keywords: ['swarm', 'parallel', 'multi'] });
+			items.push({ id: 'toggle-hydra', label: 'Toggle Hydra Panel', desc: 'Show hydra heads', action: () => {}, icon: 'hydra', category: 'Actions', keywords: ['swarm', 'parallel', 'multi'] });
 			items.push({ id: 'attach-file', label: 'Attach File', desc: 'Add a file to the message', action: () => {}, icon: 'attach', category: 'Actions', keywords: ['upload', 'file'] });
 			items.push({ id: 'delete-thread', label: 'Delete Thread', desc: 'Remove this thread', action: () => {}, icon: 'trash', category: 'Actions', keywords: ['remove'] });
 		}
@@ -231,24 +229,20 @@
 					terminalVisible={terminalVisible}
 					onToggleTerminal={() => terminalVisible = !terminalVisible}
 				/>
-				{#if terminalVisible}
-					<TerminalPanel threadId={selectedThread.id} />
-				{/if}
-				<Composer thread={selectedThread} />
-				{:else if selectedProjectID}
-				<div class="empty-state project-empty">
-					<div class="welcome-inner" style="gap: 16px;">
-						<img src="/icons/swarmcode-logo.svg" alt="Swarm Code" class="welcome-glyph" width="72" height="72" />
-						<h2 class="welcome-title" style="font-size: 20px; font-weight: 600;">Project Selected</h2>
-						<p class="welcome-desc" style="max-width: 320px;">Pick a thread or start a new one</p>
-						<button class="welcome-action-btn" onclick={() => createNewThread()}>
-							<svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
-								<path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
-							</svg>
-							New Thread
-						</button>
-					</div>
+			{:else if selectedProjectID}
+			<div class="empty-state project-empty">
+				<div class="welcome-inner" style="gap: 16px;">
+					<img src="/icons/swarmcode-logo.svg" alt="Swarm Code" class="welcome-glyph" width="72" height="72" />
+					<h2 class="welcome-title" style="font-size: 20px; font-weight: 600;">Project Selected</h2>
+					<p class="welcome-desc" style="max-width: 320px;">Pick a thread or start a new one</p>
+					<button class="welcome-action-btn" onclick={() => createNewThread()}>
+						<svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+							<path d="M7 1V13M1 7H13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+						</svg>
+						New Thread
+					</button>
 				</div>
+			</div>
 			{:else}
 				<div class="empty-state">
 					<div class="welcome-inner">
