@@ -361,21 +361,41 @@ struct ChatView: View {
 
     /// The team's panel: next to the helper panel when that one is in the same corner.
     private func hydraPanel(scene: PanelScene, workingDirectory: String?, project: Project?) -> some View {
+        let isFullScreen = runtime.isHydraPanelFullScreen
         let slot = scene.slots[.hydra] ?? PanelScene.PanelSlot(corner: runtime.hydraPanelDock, below: 0, lift: 0)
         let corner = slot.corner
-        let rest = Self.rest(for: slot, scene: scene)
-        return PlacedPanel(drag: hydraDrag, rest: rest, size: scene.layout.panelSize, content: HydraPanel(
+        let dockedRest = Self.rest(for: slot, scene: scene)
+
+        let margin: CGFloat = 12
+        let fullOrigin = CGPoint(x: margin, y: margin)
+        let fullSize = CGSize(
+            width: max(320, scene.layout.pane.width - 2 * margin),
+            height: max(220, scene.layout.pane.height - 2 * margin)
+        )
+
+        let rest = isFullScreen ? fullOrigin : dockedRest
+        let size = isFullScreen ? fullSize : scene.layout.panelSize
+
+        return PlacedPanel(drag: hydraDrag, rest: rest, size: size, content: HydraPanel(
             runtime: runtime,
             heads: scene.heads,
-            size: scene.layout.panelSize,
+            size: size,
             workingDirectory: workingDirectory,
             projectName: project?.name,
+            isFullScreen: isFullScreen,
+            toggleFullScreen: {
+                withAnimation(Chrome.panelSlide) {
+                    runtime.isHydraPanelFullScreen.toggle()
+                }
+            },
             onDrag: { translation in
+                guard !runtime.isHydraPanelFullScreen else { return }
                 let position = hydraDrag.move(by: translation, from: rest, in: scene.layout)
                 dock(.hydra, \.hydraPanelDock, nearest: position, scene: scene)
                 reorder(.hydra, at: position, corner: runtime.hydraPanelDock, scene: scene)
             },
             onDragEnd: {
+                guard !runtime.isHydraPanelFullScreen else { return }
                 if let heading = hydraDrag.release() {
                     dock(.hydra, \.hydraPanelDock, nearest: heading, scene: scene)
                     reorder(.hydra, at: heading, corner: runtime.hydraPanelDock, scene: scene)
@@ -392,12 +412,13 @@ struct ChatView: View {
             },
             dismiss: {
                 withAnimation(Chrome.panelSlide) {
+                    runtime.isHydraPanelFullScreen = false
                     model.dismissHydraHeads(of: runtime.threadID)
                 }
             }
         )
         .modifier(HydraCaptureFrame(threadID: runtime.threadID, liveResize: liveResize))
-        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelsHeld)
+        .transition(Self.panelTransition), resize: isFullScreen ? nil : resizer(for: corner, scene: scene), isResizing: panelsHeld)
     }
 
     /// Where the team's panel sits, for the tour's captures only: the Hydra page zooms on
@@ -422,22 +443,42 @@ struct ChatView: View {
 
     /// The popped-out head's panel: beyond whichever panels are in the same corner.
     private func poppedPanel(_ popped: ChatThread, scene: PanelScene, workingDirectory: String?, project: Project?) -> some View {
+        let isFullScreen = runtime.isHydraPoppedFullScreen
         let slot = scene.slots[.popped] ?? PanelScene.PanelSlot(corner: runtime.hydraPoppedPanelDock, below: 0, lift: 0)
         let corner = slot.corner
-        let rest = Self.rest(for: slot, scene: scene)
-        return PlacedPanel(drag: poppedDrag, rest: rest, size: scene.layout.panelSize, content: HydraPanel(
+        let dockedRest = Self.rest(for: slot, scene: scene)
+
+        let margin: CGFloat = 12
+        let fullOrigin = CGPoint(x: margin, y: margin)
+        let fullSize = CGSize(
+            width: max(320, scene.layout.pane.width - 2 * margin),
+            height: max(220, scene.layout.pane.height - 2 * margin)
+        )
+
+        let rest = isFullScreen ? fullOrigin : dockedRest
+        let size = isFullScreen ? fullSize : scene.layout.panelSize
+
+        return PlacedPanel(drag: poppedDrag, rest: rest, size: size, content: HydraPanel(
             runtime: runtime,
             heads: [popped],
-            size: scene.layout.panelSize,
+            size: size,
             workingDirectory: workingDirectory,
             projectName: project?.name,
             isPoppedOut: true,
+            isFullScreen: isFullScreen,
+            toggleFullScreen: {
+                withAnimation(Chrome.panelSlide) {
+                    runtime.isHydraPoppedFullScreen.toggle()
+                }
+            },
             onDrag: { translation in
+                guard !runtime.isHydraPoppedFullScreen else { return }
                 let position = poppedDrag.move(by: translation, from: rest, in: scene.layout)
                 dock(.popped, \.hydraPoppedPanelDock, nearest: position, scene: scene)
                 reorder(.popped, at: position, corner: runtime.hydraPoppedPanelDock, scene: scene)
             },
             onDragEnd: {
+                guard !runtime.isHydraPoppedFullScreen else { return }
                 if let heading = poppedDrag.release() {
                     dock(.popped, \.hydraPoppedPanelDock, nearest: heading, scene: scene)
                     reorder(.popped, at: heading, corner: runtime.hydraPoppedPanelDock, scene: scene)
@@ -446,12 +487,13 @@ struct ChatView: View {
             dismiss: {
                 // Back into the team panel, and onto its stage.
                 withAnimation(Chrome.panelSlide) {
+                    runtime.isHydraPoppedFullScreen = false
                     runtime.hydraSelectedHeadID = popped.id
                     runtime.hydraPoppedHeadID = nil
                 }
             }
         )
-        .transition(Self.panelTransition), resize: resizer(for: corner, scene: scene), isResizing: panelsHeld)
+        .transition(Self.panelTransition), resize: isFullScreen ? nil : resizer(for: corner, scene: scene), isResizing: panelsHeld)
         .id(popped.id)
     }
 

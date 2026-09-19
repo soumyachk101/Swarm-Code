@@ -258,6 +258,10 @@ final class ThreadRuntime {
     /// Heads whose automatic panel the user closed, so they stay in the team panel while
     /// the others fill the room.
     var hydraAutoPopHeld: Set<UUID> = []
+    /// Whether the team Hydra panel is in full screen mode.
+    var isHydraPanelFullScreen = false
+    /// Whether the popped-out Hydra panel is in full screen mode.
+    var isHydraPoppedFullScreen = false
     /// The order the user gave the panels inside their corners by dragging; a panel not
     /// listed comes after the listed ones, in the built-in order: helper, team, popped
     /// head, usage, heads popped out automatically.
