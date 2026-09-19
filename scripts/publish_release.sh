@@ -43,7 +43,13 @@ if gh release view "$TAG" -R "$PROJECT" > /dev/null 2>&1; then
   echo "Release $TAG already exists on GitHub."
   exit 1
 fi
-gh release create "$TAG" "$DMG#Swarm Code $VERSION (Apple silicon)" \
+
+UNVERSIONED_DMG="$(dirname "$DMG")/Swarm-Code.dmg"
+cp "$DMG" "$UNVERSIONED_DMG"
+
+gh release create "$TAG" \
+  "$DMG#Swarm Code $VERSION (Apple silicon)" \
+  "$UNVERSIONED_DMG#Swarm Code (Apple silicon)" \
   -R "$PROJECT" \
   --title "Swarm Code $VERSION" \
   --notes-file "$NOTES"
