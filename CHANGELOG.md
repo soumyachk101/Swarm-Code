@@ -4,6 +4,18 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.7.1] - 2026-09-19
+
+Swarm Code 1.7.1 purges all leftover upstream branding assets, restores the official Swarm Code golden bee app icon, and fixes Hydra pair row layout in the model picker with authentic dragon mark silhouettes and clean provider badges. Apple silicon, macOS 26 or later.
+
+### Bug fixes
+- Fixed model picker pair logos: Restored the authentic Hydra dragon mark on the leading side of pair rows and clear provider arrow marks on the trailing side, eliminating bisected and broken logo rendering for Codex/OpenAI and cross-provider models.
+- Restored official app icon: Purged leftover Droppy Code logo assets and AppIcon.icon so Xcode strictly compiles the official Swarm Code golden bee icon.
+- Composer chip Hydra mark: Restored the clean Hydra mark indicator in the composer chip when a Hydra pair is active.
+
+### Refinements
+- Purged all residual Droppy Code mascot files and documentation assets across the entire repository.
+
 ## [1.7.0] - 2026-09-19
 
 Swarm Code 1.7.0 adds a full-screen expand toggle to Hydra floating panels, brings instant model search to the model picker, unlocks model and provider switching during running tasks and chats with history, and restores author attribution and direct project links in Settings. Apple silicon, macOS 26 or later.
