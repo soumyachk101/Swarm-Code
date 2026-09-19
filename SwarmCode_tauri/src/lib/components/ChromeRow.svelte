@@ -33,6 +33,8 @@
 		toggleTerminal: void;
 		toggleChanges: void;
 		rename: void;
+		toggleHydra: void;
+		toggleSubagent: void;
 	}>();
 
 	let showBranchMenu = $state(false);
@@ -58,6 +60,7 @@
 		{#if thread && hydraEnabled && !thread.is_helper}
 			<button
 				class="chrome-btn chrome-icon-btn hydra-btn"
+				onclick={() => dispatch('toggleHydra')}
 				title="Hydra panel"
 				aria-label="Hydra"
 			>

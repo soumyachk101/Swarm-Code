@@ -210,6 +210,8 @@
 			{hydraEnabled}
 			{isGenerating}
 			onToggleTerminal={() => onToggleTerminal?.()}
+			onToggleHydra={() => showHydraPanel = !showHydraPanel}
+			onToggleSubagent={() => showSubagentPanel = !showSubagentPanel}
 		/>
 
 		<!-- Scrollable timeline -->
@@ -425,7 +427,7 @@
 	<!-- Subagent panel overlay -->
 	{#if showSubagentPanel}
 		<div class="floating-panel subagent-panel-overlay">
-			<SubagentPanel threadId={thread.id} onClose={() => showSubagentPanel = false} />
+			<SubagentPanel threadId={thread.id} isExpanded={true} />
 		</div>
 	{/if}
 
