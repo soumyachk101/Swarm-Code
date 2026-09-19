@@ -4,6 +4,17 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.7.5] - 2026-09-19
+
+Swarm Code 1.7.5 introduces in-app toast completion banners, adds Time-Sensitive notifications to break through macOS Focus/DND filters, and cleans up desktop notification dispatch. Apple silicon, macOS 26 or later.
+
+### New features
+- In-app toast banners: An elegant Liquid Glass toast banner floats down from the top of the window with the agent persona and task status whenever a task finishes, guaranteeing visual alerts even when system notification banners are suppressed or filtered.
+
+### Bug fixes
+- Time-Sensitive notifications: System notifications now use `.timeSensitive` interruption level and maximum relevance score to break through macOS Focus and Do Not Disturb filters.
+- Modern notification pipeline: Eliminated legacy AppleScript execution that caused daemon conflicts, restoring direct, clean UserNotifications delivery.
+
 ## [1.7.4] - 2026-09-19
 
 Swarm Code 1.7.4 guarantees desktop notification banners and audible alerts across all macOS environments, adds Hydra head completion announcements, and introduces an instant notification test button. Apple silicon, macOS 26 or later.

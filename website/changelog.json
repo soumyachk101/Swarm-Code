@@ -2,6 +2,28 @@
   "generated_at": "2026-09-19T15:22:48.167586+00:00",
   "releases": [
     {
+      "version": "1.7.5",
+      "date": "2026-09-19",
+      "platform": "mac",
+      "summary": "Swarm Code 1.7.5 introduces in-app toast completion banners, adds Time-Sensitive notifications to break through macOS Focus/DND filters, and cleans up desktop notification dispatch. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "New features",
+          "items": [
+            "In-app toast banners: An elegant Liquid Glass toast banner floats down from the top of the window with the agent persona and task status whenever a task finishes, guaranteeing visual alerts even when system notification banners are suppressed or filtered."
+          ]
+        },
+        {
+          "title": "Bug fixes",
+          "items": [
+            "Time-Sensitive notifications: System notifications now use `.timeSensitive` interruption level and maximum relevance score to break through macOS Focus and Do Not Disturb filters.",
+            "Modern notification pipeline: Eliminated legacy AppleScript execution that caused daemon conflicts, restoring direct, clean UserNotifications delivery."
+          ]
+        }
+      ],
+      "thanks": []
+    },
+    {
       "version": "1.7.4",
       "date": "2026-09-19",
       "platform": "mac",

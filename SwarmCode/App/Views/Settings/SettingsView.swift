@@ -345,7 +345,10 @@ private struct GeneralSettingsPage: View {
                         SettingsSwitch(isOn: $settings.recentDownloadsPicker)
                     }
                     ChromeRowDivider()
-                    ChromeRow(title: "Notify when a turn finishes") {
+                    ChromeRow(
+                        title: "Notify when a turn finishes",
+                        detail: "Desktop alerts and in-app banner when the agent finishes a task"
+                    ) {
                         HStack(spacing: 8) {
                             Button("Test") {
                                 model.sendTestNotification()

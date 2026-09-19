@@ -9,6 +9,12 @@ struct AppAlert: Identifiable {
     var message: String
 }
 
+struct ToastNotification: Identifiable, Equatable {
+    let id = UUID()
+    var title: String
+    var message: String
+}
+
 /// The app's library of projects and threads, plus everything that spans threads.
 @MainActor
 @Observable
@@ -19,6 +25,7 @@ final class AppModel {
     let mcp: MCPStore
     let terminals: TerminalStore
     let sidebar: SidebarLayout
+    private(set) var currentToast: ToastNotification?
     /// Picks chats back up once a spent usage limit resets, with the setting on.
     @ObservationIgnored private(set) var autoContinue: AutoContinue!
     /// How often each Swarm-run head has been started again after failing at the door
@@ -1239,55 +1246,26 @@ final class AppModel {
         updateDockBadge()
     }
 
-    // MARK: - Notifications
+    // MARK: - In-app Toasts & Notifications
 
-    /// Whether this app bundle is signed with a registered Apple Developer Team ID.
-    /// Ad-hoc signed builds (where TeamIdentifier is not set) have their UNUserNotificationCenter
-    /// banners silently discarded by macOS usernoted, requiring the AppleScript desktop route.
-    static var hasTeamID: Bool {
-        var code: SecCode?
-        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return false }
-        var staticCode: SecStaticCode?
-        guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return false }
-        var info: CFDictionary?
-        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
-              let dict = info as? [String: Any] else { return false }
-        guard let teamID = dict[kSecCodeInfoTeamIdentifier as String] as? String, !teamID.isEmpty else {
-            return false
+    func showToast(title: String, message: String) {
+        let toast = ToastNotification(title: title, message: message)
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+            currentToast = toast
         }
-        return true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(4.5))
+            if currentToast?.id == toast.id {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    currentToast = nil
+                }
+            }
+        }
     }
 
-    /// Delivers an immediate macOS desktop notification banner and sound via AppleScript standard additions.
-    /// Works reliably on all macOS versions without requiring Developer ID certificates or provisioning profiles.
-    static func deliverDesktopNotification(title: String, body: String, sound: Bool = true) {
-        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayTitle = cleanTitle.isEmpty ? "Swarm Code" : cleanTitle
-        let cleanBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        let displayBody = cleanBody.isEmpty ? "Task finished." : cleanBody
-
-        func escapeAppleScript(_ string: String) -> String {
-            let escaped = string
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "\"", with: "\\\"")
-                .replacingOccurrences(of: "\n", with: " ")
-                .replacingOccurrences(of: "\r", with: " ")
-            return "\"\(escaped)\""
-        }
-
-        var scriptParts = [
-            "display notification \(escapeAppleScript(displayBody))",
-            "with title \(escapeAppleScript(displayTitle))"
-        ]
-        if sound {
-            scriptParts.append("sound name \"default\"")
-        }
-        let scriptSource = scriptParts.joined(separator: " ")
-
-        DispatchQueue.global(qos: .userInitiated).async {
-            var error: NSDictionary?
-            let script = NSAppleScript(source: scriptSource)
-            script?.executeAndReturnError(&error)
+    func dismissToast() {
+        withAnimation(.easeOut(duration: 0.2)) {
+            currentToast = nil
         }
     }
 
@@ -1297,7 +1275,7 @@ final class AppModel {
             let center = UNUserNotificationCenter.current()
             let settings = await center.notificationSettings()
             if settings.authorizationStatus == .notDetermined {
-                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge, .providesAppNotificationSettings])
             }
         }
     }
@@ -1308,10 +1286,17 @@ final class AppModel {
 
     func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
         guard !WebsiteCaptures.isEnabled else { return }
+
+        // Always show the in-app toast banner so it is guaranteed visible on screen
+        showToast(title: title, message: body)
+
+        // Modern macOS notification with Time-Sensitive interruption level
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = sound
+        content.interruptionLevel = .timeSensitive
+        content.relevanceScore = 1.0
         content.userInfo = ["threadID": threadID.uuidString]
         let identifier = "turn-\(threadID.uuidString)-\(Date.now.timeIntervalSince1970)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
@@ -1319,22 +1304,13 @@ final class AppModel {
             let center = UNUserNotificationCenter.current()
             let settings = await center.notificationSettings()
             if settings.authorizationStatus == .notDetermined {
-                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge, .providesAppNotificationSettings])
             }
-            if Self.hasTeamID && (settings.authorizationStatus == .authorized || settings.authorizationStatus == .notDetermined) {
-                do {
-                    try await center.add(request)
-                    return
-                } catch {
-                    // Fall back to desktop notification
-                }
-            }
-            // Guaranteed desktop delivery for ad-hoc builds or when UNUserNotificationCenter cannot display
-            Self.deliverDesktopNotification(title: title, body: body, sound: sound != nil)
+            try? await center.add(request)
         }
     }
 
-    func updateDockBadge() {
+        func updateDockBadge() {
         let unread = threads.count { $0.hasUnread && !$0.isArchived && !$0.isInPanel }
         NSApp.dockTile.badgeLabel = unread > 0 ? String(unread) : nil
     }

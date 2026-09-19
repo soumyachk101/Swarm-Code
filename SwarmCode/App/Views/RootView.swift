@@ -74,6 +74,36 @@ struct RootView: View {
                 CommandPalette()
             }
         }
+        .overlay(alignment: .top) {
+            if let toast = model.currentToast {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(Color.green)
+                        .font(.system(size: 14, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(toast.title)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Color.primary)
+                        if !toast.message.isEmpty {
+                            Text(toast.message)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Color.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5))
+                .shadow(color: Color.black.opacity(0.25), radius: 14, x: 0, y: 7)
+                .padding(.top, 14)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .onTapGesture {
+                    model.dismissToast()
+                }
+            }
+        }
         .dropDestination(for: URL.self) { urls, _ in
             handleDrop(urls)
         }
