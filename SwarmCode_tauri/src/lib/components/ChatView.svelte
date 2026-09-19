@@ -55,6 +55,15 @@
 		if (!scrollContainer) return;
 		const { scrollTop, scrollHeight, clientHeight } = scrollContainer;
 		autoScroll = scrollHeight - scrollTop - clientHeight < 80;
+		isAtBottom = scrollHeight - scrollTop - clientHeight < 30;
+		showJumpToLatest = !isAtBottom;
+	}
+
+	function scrollToBottom() {
+		if (!scrollContainer) return;
+		scrollContainer.scrollTop = scrollContainer.scrollHeight;
+		showJumpToLatest = false;
+		isAtBottom = true;
 	}
 
 	// ---- Item type guards ----
@@ -181,6 +190,8 @@
 	let branches = $derived<string[]>(thread.branch ? [thread.branch] : []);
 	let hydraEnabled = $derived(thread.hydra_enabled ?? false);
 	let directory = $derived('');
+	let showJumpToLatest = $state(false);
+	let isAtBottom = $state(true);
 </script>
 
 <svelte:window onkeydown={handleKeyDown} />
@@ -386,6 +397,15 @@
 		<div class="composer-area">
 			<Composer {thread} />
 		</div>
+
+		<!-- JumpToLatestButton -->
+		{#if showJumpToLatest && !isAtBottom}
+			<button class="jump-to-latest" onclick={scrollToBottom} title="Jump to latest">
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M12 5v14M5 12l7 7 7-7"/>
+				</svg>
+			</button>
+		{/if}
 	</div>
 
 	<!-- Terminal overlay -->

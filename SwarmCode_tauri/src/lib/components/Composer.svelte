@@ -245,14 +245,8 @@
 
 	// ---------- attachments ----------
 
-	function getAttachmentsArray(): DraftAttachment[] {
-		return ($attachments ?? []).map(a => ({
-			id: a.id,
-			name: a.name,
-			path: a.path,
-			size: a.size,
-			data: a.data
-		}));
+	function getAttachmentsArray(): AttachmentInfo[] {
+		return ($attachments ?? []).map(a => ({ id: a.id, name: a.name, path: a.path, mime_type: a.mime_type }));
 	}
 
 	function handleDrop(e: DragEvent) {
@@ -260,17 +254,8 @@
 		const files = e.dataTransfer?.files;
 		if (!files || files.length === 0) return;
 		for (const file of files) {
-			const reader = new FileReader();
-			reader.onload = () => {
-				addAttachment({
-					id: crypto.randomUUID(),
-					name: file.name,
-					path: file.name,
-					size: file.size,
-					data: reader.result as string
-				});
-			};
-			reader.readAsDataURL(file);
+			const id = crypto.randomUUID();
+			addAttachment({ id, name: file.name, path: file.name, mime_type: file.type || 'application/octet-stream' });
 		}
 	}
 
@@ -280,11 +265,7 @@
 		if (!files) return;
 		for (const file of files) {
 			const id = crypto.randomUUID();
-			const reader = new FileReader();
-			reader.onload = () => {
-				addAttachment({ id, name: file.name, path: file.name, size: file.size, data: reader.result as string });
-			};
-			reader.readAsDataURL(file);
+			addAttachment({ id, name: file.name, path: file.name, mime_type: file.type || 'application/octet-stream' });
 		}
 	}
 
