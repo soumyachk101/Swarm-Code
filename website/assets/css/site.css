@@ -921,6 +921,15 @@ html.nav-intro-done .nav__pill { animation: none; }
   height: 100%;
 }
 
+/* Hero laser: WebGL2 blue vertical beam, stacked behind the binary field */
+.hero__laser {
+  z-index: 0;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, #000 60%, transparent 100%);
+  mask-image: linear-gradient(180deg, #000 0%, #000 60%, transparent 100%);
+  opacity: 0.85;
+  mix-blend-mode: screen;
+}
+
 /* Hero still: the real app, captured from its own capture mode. Every tour still is a
    whole 16:10 frame, so the box is 16:10 too and `cover` below never cuts an edge off. */
 .hero__film { aspect-ratio: 16 / 10; }
