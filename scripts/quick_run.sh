@@ -1,13 +1,21 @@
 #!/bin/bash
 # Dev loop for Swarm Code: build Debug, install it as the single
-# /Applications copy, and relaunch it.
+# /Applications copy of the dev app, and relaunch it.
 #
 #   scripts/quick_run.sh
+#
+# A Debug build is "Swarm Code Dev" (bundle id iordv.swarmcode.dev): it runs
+# beside the released Swarm Code with its own library, settings, keychain items
+# and worktrees (~/.swarm-code-dev), and never touches the release app's. Dev
+# keeps its own data across relaunches: pair names, MCP sign-ins and the threads
+# made in Dev live only there, and a mirror of the release app would wipe them.
+# Set SWARM_DEV_SYNC=1 to have scripts/sync_dev_data.sh replace Dev's library,
+# settings and API keys with the release app's before the relaunch.
 #
 # Builds under build.noindex (never ~/Library/Developer/Xcode/DerivedData),
 # because the ".noindex" suffix keeps Spotlight and Launchpad from listing
 # the build folder as a second copy of the app. There must only ever be one
-# Swarm Code: /Applications/Swarm Code.app.
+# dev app: /Applications/Swarm Code Dev.app.
 #
 # Safe to run from an agent inside Swarm Code itself: quitting the app may
 # interrupt the calling session, but this script keeps going and the fresh
@@ -15,7 +23,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-APP_NAME="Swarm Code"
+APP_NAME="Swarm Code Dev"
 DERIVED="build.noindex/dev"
 PRODUCT="$DERIVED/Build/Products/Debug/$APP_NAME.app"
 TARGET="/Applications/$APP_NAME.app"
@@ -30,10 +38,7 @@ xcodebuild \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED" \
   -skipPackagePluginValidation \
-  CODE_SIGN_IDENTITY="-" \
-  CODE_SIGN_STYLE="Manual" \
-  DEVELOPMENT_TEAM="" \
-  build
+  build 2>&1 | tail -n 5
 
 step "Installing the single copy to $TARGET"
 # Atomic swap: move running bundle aside so ditto installs the fresh build immediately
@@ -53,11 +58,16 @@ else
 fi
 
 step "Relaunching"
-osascript -e "tell application \"$APP_NAME\" to quit" 2>/dev/null || true
-for _ in $(seq 1 20); do
+osascript -e "with timeout of 300 seconds" -e "tell application \"$APP_NAME\" to quit" -e "end timeout" 2>/dev/null || true
+# The app holds its quit while a Hydra merge is going out (up to four minutes): wait for it.
+for _ in $(seq 1 300); do
   ps aux | grep -F "$APP_NAME.app/Contents/MacOS" | grep -v grep >/dev/null || break
   sleep 1
 done
+if [ "${SWARM_DEV_SYNC:-0}" = "1" ]; then
+  step "Mirroring the release app's data into $APP_NAME"
+  scripts/sync_dev_data.sh
+fi
 open "$TARGET"
 sleep 4
 ps aux | grep -F "$APP_NAME.app/Contents/MacOS" | grep -v grep | head -n 3

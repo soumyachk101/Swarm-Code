@@ -10,8 +10,8 @@ packages:
     exactVersion: 1.20.0
 settings:
   base:
-    MARKETING_VERSION: "1.1.10"
-    CURRENT_PROJECT_VERSION: "13"
+    MARKETING_VERSION: "1.6.0"
+    CURRENT_PROJECT_VERSION: "19"
     ARCHS: arm64
     EXCLUDED_ARCHS: x86_64
     SWIFT_VERSION: "6.0"
@@ -48,7 +48,12 @@ targets:
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_STYLE: Automatic
         DEAD_CODE_STRIPPING: YES
+        SWIFT_OBJC_BRIDGING_HEADER: SwarmCode/App/Window/SwarmCode-Bridging-Header.h
       configs:
+        Debug:
+          PRODUCT_NAME: "Swarm Code Dev"
+          PRODUCT_BUNDLE_IDENTIFIER: iordv.swarmcode.dev
+          INFOPLIST_KEY_CFBundleDisplayName: "Swarm Code Dev"
         Release:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: Developer ID Application

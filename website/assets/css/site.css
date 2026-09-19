@@ -732,8 +732,12 @@ html.nav-intro-done .nav__pill { animation: none; }
   line-height: 1;
   color: var(--text-primary);
   margin-bottom: 30px;
-  transition: color var(--dur-fast) var(--ease-out);
 }
+/* The hover colour eases on the text and the arrow, not on the link itself: a
+   transition on the link replaced the reveal's, and the line snapped in while
+   the headline under it glided. */
+.hero__kicker > span,
+.hero__kicker-arrow { transition: color var(--dur-fast) var(--ease-out); }
 .hero__eyebrow {
   display: inline-block;
   font-family: "Inter Tight", var(--font-display);
@@ -917,9 +921,9 @@ html.nav-intro-done .nav__pill { animation: none; }
   height: 100%;
 }
 
-/* Hero film: the real app, captured from its own capture mode, in the same block
-   geometry as the Swarm Code promo film. */
-.hero__film { aspect-ratio: 2400 / 1646; }
+/* Hero still: the real app, captured from its own capture mode. Every tour still is a
+   whole 16:10 frame, so the box is 16:10 too and `cover` below never cuts an edge off. */
+.hero__film { aspect-ratio: 16 / 10; }
 .hero__video {
   display: block;
   width: 100%;
@@ -976,13 +980,15 @@ html.nav-intro-done .nav__pill { animation: none; }
   margin: 0;
   max-width: 46ch;
 }
+/* The stills are whole 16:10 frames from the tour run; a 16:9 or window-shaped box
+   with `cover` cropped their edges. */
 .fcard__media {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 16 / 10;
   background: var(--ink);
 }
-.fcard__media--window { aspect-ratio: 2080 / 1426; }
+.fcard__media--window { aspect-ratio: 16 / 10; }
 .fcard__media-video,
 .fcard__media-img {
   display: block;
@@ -1067,7 +1073,7 @@ html.nav-intro-done .nav__pill { animation: none; }
   max-width: 52ch;
   font-size: clamp(0.98rem, 1.45vw, 1.08rem);
 }
-.highlight-card .fcard__media { flex: 0 0 auto; aspect-ratio: 16 / 9; }
+.highlight-card .fcard__media { flex: 0 0 auto; aspect-ratio: 16 / 10; }
 .showcase-highlights__controls {
   display: flex;
   justify-content: flex-end;
@@ -1292,10 +1298,39 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 .tile--plain .tile__caption { max-width: 34ch; text-wrap: pretty; }
 
-/* Agents: eight marks in one tile. */
+/* Picture tiles: the copy sits at the top, and the capture stands under it, running off
+   the bottom and one side of the tile and fading out before the edge. Never under the
+   words: the copy keeps its own band, the picture takes what is left. */
+.tile--fade {
+  min-height: 460px;
+  padding: 44px 44px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+.tile__copy { position: relative; z-index: 1; max-width: 34ch; }
+.tile__fade { position: relative; flex: 1; min-height: 240px; pointer-events: none; }
+.tile__fade-img {
+  position: absolute;
+  top: 0;
+  width: 96%;
+  height: auto;
+  border-radius: 18px 18px 0 0;
+  -webkit-mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 62%, transparent 100%);
+}
+.tile--fade-right .tile__fade-img { right: -14%; }
+.tile--fade-left .tile__fade-img { left: -14%; }
+@media (max-width: 720px) {
+  .tile--fade { min-height: 0; padding-bottom: 0; }
+  .tile__fade { min-height: 200px; }
+  .tile__fade-img { width: 108%; }
+}
+
+/* Agents: ten marks in one tile. */
 .tile--agents {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 40px 20px;
   margin-top: var(--gap-heading);
   padding: 56px 48px;
@@ -1330,12 +1365,55 @@ html.nav-intro-done .nav__pill { animation: none; }
   border-radius: 6px;
 }
 
+/* Usage limits: the copy on the left, the popover capture on the right. */
+.tile--usage {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 48px;
+  align-items: center;
+  margin-top: var(--gap-heading);
+}
+.usage__copy { min-width: 0; }
+.usage__list {
+  list-style: none;
+  margin: 28px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 18px;
+}
+.usage__list li {
+  display: grid;
+  gap: 4px;
+}
+.usage__list strong {
+  font-family: "Inter Tight", var(--font-display);
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+.usage__list span {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  max-width: 44ch;
+  text-wrap: pretty;
+}
+.usage__shot {
+  display: block;
+  width: min(420px, 100%);
+  height: auto;
+  border-radius: 28px;
+  justify-self: center;
+}
+
 @media (max-width: 960px) {
   .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-auto-rows: auto; gap: 16px; }
   .tile { padding: 36px; border-radius: 32px; }
   .tile--wide, .tile--half, .tile--full { grid-column: span 2; }
   .tile--tall { grid-column: span 2; grid-row: auto; min-height: 460px; }
-  .tile--agents { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px 12px; }
+  .tile--agents { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 32px 12px; }
+  .tile--usage { gap: 32px; }
 }
 @media (max-width: 620px) {
   .tiles { grid-template-columns: minmax(0, 1fr); }
@@ -1345,6 +1423,8 @@ html.nav-intro-done .nav__pill { animation: none; }
   .tile--split { grid-template-columns: minmax(0, 1fr); min-height: 0; }
   .tile__rows { margin: 8px -28px 0 0; }
   .tile--agents { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 36px 24px; }
+  .tile--usage { grid-template-columns: minmax(0, 1fr); }
+  .usage__shot { justify-self: start; width: min(360px, 100%); }
   .agent__name { font-size: 18px; }
 }
 
@@ -1570,45 +1650,92 @@ html.nav-intro-done .nav__pill { animation: none; }
 }
 .faq {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px 20px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
   margin-top: var(--gap-heading);
 }
 .faq__item {
+  position: relative;
   min-width: 0;
-  border-radius: 22px;
-  background: var(--bg-well);
+  border-radius: 0;
+  background: none;
   display: flex;
   flex-direction: column;
 }
 .faq__question {
-  width: 100%;
-  flex: 1;
+  position: relative;
+  /* Content-sized, so a left-hand question is a pill and never a banner.
+     Only the phones rule below takes the full width back. */
+  width: fit-content;
+  flex: 0 0 auto;
   display: flex;
-  flex-direction: row-reverse;
   align-items: center;
-  justify-content: flex-end;
-  gap: 18px;
-  padding: 26px 28px;
+  justify-content: space-between;
+  gap: 64px;
+  margin: 0;
+  padding: 12px 0 12px 32px;
   background: none;
   border: none;
   text-align: left;
   font-size: var(--text-base);
-  font-weight: 500;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text-primary);
+  cursor: pointer;
+}
+/* The pill is drawn by a pseudo-element so the round button can sit
+   outside it on the page canvas, and so the row still works when a
+   page ships the question as a bare text node. Negative z-index keeps
+   it behind the question text. */
+.faq__question::before {
+  content: '';
+  position: absolute;
+  inset: 0 64px 0 0;
+  border-radius: var(--radius-full);
+  background: var(--bg-well-raised);
+  z-index: -1;
+}
+/* The list reads as a back-and-forth: only every second pill is pushed
+   to the right, and every question keeps its own content-sized width. */
+.faq__item:nth-child(even) .faq__question {
+  margin-left: auto;
 }
 .faq__question-icon {
+  position: relative;
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
+  width: 40px;
+  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--text-quaternary);
   color: var(--text-tertiary);
-  transition: transform var(--dur-base) var(--ease-out);
+  transition: background var(--dur-base) var(--ease-out),
+    border-color var(--dur-base) var(--ease-out);
 }
-.faq__question-icon > svg { display: block; }
-.faq__item.is-open .faq__question-icon { transform: rotate(45deg); color: var(--accent-text); }
+.faq__question-icon > svg {
+  display: block;
+  width: 17px;
+  height: 17px;
+}
+/* The minus bar of the open state. */
+.faq__question-icon::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--text-on-dark);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.faq__item.is-open .faq__question-icon {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.faq__item.is-open .faq__question-icon > svg { visibility: hidden; }
+.faq__item.is-open .faq__question-icon::after { opacity: 1; }
 .faq__answer {
   display: grid;
   grid-template-rows: 0fr;
@@ -1617,10 +1744,54 @@ html.nav-intro-done .nav__pill { animation: none; }
 .faq__item.is-open .faq__answer { grid-template-rows: 1fr; }
 .faq__answer-inner { overflow: hidden; }
 .faq__answer-content {
-  padding: 0 28px 26px;
+  position: relative;
+  margin: 16px 18% 0 72px;
+  padding: 24px 28px;
+  border-radius: 24px;
+  background: var(--bg-well-raised);
   font-size: var(--text-sm);
   color: var(--text-tertiary);
   line-height: 1.65;
+}
+/* The dot that marks an open answer, sitting in the side margin. */
+.faq__answer-content::before {
+  content: '';
+  position: absolute;
+  left: -48px;
+  top: 28px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.faq__item.is-open .faq__answer-content::before { opacity: 1; }
+/* Mirrored: a right-hand question gets a left-hand answer card. */
+.faq__item:nth-child(even) .faq__answer-content {
+  margin: 16px 72px 0 18%;
+}
+.faq__item:nth-child(even) .faq__answer-content::before {
+  left: auto;
+  right: -48px;
+}
+@media (max-width: 760px) {
+  .faq__item:nth-child(even) .faq__question {
+    width: 100%;
+    margin-left: 0;
+  }
+  .faq__question {
+    /* Phones get the full-width pill back for both sides. */
+    width: 100%;
+    gap: 46px;
+    padding: 14px 0 14px 22px;
+  }
+  .faq__question::before { inset: 0 46px 0 0; }
+  .faq__question-icon { width: 34px; height: 34px; }
+  .faq__answer-content,
+  .faq__item:nth-child(even) .faq__answer-content { margin: 14px 0 0 0; }
+  .faq__answer-content::before,
+  .faq__item:nth-child(even) .faq__answer-content::before { display: none; }
 }
 .faq__answer-content a { color: var(--accent-text); }
 .faq__answer-content code {
@@ -1630,7 +1801,6 @@ html.nav-intro-done .nav__pill { animation: none; }
   padding: 1px 6px;
   border-radius: 5px;
 }
-@media (max-width: 760px) { .faq { grid-template-columns: minmax(0, 1fr); } }
 
 /* ---------------------------------------------------------------------- */
 /* Outro                                                                   */
@@ -1817,8 +1987,8 @@ html.nav-intro-done .nav__pill { animation: none; }
 /* Code elements                                                           */
 /* ---------------------------------------------------------------------- */
 
-/* The demo films are whole windows in their own proportions, never cropped to 16:9. */
-.wordscroll__demo-video { aspect-ratio: 2400 / 1646; object-fit: contain; }
+/* The demo stills are whole 16:10 frames, shown whole: the box matches, so no bars and no crop. */
+.wordscroll__demo-video { aspect-ratio: 16 / 10; object-fit: contain; }
 
 /* Theme picker: one big window in the chosen theme, and the names to pick from. Lives
    inside the second wordscroll's demo slot. */

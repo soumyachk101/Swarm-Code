@@ -187,12 +187,12 @@ impl HydraPersona {
 #[serde(rename_all = "snake_case")]
 pub enum HydraHeadKind {
  Native,
- Droppy,
+ Swarm,
 }
 
 impl Default for HydraHeadKind {
  fn default() -> Self {
- Self::Droppy
+ Self::Swarm
  }
 }
 
@@ -260,7 +260,7 @@ pub struct HydraHeadInfo {
 
 impl HydraHeadInfo {
  pub fn new(index: u32, task: String, kind: HydraHeadKind, origin: HydraHeadOrigin) -> Self {
- let can_stop = matches!(kind, HydraHeadKind::Droppy);
+ let can_stop = matches!(kind, HydraHeadKind::Swarm);
  Self {
  index,
  task,

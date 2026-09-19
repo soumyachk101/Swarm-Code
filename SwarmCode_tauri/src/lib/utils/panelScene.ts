@@ -1,158 +1,139 @@
-<script lang="ts">
-	// ---------------------------------------------------------------------------
-	// PanelDragState – tracks pointer travel during a drag.
-	// Matches Swift PanelDragState: position, velocity, flick on release.
-	// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// PanelDragState – tracks pointer travel during a drag.
+// Matches Swift PanelDragState: position, velocity, flick on release.
+// ---------------------------------------------------------------------------
 
-	export interface PanelDrag {
-		/** Current position in pane coords, null at rest */
-		position: { x: number; y: number } | null;
-		/** Where the grab started */
-		grab: { x: number; y: number } | null;
-		/** Smoothed velocity (px/s) */
-		vx: number;
-		vy: number;
-		lastMoveTime: number;
-	}
+export interface PanelDrag {
+	position: { x: number; y: number } | null;
+	grab: { x: number; y: number } | null;
+	vx: number;
+	vy: number;
+	lastMoveTime: number;
+}
 
-	export function createDrag(): PanelDrag {
-		return {
-			position: null,
-			grab: null,
-			vx: 0,
-			vy: 0,
-			lastMoveTime: 0
-		};
-	}
+export function createDrag(): PanelDrag {
+	return { position: null, grab: null, vx: 0, vy: 0, lastMoveTime: 0 };
+}
 
-	/** Smoothing factor for velocity (matches Swift 0.4/0.6 split) */
-	const VELOCITY_SMOOTH = 0.4;
-	const VELOCITY_INSTANT = 0.6;
-	const FLICK_CARRY = 0.12; // seconds
-	const REST_BEFORE_DROP = 0.08; // seconds
+const VELOCITY_SMOOTH = 0.4;
+const VELOCITY_INSTANT = 0.6;
+const FLICK_CARRY = 0.12;
+const REST_BEFORE_DROP = 0.08;
 
-	export function dragMove(
-		drag: PanelDrag,
-		translation: { x: number; y: number },
-		rest: { x: number; y: number },
-		now: number
-	): { x: number; y: number } {
-		const start = drag.grab ?? rest;
-		drag.grab = { ...start };
-		const next = {
-			x: start.x + translation.x,
-			y: start.y + translation.y
-		};
+export function dragMove(
+	drag: PanelDrag,
+	dx: number,
+	dy: number
+): { x: number; y: number } {
+	const start = drag.grab ?? drag.position ?? { x: 0, y: 0 };
+	if (!drag.grab) drag.grab = { ...start };
+	const next = { x: start.x + dx, y: start.y + dy };
 
-		if (drag.position) {
-			const elapsed = (now - drag.lastMoveTime) / 1000;
-			if (elapsed >= 0.004) {
-				const instantX = (next.x - drag.position.x) / elapsed;
-				const instantY = (next.y - drag.position.y) / elapsed;
-				drag.vx = drag.vx * VELOCITY_SMOOTH + instantX * VELOCITY_INSTANT;
-				drag.vy = drag.vy * VELOCITY_SMOOTH + instantY * VELOCITY_INSTANT;
-			}
-		} else {
-			drag.vx = 0;
-			drag.vy = 0;
+	if (drag.position) {
+		const elapsed = (performance.now() - drag.lastMoveTime) / 1000;
+		if (elapsed >= 0.004) {
+			const ix = (next.x - drag.position.x) / elapsed;
+			const iy = (next.y - drag.position.y) / elapsed;
+			drag.vx = drag.vx * VELOCITY_SMOOTH + ix * VELOCITY_INSTANT;
+			drag.vy = drag.vy * VELOCITY_SMOOTH + iy * VELOCITY_INSTANT;
 		}
-
-		drag.lastMoveTime = now;
-		drag.position = next;
-		return next;
-	}
-
-	export function dragRelease(drag: PanelDrag, now: number): { x: number; y: number } | null {
-		const pos = drag.position;
-		const elapsed = (now - drag.lastMoveTime) / 1000;
-
-		drag.position = null;
-		drag.grab = null;
+	} else {
 		drag.vx = 0;
 		drag.vy = 0;
-
-		if (!pos) return null;
-		if (elapsed >= REST_BEFORE_DROP) return pos;
-
-		return {
-			x: pos.x + drag.vx * FLICK_CARRY,
-			y: pos.y + drag.vy * FLICK_CARRY
-		};
 	}
 
-	// ---------------------------------------------------------------------------
-	// PanelScene – computes dock positions and reserves for floating panels.
-	// ---------------------------------------------------------------------------
+	drag.lastMoveTime = performance.now();
+	drag.position = next;
+	return next;
+}
 
-	export interface PanelLayout {
-		paneWidth: number;
-		paneHeight: number;
-		composerHeight: number;
-		chromeHeight: number;
-	}
+export function dragRelease(drag: PanelDrag): { x: number; y: number } | null {
+	const pos = drag.position;
+	const elapsed = (performance.now() - drag.lastMoveTime) / 1000;
 
-	export const PANEL_WIDTH = 400;
-	export const PANEL_MIN_WIDTH = 300;
-	export const PANEL_GAP = 12;
-	export const PANEL_SIDE_MARGIN = 20;
-	export const PANEL_BOTTOM_MARGIN = 14;
-	export const MIN_COMPOSER_WIDTH = 360;
+	drag.position = null;
+	drag.grab = null;
+	drag.vx = 0;
+	drag.vy = 0;
 
-	export function panelWidth(layout: PanelLayout): number {
-		return Math.min(PANEL_WIDTH, Math.max(PANEL_MIN_WIDTH, layout.paneWidth - 2 * PANEL_SIDE_MARGIN));
-	}
+	if (!pos) return null;
+	if (elapsed >= REST_BEFORE_DROP) return pos;
 
-	export function sitsBesideComposer(layout: PanelLayout): boolean {
-		const pw = panelWidth(layout);
-		return layout.paneWidth - 2 * PANEL_SIDE_MARGIN - pw - PANEL_GAP >= MIN_COMPOSER_WIDTH;
-	}
+	return {
+		x: pos.x + drag.vx * FLICK_CARRY,
+		y: pos.y + drag.vy * FLICK_CARRY
+	};
+}
 
-	export function composerReserve(layout: PanelLayout): number {
-		return sitsBesideComposer(layout) ? panelWidth(layout) + PANEL_GAP : 0;
-	}
+// ---------------------------------------------------------------------------
+// PanelScene – computes dock positions, reserves, corner snapping
+// ---------------------------------------------------------------------------
 
-	export function verticalRoom(layout: PanelLayout): number {
-		return layout.paneHeight - layout.chromeHeight - (sitsBesideComposer(layout) ? PANEL_BOTTOM_MARGIN : layout.composerHeight + PANEL_GAP);
-	}
+export interface PanelLayout {
+	paneWidth: number;
+	paneHeight: number;
+	composerHeight: number;
+	chromeHeight: number;
+}
 
-	/** Docked position for a panel in a given corner */
-	export function dockedPosition(corner: 'top-leading' | 'top-trailing' | 'bottom-leading' | 'bottom-trailing', layout: PanelLayout): { x: number; y: number } {
-		const pw = panelWidth(layout);
-		const isLeading = corner.includes('leading');
-		const isTop = corner.includes('top');
-		const vr = verticalRoom(layout);
+export const PANEL_WIDTH = 400;
+export const PANEL_MIN_WIDTH = 300;
+export const PANEL_GAP = 12;
+export const PANEL_SIDE_MARGIN = 20;
+export const PANEL_BOTTOM_MARGIN = 14;
+export const MIN_COMPOSER_WIDTH = 360;
 
-		const x = isLeading ? PANEL_SIDE_MARGIN : layout.paneWidth - pw - PANEL_SIDE_MARGIN;
-		const y = isTop ? 8 : Math.max(8, layout.paneHeight - 260 - 8); // 260 = approximate panel height
+export function panelWidth(layout: PanelLayout): number {
+	return Math.min(PANEL_WIDTH, Math.max(PANEL_MIN_WIDTH, layout.paneWidth - 2 * PANEL_SIDE_MARGIN));
+}
 
-		return { x, y };
-	}
+export function sitsBesideComposer(layout: PanelLayout): boolean {
+	const pw = panelWidth(layout);
+	return layout.paneWidth - 2 * PANEL_SIDE_MARGIN - pw - PANEL_GAP >= MIN_COMPOSER_WIDTH;
+}
 
-	/** Clamp a position so the panel stays within the pane */
-	export function clampPosition(pos: { x: number; y: number }, layout: PanelLayout): { x: number; y: number } {
-		const pw = panelWidth(layout);
-		const ph = 260;
-		const vr = verticalRoom(layout);
+export function composerReserve(layout: PanelLayout): number {
+	return sitsBesideComposer(layout) ? panelWidth(layout) + PANEL_GAP : 0;
+}
 
-		return {
-			x: Math.max(0, Math.min(layout.paneWidth - pw, pos.x)),
-			y: Math.max(0, Math.min(layout.paneHeight - ph, pos.y))
-		};
-	}
+export function verticalRoom(layout: PanelLayout): number {
+	return layout.paneHeight - layout.chromeHeight - (sitsBesideComposer(layout) ? PANEL_BOTTOM_MARGIN : layout.composerHeight + PANEL_GAP);
+}
 
-	/** Which corner is the panel closest to (for snap-back) */
-	export function nearestCorner(pos: { x: number; y: number }, layout: PanelLayout): 'top-leading' | 'top-trailing' | 'bottom-leading' | 'bottom-trailing' {
-		const pw = panelWidth(layout);
-		const ph = 260;
-		const midX = layout.paneWidth / 2;
-		const midY = layout.paneHeight / 2;
+export function dockedPosition(corner: string, layout: PanelLayout): { x: number; y: number } {
+	const pw = panelWidth(layout);
+	const ph = 280;
+	const isLeading = corner.includes('leading');
+	const isTop = corner.includes('top');
 
-		const isLeft = pos.x + pw / 2 < midX;
-		const isTop = pos.y + ph / 2 < midY;
+	const x = isLeading ? PANEL_SIDE_MARGIN : layout.paneWidth - pw - PANEL_SIDE_MARGIN;
+	const vr = verticalRoom(layout);
+	const y = isTop ? 8 : Math.max(8, layout.paneHeight - ph - PANEL_BOTTOM_MARGIN);
 
-		if (isTop && isLeft) return 'top-leading';
-		if (isTop && !isLeft) return 'top-trailing';
-		if (!isTop && isLeft) return 'bottom-leading';
-		return 'bottom-trailing';
-	}
-</script>
+	return { x, y };
+}
+
+export function clampPosition(pos: { x: number; y: number }, layout: PanelLayout): { x: number; y: number } {
+	const pw = panelWidth(layout);
+	const ph = 280;
+
+	return {
+		x: Math.max(0, Math.min(layout.paneWidth - pw, pos.x)),
+		y: Math.max(0, Math.min(layout.paneHeight - ph, pos.y))
+	};
+}
+
+export function nearestCorner(pos: { x: number; y: number }, layout: PanelLayout): string {
+	const pw = panelWidth(layout);
+	const ph = 280;
+	const midX = layout.paneWidth / 2;
+	const midY = layout.paneHeight / 2;
+
+	const isLeft = pos.x + pw / 2 < midX;
+	const isTop = pos.y + ph / 2 < midY;
+
+	if (isTop && isLeft) return 'top-leading';
+	if (isTop && !isLeft) return 'top-trailing';
+	if (!isTop && isLeft) return 'bottom-leading';
+	return 'bottom-trailing';
+}

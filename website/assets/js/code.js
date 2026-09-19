@@ -287,9 +287,7 @@
     ["matrix", "Matrix", "Dark · Green"]
   ];
 
-  /* Theme screenshots are served from this CDN. Do not change unless you
-     mirror the assets elsewhere. */
-  var THEME_BASE = "https://droppy-releases.jordylegrand.workers.dev/site-assets/swarmai/themes/";
+  var THEME_BASE = "assets/app/themes/";
 
   /* One big window, the real app in the chosen theme, and the 26 names under it. Cycles on
      its own until the visitor picks one, and only fetches a theme when it is about to show. */
@@ -311,7 +309,7 @@
       var img = document.createElement("img");
       img.src = THEME_BASE + id + ".webp";
       img.width = 2080;
-      img.height = 1426;
+      img.height = 1300;
       img.decoding = "async";
       img.alt = "Swarm Code in the " + id + " theme";
       stage.appendChild(img);

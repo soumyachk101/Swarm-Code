@@ -444,7 +444,7 @@ export interface HydraHeadInfo {
 
 export enum HydraHeadKind {
 	Native = 'native',
-	Droppy = 'droppy',
+	Swarm = 'swarm',
 }
 
 export enum HydraHeadOrigin {

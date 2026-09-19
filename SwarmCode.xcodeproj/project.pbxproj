@@ -16,7 +16,7 @@
 /* Begin PBXFileReference section */
 		407374162B673FE1CFDB0507 /* TRADEMARK.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = TRADEMARK.md; sourceTree = "<group>"; };
 		AE8B6A92FB544EA3A8C2FF3A /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
-		BF08528FE4987FB150391D97 /* SwarmCode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Swarm Code.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		BF08528FE4987FB150391D97 /* SwarmCode.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwarmCode.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F27C3C109E48B14D114F56CA /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -85,7 +85,7 @@
 			packageProductDependencies = (
 				46198FD9B910732AD71A6686 /* SwiftTerm */,
 			);
-			productName = "Swarm Code";
+			productName = SwarmCode;
 			productReference = BF08528FE4987FB150391D97 /* SwarmCode.app */;
 			productType = "com.apple.product-type.application";
 		};
@@ -184,7 +184,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 19;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = NARHG44L48;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -205,8 +205,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.1.10;
-				CURRENT_PROJECT_VERSION = 13;
+				MARKETING_VERSION = 1.6.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -254,7 +253,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 19;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = NARHG44L48;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -269,8 +268,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.1.10;
-				CURRENT_PROJECT_VERSION = 13;
+				MARKETING_VERSION = 1.6.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -303,6 +301,7 @@
 				PRODUCT_MODULE_NAME = SwarmCode;
 				PRODUCT_NAME = "Swarm Code";
 				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "SwarmCode/App/Window/SwarmCode-Bridging-Header.h";
 			};
 			name = Release;
 		};
@@ -315,17 +314,18 @@
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = "Swarm Code";
+				INFOPLIST_KEY_CFBundleDisplayName = "Swarm Code Dev";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "Swarm Code, the coding app by Soumya Chakraborty. MIT License.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = iordv.swarmcode;
+				PRODUCT_BUNDLE_IDENTIFIER = iordv.swarmcode.dev;
 				PRODUCT_MODULE_NAME = SwarmCode;
-				PRODUCT_NAME = "Swarm Code";
+				PRODUCT_NAME = "Swarm Code Dev";
 				SDKROOT = macosx;
+				SWIFT_OBJC_BRIDGING_HEADER = "SwarmCode/App/Window/SwarmCode-Bridging-Header.h";
 			};
 			name = Debug;
 		};

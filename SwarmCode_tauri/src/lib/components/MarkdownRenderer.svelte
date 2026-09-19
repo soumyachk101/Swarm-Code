@@ -93,7 +93,7 @@
 		text = text.replace(/(<blockquote>.*?<\/blockquote>\n?)+/g, (match) => `<blockquote>${match.replace(/<\/?blockquote>/g, '')}</blockquote>`);
 
 		return text;
-	};
+	});
 
 	let containerRef: HTMLDivElement | undefined = $state();
 

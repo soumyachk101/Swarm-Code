@@ -272,7 +272,7 @@ pub struct HydraLaunch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HydraKind {
 	Native,
-	Droppy,
+	Swarm,
 }
 
 // ---------------------------------------------------------------------------

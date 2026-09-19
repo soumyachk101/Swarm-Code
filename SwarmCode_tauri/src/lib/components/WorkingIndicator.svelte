@@ -11,13 +11,13 @@
 		onCancel?: () => void;
 	}
 
-	let { headId = '', persona = 'Agent', state, task = 'Working…', progress = 0, onCancel }: Props = $props();
+	let { headId = '', persona = 'Agent', state: indicatorState, task = 'Working…', progress = 0, onCancel }: Props = $props();
 
 	let elapsed = $state(0);
 	let timerInterval: number | null = null;
 
 	$effect(() => {
-		if (state === 'running') {
+		if (indicatorState === 'running') {
 			elapsed = 0;
 			timerInterval = window.setInterval(() => {
 				elapsed += 1;
@@ -59,7 +59,7 @@
 	}
 
 	let stateColor = $derived(() => {
-		switch (state) {
+		switch (indicatorState) {
 			case 'thinking': return 'var(--accent-1)';
 			case 'searching': return 'var(--info)';
 			case 'planning': return 'var(--accent-1)';
@@ -75,14 +75,14 @@
 	});
 </script>
 
-<div class="working-indicator state-{state}">
+<div class="working-indicator state-{indicatorState}">
 	<div class="indicator-main">
 		<div class="indicator-glyph">
-			{#if state === 'done'}
+			{#if indicatorState === 'done'}
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 					<path d="M20 6L9 17l-5-5"/>
 				</svg>
-			{:else if state === 'error'}
+			{:else if indicatorState === 'error'}
 				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 					<path d="M18 6L6 18M6 6l12 12"/>
 				</svg>
@@ -93,7 +93,7 @@
 		<div class="indicator-body">
 			<div class="indicator-top">
 				<span class="persona-name">{persona}</span>
-				<span class="state-label" style="color: {stateColor()};">{getStateLabel(state)}</span>
+				<span class="state-label" style="color: {stateColor()};">{getStateLabel(indicatorState)}</span>
 				<span class="elapsed">({formatElapsed(elapsed)})</span>
 			</div>
 			<div class="indicator-task">{displayTask}</div>
@@ -104,7 +104,7 @@
 			{/if}
 		</div>
 	</div>
-	{#if onCancel && state !== 'done' && state !== 'error'}
+	{#if onCancel && indicatorState !== 'done' && indicatorState !== 'error'}
 		<button class="cancel-btn" onclick={onCancel} title="Cancel">
 			<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
 				<path d="M18 6L6 18M6 6l12 12"/>

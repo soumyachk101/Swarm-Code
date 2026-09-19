@@ -3,13 +3,11 @@
   ====================================
   A native-feel dark marketing site with the Liquid Glass aesthetic:
   notch navigation, glass pills, reveal motion, feature highlight rail,
-  blog section, FAQ accordion and a bold footer. No build step; shared
+  usage popovers, FAQ accordion and a bold footer. No build step; shared
   CSS/JS live in assets/.
 
-  Every picture and film of the app is the real app, rendered by
-  scripts/website_captures.py from the app's own capture mode with mock
-  data, encoded at 2x and served locally. Rerun the script after a UI
-  change; nothing on this page is drawn by hand.
+  Every picture of the app is the real app, rendered from the app's own
+  capture mode with mock data, encoded at 2x.
 -->
 <!doctype html>
 <html lang="en">
@@ -17,35 +15,34 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="google-site-verification" content="glfROTt1yu8Q3W5gDcss1lagtgNtfoB2_ZhcWabVNhA" />
-  <title>Swarm Code. Your coding agents, native on the Mac</title>
-  <!-- Canonical + Social preview (Open Graph / Twitter Cards) -->
+  <title>Swarm Code. Supercharged coding agent for Mac</title>
+  <meta name="description" content="Swarm Code is the supercharged coding agent for Mac. Hydra turns one chat into a team of heads working in parallel, on Codex, Claude, Cursor, OpenCode, Grok, Antigravity, Copilot, Command Code, Pi, DeepSeek, Meta and Z.ai, from one native Liquid Glass window. Free and open source.">
   <link rel="canonical" href="https://swarmcode.vercel.app/">
-  <meta name="description" content="Swarm Code is a native macOS app for coding agents. Orchestrate Claude, Codex, Cursor, OpenCode and local models in Liquid Glass. Parallel worktree branches, live provider switching, checkpoints and diff reviews. Free and open source on Apple silicon.">
-  <meta name="keywords" content="Swarm Code, macOS, coding agents, AI coding, Claude, Codex, OpenCode, Liquid Glass, Apple silicon, developer tools">
-  <meta name="author" content="Soumya Chakraborty">
-  <meta name="creator" content="Soumya Chakraborty">
-  <meta name="publisher" content="Swarm Code">
-  <meta name="application-name" content="Swarm Code">
-  <meta name="apple-mobile-web-app-title" content="Swarm Code">
+  <meta name="theme-color" content="#0b0e14">
+  <meta name="color-scheme" content="dark">
+
+  <!-- Open Graph -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Swarm Code">
+  <meta property="og:locale" content="en_US">
+  <meta property="og:title" content="Swarm Code. Supercharged coding agent for Mac">
+  <meta property="og:description" content="Swarm Code is the supercharged coding agent for Mac. Hydra turns one chat into a team of heads working in parallel, on Codex, Claude, Cursor, OpenCode, Grok, Antigravity, Copilot, Command Code, Pi, DeepSeek, Meta and Z.ai, from one native Liquid Glass window. Free and open source.">
   <meta property="og:url" content="https://swarmcode.vercel.app/">
   <meta property="og:image" content="https://swarmcode.vercel.app/assets/og/og-home.png?v=2">
   <meta property="og:image:secure_url" content="https://swarmcode.vercel.app/assets/og/og-home.png?v=2">
   <meta property="og:image:type" content="image/png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Swarm Code — A native macOS app for coding agents">
-  <meta property="og:title" content="Swarm Code — A native macOS app for coding agents">
-  <meta property="og:description" content="The coding app by Soumya Chakraborty. Claude, Codex, OpenCode and local models, running natively in Liquid Glass on Apple silicon.">
-  <meta property="og:locale" content="en_US">
-  <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Swarm Code — A native macOS app for coding agents">
-  <meta name="twitter:description" content="The coding app by Soumya Chakraborty. Claude, Codex, OpenCode and local models, running natively in Liquid Glass on Apple silicon.">
-  <meta name="twitter:image" content="https://swarmcode.vercel.app/assets/og/og-home.png?v=2">
-  <meta name="twitter:image:alt" content="Swarm Code — A native macOS app for coding agents">
+  <meta property="og:image:alt" content="Swarm Code. The coding app by Soumya Chakraborty.">
 
-  <!-- Icons -->
+  <!-- Twitter / X -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Swarm Code. Supercharged coding agent for Mac">
+  <meta name="twitter:description" content="Swarm Code is the supercharged coding agent for Mac. Hydra turns one chat into a team of heads working in parallel, on Codex, Claude, Cursor, OpenCode, Grok, Antigravity, Copilot, Command Code, Pi, DeepSeek, Meta and Z.ai, from one native Liquid Glass window. Free and open source.">
+  <meta name="twitter:image" content="https://swarmcode.vercel.app/assets/og/og-home.png?v=2">
+  <meta name="twitter:image:alt" content="Swarm Code. The coding app by Soumya Chakraborty.">
+
+  <!-- Favicon -->
   <link rel="icon" href="assets/brand/favicon.ico" sizes="any">
   <link rel="icon" type="image/svg+xml" href="app-icon.svg">
   <link rel="icon" type="image/png" sizes="96x96" href="assets/brand/swarmcode-icon-96.png">
@@ -57,13 +54,13 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&display=swap" rel="stylesheet">
 
   <script>try{if(sessionStorage.getItem("swarmcodeNavIntro")||sessionStorage.getItem("swarmaiNavIntro")){document.documentElement.className+=" nav-intro-done";}else{sessionStorage.setItem("swarmcodeNavIntro","1");}}catch(e){}</script>
-  <link rel="stylesheet" href="assets/css/site.css?v=6">
+  <link rel="stylesheet" href="assets/css/site.css?v=14">
   <link rel="stylesheet" href="assets/css/wordscroll.css?v=5">
   <noscript><style>.reveal { opacity: 1; transform: none; } .hero__field, .outro__field { display: none; }</style></noscript>
 
   <script src="assets/js/site.js?v=5" defer></script>
   <script src="assets/js/wordscroll.js?v=5" defer></script>
-  <script src="assets/js/code.js?v=5" defer></script>
+  <script src="assets/js/code.js?v=7" defer></script>
 
   <script type="application/ld+json">
   {
@@ -96,14 +93,11 @@
         <span>Swarm Code</span>
       </a>
       <div class="nav__links">
-        <a class="nav__link" href="#highlights">Highlights</a>
-        <a class="nav__link" href="#agents">Agents</a>
         <a class="nav__link" href="#hydra">Hydra</a>
-        <a class="nav__link" href="#themes">Themes</a>
+        <a class="nav__link" href="#highlights">Highlights</a>
         <a class="nav__link" href="#features">Features</a>
-        <a class="nav__link" href="#blog">Blog</a>
+        <a class="nav__link" href="changelog.html">Changelog</a>
         <a class="nav__link" href="#faq">FAQ</a>
-        <a class="nav__link" href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener">Source</a>
       </div>
       <button class="nav__menu" type="button" aria-expanded="false" aria-label="Menu">
         <span></span><span></span><span></span>
@@ -123,11 +117,15 @@
       </div>
 
       <div class="container hero__inner">
-        <p class="hero__eyebrow reveal" data-reveal-on-load>The coding app by Soumya Chakraborty</p>
-        <h1 class="hero__title reveal" data-reveal-on-load style="--reveal-delay: 60ms">All your <span class="hero__charged">coding agents<span class="hero__charged-sheen" aria-hidden="true">coding agents</span><svg class="hero__charge-entry" viewBox="0 0 180 600" preserveAspectRatio="xMidYMax meet" aria-hidden="true" focusable="false"><text x="86" y="24">1</text><text class="dim" x="98" y="52">0</text><text x="82" y="80">0</text><text class="dim" x="94" y="108">1</text><text x="90" y="136">1</text><text class="dim" x="80" y="164">0</text><text x="96" y="192">1</text><text class="dim" x="88" y="220">0</text><text x="84" y="248">0</text><text class="dim" x="98" y="276">1</text><text x="90" y="304">1</text><text class="dim" x="82" y="332">1</text><text x="94" y="360">0</text><text class="dim" x="86" y="388">1</text><text x="98" y="416">0</text><text class="dim" x="90" y="444">0</text><text x="82" y="472">1</text><text class="dim" x="94" y="500">1</text><text x="88" y="528">0</text><text class="dim" x="96" y="556">1</text><text x="90" y="584">1</text></svg></span>,<br><span class="hero__mac">one native <svg class="hero__apple" aria-hidden="true" focusable="false"><use href="#apple-mark"/></svg>Mac app</span></h1>
-        <p class="hero__subtitle reveal" data-reveal-on-load style="--reveal-delay: 120ms">Swarm Code drives Codex, Claude, Cursor, OpenCode, Grok, Antigravity, DeepSeek and Meta from one Liquid Glass window. Streaming replies, inline approvals, a diff for every turn and a terminal per thread. On your own subscriptions. Free and open source.</p>
+        <a class="hero__kicker reveal" data-reveal-on-load href="#mac">
+          <img class="hero__kicker-mark" src="assets/brand/swarmcode-icon-96.png" alt="" height="20">
+          <span>The coding app by Soumya Chakraborty</span>
+          <svg class="hero__kicker-arrow" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 12 4M5 4h7v7"/></svg>
+        </a>
+        <h1 class="hero__title reveal" data-reveal-on-load style="--reveal-delay: 60ms"><span class="hero__charged">Supercharged<span class="hero__charged-sheen" aria-hidden="true">Supercharged</span><svg class="hero__charge-entry" viewBox="0 0 180 600" preserveAspectRatio="xMidYMax meet" aria-hidden="true" focusable="false"><text x="86" y="24">1</text><text class="dim" x="98" y="52">0</text><text x="82" y="80">0</text><text class="dim" x="94" y="108">1</text><text x="90" y="136">1</text><text class="dim" x="80" y="164">0</text><text x="96" y="192">1</text><text class="dim" x="88" y="220">0</text><text x="84" y="248">0</text><text class="dim" x="98" y="276">1</text><text x="90" y="304">1</text><text class="dim" x="82" y="332">1</text><text x="94" y="360">0</text><text class="dim" x="86" y="388">1</text><text x="98" y="416">0</text><text class="dim" x="90" y="444">0</text><text x="82" y="472">1</text><text class="dim" x="94" y="500">1</text><text x="88" y="528">0</text><text class="dim" x="96" y="556">1</text><text x="90" y="584">1</text></svg></span><br><span class="hero__mac">coding agent for <svg class="hero__apple" aria-hidden="true" focusable="false"><use href="#apple-mark"/></svg>Mac</span></h1>
+        <p class="hero__subtitle reveal" data-reveal-on-load style="--reveal-delay: 120ms">Hydra is on from your first chat: one chat leads a team of heads that work in parallel, each in a copy of your project, and their work lands as one merge. Codex, Claude, Cursor, OpenCode, Grok, Antigravity, Copilot, Command Code, Pi, DeepSeek, Meta and Z.ai, in one Liquid Glass window on your own subscriptions. Free and open source.</p>
         <div class="hero__actions reveal" data-reveal-on-load style="--reveal-delay: 180ms">
-          <a class="btn--applepill" data-download-link href="https://github.com/soumyachk101/Swarm-Code-Release/releases/latest/download/Swarm-Code-1.1.10.dmg">
+          <a class="btn--applepill" data-download-link href="https://github.com/soumyachk101/Swarm-Code-Release/releases/latest/download/Swarm-Code.dmg">
             <svg class="btn--applepill-logo" aria-hidden="true"><use href="#apple-mark"/></svg>
             <span>Download for macOS</span>
           </a>
@@ -138,14 +136,48 @@
         </div>
       </div>
 
-      <!-- Hero window. Same .container + .media-block geometry as the Swarm Code
-           promo film. -->
+      <!-- Hero window. Same .container + .media-block geometry. -->
       <div class="container hero__media reveal" data-reveal-on-load style="--reveal-delay: 340ms">
         <div class="media-block hero__film">
-          <video class="hero__video" data-film autoplay muted loop playsinline preload="metadata" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback" poster="assets/app/hero-poster.webp" width="2400" height="1646" aria-label="Swarm Code with a turn streaming in: reasoning, a read, an edit, the to-dos, a build running and the reply arriving">
-            <source src="assets/app/hero-hevc.mp4" type="video/mp4; codecs=hvc1">
-            <source src="assets/app/hero.mp4" type="video/mp4">
-          </video>
+          <img class="hero__video" src="assets/app/tour/hero.webp" width="1600" height="1000" alt="Swarm Code with a Hydra team at work: the lead's chat with its heads, the team's panel floating, and the effort slider open at Max" loading="eager" decoding="async" fetchpriority="high">
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================================ -->
+    <!-- Hydra: one chat, many heads                                     -->
+    <!-- ================================================================ -->
+    <section id="hydra">
+      <div class="container">
+        <div class="stack-center">
+          <h2 class="section-heading reveal">One chat, many heads.</h2>
+          <p class="section-subtitle reveal">Hydra is on from your first chat. The lead writes the briefs, sends heads out in parallel, each in a copy of your project, checks their work when they report back and lands it as one merge.</p>
+        </div>
+
+        <div class="tiles reveal">
+          <div class="tile tile--full tile--film">
+            <h3 class="tile__label">Meet Hydra.</h3>
+            <p class="tile__caption">The lead sends out Hank, Walter, Ada and the rest, hears back from each one as a badge in the chat, and keeps the team's panel at hand. Plans and questions come to you the same way, with a wave along the top when they wait on you.</p>
+            <img class="tile__film" src="assets/app/tour/hydra.webp" width="1600" height="1000" alt="A chat where the lead has sent out three heads, with the delegation card, the heads' rows, the Hank and Walter reported back pill, the Ada is working pill, and the team's panel docked at the right" loading="lazy" decoding="async">
+          </div>
+
+          <div class="tile tile--half tile--film">
+            <h3 class="tile__label">Pair a strong lead with quick heads.</h3>
+            <p class="tile__caption">A pair says which model leads and which model, or which provider, runs the heads: a Claude lead over Gemini or OpenCode heads, picked straight from the model picker. Without a pair the heads take the chat's model at a working effort, so a Max lead sends out medium heads.</p>
+            <img class="tile__film" src="assets/app/tour/pairs.webp" width="1600" height="1000" alt="The model picker with pairs at the top" loading="lazy" decoding="async">
+          </div>
+
+          <div class="tile tile--half tile--film">
+            <h3 class="tile__label">Effort, fused.</h3>
+            <p class="tile__caption">In a pair the slider is the lead's: its track blends the lead's colour into the heads', and says what effort the heads run at.</p>
+            <img class="tile__film" src="assets/app/tour/slider.webp" width="1600" height="1000" alt="The effort slider at Max for a pair, its track blending the lead's orange into the heads' blue" loading="lazy" decoding="async">
+          </div>
+
+          <div class="tile tile--full tile--film">
+            <h3 class="tile__label">Panels that snap.</h3>
+            <p class="tile__caption">The team's panel, every head popped out of it and the usage panel dock to slots beside the chat, three a side on a 16-inch display, fewer on a smaller one. Drag one to any slot to reorder or swap, and let heads pop out on their own while there is room.</p>
+            <img class="tile__film" src="assets/app/tour/panels.webp" width="1600" height="1000" alt="Two floating glass panels over the chat: a head popped out at the left, the team's panel at the right" loading="lazy" decoding="async">
+          </div>
         </div>
       </div>
     </section>
@@ -161,7 +193,7 @@
             <p class="showcase-highlights__sub">The real app, mid-work: asking, queueing, reviewing, and the palette.</p>
           </div>
           <div class="showcase-highlights__rail" id="feature-highlights-rail" role="region" aria-roledescription="carousel" aria-label="Swarm Code feature highlights" tabindex="0" data-highlight-rail>
-            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Questions, 1 of 4" aria-current="true" data-highlight-slide>
+            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Questions, 1 of 7" aria-current="true" data-highlight-slide>
               <div class="fcard__head">
                 <div>
                   <h3 class="fcard__title">It asks.</h3>
@@ -169,13 +201,10 @@
                 </div>
               </div>
               <div class="fcard__media fcard__media--window">
-                <video class="fcard__media-video" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback" poster="assets/app/question-poster.webp" width="2080" height="1426" loop muted playsinline preload="metadata" aria-label="A plan-mode thread: the plan, a question with two choices, then an approval to run git push">
-                  <source src="assets/app/question-hevc.mp4" type="video/mp4; codecs=hvc1">
-                  <source src="assets/app/question.mp4" type="video/mp4">
-                </video>
+                <img class="fcard__media-img" src="assets/app/question.webp" width="1600" height="1000" alt="A question card in the chat with two choices" loading="lazy" decoding="async">
               </div>
             </article>
-            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Follow-ups, 2 of 4" data-highlight-slide>
+            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Follow-ups, 2 of 7" data-highlight-slide>
               <div class="fcard__head">
                 <div>
                   <h3 class="fcard__title">Queue what's next.</h3>
@@ -183,13 +212,10 @@
                 </div>
               </div>
               <div class="fcard__media fcard__media--window">
-                <video class="fcard__media-video" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback" poster="assets/app/queue-poster.webp" width="2080" height="1426" loop muted playsinline preload="metadata" aria-label="Three follow-ups queued above the chat box while a turn runs">
-                  <source src="assets/app/queue-hevc.mp4" type="video/mp4; codecs=hvc1">
-                  <source src="assets/app/queue.mp4" type="video/mp4">
-                </video>
+                <img class="fcard__media-img" src="assets/app/queue.webp" width="1600" height="1000" alt="Three follow-ups queued above the chat box while a turn runs" loading="lazy" decoding="async">
               </div>
             </article>
-            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Changes, 3 of 4" data-highlight-slide>
+            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Changes, 3 of 7" data-highlight-slide>
               <div class="fcard__head">
                 <div>
                   <h3 class="fcard__title">A diff for every turn.</h3>
@@ -197,10 +223,10 @@
                 </div>
               </div>
               <div class="fcard__media fcard__media--window">
-                <img class="fcard__media-img" src="assets/app/diff.webp" width="2080" height="1426" alt="The changes popover open over the thread, showing the turn's diff" loading="lazy" decoding="async">
+                <img class="fcard__media-img" src="assets/app/diff.webp" width="1600" height="1000" alt="The changes popover open over the thread, showing the turn's diff" loading="lazy" decoding="async">
               </div>
             </article>
-            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Command palette, 4 of 4" data-highlight-slide>
+            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Command palette, 4 of 7" data-highlight-slide>
               <div class="fcard__head">
                 <div>
                   <h3 class="fcard__title">Every action, one keystroke away.</h3>
@@ -208,7 +234,40 @@
                 </div>
               </div>
               <div class="fcard__media fcard__media--window">
-                <img class="fcard__media-img" src="assets/app/palette.webp" width="2080" height="1426" alt="The command palette open over a thread, listing threads, projects and actions" loading="lazy" decoding="async">
+                <img class="fcard__media-img" src="assets/app/palette.webp" width="1600" height="1000" alt="The command palette open over a thread, listing threads, projects and actions" loading="lazy" decoding="async">
+              </div>
+            </article>
+            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Recipes, 5 of 7" data-highlight-slide>
+              <div class="fcard__head">
+                <div>
+                  <h3 class="fcard__title">Recipes for a team</h3>
+                  <p class="fcard__sub">Hydra's cookbook: ready-made pairs with a lead, its heads and an effort for each side, from the providers you have signed in.</p>
+                </div>
+              </div>
+              <div class="fcard__media fcard__media--window">
+                <img class="fcard__media-img" src="assets/app/recipes.webp" width="1600" height="1000" alt="The Hydra cookbook popover over the chat, listing ready-made pairs" loading="lazy" decoding="async">
+              </div>
+            </article>
+            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Intro, 6 of 7" data-highlight-slide>
+              <div class="fcard__head">
+                <div>
+                  <h3 class="fcard__title">Hydra, explained where you switch it on</h3>
+                  <p class="fcard__sub">The first time you turn Hydra on, a short intro shows what the lead and its heads will do before anything runs.</p>
+                </div>
+              </div>
+              <div class="fcard__media fcard__media--window">
+                <img class="fcard__media-img" src="assets/app/intro.webp" width="1600" height="1000" alt="The Hydra intro popover over the chat" loading="lazy" decoding="async">
+              </div>
+            </article>
+            <article class="fcard highlight-card" role="group" aria-roledescription="slide" aria-label="Threads, 7 of 7" data-highlight-slide>
+              <div class="fcard__head">
+                <div>
+                  <h3 class="fcard__title">Threads, when you want them</h3>
+                  <p class="fcard__sub">Hide the sidebar and the chat has the whole window; the Threads button floats the list back over it.</p>
+                </div>
+              </div>
+              <div class="fcard__media fcard__media--window">
+                <img class="fcard__media-img" src="assets/app/threads.webp" width="1600" height="1000" alt="The hidden sidebar's thread list floating from the toolbar's Threads button over the chat" loading="lazy" decoding="async">
               </div>
             </article>
           </div>
@@ -260,12 +319,28 @@
             <div class="agent__name">Antigravity</div>
           </div>
           <div class="agent">
+            <div class="agent__mark"><svg viewBox="-0.77 -0.77 25.53 25.53" aria-hidden="true"><path fill="currentColor" d="M23.922 16.992c-.861 1.495-5.859 5.023-11.922 5.023-6.063 0-11.061-3.528-11.922-5.023A.641.641 0 0 1 0 16.736v-2.869a.841.841 0 0 1 .053-.22c.372-.935 1.347-2.292 2.605-2.656.167-.429.414-1.055.644-1.517a10.195 10.195 0 0 1-.052-1.086c0-1.331.282-2.499 1.132-3.368.397-.406.89-.717 1.474-.952 1.399-1.136 3.392-2.093 6.122-2.093 2.731 0 4.767.957 6.166 2.093.584.235 1.077.546 1.474.952.85.869 1.132 2.037 1.132 3.368 0 .368-.014.733-.052 1.086.23.462.477 1.088.644 1.517 1.258.364 2.233 1.721 2.605 2.656a.832.832 0 0 1 .053.22v2.869a.641.641 0 0 1-.078.256ZM12.172 11h-.344a4.323 4.323 0 0 1-.355.508C10.703 12.455 9.555 13 7.965 13c-1.725 0-2.989-.359-3.782-1.259a2.005 2.005 0 0 1-.085-.104L4 11.741v6.585c1.435.779 4.514 2.179 8 2.179 3.486 0 6.565-1.4 8-2.179v-6.585l-.098-.104s-.033.045-.085.104c-.793.9-2.057 1.259-3.782 1.259-1.59 0-2.738-.545-3.508-1.492a4.323 4.323 0 0 1-.355-.508h-.016.016Zm.641-2.935c.136 1.057.403 1.913.878 2.497.442.544 1.134.938 2.344.938 1.573 0 2.292-.337 2.657-.751.384-.435.558-1.15.558-2.361 0-1.14-.243-1.847-.705-2.319-.477-.488-1.319-.862-2.824-1.025-1.487-.161-2.192.138-2.533.529-.269.307-.437.808-.438 1.578v.021c0 .265.021.562.063.893Zm-1.626 0c.042-.331.063-.628.063-.894v-.02c-.001-.77-.169-1.271-.438-1.578-.341-.391-1.046-.69-2.533-.529-1.505.163-2.347.537-2.824 1.025-.462.472-.705 1.179-.705 2.319 0 1.211.175 1.926.558 2.361.365.414 1.084.751 2.657.751 1.21 0 1.902-.394 2.344-.938.475-.584.742-1.44.878-2.497Z"/><path fill="currentColor" d="M14.5 14.25a1 1 0 0 1 1 1v2a1 1 0 0 1-2 0v-2a1 1 0 0 1 1-1Zm-5 0a1 1 0 0 1 1 1v2a1 1 0 0 1-2 0v-2a1 1 0 0 1 1-1Z"/></svg></div>
+            <div class="agent__name">Copilot</div>
+          </div>
+          <div class="agent">
             <div class="agent__mark"><svg viewBox="-0.77 -0.77 25.53 25.53" aria-hidden="true"><path fill="#4D6BFE" d="M23.748 4.651c-.254-.124-.364.113-.512.233-.051.04-.094.09-.137.137-.372.397-.806.657-1.373.626-.829-.046-1.537.214-2.163.848-.133-.782-.575-1.248-1.247-1.548-.352-.155-.708-.311-.955-.65-.172-.24-.219-.509-.305-.774-.055-.16-.11-.323-.293-.35-.2-.031-.278.136-.356.276-.313.572-.434 1.202-.422 1.84.027 1.436.633 2.58 1.838 3.393.137.094.172.187.129.323-.082.28-.18.553-.266.833-.055.179-.137.218-.328.14a5.5 5.5 0 0 1-1.737-1.179c-.857-.828-1.631-1.743-2.597-2.46a12 12 0 0 0-.689-.47c-.985-.957.13-1.743.387-1.836.27-.098.094-.433-.778-.428-.872.003-1.67.295-2.687.685a3 3 0 0 1-.465.136 9.6 9.6 0 0 0-2.883-.101c-1.885.21-3.39 1.1-4.497 2.622C.082 8.776-.231 10.854.152 13.02c.403 2.284 1.568 4.175 3.36 5.653 1.857 1.533 3.997 2.284 6.438 2.14 1.482-.085 3.132-.284 4.994-1.86.47.234.962.328 1.78.398.629.058 1.235-.031 1.705-.129.735-.155.684-.836.418-.961-2.155-1.004-1.682-.595-2.112-.926 1.095-1.295 2.768-3.598 3.284-6.733.05-.346.115-.834.108-1.114-.004-.171.035-.238.23-.257a4.2 4.2 0 0 0 1.545-.475c1.397-.763 1.96-2.016 2.093-3.517.02-.23-.004-.467-.247-.588M11.58 18.168c-2.088-1.642-3.101-2.183-3.52-2.16-.39.024-.32.472-.234.763.09.288.207.487.371.74.114.167.192.416-.113.603-.673.416-1.842-.14-1.897-.168-1.361-.801-2.5-1.86-3.301-3.306-.775-1.393-1.225-2.888-1.299-4.482-.02-.385.094-.522.477-.592a4.7 4.7 0 0 1 1.53-.038c2.131.311 3.946 1.264 5.467 2.774.868.86 1.525 1.887 2.202 2.89.72 1.066 1.494 2.082 2.48 2.915.348.291.626.513.892.677-.802.09-2.14.109-3.055-.615zm1.001-6.44a.306.306 0 0 1 .415-.287.3.3 0 0 1 .113.074.3.3 0 0 1 .086.214c0 .17-.136.307-.308.307a.303.303 0 0 1-.306-.307m3.11 1.596c-.2.081-.4.151-.591.16a1.25 1.25 0 0 1-.798-.254c-.274-.23-.47-.358-.551-.758a1.7 1.7 0 0 1 .015-.588c.07-.327-.007-.537-.238-.727-.188-.156-.426-.199-.689-.199a.6.6 0 0 1-.254-.078.253.253 0 0 1-.114-.358 1 1 0 0 1 .192-.21c.356-.202.767-.136 1.146.016.352.144.618.408 1.001.782.392.451.462.576.685.915.176.264.336.536.446.848.066.194-.02.353-.25.45"/></svg></div>
             <div class="agent__name">DeepSeek</div>
           </div>
           <div class="agent">
+            <div class="agent__mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M6 1.5A4.5 4.5 0 0 1 10.5 6v1.5h3V6A4.5 4.5 0 1 1 18 10.5h-1.5v3H18A4.5 4.5 0 1 1 13.5 18v-1.5h-3V18A4.5 4.5 0 1 1 6 13.5h1.5v-3H6A4.5 4.5 0 0 1 6 1.5Zm0 3A1.5 1.5 0 0 0 6 7.5h1.5V6A1.5 1.5 0 0 0 6 4.5Zm12 0A1.5 1.5 0 0 0 16.5 6v1.5H18A1.5 1.5 0 0 0 18 4.5Zm-7.5 6v3h3v-3h-3ZM6 16.5A1.5 1.5 0 1 0 7.5 18v-1.5H6Zm12 0h-1.5V18A1.5 1.5 0 1 0 18 16.5Z"/></svg></div>
+            <div class="agent__name">Command Code</div>
+          </div>
+          <div class="agent">
+            <div class="agent__mark"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="3.5" rx="1.5" fill="currentColor"/><rect x="6" y="7" width="3.5" height="12.5" rx="1.5" fill="currentColor"/><rect x="14.5" y="7" width="3.5" height="12.5" rx="1.5" fill="currentColor"/><rect x="14.5" y="16" width="6" height="3.5" rx="1.5" fill="currentColor"/></svg></div>
+            <div class="agent__name">Pi</div>
+          </div>
+          <div class="agent">
             <div class="agent__mark"><svg viewBox="2.85 2.85 18.3 18.3" aria-hidden="true"><defs><linearGradient id="meta-blue" x1="4.5" y1="12" x2="19.5" y2="12" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#0064E0"/><stop offset="0.5" stop-color="#0082FB"/><stop offset="1" stop-color="#0064E0"/></linearGradient></defs><path fill="none" stroke="url(#meta-blue)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M4.5 12c0-2.5 2-4.5 4.5-4.5 3.6 0 4.2 9 6 9 2.5 0 4.5-2 4.5-4.5S17.5 7.5 15 7.5c-3.6 0-4.2 9-6 9-2.5 0-4.5-2-4.5-4.5Z"/></svg></div>
             <div class="agent__name">Meta</div>
+          </div>
+          <div class="agent">
+            <div class="agent__mark"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 4h16v3.2L9.6 17.6H20V20H4v-3.2L14.4 6.4H4z"/></svg></div>
+            <div class="agent__name">Z.ai</div>
           </div>
         </div>
         <p class="agents__note reveal">Sign in once in your terminal, for example <code>codex login</code> or <code>claude auth login</code>, and Swarm Code picks it up.</p>
@@ -273,63 +348,26 @@
     </section>
 
     <!-- ================================================================ -->
-    <!-- Hydra: one chat, many heads                                     -->
+    <!-- Usage limits: every window, one popover                          -->
     <!-- ================================================================ -->
-    <section id="hydra">
+    <section id="usage">
       <div class="container">
         <div class="stack-center">
-          <h2 class="section-heading reveal">One chat, many heads.</h2>
-          <p class="section-subtitle reveal">Hydra turns a big job into a team. The lead writes the briefs, sends heads out in parallel, each in a copy of your project, and their work lands back in your checkout.</p>
+          <h2 class="section-heading reveal">Every limit, one popover.</h2>
+          <p class="section-subtitle reveal">Click the ring beside the send button and every window you pay for is there: each rolling limit with its reset, and the credit left on a pay-as-you-go key. In a Hydra pair the lead's provider stacks over the heads'.</p>
         </div>
-
-        <div class="tiles reveal">
-          <div class="tile tile--full tile--film">
-            <h3 class="tile__label">Meet Hydra.</h3>
-            <p class="tile__caption">The lead sends out heads, hears back from each one in the chat, and keeps the team's panel at hand.</p>
-            <img class="tile__film" src="assets/app/tour/hydra.webp" width="1600" height="1000" alt="A chat where the lead has sent out three heads, with the delegation card, the heads' rows, the Hank and Walter reported back pill, the Ada is working pill, and the team's panel docked at the right" loading="lazy" decoding="async">
+        <div class="tile tile--usage reveal">
+          <div class="usage__copy">
+            <h3 class="tile__heading">See what you have left before you send.</h3>
+            <ul class="usage__list">
+              <li><strong>Plan limits</strong><span>Codex, Claude, Antigravity, Copilot, Command Code and Z.ai: every rolling window, how much of it is used and when it resets.</span></li>
+              <li><strong>Credits</strong><span>DeepSeek and Command Code keys show the balance left on them.</span></li>
+              <li><strong>Lead and heads</strong><span>A pair across two providers stacks both: the lead's limits first, then the heads'.</span></li>
+              <li><strong>Every account at once</strong><span>Settings › Providers shows the same limits for every signed-in provider on one page.</span></li>
+              <li><strong>Or keep it open</strong><span>Switch on the usage panel in General settings and the same limits float beside the chat, across from the heads; the popover's expand button opens it any time.</span></li>
+            </ul>
           </div>
-
-          <div class="tile tile--half tile--film">
-            <h3 class="tile__label">Pair a strong lead with quick heads.</h3>
-            <p class="tile__caption">A Claude lead over Gemini or OpenCode heads, picked straight from the model picker.</p>
-            <img class="tile__film" src="assets/app/tour/pairs.webp" width="1600" height="1000" alt="The model picker with pairs at the top" loading="lazy" decoding="async">
-          </div>
-
-          <div class="tile tile--half tile--film">
-            <h3 class="tile__label">Effort, fused.</h3>
-            <p class="tile__caption">In a pair the slider's track blends the lead's colour into the heads'.</p>
-            <img class="tile__film" src="assets/app/tour/slider.webp" width="1600" height="1000" alt="The effort slider at Max for a pair, its track blending the lead's orange into the heads' blue" loading="lazy" decoding="async">
-          </div>
-
-          <div class="tile tile--full tile--film">
-            <h3 class="tile__label">Panels that float.</h3>
-            <p class="tile__caption">The team's panel and any head popped out of it dock to a corner, and the conversation makes room.</p>
-            <img class="tile__film" src="assets/app/tour/panels.webp" width="1600" height="1000" alt="Two floating glass panels over the chat: a head popped out at the left, the team's panel at the right" loading="lazy" decoding="async">
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ================================================================ -->
-    <!-- Wordscroll 1: everything streams in                               -->
-    <!-- ================================================================ -->
-    <section class="wordscroll" id="live" aria-label="Everything your agent does, live" data-wordscroll data-wordscroll-glow="your live">
-      <div class="wordscroll__stage">
-        <div class="wordscroll__glow" aria-hidden="true"></div>
-        <div class="wordscroll__bits" aria-hidden="true">
-          <span>0</span><span>1</span><span>1</span><span>0</span><span>1</span><span>0</span>
-          <span>0</span><span>1</span><span>0</span><span>1</span><span>1</span><span>0</span>
-        </div>
-        <div class="wordscroll__bloom" aria-hidden="true"></div>
-        <div class="wordscroll__copy">
-          <p class="wordscroll__text" data-wordsplit>Everything your agent does, live.</p>
-          <p class="wordscroll__text wordscroll__ask" data-wordsplit>Plan mode, model and reasoning selection, and four permission modes per thread. Approvals and questions answered inline, in the timeline where they happen.</p>
-        </div>
-        <div class="wordscroll__demo">
-<video class="wordscroll__demo-video" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback" poster="assets/app/hero-poster.webp" width="2400" height="1646" loop muted playsinline preload="metadata" aria-label="A turn streaming in: reasoning, a read, an edit, the to-dos and the reply">
-            <source src="assets/app/hero-hevc.mp4" type="video/mp4; codecs=hvc1">
-            <source src="assets/app/hero.mp4" type="video/mp4">
-          </video>
+          <img class="usage__shot" src="assets/app/limits.webp" width="812" height="1146" alt="The usage popover above the chat box: Lead, Claude on the Max plan with its 5-hour and weekly limits, then Heads, Antigravity with the Gemini and the Claude and GPT windows and the AI credits left" loading="lazy" decoding="async">
         </div>
       </div>
     </section>
@@ -368,37 +406,28 @@
 
         <div class="tiles reveal">
 
-          <!-- The reasoning slider, filmed. -->
+          <!-- The reasoning slider, still. -->
           <div class="tile tile--full tile--film">
             <h3 class="tile__label">Turn the thinking up.</h3>
             <p class="tile__caption">The effort slider under the model chip. Maximum lights the track in the provider's colour, and fast mode fuses in.</p>
-            <video class="tile__film" disablepictureinpicture disableremoteplayback controlslist="nodownload noplaybackrate noremoteplayback" poster="assets/app/slider-poster.webp" width="2008" height="1408" loop muted playsinline preload="metadata" aria-label="The reasoning effort slider moving from high to maximum, then fast mode joining, then back down">
-                  <source src="assets/app/slider-hevc.mp4" type="video/mp4; codecs=hvc1">
-                  <source src="assets/app/slider.mp4" type="video/mp4">
-                </video>
+            <img class="tile__film" src="assets/app/tour/slider.webp" width="1600" height="1000" alt="The effort slider popover open at Max and the chip under it" loading="lazy" decoding="async">
           </div>
 
           <!-- The model switcher. -->
           <div class="tile tile--wide tile--film">
             <h3 class="tile__label">Switch the model.</h3>
             <p class="tile__caption">Any model from any provider, from the same chip.</p>
-            <img class="tile__film" src="assets/app/switcher.webp" width="2008" height="1408" alt="The model switcher listing Opus, Sonnet, Gemini, DeepSeek and Meta models" loading="lazy" decoding="async">
-          </div>
-
-          <div class="tile tile--wide tile--film">
-            <h3 class="tile__label">A tour on first launch.</h3>
-            <p class="tile__caption">Six pages of real screenshots. The Help menu opens it again.</p>
-            <img class="tile__film" src="assets/app/tour/window.webp" width="1600" height="1000" alt="The app's welcome tour window: a dark glass card with a screenshot, a title, a description and a Continue button" loading="lazy" decoding="async">
+            <img class="tile__film" src="assets/app/tour/pairs.webp" width="1600" height="1000" alt="The model picker with the pairs at the top" loading="lazy" decoding="async">
           </div>
 
           <!-- Sidebar: the real one fills the tile, the label sits on it. -->
           <div class="tile tile--tall tile--visual">
             <div class="tile__art" aria-hidden="true">
-              <img class="tile__art-img" src="assets/app/sidebar.webp" width="684" height="1720" alt="" loading="lazy" decoding="async">
+              <img class="tile__art-img" src="assets/app/sidebar.webp" width="588" height="1236" alt="" loading="lazy" decoding="async">
             </div>
             <div class="tile__overlay">
               <h3>Projects and threads</h3>
-              <p>Search, pin, archive, drag to resize. A pulse shows which threads are busy.</p>
+              <p>Hide the sidebar and the list floats from the Threads button. Search, pin, settle, drag to resize. A pulse shows which threads are busy.</p>
             </div>
           </div>
 
@@ -418,22 +447,46 @@
             </div>
           </div>
 
-          <!-- Plans and to-dos: the real exchange. -->
-          <div class="tile tile--half tile--film">
-            <h3 class="tile__label">Plans and to‑dos</h3>
-            <p class="tile__caption">Plans wait for your approval and to-do lists tick themselves off as the agent works.</p>
-            <img class="tile__film" src="assets/app/plans.webp" width="2080" height="1078" alt="A plan-mode thread: the ask, the proposed plan and its three to-dos" loading="lazy" decoding="async">
+          <!-- The welcome tour. -->
+          <div class="tile tile--full tile--film">
+            <h3 class="tile__label">A tour on first launch.</h3>
+            <p class="tile__caption">Eight pages of real screenshots. The Help menu opens it again.</p>
+            <img class="tile__film" src="assets/app/tour/window.webp" width="1408" height="1283" alt="The welcome tour over the desktop: the app behind a glass card that reads Welcome to Swarm Code, one native macOS window for every coding agent you use, with a Continue button" loading="lazy" decoding="async">
           </div>
 
-          <!-- Notifications: a label and a line. -->
-          <div class="tile tile--half tile--plain">
-            <h3 class="tile__label">Notifications<br>when work finishes</h3>
-            <p class="tile__caption">Switch away, come back when the agent is done or needs you. The thread that wants you is one click.</p>
+          <div class="tile tile--half tile--fade tile--fade-right">
+            <div class="tile__copy"><h3 class="tile__label">Plans and to‑dos</h3><p class="tile__caption">Plans wait for your approval and to-do lists tick themselves off as the agent works.</p></div>
+            <div class="tile__fade" aria-hidden="true"><img class="tile__fade-img" src="assets/app/plans.webp" width="2080" height="1300" alt="" loading="lazy" decoding="async"></div>
+          </div>
+
+          <div class="tile tile--half tile--fade tile--fade-left">
+            <div class="tile__copy"><h3 class="tile__label">Notifications<br>when work finishes</h3><p class="tile__caption">Switch away, come back when the agent is done or needs you. The thread that wants you is one click.</p></div>
+            <div class="tile__fade" aria-hidden="true"><img class="tile__fade-img" src="assets/app/notify.webp" width="2080" height="1300" alt="" loading="lazy" decoding="async"></div>
+          </div>
+
+          <div class="tile tile--half tile--fade tile--fade-right">
+            <div class="tile__copy"><h3 class="tile__label">Slash commands</h3><p class="tile__caption">Type / and lead a message with any command your agent knows.</p></div>
+            <div class="tile__fade" aria-hidden="true"><img class="tile__fade-img" src="assets/app/slash.webp" width="2080" height="1300" alt="" loading="lazy" decoding="async"></div>
+          </div>
+
+          <div class="tile tile--half tile--fade tile--fade-left">
+            <div class="tile__copy"><h3 class="tile__label">Reply quotes</h3><p class="tile__caption">Quote a line of a reply and answer it in place.</p></div>
+            <div class="tile__fade" aria-hidden="true"><img class="tile__fade-img" src="assets/app/quote.webp" width="2080" height="1300" alt="" loading="lazy" decoding="async"></div>
+          </div>
+
+          <div class="tile tile--half tile--fade tile--fade-right">
+            <div class="tile__copy"><h3 class="tile__label">Heads that pop into panels</h3><p class="tile__caption">A finished head pops into a floating panel on its own, its outcome on its glyph.</p></div>
+            <div class="tile__fade" aria-hidden="true"><img class="tile__fade-img" src="assets/app/tour/panels.webp" width="2080" height="1300" alt="" loading="lazy" decoding="async"></div>
+          </div>
+
+          <div class="tile tile--half tile--fade tile--fade-left">
+            <div class="tile__copy"><h3 class="tile__label">Bundled follow-ups</h3><p class="tile__caption">Everything you send while a turn runs arrives as one message.</p></div>
+            <div class="tile__fade" aria-hidden="true"><img class="tile__fade-img" src="assets/app/queue.webp" width="2080" height="1300" alt="" loading="lazy" decoding="async"></div>
           </div>
 
           <div class="tile tile--full tile--film">
             <h3 class="tile__label">Make it yours.</h3>
-            <p class="tile__caption">Twenty-five themes, in real glass.</p>
+            <p class="tile__caption">Twenty-six themes, in real glass.</p>
             <img class="tile__film" src="assets/app/tour/themes.webp" width="1600" height="1000" alt="Swarm Code in four themes" loading="lazy" decoding="async">
           </div>
 
@@ -453,7 +506,7 @@
 
         <div class="stats reveal">
           <div class="stat"><div class="stat__value">100%</div><div class="stat__label">Swift and SwiftUI</div></div>
-          <div class="stat"><div class="stat__value">8</div><div class="stat__label">agent providers</div></div>
+          <div class="stat"><div class="stat__value">10</div><div class="stat__label">agent providers</div></div>
           <div class="stat"><div class="stat__value">26</div><div class="stat__label">tinted-glass themes</div></div>
           <div class="stat"><div class="stat__value">1</div><div class="stat__label">dependency, SwiftTerm</div></div>
           <div class="stat"><div class="stat__value">0</div><div class="stat__label">telemetry, ever</div></div>
@@ -480,13 +533,13 @@
       <div class="container">
         <div class="stack-center">
           <h2 class="section-heading reveal">No price.</h2>
-          <p class="section-subtitle reveal">Swarm Code is free and MIT licensed. It drives the agents you already pay for, so there is nothing to pay for here.</p>
+          <p class="section-subtitle reveal">Swarm Code is free and open source under the MIT License. It drives the agents you already pay for, so there is nothing to pay for here.</p>
         </div>
 
         <div class="free reveal">
           <div class="free__app">
             <img src="assets/brand/swarmcode-icon-96.png" alt="" width="34" height="34" loading="lazy" decoding="async">
-            <span>Swarm Code for macOS<small>Version 1.1.10 · Apple silicon</small></span>
+            <span>Swarm Code for macOS<small>Version 1.6.0 · Apple silicon</small></span>
           </div>
           <div class="free__price">Free<small>MIT</small></div>
           <ul class="free__lines">
@@ -494,7 +547,7 @@
             <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 5 5L20 7"/></svg><span>At least one provider installed and signed in, for example <code>codex login</code> or <code>claude auth login</code></span></li>
             <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 5 5L20 7"/></svg><span>Git, plus <code>gh</code> or <code>glab</code> for pull requests</span></li>
           </ul>
-          <a class="btn--applepill" data-download-link href="https://github.com/soumyachk101/Swarm-Code-Release/releases/latest/download/Swarm-Code-1.1.10.dmg">
+          <a class="btn--applepill" data-download-link href="https://github.com/soumyachk101/Swarm-Code-Release/releases/latest/download/Swarm-Code.dmg">
             <svg class="btn--applepill-logo" aria-hidden="true"><use href="#apple-mark"/></svg>
             <span>Download for macOS</span>
           </a>
@@ -520,7 +573,7 @@
               <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
             </button>
             <div class="faq__answer"><div class="faq__answer-inner">
-              <p class="faq__answer-content">Swarm Code is the coding app by Soumya Chakraborty: a native macOS app that drives the coding agents you already have installed. It gives Codex, Claude, Cursor, OpenCode, Grok, Antigravity, DeepSeek and Meta one shared window with projects, threads, streaming replies, approvals, diffs, git and a terminal.</p>
+              <p class="faq__answer-content">Swarm Code is the coding app by Soumya Chakraborty: a native macOS app that drives the coding agents you already have installed. It gives Codex, Claude, Cursor, OpenCode, Grok, Antigravity, Copilot, Command Code, Pi, DeepSeek, Meta and Z.ai one shared window with projects, threads, streaming replies, approvals, diffs, git and a terminal.</p>
             </div></div>
           </div>
 
@@ -530,7 +583,7 @@
               <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
             </button>
             <div class="faq__answer"><div class="faq__answer-inner">
-              <p class="faq__answer-content">Yes. Swarm Code is free and released under the <a href="https://github.com/soumyachk101/Swarm-Code/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>. You pay your agent providers as you already do; Swarm Code never sits in between, never proxies a request and never adds a markup.</p>
+              <p class="faq__answer-content">Yes. Swarm Code is free and open source under the <a href="https://github.com/soumyachk101/Swarm-Code/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>. You pay your agent providers as you already do; Swarm Code never sits in between, never proxies a request and never adds a markup.</p>
             </div></div>
           </div>
 
@@ -540,7 +593,7 @@
               <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
             </button>
             <div class="faq__answer"><div class="faq__answer-inner">
-              <p class="faq__answer-content">Yes, all of it. The app lives on <a href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener">GitHub</a>, written in Swift and SwiftUI, with every release and its notes on the <a href="https://github.com/soumyachk101/Swarm-Code-Release/releases" target="_blank" rel="noopener">releases page</a>. Read it, build it in Xcode, or send a merge request. The code is MIT; the Swarm Code name and icon are not, as the <a href="https://github.com/soumyachk101/Swarm-Code/blob/main/TRADEMARK.md" target="_blank" rel="noopener">trademark policy</a> explains.</p>
+              <p class="faq__answer-content">Yes, all of it. The app lives on <a href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener">GitHub</a>, written in Swift and SwiftUI, with every release and its notes on the <a href="https://github.com/soumyachk101/Swarm-Code-Release/releases" target="_blank" rel="noopener">releases page</a>. Read it, build it in Xcode, or contribute.</p>
             </div></div>
           </div>
 
@@ -550,7 +603,7 @@
               <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
             </button>
             <div class="faq__answer"><div class="faq__answer-inner">
-              <p class="faq__answer-content">Not for Codex, Claude, Cursor, OpenCode, Grok or Antigravity: sign in once in your terminal, for example <code>codex login</code> or <code>claude auth login</code>, and Swarm Code uses that session and your subscription. DeepSeek and Meta talk to their APIs directly, so those two take a key, stored in your Keychain.</p>
+              <p class="faq__answer-content">Not for Codex, Claude, Cursor, OpenCode, Grok, Antigravity, Copilot, Command Code or Pi: sign in once in your terminal, for example <code>codex login</code>, <code>claude auth login</code>, <code>cmd login</code> or <code>pi</code> then <code>/login</code>, and Swarm Code uses that session and your subscription. DeepSeek, Meta and Z.ai talk to their APIs directly, so those three take a key, stored in your Keychain.</p>
             </div></div>
           </div>
 
@@ -560,7 +613,7 @@
               <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
             </button>
             <div class="faq__answer"><div class="faq__answer-inner">
-              <p class="faq__answer-content">A Mac with Apple silicon running macOS 26 or later. The app is built on Liquid Glass and ships as an Apple silicon binary only. It is signed with a Developer ID and notarized, so it opens without any Gatekeeper workaround.</p>
+              <p class="faq__answer-content">A Mac with Apple silicon running macOS 26 or later. The app is built on Liquid Glass and ships as an Apple silicon binary only.</p>
             </div></div>
           </div>
 
@@ -576,16 +629,6 @@
 
           <div class="faq__item">
             <button class="faq__question" aria-expanded="false">
-              <span>Is this really open source?</span>
-              <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
-            </button>
-            <div class="faq__answer"><div class="faq__answer-inner">
-              <p class="faq__answer-content">Every line. The full Swift and SwiftUI source is on <a href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener">GitHub</a> under the <a href="https://github.com/soumyachk101/Swarm-Code/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>. Read it, build it, open an issue or send a merge request.</p>
-            </div></div>
-          </div>
-
-          <div class="faq__item">
-            <button class="faq__question" aria-expanded="false">
               <span>What are checkpoints and worktrees?</span>
               <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
             </button>
@@ -596,51 +639,25 @@
 
           <div class="faq__item">
             <button class="faq__question" aria-expanded="false">
-              <span>Where do I get help?</span>
+              <span>What is Hydra?</span>
               <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
             </button>
             <div class="faq__answer"><div class="faq__answer-inner">
-              <p class="faq__answer-content">Open an issue on the <a href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener">GitHub repo</a>, or email <a href="mailto:hi@swarmcode.dev">hi@swarmcode.dev</a>. Bug reports and ideas are welcome there too.</p>
+              <p class="faq__answer-content">Hydra turns one chat into a team, and it is on from your first chat. The agent becomes the lead: it writes the briefs, sends helper agents called heads out in parallel, each in its own copy of your project, checks their work when they report back and lands it in your checkout as one merge. A pair sets which model leads and which model, or which provider, runs the heads, a Claude lead over Gemini heads for example, with one effort slider fused for both; without a pair the heads run on the chat's model at a working effort. Every head can have a panel that floats beside the chat, panels snap to slots you can reorder, and right-clicking the Hydra mark switches it off for a chat.</p>
+            </div></div>
+          </div>
+
+          <div class="faq__item">
+            <button class="faq__question" aria-expanded="false">
+              <span>Can I see my usage limits?</span>
+              <span class="faq__question-icon"><svg viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 4v12M4 10h12"/></svg></span>
+            </button>
+            <div class="faq__answer"><div class="faq__answer-inner">
+              <p class="faq__answer-content">Yes. The ring beside the send button opens a popover with the context window, every rolling limit of your plan with its reset time, and the credit left on a pay-as-you-go key. Codex, Claude, Antigravity, Copilot, Command Code and Z.ai report plan limits; DeepSeek and Command Code report credits. In a Hydra pair across two providers the lead's limits stack over the heads'. Switch on the usage panel in General settings to keep them floating beside the chat, or open that panel from the popover's expand button. Settings › Providers shows the same for every signed-in account at once.</p>
             </div></div>
           </div>
 
         </div>
-      </div>
-    </section>
-
-    <!-- ================================================================ -->
-    <!-- Blog                                                               -->
-    <!-- ================================================================ -->
-    <section id="blog">
-      <div class="container">
-        <div class="stack-center">
-          <h2 class="section-heading reveal">From the blog.</h2>
-          <p class="section-subtitle reveal">Notes on building Swarm Code, what is shipping next, and how to get more from your coding agents.</p>
-        </div>
-
-        <div class="blog__grid reveal">
-          <a class="blog__card" href="https://github.com/soumyachk101/Swarm-Code/blob/main/README.md" target="_blank" rel="noopener">
-            <span class="blog__card-date">June 2026</span>
-            <h3 class="blog__card-title">Swarm Code is now open source</h3>
-            <p class="blog__card-excerpt">The full Swift and SwiftUI codebase is on GitHub under the MIT License. Read it, build it, send a merge request.</p>
-            <span class="blog__card-arrow"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 12 4M5 4h7v7"/></svg></span>
-          </a>
-          <a class="blog__card" href="https://github.com/soumyachk101/Swarm-Code-Release/releases" target="_blank" rel="noopener">
-            <span class="blog__card-date">May 2026</span>
-            <h3 class="blog__card-title">Why we built a native Mac app for coding agents</h3>
-            <p class="blog__card-excerpt">No Electron, no web view, no account, no cloud. Just Swift, Liquid Glass and the tools you already have installed.</p>
-            <span class="blog__card-arrow"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 12 4M5 4h7v7"/></svg></span>
-          </a>
-          <a class="blog__card" href="https://github.com/soumyachk101/Swarm-Code-Release/releases" target="_blank" rel="noopener">
-            <span class="blog__card-date">April 2026</span>
-            <h3 class="blog__card-title">Hydra: one chat, many heads</h3>
-            <p class="blog__card-excerpt">How parallel agents in separate worktrees can tackle a big job and land every change back in your checkout.</p>
-            <span class="blog__card-arrow"><svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12 12 4M5 4h7v7"/></svg></span>
-          </a>
-        </div>
-        <p class="blog__more reveal" style="margin-top: 28px; text-align: center;">
-          <a class="blog__more-link" href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener">All updates on GitHub <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px;margin-left:4px"><path d="M4 12 12 4M5 4h7v7"/></svg></a>
-        </p>
       </div>
     </section>
 
@@ -654,9 +671,9 @@
           <img class="outro__icon" src="assets/brand/swarmcode-icon-256.webp" alt="" width="96" height="96" loading="lazy" decoding="async">
         </div>
         <h2 class="outro__title reveal">Ready to give your agents a real Mac app?</h2>
-        <p class="outro__subtitle reveal">Eight providers, one window, a diff for every turn and a terminal per thread. Free, open source, native.</p>
+        <p class="outro__subtitle reveal">Ten providers, one window, a diff for every turn and a terminal per thread. Free, open source, native.</p>
         <div class="hero__actions reveal">
-          <a class="btn--applepill" data-download-link href="https://github.com/soumyachk101/Swarm-Code-Release/releases/latest/download/Swarm-Code-1.1.10.dmg">
+          <a class="btn--applepill" data-download-link href="https://github.com/soumyachk101/Swarm-Code-Release/releases/latest/download/Swarm-Code.dmg">
             <svg class="btn--applepill-logo" aria-hidden="true"><use href="#apple-mark"/></svg>
             <span>Download for macOS</span>
           </a>
@@ -680,8 +697,8 @@
           <span>Swarm Code</span>
         </div>
         <p class="footer__tagline">The coding app by Soumya Chakraborty.</p>
-        <p class="footer__desc">A native macOS app for your coding agents. Codex, Claude, Cursor, OpenCode, Grok, Antigravity, DeepSeek and Meta, in one Liquid Glass window on Apple silicon.</p>
-        <a class="footer__cta" data-download-link href="https://github.com/soumyachk101/Swarm-Code-Release/releases/latest/download/Swarm-Code-1.1.10.dmg">
+        <p class="footer__desc">A native macOS app for your coding agents. Codex, Claude, Cursor, OpenCode, Grok, Antigravity, Copilot, Command Code, Pi, DeepSeek, Meta and Z.ai, in one Liquid Glass window on Apple silicon.</p>
+        <a class="footer__cta" data-download-link href="https://github.com/soumyachk101/Swarm-Code-Release/releases/latest/download/Swarm-Code.dmg">
           <svg aria-hidden="true"><use href="#apple-mark"/></svg>
           <span>Download for macOS</span>
         </a>
@@ -691,32 +708,33 @@
       <nav class="footer__col" aria-label="Menu">
         <p class="footer__head">Menu</p>
         <a href="index.html">Home</a>
+        <a href="#hydra">Hydra</a>
         <a href="#highlights">Highlights</a>
         <a href="#agents">Agents</a>
+        <a href="#usage">Usage</a>
         <a href="#themes">Themes</a>
         <a href="#features">Features</a>
-        <a href="#blog">Blog</a>
         <a href="#download">Download</a>
         <a href="#faq">FAQ</a>
+        <a href="changelog.html">Changelog</a>
+        <a href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener">Source</a>
       </nav>
       <nav class="footer__col" aria-label="More">
         <p class="footer__head">More</p>
-        <a href="https://github.com/soumyachk101/Swarm-Code/blob/main/CHANGELOG.md" target="_blank" rel="noopener">Changelog</a>
+        <a href="changelog.html">Changelog</a>
         <a href="https://github.com/soumyachk101/Swarm-Code/blob/main/README.md" target="_blank" rel="noopener">README</a>
         <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noopener">MIT License</a>
         <a href="https://github.com/soumyachk101/Swarm-Code/blob/main/THIRD_PARTY_NOTICES.md" target="_blank" rel="noopener">Third-party notices</a>
-        <a href="https://github.com/soumyachk101/Swarm-Code/blob/main/TRADEMARK.md" target="_blank" rel="noopener">Trademark policy</a>
       </nav>
       <nav class="footer__col" aria-label="Open source">
         <p class="footer__head">Open source</p>
         <a href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener">Source code</a>
         <a href="https://github.com/soumyachk101/Swarm-Code-Release/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="https://github.com/soumyachk101/Swarm-Code/pulls" target="_blank" rel="noopener">Pull requests</a>
       </nav>
       <nav class="footer__col" aria-label="Connect">
         <p class="footer__head">Connect</p>
-        <a href="mailto:hi@swarmcode.dev">hi@swarmcode.dev</a>
-        <a href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/soumyachk101" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://swarmcode.vercel.app" target="_blank" rel="noopener">Website</a>
       </nav>
     </div>
     <div class="footer__wordmark" aria-hidden="true"><span>Swarm Code</span></div>

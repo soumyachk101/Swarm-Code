@@ -7,6 +7,8 @@
 	import ChromeRow from './ChromeRow.svelte';
 	import Composer from './Composer.svelte';
 	import TerminalPanel from './TerminalPanel.svelte';
+	import HydraPanel from './HydraPanel.svelte';
+	import SubagentPanel from './SubagentPanel.svelte';
 
 	interface Props {
 		thread: ChatThread;
@@ -194,6 +196,54 @@
 	let isAtBottom = $state(true);
 	let showHydraPanel = $state(false);
 	let showSubagentPanel = $state(false);
+	let hydraPanelEl: HTMLDivElement | undefined = $state();
+	let subagentPanelEl: HTMLDivElement | undefined = $state();
+	let hydraDragging = $state(false);
+	let subagentDragging = $state(false);
+	let hydraDragStart = $state({ x: 0, y: 0 });
+	let subagentDragStart = $state({ x: 0, y: 0 });
+	let hydraPosStart = $state({ x: 0, y: 0 });
+	let subagentPosStart = $state({ x: 0, y: 0 });
+
+	function onHydraDragStart(e: PointerEvent) {
+		e.preventDefault();
+		hydraDragging = true;
+		hydraDragStart = { x: e.clientX, y: e.clientY };
+		hydraPosStart = { ...hydraPanelPos };
+		hydraPanelEl?.setPointerCapture(e.pointerId);
+	}
+	function onHydraDragMove(e: PointerEvent) {
+		if (!hydraDragging) return;
+		hydraPanelPos = {
+			x: hydraPosStart.x + (e.clientX - hydraDragStart.x),
+			y: hydraPosStart.y + (e.clientY - hydraDragStart.y)
+		};
+	}
+	function onHydraDragEnd(e: PointerEvent) {
+		if (!hydraDragging) return;
+		hydraDragging = false;
+		hydraPanelEl?.releasePointerCapture(e.pointerId);
+	}
+
+	function onSubagentDragStart(e: PointerEvent) {
+		e.preventDefault();
+		subagentDragging = true;
+		subagentDragStart = { x: e.clientX, y: e.clientY };
+		subagentPosStart = { ...subagentPanelPos };
+		subagentPanelEl?.setPointerCapture(e.pointerId);
+	}
+	function onSubagentDragMove(e: PointerEvent) {
+		if (!subagentDragging) return;
+		subagentPanelPos = {
+			x: subagentPosStart.x + (e.clientX - subagentDragStart.x),
+			y: subagentPosStart.y + (e.clientY - subagentDragStart.y)
+		};
+	}
+	function onSubagentDragEnd(e: PointerEvent) {
+		if (!subagentDragging) return;
+		subagentDragging = false;
+		subagentPanelEl?.releasePointerCapture(e.pointerId);
+	}
 </script>
 
 <svelte:window onkeydown={handleKeyDown} />
@@ -419,14 +469,26 @@
 
 	<!-- Hydra panel overlay -->
 	{#if showHydraPanel}
-		<div class="floating-panel hydra-panel-overlay">
+		<div class="floating-panel hydra-panel-overlay"
+			 bind:this={hydraPanelEl}
+			 style="left: {hydraPanelPos.x}px; top: {hydraPanelPos.y}px;"
+			 onpointerdown={onHydraDragStart}
+			 onpointermove={onHydraDragMove}
+			 onpointerup={onHydraDragEnd}
+			 onpointercancel={onHydraDragEnd}>
 			<HydraPanel threadId={thread.id} onClose={() => showHydraPanel = false} />
 		</div>
 	{/if}
 
 	<!-- Subagent panel overlay -->
 	{#if showSubagentPanel}
-		<div class="floating-panel subagent-panel-overlay">
+		<div class="floating-panel subagent-panel-overlay"
+			 bind:this={subagentPanelEl}
+			 style="left: {subagentPanelPos.x}px; top: {subagentPanelPos.y}px;"
+			 onpointerdown={onSubagentDragStart}
+			 onpointermove={onSubagentDragMove}
+			 onpointerup={onSubagentDragEnd}
+			 onpointercancel={onSubagentDragEnd}>
 			<SubagentPanel threadId={thread.id} isExpanded={true} />
 		</div>
 	{/if}
@@ -1302,5 +1364,41 @@
 	.composer-area {
 		flex-shrink: 0;
 		position: relative;
+	}
+
+	/* ===== Floating panels ===== */
+	.floating-panel {
+		position: absolute;
+		z-index: 50;
+		border-radius: 18px;
+		background: color-mix(in srgb, var(--surface-0) 78%, transparent);
+		backdrop-filter: blur(24px) saturate(1.5);
+		-webkit-backdrop-filter: blur(24px) saturate(1.5);
+		border: 1px solid var(--border-subtle);
+		box-shadow:
+			0 8px 32px rgba(0, 0, 0, 0.14),
+			0 2px 8px rgba(0, 0, 0, 0.06);
+		overflow: hidden;
+		transition: box-shadow 0.2s ease;
+	}
+
+	.floating-panel:active {
+		box-shadow:
+			0 12px 48px rgba(0, 0, 0, 0.2),
+			0 4px 12px rgba(0, 0, 0, 0.1);
+	}
+
+	.hydra-panel-overlay {
+		right: 12px;
+		top: 52px;
+		width: 320px;
+		max-height: 420px;
+	}
+
+	.subagent-panel-overlay {
+		right: 12px;
+		top: 52px;
+		width: 340px;
+		max-height: 380px;
 	}
 </style>
