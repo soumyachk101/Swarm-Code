@@ -4,12 +4,22 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
-## [Unreleased]
+## [1.7.0] - 2026-09-19
+
+Swarm Code 1.7.0 adds a full-screen expand toggle to Hydra floating panels, brings instant model search to the model picker, unlocks model and provider switching during running tasks and chats with history, and restores author attribution and direct project links in Settings. Apple silicon, macOS 26 or later.
+
+### New features
+- Hydra full-screen expand toggle: Expand the Hydra team panel or any popped-out head panel into full-screen across the chat pane with a single click on the new expand button in the panel header, or restore it back to its floating dock position with smooth animation.
+- Live model switching during running tasks: Unlocked provider and model selection so you can switch to any model across all configured providers (Claude, Codex, Antigravity, Grok, Copilot, etc.) at any point, even while a turn is running or within chats that already have message history.
+- Model search in popover: The model picker popover now includes an instant search field (`SidebarSearchField`) to quickly filter models and Hydra pairs across all available providers.
+- Restored Soumya Chakraborty attribution: Settings > About now features complete author attribution, links to the official website (`swarmcode.vercel.app`), author GitHub profile (`@soumyachk101`), source repository, and latest releases.
 
 ### Bug fixes
-- A framework's own raise while a notification is posted no longer ends the app: on macOS 27 a popover's window coming on screen can make the framework's remote view throw from inside the notification that announces it, and because that happens during a SwiftUI layout pass AppKit catches the exception and stops the app, which is how both reports of September 18 read, both from the release-notes cards on Settings › About. The app's notification posts now catch such a raise, log it with the raising observer's frames, and carry on, so the popover's window ordering and the popover itself still finish.
-- The New features, Bug fixes and Refinements cards on Settings › About open their section in a card under the row instead of in a popover: the notes read in the page and scroll with it, and tapping the card again, or the card's close button, folds them away.
-- The Codex usage panel names the ChatGPT plan the way OpenAI sells it: the `pro` account type is the $200 Pro tier and now reads "Pro 20x" where the panel showed "Pro", and `prolite` reads "Pro 5x" where it showed "Prolite"; plan types only Codex spells get its own CLI wording, so the self-serve business Pro Lite entitlement reads "Business Premium" instead of "self_serve_business_prolite".
+- Fixed model picker lockout: Previously, chats with turn history locked all models from other providers with "New chats only". Provider lockouts have been removed so models can be freely changed.
+- Fixed update checker references: Replaced legacy upstream GitLab references in update status tooltips and check rows with GitHub.
+
+### Refinements
+- Popover sizing and layout in the model picker now adapts smoothly to search query results with a clean "No models found" state when no candidates match.
 
 ## [1.6.0] - 2026-09-18
 
