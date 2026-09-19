@@ -700,8 +700,8 @@ private struct AboutVersionPill: View {
     private var standingHelp: String {
         switch standing {
         case .upToDate: "Swarm Code \(AppInfo.version) is the latest version"
-        case .failed: checker.lastError ?? "The last check did not reach GitLab"
-        case .unchecked: "Swarm Code has not asked GitLab for a release yet"
+        case .failed: checker.lastError ?? "The last check did not reach GitHub"
+        case .unchecked: "Swarm Code has not asked GitHub for a release yet"
         }
     }
 
@@ -779,7 +779,7 @@ struct AboutSoftwareUpdateSection: View {
                         .foregroundStyle(Chrome.accent)
                     }
                     .buttonStyle(.plain)
-                    .help("Open the release on GitLab")
+                    .help("Open the release on GitHub")
                 }
             }
         }
@@ -825,7 +825,7 @@ struct AboutSoftwareUpdateSection: View {
     }
 }
 
-/// The row on the app card that says when GitLab was last asked, and asks again.
+/// The row on the app card that says when GitHub was last asked, and asks again.
 struct AboutUpdateCheckRow: View {
     private let checker = UpdateChecker.shared
 
@@ -841,12 +841,12 @@ struct AboutUpdateCheckRow: View {
     }
 
     private var detail: String {
-        if checker.isChecking { return "Asking GitLab for the latest release…" }
+        if checker.isChecking { return "Asking GitHub for the latest release…" }
         let checked = checker.lastCheckedAt.map { "Checked \($0.formatted(.relative(presentation: .named)))." } ?? "Not checked yet."
         if let error = checker.lastError { return "\(error) \(checked)" }
         if checker.updateAvailable, let version = checker.update?.version {
             return "Swarm Code \(version) is ready to install. \(checked)"
         }
-        return "Swarm Code checks GitLab for new versions a few times a day. \(checked)"
+        return "Swarm Code checks GitHub for new versions a few times a day. \(checked)"
     }
 }

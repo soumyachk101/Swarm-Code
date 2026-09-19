@@ -921,7 +921,6 @@ private struct ArchiveSettingsPage: View {
 
 private struct AboutSettingsPage: View {
     @Environment(AppModel.self) private var model
-    private static let swarmURL = URL(string: "https://getswarm.app")!
 
     var body: some View {
         VStack(alignment: .leading, spacing: Chrome.sectionSpacing) {
@@ -929,7 +928,23 @@ private struct AboutSettingsPage: View {
             appCard
             ChromeSection(title: "Credits") {
                 ChromeCard {
-                    MadeBySwarmRow(url: Self.swarmURL)
+                    MadeByRow()
+                    ChromeRowDivider()
+                    ChromeRow(title: "Website", detail: "swarmcode.vercel.app") {
+                        CreditLink(title: "Open website", url: URL(string: "https://swarmcode.vercel.app")!)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "GitHub Profile", detail: "Soumya Chakraborty on GitHub (@soumyachk101)") {
+                        CreditLink(title: "@soumyachk101", url: URL(string: "https://github.com/soumyachk101")!)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "Source code", detail: "Swarm Code repository on GitHub.") {
+                        CreditLink(title: "soumyachk101/Swarm-Code", url: URL(string: "https://github.com/soumyachk101/Swarm-Code")!)
+                    }
+                    ChromeRowDivider()
+                    ChromeRow(title: "Releases", detail: "Latest release builds and changelog.") {
+                        CreditLink(title: "Releases", url: URL(string: "https://github.com/soumyachk101/Swarm-Code-Release/releases")!)
+                    }
                     ChromeRowDivider()
                     ChromeRow(title: "Working indicators", detail: "Ported from Zeron by Wing, MIT License.") {
                         CreditLink(title: "zeronsh/zeron", url: URL(string: "https://github.com/zeronsh/zeron")!)
@@ -972,13 +987,13 @@ private struct AboutSettingsPage: View {
             ChromeRowDivider()
             AboutUpdateCheckRow()
             ChromeRowDivider()
-            Text("The coding app by Swarm: a native home for your coding agents, built in Swift with Liquid Glass.")
+            Text("The coding app by Soumya Chakraborty: a native home for your coding agents, built in Swift with Liquid Glass.")
                 .font(.system(size: 13))
                 .padding(.leading, 16)
                 .padding(.trailing, Chrome.rowControlTrailingPadding)
                 .padding(.vertical, 11)
             ChromeRowDivider()
-            Text("Swarm Code is licensed under the GNU AGPL v3.0 with attribution terms; SwiftTerm is MIT licensed.")
+            Text("Swarm Code and SwiftTerm are MIT licensed.")
                 .font(.system(size: 12))
                 .foregroundStyle(Chrome.secondaryText)
                 .padding(.leading, 16)
@@ -1000,7 +1015,7 @@ private struct LicensesRow: View {
     ]
 
     var body: some View {
-        ChromeRow(title: "Licenses", detail: "AGPL-3.0 with attribution terms, and the notices for what the app builds on.") {
+        ChromeRow(title: "Licenses", detail: "MIT, with the notices for what the app builds on.") {
             Button("Show") { isPresented = true }
                 .buttonStyle(.glass)
                 .controlSize(.small)
@@ -1040,48 +1055,33 @@ private struct LicensesRow: View {
     }
 }
 
-/// Swarm's logo and name, linking to getswarm.app, so it is clear the app is made by Swarm.
-private struct MadeBySwarmRow: View {
-    let url: URL
-    @State private var isHovering = false
-
+/// Swarm Code's logo and name, showing attribution that the app is made by Soumya Chakraborty.
+private struct MadeByRow: View {
     var body: some View {
-        Link(destination: url) {
-            HStack(spacing: 12) {
-                Image("swarm-logo")
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 40, height: 40)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Made by Swarm")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Chrome.primaryText)
-                    Text("Swarm Code is a coding app by Swarm for Mac.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Chrome.secondaryText)
-                }
-                Spacer(minLength: 12)
-                HStack(spacing: 4) {
-                    Text(verbatim: "getswarm.app")
-                    Image(systemName: "arrow.up.right")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(Chrome.accent)
-                .opacity(isHovering ? 1 : 0.9)
+        HStack(spacing: 12) {
+            Image("swarmcode-logo")
+                .resizable()
+                .interpolation(.high)
+                .frame(width: 40, height: 40)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Made by Soumya Chakraborty")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Chrome.primaryText)
+                Text("Swarm Code is a coding app by Soumya Chakraborty for Mac.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Chrome.secondaryText)
             }
-            .padding(.leading, 16)
-            .padding(.trailing, Chrome.rowControlTrailingPadding + 4)
-            .padding(.vertical, 12)
-            .contentShape(.rect)
+            Spacer(minLength: 12)
+            HStack(spacing: 10) {
+                CreditLink(title: "Website", url: URL(string: "https://swarmcode.vercel.app")!)
+                CreditLink(title: "GitHub", url: URL(string: "https://github.com/soumyachk101")!)
+            }
         }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            withAnimation(Chrome.hover) { isHovering = hovering }
-        }
-        .help("Open getswarm.app")
-        .accessibilityLabel(Text("Made by Swarm. Open getswarm.app"))
+        .padding(.leading, 16)
+        .padding(.trailing, Chrome.rowControlTrailingPadding + 4)
+        .padding(.vertical, 12)
+        .accessibilityLabel(Text("Made by Soumya Chakraborty."))
     }
 }
 
