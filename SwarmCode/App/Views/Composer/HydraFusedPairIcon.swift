@@ -19,7 +19,9 @@ struct HydraFusedPairIcon: View {
     private var halfWidth: CGFloat { (size - 1) / 2 - gap }
 
     var body: some View {
-        HydraPairMark(lead: lead, heads: heads, leadSize: size)
+        HydraMarkImage()
+            .foregroundStyle(Chrome.primaryText)
+            .frame(width: size, height: size)
     }
 
     /// One provider's icon as a silhouette, one half of it kept, wearing the gradient.

@@ -66,13 +66,11 @@ struct ModelEffortButton: View {
             isPresented.toggle()
         } label: {
             HStack(spacing: 5) {
-                if let pair {
-                    // In a pair the chip wears the two of them as one mark: the lead's icon fused
-                    // with the heads', the way the slider's track runs one colour into the other.
-                    HydraFusedPairIcon(lead: pair.provider, heads: model.hydraHeadsProvider(of: pair), size: 15)
-                        .id(pair.id)
-                } else {
-                    ProviderIcon(provider: thread.provider, size: 14)
+                ProviderIcon(provider: thread.provider, size: 14)
+                if pair != nil {
+                    HydraMarkImage()
+                        .foregroundStyle(Chrome.primaryText.opacity(0.85))
+                        .frame(width: 12, height: 12)
                 }
                 if thread.fastMode, current?.supportsFast == true {
                     Image(systemName: "bolt.fill")
@@ -423,8 +421,10 @@ private struct HydraPairListRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                HydraFusedPairIcon(lead: pair.provider, heads: pair.headsProvider, size: 15, animates: false)
-                    .frame(minWidth: 18, alignment: .leading)
+                HydraMarkImage()
+                    .foregroundStyle(Chrome.primaryText)
+                    .frame(width: 14, height: 14)
+                    .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: title)
                         .font(.system(size: 14))
@@ -436,6 +436,15 @@ private struct HydraPairListRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 12)
+                if pair.sendsHeadsElsewhere {
+                    HStack(spacing: 3) {
+                        ProviderIcon(provider: pair.provider, size: 12)
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 7, weight: .semibold))
+                        ProviderIcon(provider: pair.headsProvider, size: 12)
+                    }
+                    .foregroundStyle(Chrome.secondaryText)
+                }
                 Image(systemName: "checkmark")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)
