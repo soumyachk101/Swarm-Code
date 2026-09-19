@@ -346,8 +346,11 @@ private struct GeneralSettingsPage: View {
                     }
                     ChromeRowDivider()
                     ChromeRow(title: "Notify when a turn finishes") {
-                    SettingsSwitch(isOn: $settings.notifyWhenFinished)
-                }
+                        SettingsSwitch(isOn: $settings.notifyWhenFinished)
+                    }
+                    .onChange(of: settings.notifyWhenFinished) { _, isOn in
+                        if isOn { model.requestNotificationPermission() }
+                    }
                 ChromeRowDivider()
                 ChromeRow(title: "Chime when a turn finishes", detail: "A soft chime, whether or not the thread is in view") {
                     SettingsSwitch(isOn: $settings.chimeWhenFinished)

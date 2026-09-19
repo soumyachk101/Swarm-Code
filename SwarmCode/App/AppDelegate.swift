@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         windows.showMain()
         windows.model.openThreadOnLaunch()
+        windows.model.requestNotificationPermission()
         if !windows.model.settings.hasSeenTour {
             Task { @MainActor in try? await Task.sleep(for: .milliseconds(700)); Tour.present(model: windows.model) }
         }
@@ -58,14 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        let threadIDString = notification.request.content.userInfo["threadID"] as? String
-        if let threadIDString, let notifiedID = UUID(uuidString: threadIDString) {
-            let isOpenChat = await MainActor.run {
-                NSApp.isActive && self.model?.selectedThreadID == notifiedID
-            }
-            if isOpenChat { return [] }
-        }
-        return [.banner, .sound]
+        [.banner, .sound, .list]
     }
 
     nonisolated func userNotificationCenter(

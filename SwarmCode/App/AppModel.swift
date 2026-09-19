@@ -115,7 +115,6 @@ final class AppModel {
     /// again every few minutes; it skips anything still running, so a busy chat is left alone.
     @ObservationIgnored private var hydraMergeSweepTask: Task<Void, Never>?
     @ObservationIgnored private var persistenceEnabled = true
-    @ObservationIgnored private var didRequestNotifications = false
 
     init() {
         settings = AppSettings()
@@ -1204,15 +1203,17 @@ final class AppModel {
         // whether or not the thread is in view.
         let chimed = settings.chimeWhenFinished && status != .interrupted
         if chimed { FinishChime.play() }
-        guard !isVisible, settings.notifyWhenFinished, let thread = thread(id) else { return }
+        if !isVisible {
+            NSApp.requestUserAttention(.informationalRequest)
+        }
+        guard settings.notifyWhenFinished, let thread = thread(id) else { return }
         let body = switch status {
         case .completed: "Finished."
         case .interrupted: "Stopped."
         case .failed: "Stopped with an error."
         case .running: ""
         }
-        // The chime has already sounded, so the banner stays quiet rather than doubling it.
-        notify(threadID: id, title: thread.title, body: body, sound: chimed ? nil : .default)
+        notify(threadID: id, title: thread.title, body: body, sound: .default)
     }
 
     func markRead(_ id: UUID) {
@@ -1238,24 +1239,33 @@ final class AppModel {
     }
 
     func requestNotificationPermission() {
-        guard !didRequestNotifications, !WebsiteCaptures.isEnabled else { return }
-        didRequestNotifications = true
+        guard !WebsiteCaptures.isEnabled else { return }
         Task {
-            _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge])
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            if settings.authorizationStatus == .notDetermined {
+                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+            }
         }
     }
 
     func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
         guard !WebsiteCaptures.isEnabled else { return }
-        if NSApp.isActive, let thread = thread(threadID), isOnScreen(thread) { return }
-        requestNotificationPermission()
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = sound
         content.userInfo = ["threadID": threadID.uuidString]
-        let request = UNNotificationRequest(identifier: threadID.uuidString, content: content, trigger: nil)
-        Task { try? await UNUserNotificationCenter.current().add(request) }
+        let identifier = "turn-\(threadID.uuidString)-\(Date.now.timeIntervalSince1970)"
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            if settings.authorizationStatus == .notDetermined {
+                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
+            }
+            try? await center.add(request)
+        }
     }
 
     func updateDockBadge() {
