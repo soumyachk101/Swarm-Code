@@ -4,6 +4,19 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.7.3] - 2026-09-19
+
+Swarm Code 1.7.3 fixes task completion notifications, ensuring system banners, audible alerts, and dock bounces trigger reliably whenever AI tasks finish. Apple silicon, macOS 26 or later.
+
+### Bug fixes
+- Task completion notifications: Fixed notifications being suppressed when the chat or window is active, ensuring completion banners trigger every time "Notify when a turn finishes" is enabled.
+- Notification alerts and sound: Restored system alert sounds for task completion notifications and added background dock bounces when turns finish out of view.
+- Unique notification requests: Assigned distinct notification request identifiers to prevent macOS Notification Center from silently updating existing alerts without re-alerting.
+- Early permission verification: Upfront notification authorization check on application launch and instant permission prompt upon enabling notifications in Settings.
+
+### Refinements
+- Streamlined notification presentation options to cleanly present banners and notification center history items.
+
 ## [1.7.2] - 2026-09-19
 
 Swarm Code 1.7.2 delivers complete visual sanitization across all website images, in-app tour assets, and documentation screenshots: replacing all residual Droppy Code logos, water-droplet app icons, and URLs with authentic Swarm Code golden bee branding, while strictly preserving genuine Hydra marks across toolbars and composers. Apple silicon, macOS 26 or later.

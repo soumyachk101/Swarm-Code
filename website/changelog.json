@@ -1,6 +1,30 @@
 {
-  "generated_at": "2026-09-19T09:24:06.109202+00:00",
+  "generated_at": "2026-09-19T15:22:48.167586+00:00",
   "releases": [
+    {
+      "version": "1.7.3",
+      "date": "2026-09-19",
+      "platform": "mac",
+      "summary": "Swarm Code 1.7.3 fixes task completion notifications, ensuring system banners, audible alerts, and dock bounces trigger reliably whenever AI tasks finish. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "Bug fixes",
+          "items": [
+            "Task completion notifications: Fixed notifications being suppressed when the chat or window is active, ensuring completion banners trigger every time \"Notify when a turn finishes\" is enabled.",
+            "Notification alerts and sound: Restored system alert sounds for task completion notifications and added background dock bounces when turns finish out of view.",
+            "Unique notification requests: Assigned distinct notification request identifiers to prevent macOS Notification Center from silently updating existing alerts without re-alerting.",
+            "Early permission verification: Upfront notification authorization check on application launch and instant permission prompt upon enabling notifications in Settings."
+          ]
+        },
+        {
+          "title": "Refinements",
+          "items": [
+            "Streamlined notification presentation options to cleanly present banners and notification center history items."
+          ]
+        }
+      ],
+      "thanks": []
+    },
     {
       "version": "1.7.2",
       "date": "2026-09-19",
