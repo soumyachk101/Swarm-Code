@@ -545,6 +545,22 @@ extension AppModel {
                 $0.tokens = max($0.tokens, live.hydraTokens)
             }
         }
+        if settings.chimeWhenFinished && status != .interrupted {
+            FinishChime.play()
+        }
+        NSApp.requestUserAttention(.informationalRequest)
+        if settings.notifyWhenFinished {
+            let agentName = info.displayName.isEmpty ? "Agent" : info.displayName
+            let title = head.title.isEmpty ? "\(agentName) · Task" : head.title
+            let outcomeText = switch status {
+            case .completed: "Finished."
+            case .failed: "Task failed."
+            case .interrupted: "Task stopped."
+            case .running: ""
+            }
+            let body = info.task.isEmpty ? outcomeText : "\(outcomeText) \(info.task)"
+            notify(threadID: id, title: title, body: body, sound: .default)
+        }
         // Opt-in: a finished head leaves the panel on its own, for the sidebar under its
         // lead, instead of waiting for "Clear finished heads". Running heads stay put. It
         // goes once its panel has played the head's finish (see `HydraPanel.finishHold`),

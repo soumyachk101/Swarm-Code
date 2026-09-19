@@ -694,9 +694,10 @@ extension AppModel {
         runtime?.hydraMergeNoteID = nil
         runtime?.appendHydraNote(title + "\n" + body, id: id)
         let onScreen = selectedThreadID == leadID
-        guard !(NSApp.isActive && onScreen) else { return }
-        updateThread(leadID) { $0.hasUnread = true }
-        updateDockBadge()
+        if !(NSApp.isActive && onScreen) {
+            updateThread(leadID) { $0.hasUnread = true }
+            updateDockBadge()
+        }
         if settings.notifyWhenFinished, let lead = thread(leadID) {
             notify(threadID: leadID, title: lead.title, body: title)
         }

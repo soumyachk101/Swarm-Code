@@ -1,4 +1,5 @@
 import AppKit
+import Security
 import SwiftUI
 import UserNotifications
 
@@ -1238,6 +1239,58 @@ final class AppModel {
         updateDockBadge()
     }
 
+    // MARK: - Notifications
+
+    /// Whether this app bundle is signed with a registered Apple Developer Team ID.
+    /// Ad-hoc signed builds (where TeamIdentifier is not set) have their UNUserNotificationCenter
+    /// banners silently discarded by macOS usernoted, requiring the AppleScript desktop route.
+    static var hasTeamID: Bool {
+        var code: SecCode?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return false }
+        var staticCode: SecStaticCode?
+        guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else { return false }
+        var info: CFDictionary?
+        guard SecCodeCopySigningInformation(staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dict = info as? [String: Any] else { return false }
+        guard let teamID = dict[kSecCodeInfoTeamIdentifier as String] as? String, !teamID.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    /// Delivers an immediate macOS desktop notification banner and sound via AppleScript standard additions.
+    /// Works reliably on all macOS versions without requiring Developer ID certificates or provisioning profiles.
+    static func deliverDesktopNotification(title: String, body: String, sound: Bool = true) {
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayTitle = cleanTitle.isEmpty ? "Swarm Code" : cleanTitle
+        let cleanBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayBody = cleanBody.isEmpty ? "Task finished." : cleanBody
+
+        func escapeAppleScript(_ string: String) -> String {
+            let escaped = string
+                .replacingOccurrences(of: "\\", with: "\\\\")
+                .replacingOccurrences(of: "\"", with: "\\\"")
+                .replacingOccurrences(of: "\n", with: " ")
+                .replacingOccurrences(of: "\r", with: " ")
+            return "\"\(escaped)\""
+        }
+
+        var scriptParts = [
+            "display notification \(escapeAppleScript(displayBody))",
+            "with title \(escapeAppleScript(displayTitle))"
+        ]
+        if sound {
+            scriptParts.append("sound name \"default\"")
+        }
+        let scriptSource = scriptParts.joined(separator: " ")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            var error: NSDictionary?
+            let script = NSAppleScript(source: scriptSource)
+            script?.executeAndReturnError(&error)
+        }
+    }
+
     func requestNotificationPermission() {
         guard !WebsiteCaptures.isEnabled else { return }
         Task {
@@ -1247,6 +1300,10 @@ final class AppModel {
                 _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
             }
         }
+    }
+
+    func sendTestNotification() {
+        notify(threadID: UUID(), title: "Swarm Code", body: "Task notifications are working perfectly!", sound: .default)
     }
 
     func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
@@ -1264,7 +1321,16 @@ final class AppModel {
             if settings.authorizationStatus == .notDetermined {
                 _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
             }
-            try? await center.add(request)
+            if Self.hasTeamID && (settings.authorizationStatus == .authorized || settings.authorizationStatus == .notDetermined) {
+                do {
+                    try await center.add(request)
+                    return
+                } catch {
+                    // Fall back to desktop notification
+                }
+            }
+            // Guaranteed desktop delivery for ad-hoc builds or when UNUserNotificationCenter cannot display
+            Self.deliverDesktopNotification(title: title, body: body, sound: sound != nil)
         }
     }
 

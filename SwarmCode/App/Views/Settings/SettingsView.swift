@@ -346,10 +346,26 @@ private struct GeneralSettingsPage: View {
                     }
                     ChromeRowDivider()
                     ChromeRow(title: "Notify when a turn finishes") {
-                        SettingsSwitch(isOn: $settings.notifyWhenFinished)
+                        HStack(spacing: 8) {
+                            Button("Test") {
+                                model.sendTestNotification()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.12))
+                            .clipShape(RoundedRectangle(cornerRadius: 5))
+
+                            SettingsSwitch(isOn: $settings.notifyWhenFinished)
+                        }
                     }
                     .onChange(of: settings.notifyWhenFinished) { _, isOn in
-                        if isOn { model.requestNotificationPermission() }
+                        if isOn {
+                            model.requestNotificationPermission()
+                            model.sendTestNotification()
+                        }
                     }
                 ChromeRowDivider()
                 ChromeRow(title: "Chime when a turn finishes", detail: "A soft chime, whether or not the thread is in view") {
