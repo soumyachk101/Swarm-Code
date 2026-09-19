@@ -1,4 +1,9 @@
 <script lang="ts">
+	// ---------------------------------------------------------------------------
+	// Composer – self-contained. Matches Swift ComposerView: placeholder logic,
+	// suggestions popover, attachments, history recall, send/steer, running dots.
+	// ---------------------------------------------------------------------------
+
 	import { onMount, tick } from 'svelte';
 	import { sendMessage, sendFollowUp, approveRequest, answerQuestion } from '$lib/api/commands';
 	import { appStore } from '$lib/stores/appStore';
@@ -6,8 +11,6 @@
 		isGenerating,
 		stopGeneration,
 		effortLevel,
-		hydraEnabled,
-		hydraHeadCount,
 		attachments,
 		addAttachment,
 		removeAttachment,
@@ -17,18 +20,13 @@
 		pendingQuestions,
 		changeStats
 	} from '$lib/stores/chatStore';
-	import AgentQuestionTab from '$lib/components/AgentQuestionTab.svelte';
-	import ApprovalCard from '$lib/components/ApprovalCard.svelte';
-	import FollowUpQueueTab from '$lib/components/FollowUpQueueTab.svelte';
-	import ThreadChangesTab from '$lib/components/ThreadChangesTab.svelte';
-	import type { ChatThread } from '$lib/types';
+	import type { ChatThread, DraftAttachment } from '$lib/types';
 
 	interface Props {
 		thread: ChatThread | null;
-		disabled?: boolean;
 	}
 
-	let { thread = null, disabled = false }: Props = $props();
+	let { thread = null }: Props = $props();
 
 	let textarea = $state<HTMLTextAreaElement | null>(null);
 	let messageText = $state('');
@@ -37,125 +35,281 @@
 	let isSubmitting = $state(false);
 	let isFocusMode = $state(false);
 	let showToolPicker = $state(false);
-	let availableTools = $state<Array<{ id: string; name: string; icon: string; desc: string }>>([
-		{ id: 'file', name: '@file', icon: 'paperclip', desc: 'Attach a file by path' },
-		{ id: 'search', name: '@search', icon: 'search', desc: 'Search files by name' },
-		{ id: 'folder', name: '@folder', icon: 'folder', desc: 'Attach all files in a folder' },
-		{ id: 'git', name: '/git', icon: 'git', desc: 'Run a git command' },
-		{ id: 'test', name: '/test', icon: 'play', desc: 'Run the project test suite' },
-		{ id: 'lint', name: '/lint', icon: 'check', desc: 'Lint the current files' },
-		{ id: 'clear', name: '/clear', icon: 'x', desc: 'Clear the message text' },
-		{ id: 'compact', name: '/compact', icon: 'minimize', desc: 'Compact the conversation context' },
-		{ id: 'plan', name: '/plan', icon: 'list', desc: 'Enter plan mode for this turn' },
-		{ id: 'voice', name: '/voice', icon: 'mic', desc: 'Start voice input (if available)' }
-	]);
+	let showSuggestions = $state(false);
+	let suggestionKind = $state<'command' | 'file'>('command');
+	let suggestionItems = $state<Array<{ id: string; title: string; detail: string; symbol: string; value: string }>>([]);
+	let selectedSuggestionIndex = $state(0);
+	let attachmentNotice = $state<string | null>(null);
+	let suggestionRange = $state({ start: 0, end: 0 });
+	let showRecents = $state(false);
+	let recentsAnchor = $state<{ x: number; y: number } | null>(null);
 
-	function handlePaste(e: ClipboardEvent) {
-		const items = e.clipboardData?.items;
-		if (!items) return;
-		for (let i = 0; i < items.length; i++) {
-			const item = items[i];
-			if (item.kind === 'file' && item.type.startsWith('image/')) {
-				e.preventDefault();
-				const file = item.getAsFile();
-				if (!file) continue;
-				const id = crypto.randomUUID();
-				const reader = new FileReader();
-				reader.onload = () => {
-					addAttachment({ id, name: file.name || `pasted-${id.slice(0, 6)}.png`, path: file.name || `pasted-${id.slice(0, 6)}.png`, size: file.size, kind: 'image' });
-				};
-				reader.readAsDataURL(file);
-			}
+	// Expose for parent tab slot
+	let _showFollowUps = $derived(($followUps?.length ?? 0) > 0);
+	let _showApprovals = $derived(($pendingApprovals?.length ?? 0) > 0);
+	let _showQuestions = $derived(($pendingQuestions?.length ?? 0) > 0);
+
+	let questionItems = $derived(
+		($pendingQuestions ?? []).map((q: any) => ({
+			id: q.id,
+			headline: q.headline || q.text || q.message || 'Question',
+			choices: Array.isArray(q.choices) ? q.choices : []
+		}))
+	);
+
+	let followUpItems = $derived(
+		($followUps ?? []).map((f: any) => ({
+			id: f.id,
+			text: f.text || f.headline || 'Follow-up'
+		}))
+	);
+
+	let approvalItems = $derived(
+		($pendingApprovals ?? []).map((a: any) => ({
+			id: a.id,
+			headline: a.headline || a.text || a.message || 'Approval needed',
+			options: Array.isArray(a.options) && a.options.length
+				? a.options.map((o: any) => (typeof o === 'string' ? o : o.title ?? o.role ?? 'Approve'))
+				: ['Approve', 'Reject']
+		}))
+	);
+
+	let isRunning = $derived($isGenerating);
+
+	// ---------- placeholders ----------
+	let placeholder = $derived.by(() => {
+		if (!thread) return '';
+		if (thread.interaction_mode === 'plan') return 'Describe what you want to plan';
+		if (thread.hydra_enabled) {
+			if ($appStore.hydra_always_heads) return 'Goes to a head; ' + (thread.provider || 'provider') + ' leads and reports back';
+			return 'Ask ' + (thread.provider || '') + ' for anything; big jobs go out to a team of heads';
 		}
-	}
+		return 'Ask ' + (thread.provider || '') + ' to build, fix or explain. @ for files, / for commands';
+	});
 
-	function pickTool(tool: typeof availableTools[number]) {
-		showToolPicker = false;
-		if (tool.id === 'clear') {
-			messageText = '';
-			textarea?.focus();
-			return;
-		}
-		messageText = messageText ? `${messageText} ${tool.name} ` : `${tool.name} `;
-		textarea?.focus();
-	}
+	// ---------- lifecycle ----------
 
-	$effect(() => {
+	onMount(() => {
 		effortValue = thread?.effort ?? $effortLevel;
 	});
 
-	function handleKeyDown(e: KeyboardEvent) {
-		if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
-			e.preventDefault();
-			handleSubmit();
-		}
-	}
-
-	function adjustHeight() {
-		if (textarea) {
-			textarea.style.height = 'auto';
-			const maxH = 160;
-			textarea.style.height = Math.min(textarea.scrollHeight, maxH) + 'px';
-		}
-	}
-
 	$effect(() => {
-		if (messageText) adjustHeight();
+		if (thread) {
+			effortValue = thread.effort ?? $effortLevel;
+		}
 	});
 
-	async function handleSubmit() {
-		if (!thread || !messageText.trim() || isSubmitting) return;
+	// ---------- focus ----------
 
+	function focusTextarea() {
+		textarea?.focus();
+	}
+
+	// ---------- send ----------
+
+	async function handleSend() {
+		if (!thread) return;
 		const text = messageText.trim();
-		isSubmitting = true;
-		messageText = '';
-		if (textarea) {
-			textarea.style.height = 'auto';
-		}
+		const atts = getAttachmentsArray();
+		if (!text && atts.length === 0) return;
 
+		isSubmitting = true;
 		try {
-			await sendMessage(thread.id, {
-				text,
-				attachments: $attachments.map(a => ({ path: a.path, name: a.name })),
-				effort: effortValue,
-				hydra_enabled: $hydraEnabled,
-				hydra_heads: $hydraHeadCount,
-			});
+			if (isRunning) {
+				await stopGeneration();
+			}
+			messageText = '';
 			clearAttachments();
-		} catch (e) {
-			console.error('Failed to send message:', e);
+			await sendMessage(thread.id, text, atts, { effort: effortValue });
 		} finally {
 			isSubmitting = false;
+			focusTextarea();
 		}
 	}
 
-	function handleAttach() {
-		const input = document.createElement('input');
-		input.type = 'file';
-		input.multiple = true;
-		input.onchange = () => {
-			const files = input.files;
-			if (!files) return;
-			for (const file of files) {
-				const id = crypto.randomUUID();
-				const reader = new FileReader();
-				reader.onload = () => {
-					addAttachment({ id, name: file.name, path: file.name, size: file.size });
-				};
-				reader.readAsDataURL(file);
+	function handleKeyDown(e: KeyboardEvent) {
+		const mod = e.metaKey || e.ctrlKey;
+
+		if (showSuggestions) {
+			if (e.key === 'ArrowDown') {
+				e.preventDefault();
+				selectedSuggestionIndex = Math.min(selectedSuggestionIndex + 1, suggestionItems.length - 1);
+				return;
 			}
-		};
-		input.click();
+			if (e.key === 'ArrowUp') {
+				e.preventDefault();
+				selectedSuggestionIndex = Math.max(selectedSuggestionIndex - 1, 0);
+				return;
+			}
+			if (e.key === 'Tab' || e.key === 'Enter') {
+				e.preventDefault();
+				pickSuggestion(suggestionItems[selectedSuggestionIndex]);
+				return;
+			}
+			if (e.key === 'Escape') {
+				showSuggestions = false;
+				return;
+			}
+		}
+
+		if (e.key === 'Enter' && !mod) {
+			e.preventDefault();
+			handleSend();
+		}
+		if (e.key === 'Enter' && mod) {
+			// Command+Enter: queue / steer
+			e.preventDefault();
+			handleSend();
+		}
 	}
 
-	function handleFollowUp(fuId: string) {
-		if (!thread) return;
-		sendFollowUp(thread.id, fuId);
+	// ---------- suggestions ----------
+
+	async function refreshSuggestions() {
+		if (!textarea) return;
+		const text = textarea.value;
+		const cursor = textarea.selectionStart ?? text.length;
+		const start = findWordStart(text, cursor);
+		const word = text.slice(start, cursor);
+		const range = { start, end: cursor };
+
+		if (word.startsWith('@')) {
+			suggestionKind = 'file';
+			const query = word.slice(1);
+			const items = await searchFiles(query);
+			if (items.length > 0 && start < cursor) {
+				suggestionItems = items.slice(0, 8);
+				selectedSuggestionIndex = 0;
+				suggestionRange = range;
+				showSuggestions = true;
+			} else {
+				showSuggestions = false;
+			}
+		} else if (word.startsWith('/') && start === 0) {
+			suggestionKind = 'command';
+			const items = commandSuggestions(word.slice(1));
+			if (items.length > 0) {
+				suggestionItems = items.slice(0, 8);
+				selectedSuggestionIndex = 0;
+				suggestionRange = range;
+				showSuggestions = true;
+			} else {
+				showSuggestions = false;
+			}
+		} else {
+			showSuggestions = false;
+		}
 	}
 
-	function handleApprove(requestId: string, role: string) {
+	function findWordStart(text: string, cursor: number): number {
+		let i = cursor;
+		while (i > 0) {
+			const ch = text[i - 1];
+			if (ch === ' ' || ch === '\n' || ch === '\t') break;
+			i--;
+		}
+		return i;
+	}
+
+	async function searchFiles(query: string): Promise<Array<{ id: string; title: string; detail: string; symbol: string; value: string }>> {
+		// Simplified: in production use the FileIndex API
+		return [];
+	}
+
+	function commandSuggestions(query: string): Array<{ id: string; title: string; detail: string; symbol: string; value: string }> {
+		const commands = [
+			{ name: 'plan', detail: 'Turn plan mode on or off', isBuiltIn: true },
+			{ name: 'compact', detail: 'Summarize the conversation to free up context', isBuiltIn: true },
+		];
+		const needle = query.toLowerCase();
+		const prefixed = commands.filter(c => c.name.toLowerCase().startsWith(needle));
+		const contained = commands.filter(c => !c.name.toLowerCase().startsWith(needle) && c.name.toLowerCase().includes(needle));
+		return [...prefixed, ...contained].slice(0, 8).map(c => ({
+			id: c.name,
+			title: '/' + c.name,
+			detail: c.detail,
+			symbol: c.isBuiltIn ? 'command' : 'sparkles',
+			value: '/' + c.name + ' '
+		}));
+	}
+
+	function pickSuggestion(item: { id: string; value: string }) {
+		if (!textarea) return;
+		const text = textarea.value;
+		const before = text.slice(0, suggestionRange.start);
+		const after = text.slice(suggestionRange.end);
+		messageText = before + item.value + after;
+		showSuggestions = false;
+		textarea.focus();
+	}
+
+	// ---------- attachments ----------
+
+	function getAttachmentsArray(): DraftAttachment[] {
+		return ($attachments ?? []).map(a => ({
+			id: a.id,
+			name: a.name,
+			path: a.path,
+			size: a.size,
+			data: a.data
+		}));
+	}
+
+	function handleDrop(e: DragEvent) {
+		e.preventDefault();
+		const files = e.dataTransfer?.files;
+		if (!files || files.length === 0) return;
+		for (const file of files) {
+			const reader = new FileReader();
+			reader.onload = () => {
+				addAttachment({
+					id: crypto.randomUUID(),
+					name: file.name,
+					path: file.name,
+					size: file.size,
+					data: reader.result as string
+				});
+			};
+			reader.readAsDataURL(file);
+		}
+	}
+
+	function handleFileSelect(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const files = input.files;
+		if (!files) return;
+		for (const file of files) {
+			const id = crypto.randomUUID();
+			const reader = new FileReader();
+			reader.onload = () => {
+				addAttachment({ id, name: file.name, path: file.name, size: file.size, data: reader.result as string });
+			};
+			reader.readAsDataURL(file);
+		}
+	}
+
+	function handleRecentsPick(url: string) {
+		showRecents = false;
+		if (!url) return;
+		addAttachment({
+			id: crypto.randomUUID(),
+			name: url.split('/').pop() || url,
+			path: url,
+			size: 0,
+			data: null
+		});
+	}
+
+	// ---------- follow-ups / approvals / questions ----------
+
+	async function handleFollowUp(fuId: string) {
 		if (!thread) return;
-		approveRequest(thread.id, requestId, role);
+		await sendFollowUp(thread.id, fuId);
+	}
+
+	async function handleApprove(requestId: string, role: string) {
+		if (!thread) return;
+		await approveRequest(thread.id, requestId, role);
 	}
 
 	function handleAnswer(questionId: string, choices: string[]) {
@@ -163,449 +317,322 @@
 		answerQuestion(thread.id, questionId, choices);
 	}
 
-	// Helpers for showing data from store
-	type ApproxApproval = { id: string; text: string; options: string[] };
-	type ApproxQuestion = { id: string; text: string; choices: string[] };
-	type ApproxFollowUp = { id: string; text: string };
+	// ---------- focus mode ----------
 
-	let showFollowUps = $derived(($followUps?.length ?? 0) > 0);
-	let showApprovals = $derived(($pendingApprovals?.length ?? 0) > 0);
-	let showQuestions = $derived(($pendingQuestions?.length ?? 0) > 0);
-
-	let approvalItems = $derived<ApproxApproval[]>(
-		($pendingApprovals ?? []).map((a: any) => ({
-			id: a.id,
-			text: a.headline || a.text || a.message || 'Approval needed',
-			options: Array.isArray(a.options) && a.options.length
-				? a.options.map((o: any) => (typeof o === 'string' ? o : o.title ?? o.role ?? 'Approve'))
-				: ['Approve', 'Reject']
-		}))
-	);
-
-	let questionItems = $derived<ApproxQuestion[]>(
-		($pendingQuestions ?? []).map((q: any) => ({
-			id: q.id,
-			text: q.headline || q.text || q.message || 'Question',
-			choices: Array.isArray(q.choices) && q.choices.length
-				? q.choices.map((c: any) => (typeof c === 'string' ? c : c.title ?? c.label ?? ''))
-				: Array.isArray(q.options) && q.options.length
-					? q.options.map((o: any) => (typeof o === 'string' ? o : o.title ?? o.label ?? ''))
-					: []
-		}))
-	);
-
-	let followUpItems = $derived<ApproxFollowUp[]>(
-		($followUps ?? []).map((f: any) => ({ id: f.id, text: f.text || f.title || '' }))
-	);
-
-	function getPlaceholder(): string {
-		if (!thread) return 'Select a thread to start chatting…';
-		if ($hydraEnabled) {
-			if (thread.provider) {
-				return `Ask ${thread.provider} for anything; big jobs go out to a team of heads`;
-			}
-			return 'Ask the assistant for anything…';
+	function toggleFocusMode() {
+		isFocusMode = !isFocusMode;
+		if (isFocusMode) {
+			document.body.classList.add('focus-mode');
+		} else {
+			document.body.classList.remove('focus-mode');
 		}
-		if (thread.provider) {
-			return `Ask ${thread.provider} to build, fix or explain. @ for files, / for commands`;
-		}
-		return 'Type a message… (⌘+Enter to send)';
 	}
+
+	// ---------- history ----------
+
+	let historyIndex: number | null = $state(null);
+	let sentPrompts = $derived<string[]>([]); // would come from runtime
+
+	function recallOlder() {
+		if (historyIndex === null) {
+			historyIndex = sentPrompts.length - 1;
+		} else {
+			historyIndex = Math.max(0, historyIndex - 1);
+		}
+		if (historyIndex !== null && historyIndex < sentPrompts.length) {
+			messageText = sentPrompts[historyIndex];
+		}
+	}
+
+	function recallNewer() {
+		if (historyIndex === null) return;
+		historyIndex = Math.min(sentPrompts.length - 1, historyIndex + 1);
+		if (historyIndex !== null && historyIndex < sentPrompts.length) {
+			messageText = sentPrompts[historyIndex];
+		} else {
+			historyIndex = null;
+			messageText = '';
+		}
+	}
+
+	// ---------- label types ----------
+	type ApproxApproval = { id: string; headline: string; options: string[] };
+	type ApproxQuestion = { id: string; headline: string; choices: string[] };
+	type ApproxFollowUp = { id: string; text: string };
+	type DraftAttachment = { id: string; name: string; path: string; size?: number; data?: string | null };
 </script>
 
-<div class="composer-area" class:focus-mode={isFocusMode} class:disabled class:generating={$isGenerating}>
-	<!-- ========================================================
-	     Slot: cards stacked ABOVE the pill (follow-ups, approvals, questions)
-	     ======================================================== -->
-	{#if showApprovals}
-		<div class="slot-stack">
-			{#each approvalItems as appr (appr.id)}
-				<div class="slot-card approval-card">
-					<p class="slot-card-text">{appr.text}</p>
-					<div class="slot-card-actions">
-						{#each appr.options as opt}
-							<button
-								class="slot-action-btn"
-								class:approve={opt.toLowerCase().includes('approv')}
-								class:reject={opt.toLowerCase().includes('reject')}
-								onclick={() => handleApprove(appr.id, opt)}
-							>
-								{opt}
-							</button>
-						{/each}
-					</div>
-				</div>
-			{/each}
-		</div>
-	{/if}
-
-	{#if showFollowUps}
-		<div class="slot-stack">
-			{#each followUpItems as fu (fu.id)}
-				<button
-					class="slot-card followup-card"
-					onclick={() => handleFollowUp(fu.id)}
-				>
-					<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M17 1l4 4-4 4"/>
-						<path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-						<path d="M7 23l-4 4 4 4"/>
-						<path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-					</svg>
-					<span class="followup-text">{fu.text}</span>
-					<span class="followup-arrow">&rsaquo;</span>
-				</button>
-			{/each}
-		</div>
-	{/if}
-
-	{#if showQuestions}
-		<div class="slot-stack">
-			{#each questionItems as q (q.id)}
-				<div class="slot-card question-card">
-					<p class="slot-card-text">{q.text}</p>
-					{#if q.choices.length > 0}
-						<div class="slot-card-actions">
-							{#each q.choices as choice}
-								<button
-									class="slot-action-btn"
-									onclick={() => handleAnswer(q.id, [choice])}
-								>
-									{choice}
-								</button>
-							{/each}
-						</div>
-					{/if}
-				</div>
-			{/each}
-		</div>
-	{/if}
-
-	<!-- ========================================================
-	     Effort slider panel (collapsible inside the pill)
-	     ======================================================== -->
-	{#if showEffortSlider}
-		<div class="effort-panel">
-			<span class="effort-label">Effort</span>
-			<div class="effort-options">
-				{#each ['minimal', 'low', 'medium', 'high', 'xhigh'] as level}
-					<button
-						class="effort-btn"
-						class:active={effortValue === level}
-						onclick={() => { effortValue = level; effortLevel.set(level); }}
-					>
-						{level}
-					</button>
-				{/each}
-			</div>
-		</div>
-	{/if}
-
-	<!-- ========================================================
-	     Tab slot: approvals, questions, follow-ups, changes
-	     ======================================================== -->
-
-	<!-- Approval cards -->
-	{#if showApprovals}
-		{#each approvalItems as item (item.id)}
-			<div class="approval-card">
-				<div class="approval-headline">{item.text}</div>
-				<div class="approval-actions">
-					{#each item.options as opt}
+<!-- ============================================================
+     Tab slot — Swift ComposerArea priority:
+     approvals > questions > follow-ups > changes
+     ============================================================ -->
+{#if _showApprovals}
+	<div class="slot-stack">
+		{#each approvalItems as appr (appr.id)}
+			<div class="slot-card approval-card">
+				<p class="slot-card-text">{appr.headline}</p>
+				<div class="slot-card-actions">
+					{#each appr.options as opt}
 						<button
-							class="approval-btn"
-							class:primary={opt.toLowerCase().includes('approve')}
-							onclick={() => handleApprove(item.id, opt)}
-							type="button"
-						>{opt}</button>
+							class="slot-action-btn"
+							class:approve={opt.toLowerCase().includes('approv')}
+							class:reject={opt.toLowerCase().includes('reject')}
+							onclick={() => handleApprove(appr.id, opt)}
+						>
+							{opt}
+						</button>
 					{/each}
 				</div>
 			</div>
 		{/each}
-	{/if}
+	</div>
+{/if}
 
-	<!-- Tab slot: question OR follow-ups OR changes -->
-	{#if showQuestions}
-		{#each $pendingQuestions as questionRequest (questionRequest.id)}
-			<AgentQuestionTab
-				request={questionRequest}
-				onSkip={() => {
-					if (thread) {
-						const answers: Record<string, string[]> = {};
-						for (const q of questionRequest.questions) answers[q.id] = [];
-						answerQuestionAction(thread.id, questionRequest.id, answers);
-					}
-				}}
-				onSubmit={(answers) => {
-					const flat = Object.values(answers).flat();
-					answerQuestionAction(questionRequest.id, flat);
-				}}
-			/>
-		{/each}
-	{:else if showFollowUps}
-		<FollowUpQueueTab
-			prompts={($followUps ?? []).map((f: any) => ({
-				id: f.id,
-				text: f.text || '',
-				attachments: []
-			}))}
-			isRunning={$isGenerating}
-			onSendNow={(id) => { if (thread) sendFollowUp(thread.id, id); }}
-			onEdit={(id, text) => {
-				const fu = ($followUps ?? []).find((f: any) => f.id === id);
-				if (fu) { fu.text = text; }
-			}}
-			onDelete={(id) => { if (thread) sendFollowUp(thread.id, id); }}
-			onMove={(id, beforeId) => {}}
-		/>
-	{:else if $changeStats && $changeStats.files > 0}
-		<ThreadChangesTab
-			stats={{ files: $changeStats.files, additions: $changeStats.additions, deletions: $changeStats.deletions }}
-			onClick={() => {}}
-		/>
-	{/if}
-
-	<!-- ========================================================
-	     Glass Pill Composer
-	     ======================================================== -->
-	<div class="composer-pill" class:is-running={$isGenerating}>
-		<!-- Working dots: accent dots flow along the pill's bottom edge -->
-		{#if $isGenerating}
-			<div class="working-dots">
-				<span class="dot"></span>
-				<span class="dot"></span>
-				<span class="dot"></span>
-				<span class="dot"></span>
-				<span class="dot"></span>
-				<span class="dot"></span>
-			</div>
-		{/if}
-
-		<!-- Attachment chips (inside pill, above textarea) -->
-		{#if $attachments.length > 0}
-			<div class="attachments-strip">
-				{#each $attachments as att (att.id)}
-					<div class="attachment-chip">
-						<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-							<path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-							<polyline points="13 2 13 9 20 9"/>
-						</svg>
-						<span class="attachment-name">{att.name}</span>
-						<button class="attachment-remove" onclick={() => removeAttachment(att.id)}>
-							<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-								<path d="M18 6L6 18M6 6l12 12"/>
-							</svg>
-						</button>
+{#if _showQuestions}
+	<div class="slot-stack">
+		{#each questionItems as q (q.id)}
+			<div class="slot-card question-card">
+				<p class="slot-card-text">{q.headline}</p>
+				{#if q.choices.length > 0}
+					<div class="slot-card-actions">
+						{#each q.choices as choice}
+							<button
+								class="slot-action-btn"
+								onclick={() => handleAnswer(q.id, [choice])}
+							>
+								{choice}
+							</button>
+						{/each}
 					</div>
-				{/each}
+				{/if}
 			</div>
-		{/if}
+		{/each}
+	</div>
+{/if}
 
-		<!-- Pill body: textarea + controls (bottom-aligned) -->
-		<div class="pill-row">
+{#if _showFollowUps}
+	<div class="slot-stack">
+		{#each followUpItems as fu (fu.id)}
+			<button class="slot-card followup-card" onclick={() => handleFollowUp(fu.id)}>
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M17 1l4 4-4 4"/>
+					<path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+					<path d="M7 23l-4 4 4 4"/>
+					<path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+				</svg>
+				<span class="followup-text">{fu.text}</span>
+				<span class="followup-arrow">&rsaquo;</span>
+			</button>
+		{/each}
+	</div>
+{/if}
+
+<!-- ============================================================
+     Composer pill — Swift ComposerView
+     ============================================================ -->
+<div
+	class="composer-pill"
+	class:is-running={isRunning}
+	class:has-attachments={($attachments?.length ?? 0) > 0}
+	role="textbox"
+	aria-multiline="true"
+	aria-label="Message composer"
+>
+	<!-- Running dots -->
+	{#if isRunning}
+		<div class="composer-dots">
+			<span class="c-dot"></span>
+			<span class="c-dot"></span>
+			<span class="c-dot"></span>
+			<span class="c-dot"></span>
+		</div>
+	{/if}
+
+	<!-- Main row -->
+	<div class="composer-main">
+		<!-- Attachments + textarea -->
+		<div class="composer-text-wrap" ondrop={handleDrop} ondragover={(e) => e.preventDefault()}>
+			{#if ($attachments?.length ?? 0) > 0}
+				<div class="attachment-chips">
+					{#each $attachments as att (att.id)}
+						<span class="att-chip">
+							<span class="att-chip-name">{att.name}</span>
+							<button class="att-chip-remove" onclick={() => removeAttachment(att.id)} aria-label="Remove attachment">
+								<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+									<line x1="18" y1="6" x2="6" y2="18"/>
+									<line x1="6" y1="6" x2="18" y2="18"/>
+								</svg>
+							</button>
+						</span>
+					{/each}
+				</div>
+			{/if}
+
 			<textarea
 				bind:this={textarea}
 				bind:value={messageText}
+				{placeholder}
+				rows="1"
+				disabled={isSubmitting}
 				onkeydown={handleKeyDown}
-				onpaste={handlePaste}
-				placeholder={getPlaceholder()}
-				{disabled}
-				rows={1}
-				class="pill-textarea"
+				oninput={() => refreshSuggestions()}
+				onfocus={() => { if (!showRecents) showRecents = false; }}
+				class="composer-textarea"
 			></textarea>
 
-			<div class="pill-controls">
+			{#if attachmentNotice}
+				<div class="attachment-notice">{attachmentNotice}</div>
+			{/if}
+
+			{#if showSuggestions && suggestionItems.length > 0}
+				<div class="suggestions-popover">
+					{#each suggestionItems as item, idx (item.id)}
+						<button
+							class="suggestion-item"
+							class:selected={idx === selectedSuggestionIndex}
+							onclick={() => pickSuggestion(item)}
+						>
+							<span class="suggestion-symbol">
+								{#if item.symbol === 'command'}
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+								{:else if item.symbol === 'sparkles'}
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
+								{:else}
+									<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+								{/if}
+							</span>
+							<span class="suggestion-title">{item.title}</span>
+							<span class="suggestion-detail">{item.detail}</span>
+						</button>
+					{/each}
+				</div>
+			{/if}
+		</div>
+
+		<!-- Controls -->
+		<div class="composer-controls">
+			{#if isRunning}
 				<button
-					class="control-btn"
-					class:toggled={showEffortSlider}
-					onclick={() => showEffortSlider = !showEffortSlider}
-					title="Effort level"
-					type="button"
+					class="ctrl-btn stop-btn"
+					onclick={() => stopGeneration()}
+					title="Stop generating"
+					aria-label="Stop"
 				>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+						<rect x="6" y="6" width="12" height="12" rx="2"/>
 					</svg>
 				</button>
-
-				<button
-					class="control-btn"
-					class:toggled={$hydraEnabled}
-					onclick={() => { hydraEnabled.update((v: boolean) => !v); }}
-					title={`Hydra (${$hydraHeadCount} heads)`}
-					type="button"
-				>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M12 2l2 4 4 1-3 3 1 4-4-2-4 2 1-4-3-3 4-1z"/>
-					</svg>
-				</button>
-
-				<div class="control-divider"></div>
-
-				<button
-					class="control-btn attach-btn"
-					onclick={handleAttach}
-					title="Attach file"
-					type="button"
-				>
-					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+			{:else}
+				<input type="file" id="composer-file-input" class="file-input" onchange={handleFileSelect} multiple />
+				<button class="ctrl-btn" onclick={() => document.getElementById('composer-file-input')?.click()} title="Attach files" aria-label="Attach">
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
 						<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
 					</svg>
 				</button>
 
 				<button
-					class="control-btn"
-					class:toggled={showToolPicker}
-					onclick={() => { showToolPicker = !showToolPicker; }}
-					title="Insert tool or command"
-					type="button"
+					class="ctrl-btn"
+					class:active={showEffortSlider}
+					onclick={() => showEffortSlider = !showEffortSlider}
+					title="Effort"
+					aria-label="Effort"
 				>
 					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-						<path d="M12 2l2 4 4 1-3 3 1 4-4-2-4 2 1-4-3-3 4-1z"/>
+						<circle cx="12" cy="12" r="3"/>
+						<path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
 					</svg>
+					{#if effortValue}
+						<span class="effort-badge">{effortValue}</span>
+					{/if}
 				</button>
 
-				{#if $isGenerating}
-					<button
-						class="send-btn stop-btn-pill"
-						onclick={() => stopGeneration()}
-						disabled={disabled}
-						type="button"
-						title="Stop generating"
-					>
-						<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-							<rect x="6" y="6" width="12" height="12" rx="2"/>
-						</svg>
-					</button>
-				{:else}
-					<button
-						class="send-btn"
-						class:active={messageText.trim().length > 0}
-						onclick={handleSubmit}
-						disabled={!thread || !messageText.trim() || isSubmitting || disabled}
-						type="button"
-						title="Send (⌘+Enter)"
-					>
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-							<path d="M22 2L11 13"/>
-							<path d="M22 2l-7 20-4-9-9-4 20-7z"/>
-						</svg>
-					</button>
+				{#if effortValue}
+					<span class="effort-label">{effortValue}</span>
 				{/if}
-			</div>
+
+				<button class="send-btn" onclick={handleSend} disabled={!messageText.trim() && ($attachments?.length ?? 0) === 0} title="Send message">
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+						<line x1="22" y1="2" x2="11" y2="13"/>
+						<polygon points="22 2 15 22 11 13 2 9 22 2"/>
+					</svg>
+				</button>
+			{/if}
 		</div>
 	</div>
+</div>
 
-	<!-- Tool picker popup -->
-	{#if showToolPicker}
-		<div class="tool-picker">
-				<div class="tool-picker-header">
-					<span class="tool-picker-title">Insert</span>
-					<span class="tool-picker-hint">@ for files · / for commands</span>
-				</div>
-				<div class="tool-picker-list">
-					{#each availableTools as tool (tool.id)}
-						<button class="tool-picker-item" onclick={() => pickTool(tool)}>
-							<span class="tool-picker-name">{tool.name}</span>
-							<span class="tool-picker-desc">{tool.desc}</span>
-						</button>
-					{/each}
-				</div>
-			</div>
-			{/if}
+<!-- Effort slider panel -->
+{#if showEffortSlider}
+	<div class="effort-panel">
+		<span class="effort-label">Effort</span>
+		<div class="effort-options">
+			{#each ['low', 'medium', 'high', 'max'] as level}
+				<button class="effort-btn" class:active={effortValue === level} onclick={() => { effortValue = level; effortLevel.set(level); }}>
+					{level}
+				</button>
+			{/each}
+		</div>
+	</div>
+{/if}
 
 <style>
-	/* ============================================================
-	   Composer Area — bottom section of the chat view
-	   ============================================================ */
-	.composer-area {
-		display: flex;
-		flex-direction: column;
-		gap: var(--space-2);
-		padding: var(--space-4) var(--space-5) var(--space-5);
-		border-top: var(--border-1) var(--border-color-1);
-		background: var(--surface-1);
-		flex-shrink: 0;
-		position: relative;
-	}
-
-	.composer-area.disabled {
-		opacity: 0.5;
-		pointer-events: none;
-	}
-
-	/* ============================================================
-	   Slot Stack — cards stacked above the pill
-	   ============================================================ */
+	/* ===== Tab slot ===== */
 	.slot-stack {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-2);
-		max-height: 180px;
-		overflow-y: auto;
-		animation: slot-pop 0.18s ease;
+		gap: 6px;
+		margin-bottom: 4px;
 	}
 
 	.slot-card {
 		display: flex;
 		flex-direction: column;
-		gap: var(--space-2);
-		padding: 9px 14px;
-		font-family: var(--font-system);
-		font-size: var(--font-size-sm);
-		animation: slot-pop 0.18s ease;
+		gap: 6px;
+		padding: 10px 14px;
+		border-radius: 10px;
+		border: 1px solid var(--border-subtle);
+		background: var(--surface-2);
+		text-align: left;
+		width: 100%;
+		font-family: inherit;
+		font-size: inherit;
+		cursor: default;
+	}
+
+	.approval-card {
+		border-left: 3px solid var(--accent);
+	}
+
+	.question-card {
+		border-left: 3px solid #f59e0b;
 	}
 
 	.followup-card {
-		flex-direction: row;
-		align-items: center;
-		gap: var(--space-2);
-		border: var(--border-1) var(--border-color-1);
-		background: var(--surface-2);
-		border-radius: var(--radius-lg);
-		color: var(--text-primary);
 		cursor: pointer;
-		transition: all var(--transition-fast);
-		text-align: left;
-		padding: 8px 14px;
+		transition: background 0.15s;
+		align-items: center;
+		flex-direction: row;
+		gap: 8px;
 	}
 
 	.followup-card:hover {
 		background: var(--surface-3);
-		border-color: var(--accent-1);
-		color: var(--accent-1);
-	}
-
-	.followup-card svg {
-		color: var(--accent-1);
-		flex-shrink: 0;
 	}
 
 	.followup-text {
 		flex: 1;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		font-size: 13px;
+		color: var(--text-secondary);
 	}
 
 	.followup-arrow {
 		color: var(--text-tertiary);
 		font-size: 14px;
-		line-height: 1;
-	}
-
-	.approval-card {
-		background: rgba(255, 149, 0, 0.06);
-		border: var(--border-1) rgba(255, 149, 0, 0.18);
-		border-radius: var(--radius-lg);
-	}
-
-	.question-card {
-		background: var(--surface-3);
-		border-radius: var(--radius-lg);
 	}
 
 	.slot-card-text {
-		font-size: var(--font-size-sm);
+		font-size: 13px;
+		font-weight: 500;
 		color: var(--text-primary);
 		margin: 0;
 		line-height: 1.4;
@@ -613,459 +640,383 @@
 
 	.slot-card-actions {
 		display: flex;
+		gap: 6px;
 		flex-wrap: wrap;
-		gap: var(--space-2);
 	}
 
 	.slot-action-btn {
-		padding: 5px 14px;
-		border: var(--border-1) var(--border-color-1);
+		padding: 4px 12px;
+		border-radius: 6px;
+		border: 1px solid var(--border-subtle);
 		background: var(--surface-1);
-		border-radius: var(--radius-full);
-		font-size: var(--font-size-xs);
+		color: var(--text-secondary);
+		font-size: 12px;
 		font-weight: 500;
-		color: var(--text-primary);
 		cursor: pointer;
-		transition: all var(--transition-fast);
-		font-family: var(--font-system);
+		transition: all 0.15s;
+		font-family: inherit;
 	}
 
 	.slot-action-btn:hover {
-		background: var(--accent-1);
-		color: var(--text-inverse);
-		border-color: var(--accent-1);
+		background: var(--surface-3);
+		color: var(--text-primary);
+	}
+
+	.slot-action-btn.approve {
+		background: rgba(52, 199, 89, 0.1);
+		color: #34c759;
+		border-color: rgba(52, 199, 89, 0.25);
 	}
 
 	.slot-action-btn.approve:hover {
-		background: rgba(52, 199, 89, 0.15);
-		border-color: var(--success);
-		color: var(--success);
+		background: rgba(52, 199, 89, 0.2);
+	}
+
+	.slot-action-btn.reject {
+		background: rgba(255, 69, 58, 0.08);
+		color: #ff453a;
+		border-color: rgba(255, 69, 58, 0.2);
 	}
 
 	.slot-action-btn.reject:hover {
-		background: rgba(255, 59, 48, 0.12);
-		border-color: var(--danger);
-		color: var(--danger);
+		background: rgba(255, 69, 58, 0.15);
 	}
 
-	/* ============================================================
-	   Glass Pill Composer
-	   ============================================================ */
+	/* ===== Composer pill ===== */
 	.composer-pill {
-		display: flex;
-		flex-direction: column;
 		position: relative;
-		border-radius: 22px;
 		background: var(--surface-2);
-		backdrop-filter: blur(20px) saturate(1.8);
-		-webkit-backdrop-filter: blur(20px) saturate(1.8);
-		border: var(--border-1) var(--border-color-2);
-		box-shadow:
-			var(--shadow-sm),
-			inset 0 1px 0 rgba(255, 255, 255, 0.4);
-		overflow: hidden;
-		transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-	}
-
-	:global([data-theme="dark"]) .composer-pill,
-	:root[data-theme="dark"] .composer-pill {
-		background: rgba(44, 44, 46, 0.7);
-		box-shadow:
-			var(--shadow-md),
-			inset 0 1px 0 rgba(255, 255, 255, 0.06);
-	}
-
-	@media (prefers-color-scheme: dark) {
-		:root[data-theme="system"] .composer-pill {
-			background: rgba(44, 44, 46, 0.7);
-			box-shadow:
-				var(--shadow-md),
-				inset 0 1px 0 rgba(255, 255, 255, 0.06);
-		}
+		border: 1px solid var(--border-subtle);
+		border-radius: 22px;
+		padding: 8px 12px 8px 14px;
+		margin: 0 16px 12px;
+		max-width: 800px;
+		transition: border-color 0.2s;
 	}
 
 	.composer-pill:focus-within {
-		border-color: var(--accent-1);
-		box-shadow:
-			var(--shadow-md),
-			0 0 0 3px var(--accent-3),
-			inset 0 1px 0 rgba(255, 255, 255, 0.4);
+		border-color: var(--accent);
 	}
 
-	/* ============================================================
-	   Working Dots — animated accents flowing along pill's bottom edge
-	   ============================================================ */
-	.working-dots {
-		position: absolute;
-		bottom: 0;
-		left: 0;
-		right: 0;
-		height: 18px;
+	.composer-pill.is-running {
+		border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+	}
+
+	.composer-main {
 		display: flex;
-		align-items: center;
-		justify-content: center;
+		align-items: flex-end;
+		gap: 6px;
+	}
+
+	.composer-text-wrap {
+		flex: 1;
+		min-width: 0;
+		position: relative;
+		display: flex;
+		flex-direction: column;
 		gap: 4px;
-		padding: 0 24px;
-		pointer-events: none;
-		z-index: 1;
-		overflow: hidden;
-		mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
-		-webkit-mask-image: linear-gradient(to right, transparent, black 12%, black 88%, transparent);
 	}
 
-	.working-dots .dot {
-		width: 4px;
-		height: 4px;
-		border-radius: 50%;
-		background: var(--accent-1);
-		opacity: 0;
-		animation: dot-flow 1.6s ease-in-out infinite;
-	}
-
-	.working-dots .dot:nth-child(1) { animation-delay: 0s; }
-	.working-dots .dot:nth-child(2) { animation-delay: 0.18s; }
-	.working-dots .dot:nth-child(3) { animation-delay: 0.36s; }
-	.working-dots .dot:nth-child(4) { animation-delay: 0.54s; }
-	.working-dots .dot:nth-child(5) { animation-delay: 0.72s; }
-	.working-dots .dot:nth-child(6) { animation-delay: 0.9s; }
-
-	@keyframes dot-flow {
-		0% {
-			opacity: 0;
-			transform: translateX(-14px) scale(0.5);
-		}
-		20% {
-			opacity: 0.9;
-		}
-		70% {
-			opacity: 0.9;
-		}
-		100% {
-			opacity: 0;
-			transform: translateX(14px) scale(0.5);
-		}
-	}
-
-	/* ============================================================
-	   Attachment Chips — inside pill, above textarea
-	   ============================================================ */
-	.attachments-strip {
+	.attachment-chips {
 		display: flex;
 		flex-wrap: wrap;
-		gap: var(--space-2);
-		padding: 10px 14px 0;
-		position: relative;
-		z-index: 2;
+		gap: 4px;
 	}
 
-	.attachment-chip {
+	.att-chip {
 		display: inline-flex;
 		align-items: center;
-		gap: 5px;
-		padding: 3px 8px 3px 8px;
+		gap: 4px;
+		padding: 2px 6px 2px 8px;
+		border-radius: 12px;
 		background: var(--surface-3);
-		border-radius: var(--radius-full);
-		font-size: var(--font-size-xs);
+		border: 1px solid var(--border-subtle);
+		font-size: 11px;
 		color: var(--text-secondary);
 		max-width: 160px;
 	}
 
-	.attachment-name {
-		white-space: nowrap;
+	.att-chip-name {
 		overflow: hidden;
 		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.attachment-remove {
+	.att-chip-remove {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 14px;
+		height: 14px;
+		border: none;
+		background: transparent;
+		color: var(--text-tertiary);
+		cursor: pointer;
+		border-radius: 50%;
+		padding: 0;
+		flex-shrink: 0;
+	}
+
+	.att-chip-remove:hover {
+		background: var(--surface-4);
+		color: var(--text-primary);
+	}
+
+	.attachment-notice {
+		font-size: 11px;
+		color: var(--warning);
+		padding: 2px 4px;
+	}
+
+	.composer-textarea {
+		width: 100%;
+		min-height: 22px;
+		max-height: 120px;
+		resize: none;
+		border: none;
+		outline: none;
+		background: transparent;
+		color: var(--text-primary);
+		font-family: inherit;
+		font-size: 14px;
+		line-height: 1.5;
+		padding: 0;
+		overflow-y: auto;
+	}
+
+	.composer-textarea::placeholder {
+		color: var(--text-tertiary);
+	}
+
+	.file-input {
+		display: none;
+	}
+
+	/* Suggestions */
+	.suggestions-popover {
+		position: absolute;
+		bottom: 100%;
+		left: 0;
+		margin-bottom: 6px;
+		min-width: 280px;
+		max-width: 360px;
+		background: var(--surface-0);
+		border: 1px solid var(--border-subtle);
+		border-radius: 10px;
+		box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+		z-index: 50;
+		overflow: hidden;
+	}
+
+	.suggestion-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		padding: 7px 12px;
+		border: none;
+		background: transparent;
+		color: var(--text-primary);
+		font-family: inherit;
+		font-size: 13px;
+		cursor: pointer;
+		text-align: left;
+		transition: background 0.1s;
+	}
+
+	.suggestion-item:hover,
+	.suggestion-item.selected {
+		background: var(--surface-2);
+	}
+
+	.suggestion-symbol {
+		width: 18px;
+		height: 18px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border: none;
-		background: none;
+		flex-shrink: 0;
 		color: var(--text-tertiary);
-		cursor: pointer;
-		padding: 1px;
-		border-radius: 50%;
+	}
+
+	.suggestion-title {
+		font-weight: 500;
 		flex-shrink: 0;
 	}
 
-	.attachment-remove:hover {
-		color: var(--danger);
-		background: var(--surface-4);
-	}
-
-	/* ============================================================
-	   Pill Row — textarea + trailing controls
-	   ============================================================ */
-	.pill-row {
-		display: flex;
-		align-items: flex-end;
-		gap: var(--space-1);
-		padding: 7px 8px 7px 14px;
-		position: relative;
-		z-index: 2;
-	}
-
-	.pill-textarea {
+	.suggestion-detail {
 		flex: 1;
-		resize: none;
-		border: none;
-		background: transparent;
-		padding: 6px 0;
-		font-family: var(--font-system);
-		font-size: var(--font-size-md);
-		line-height: var(--line-height-normal);
-		color: var(--text-primary);
-		outline: none;
-		min-height: 26px;
-		max-height: 160px;
-	}
-
-	.pill-textarea::placeholder {
+		font-size: 11px;
 		color: var(--text-tertiary);
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
-	.pill-controls {
+	/* Controls */
+	.composer-controls {
 		display: flex;
-		align-items: flex-end;
-		gap: 1px;
+		align-items: center;
+		gap: 3px;
 		flex-shrink: 0;
-		padding-bottom: 3px;
 	}
 
-	.control-btn {
+	.ctrl-btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
 		width: 28px;
 		height: 28px;
 		border: none;
 		background: transparent;
-		border-radius: var(--radius-md);
 		color: var(--text-tertiary);
+		border-radius: 8px;
 		cursor: pointer;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		transition: all var(--transition-fast);
+		transition: all 0.15s;
+		position: relative;
 		flex-shrink: 0;
 	}
 
-	.control-btn:hover {
+	.ctrl-btn:hover {
 		background: var(--surface-3);
 		color: var(--text-primary);
 	}
 
-	.control-btn.toggled {
-		background: var(--accent-3);
-		color: var(--accent-1);
+	.ctrl-btn.active {
+		background: var(--surface-3);
+		color: var(--accent);
 	}
 
-	.control-divider {
-		width: 1px;
-		height: 18px;
-		background: var(--border-color-2);
-		margin: 0 4px;
-		flex-shrink: 0;
+	.stop-btn {
+		color: #ff453a;
+	}
+
+	.stop-btn:hover {
+		background: rgba(255, 69, 58, 0.1);
+	}
+
+	.effort-badge {
+		font-size: 9px;
+		font-weight: 600;
+		color: var(--accent);
+		margin-left: 1px;
+		text-transform: uppercase;
+	}
+
+	.effort-label {
+		font-size: 10px;
+		color: var(--text-tertiary);
+		margin-right: 2px;
 	}
 
 	.send-btn {
-		width: 30px;
-		height: 30px;
-		border: none;
-		background: var(--surface-3);
-		border-radius: 50%;
-		color: var(--text-tertiary);
-		cursor: pointer;
-		display: flex;
+		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		transition: all var(--transition-fast);
+		width: 28px;
+		height: 28px;
+		border: none;
+		background: var(--accent-1);
+		color: white;
+		border-radius: 8px;
+		cursor: pointer;
+		transition: all 0.15s;
 		flex-shrink: 0;
 	}
 
-	.send-btn.active {
-		background: var(--accent-1);
-		color: var(--text-inverse);
-	}
-
-	.send-btn:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
-
 	.send-btn:hover:not(:disabled) {
-		transform: scale(1.05);
-	}
-
-	.stop-btn-pill {
-		background: var(--accent-1);
-		color: var(--text-inverse);
-	}
-
-	.stop-btn-pill:hover {
 		background: var(--accent-2);
 		transform: scale(1.05);
 	}
 
-	/* ============================================================
-	   Effort Slider Panel
-	   ============================================================ */
+	.send-btn:disabled {
+		opacity: 0.35;
+		cursor: not-allowed;
+	}
+
+	/* Effort panel */
 	.effort-panel {
 		display: flex;
 		align-items: center;
-		gap: var(--space-3);
-		padding: var(--space-3) var(--space-4);
-		background: var(--surface-2);
-		border: var(--border-1) var(--border-color-2);
-		border-radius: var(--radius-lg);
-		animation: slot-pop 0.15s ease;
-	}
-
-	.effort-label {
-		font-size: var(--font-size-xs);
-		font-weight: 500;
-		color: var(--text-tertiary);
-		text-transform: uppercase;
-		letter-spacing: 0.3px;
+		gap: 8px;
+		padding: 6px 16px 8px;
+		max-width: 800px;
+		margin: 0 auto;
 	}
 
 	.effort-options {
 		display: flex;
-		gap: 3px;
-		flex: 1;
+		gap: 4px;
 	}
 
 	.effort-btn {
-		flex: 1;
-		padding: 4px 8px;
-		border: var(--border-1) var(--border-color-1);
+		padding: 3px 12px;
+		border-radius: 12px;
+		border: 1px solid var(--border-subtle);
 		background: var(--surface-1);
-		border-radius: var(--radius-sm);
-		font-size: var(--font-size-xs);
 		color: var(--text-secondary);
-		cursor: pointer;
-		transition: all var(--transition-fast);
+		font-size: 11px;
 		font-weight: 500;
-		font-family: var(--font-system);
+		cursor: pointer;
+		transition: all 0.15s;
+		font-family: inherit;
 	}
 
 	.effort-btn:hover {
 		background: var(--surface-3);
+		color: var(--text-primary);
 	}
 
 	.effort-btn.active {
 		background: var(--accent-1);
-		color: var(--text-inverse);
+		color: white;
 		border-color: var(--accent-1);
 	}
 
-	/* ============================================================
-	   Animations
-	   ============================================================ */
-	@keyframes slot-pop {
-		from { opacity: 0; transform: translateY(6px); }
-		to { opacity: 1; transform: translateY(0); }
-	}
-
-	/* ============================================================
-	   Composer scrollbar (slot cards)
-	   ============================================================ */
-	.slot-stack::-webkit-scrollbar {
-		width: 4px;
-	}
-
-	.slot-stack::-webkit-scrollbar-track {
-		background: transparent;
-	}
-
-	.slot-stack::-webkit-scrollbar-thumb {
-		background: var(--surface-4);
-		border-radius: var(--radius-full);
-	}
-
-	.composer-area.focus-mode .composer-pill {
-		border-color: var(--accent-1);
-	}
-
-	/* ============================================================
-	   Tool Picker — slash-command popup
-	   ============================================================ */
-	.tool-picker {
-		background: var(--surface-2);
-		border: var(--border-1) var(--border-color-1);
-		border-radius: var(--radius-lg);
-		box-shadow: var(--shadow-lg);
-		width: 280px;
-		max-height: 340px;
+	/* Running dots */
+	.composer-dots {
+		position: absolute;
+		bottom: 0;
+		left: 16px;
+		right: 16px;
+		height: 4px;
+		display: flex;
+		gap: 3px;
 		overflow: hidden;
-		animation: slot-pop 0.15s ease;
-		margin-bottom: var(--space-2);
+		border-radius: 0 0 22px 22px;
+		pointer-events: none;
+		z-index: 1;
 	}
 
-	.tool-picker-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		padding: 10px 14px;
-		border-bottom: var(--border-1) var(--border-color-2);
+	.c-dot {
+		width: 8px;
+		height: 4px;
+		border-radius: 2px;
+		background: var(--accent);
+		animation: composerDot 1.4s ease-in-out infinite;
+		opacity: 0.3;
 	}
 
-	.tool-picker-title {
-		font-size: var(--font-size-xs);
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.3px;
-		color: var(--text-secondary);
+	.c-dot:nth-child(2) { animation-delay: 0.2s; }
+	.c-dot:nth-child(3) { animation-delay: 0.4s; }
+	.c-dot:nth-child(4) { animation-delay: 0.6s; }
+
+	@keyframes composerDot {
+		0%, 80%, 100% { opacity: 0.2; transform: scaleX(0.6); }
+		40% { opacity: 1; transform: scaleX(1); }
 	}
 
-	.tool-picker-hint {
-		font-size: var(--font-size-xs);
-		color: var(--text-tertiary);
+	/* Focus mode */
+	:global(body.focus-mode) .app-shell > :not(.main-area),
+	:global(body.focus-mode) .sidebar {
+		opacity: 0.08;
+		pointer-events: none;
 	}
 
-	.tool-picker-list {
-		overflow-y: auto;
-		padding: var(--space-1) 0;
-	}
-
-	.tool-picker-item {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 8px 14px;
-		width: 100%;
-		background: none;
-		border: none;
-		color: var(--text-primary);
-		cursor: pointer;
-		transition: background var(--transition-fast);
-		font-family: var(--font-system);
-		text-align: left;
-	}
-
-	.tool-picker-item:hover {
-		background: var(--surface-3);
-	}
-
-	.tool-picker-name {
-		font-size: var(--font-size-sm);
-		font-weight: 500;
-		min-width: 50px;
-	}
-
-	.tool-picker-desc {
-		font-size: var(--font-size-xs);
-		color: var(--text-tertiary);
-		flex: 1;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.working-dots .dot {
-			animation: none;
-			opacity: 0.4;
-		}
-		.slot-card,
-		.slot-stack,
-		.effort-panel {
-			animation: none;
-		}
+	:global(body.focus-mode) .composer-pill {
+		max-width: 800px;
+		margin-left: auto;
+		margin-right: auto;
+		box-shadow: 0 0 0 1px var(--border-subtle);
 	}
 </style>

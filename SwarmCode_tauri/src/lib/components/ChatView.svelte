@@ -187,8 +187,7 @@
 
 <div class="chat-view" class:generating={isGenerating}>
 	<div class="chat-column">
-	<div class="chat-pane">
-		<!-- Chrome row replaces the old chat-chrome + ThreadDetailBar -->
+		<!-- Chrome row -->
 		<ChromeRow
 			{thread}
 			projectName={null}
@@ -199,6 +198,9 @@
 			{isGenerating}
 			onToggleTerminal={() => onToggleTerminal?.()}
 		/>
+
+		<!-- Scrollable timeline -->
+		<div class="chat-pane">
 
 		<!-- Timeline -->
 		<div class="chat-timeline" bind:this={scrollContainer} onscroll={handleScroll} role="log" aria-label="Conversation">
@@ -384,12 +386,12 @@
 		<div class="composer-area">
 			<Composer {thread} />
 		</div>
-
-		<!-- Terminal overlay -->
-		{#if terminalVisible}
-			<TerminalPanel threadId={thread.id} />
-		{/if}
 	</div>
+
+	<!-- Terminal overlay -->
+	{#if terminalVisible}
+		<TerminalPanel threadId={thread.id} />
+	{/if}
 
 	<!-- Attachment preview modal -->
 	{#if previewAttachment}
@@ -398,6 +400,8 @@
 			onClose={() => previewAttachment = null}
 		/>
 	{/if}
+</div>
+</div>
 </div>
 
 <style>
