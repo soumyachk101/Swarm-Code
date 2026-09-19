@@ -192,6 +192,8 @@
 	let directory = $derived('');
 	let showJumpToLatest = $state(false);
 	let isAtBottom = $state(true);
+	let showHydraPanel = $state(false);
+	let showSubagentPanel = $state(false);
 </script>
 
 <svelte:window onkeydown={handleKeyDown} />
@@ -411,6 +413,20 @@
 	<!-- Terminal overlay -->
 	{#if terminalVisible}
 		<TerminalPanel threadId={thread.id} />
+	{/if}
+
+	<!-- Hydra panel overlay -->
+	{#if showHydraPanel}
+		<div class="floating-panel hydra-panel-overlay">
+			<HydraPanel threadId={thread.id} onClose={() => showHydraPanel = false} />
+		</div>
+	{/if}
+
+	<!-- Subagent panel overlay -->
+	{#if showSubagentPanel}
+		<div class="floating-panel subagent-panel-overlay">
+			<SubagentPanel threadId={thread.id} onClose={() => showSubagentPanel = false} />
+		</div>
 	{/if}
 
 	<!-- Attachment preview modal -->
