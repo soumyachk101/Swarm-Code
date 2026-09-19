@@ -50,6 +50,18 @@ export const hydraHeadCount: Writable<number> = writable(2);
 // Attachment state (composer)
 // ---------------------------------------------------------------------------
 
+export interface ChangeStats {
+	files: number;
+	additions: number;
+	deletions: number;
+}
+
+export const changeStats: Writable<ChangeStats | null> = writable(null);
+
+// ---------------------------------------------------------------------------
+// Attachment state (composer)
+// ---------------------------------------------------------------------------
+
 export const attachments: Writable<AttachmentInfo[]> = writable([]);
 
 // ---------------------------------------------------------------------------

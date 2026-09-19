@@ -14,8 +14,13 @@
 		clearAttachments,
 		followUps,
 		pendingApprovals,
-		pendingQuestions
+		pendingQuestions,
+		changeStats
 	} from '$lib/stores/chatStore';
+	import AgentQuestionTab from '$lib/components/AgentQuestionTab.svelte';
+	import ApprovalCard from '$lib/components/ApprovalCard.svelte';
+	import FollowUpQueueTab from '$lib/components/FollowUpQueueTab.svelte';
+	import ThreadChangesTab from '$lib/components/ThreadChangesTab.svelte';
 	import type { ChatThread } from '$lib/types';
 
 	interface Props {
@@ -31,6 +36,49 @@
 	let showEffortSlider = $state(false);
 	let isSubmitting = $state(false);
 	let isFocusMode = $state(false);
+	let showToolPicker = $state(false);
+	let availableTools = $state<Array<{ id: string; name: string; icon: string; desc: string }>>([
+		{ id: 'file', name: '@file', icon: 'paperclip', desc: 'Attach a file by path' },
+		{ id: 'search', name: '@search', icon: 'search', desc: 'Search files by name' },
+		{ id: 'folder', name: '@folder', icon: 'folder', desc: 'Attach all files in a folder' },
+		{ id: 'git', name: '/git', icon: 'git', desc: 'Run a git command' },
+		{ id: 'test', name: '/test', icon: 'play', desc: 'Run the project test suite' },
+		{ id: 'lint', name: '/lint', icon: 'check', desc: 'Lint the current files' },
+		{ id: 'clear', name: '/clear', icon: 'x', desc: 'Clear the message text' },
+		{ id: 'compact', name: '/compact', icon: 'minimize', desc: 'Compact the conversation context' },
+		{ id: 'plan', name: '/plan', icon: 'list', desc: 'Enter plan mode for this turn' },
+		{ id: 'voice', name: '/voice', icon: 'mic', desc: 'Start voice input (if available)' }
+	]);
+
+	function handlePaste(e: ClipboardEvent) {
+		const items = e.clipboardData?.items;
+		if (!items) return;
+		for (let i = 0; i < items.length; i++) {
+			const item = items[i];
+			if (item.kind === 'file' && item.type.startsWith('image/')) {
+				e.preventDefault();
+				const file = item.getAsFile();
+				if (!file) continue;
+				const id = crypto.randomUUID();
+				const reader = new FileReader();
+				reader.onload = () => {
+					addAttachment({ id, name: file.name || `pasted-${id.slice(0, 6)}.png`, path: file.name || `pasted-${id.slice(0, 6)}.png`, size: file.size, kind: 'image' });
+				};
+				reader.readAsDataURL(file);
+			}
+		}
+	}
+
+	function pickTool(tool: typeof availableTools[number]) {
+		showToolPicker = false;
+		if (tool.id === 'clear') {
+			messageText = '';
+			textarea?.focus();
+			return;
+		}
+		messageText = messageText ? `${messageText} ${tool.name} ` : `${tool.name} `;
+		textarea?.focus();
+	}
 
 	$effect(() => {
 		effortValue = thread?.effort ?? $effortLevel;
@@ -254,6 +302,70 @@
 	{/if}
 
 	<!-- ========================================================
+	     Tab slot: approvals, questions, follow-ups, changes
+	     ======================================================== -->
+
+	<!-- Approval cards -->
+	{#if showApprovals}
+		{#each approvalItems as item (item.id)}
+			<div class="approval-card">
+				<div class="approval-headline">{item.text}</div>
+				<div class="approval-actions">
+					{#each item.options as opt}
+						<button
+							class="approval-btn"
+							class:primary={opt.toLowerCase().includes('approve')}
+							onclick={() => handleApprove(item.id, opt)}
+							type="button"
+						>{opt}</button>
+					{/each}
+				</div>
+			</div>
+		{/each}
+	{/if}
+
+	<!-- Tab slot: question OR follow-ups OR changes -->
+	{#if showQuestions}
+		{#each $pendingQuestions as questionRequest (questionRequest.id)}
+			<AgentQuestionTab
+				request={questionRequest}
+				onSkip={() => {
+					if (thread) {
+						const answers: Record<string, string[]> = {};
+						for (const q of questionRequest.questions) answers[q.id] = [];
+						answerQuestionAction(thread.id, questionRequest.id, answers);
+					}
+				}}
+				onSubmit={(answers) => {
+					const flat = Object.values(answers).flat();
+					answerQuestionAction(questionRequest.id, flat);
+				}}
+			/>
+		{/each}
+	{:else if showFollowUps}
+		<FollowUpQueueTab
+			prompts={($followUps ?? []).map((f: any) => ({
+				id: f.id,
+				text: f.text || '',
+				attachments: []
+			}))}
+			isRunning={$isGenerating}
+			onSendNow={(id) => { if (thread) sendFollowUp(thread.id, id); }}
+			onEdit={(id, text) => {
+				const fu = ($followUps ?? []).find((f: any) => f.id === id);
+				if (fu) { fu.text = text; }
+			}}
+			onDelete={(id) => { if (thread) sendFollowUp(thread.id, id); }}
+			onMove={(id, beforeId) => {}}
+		/>
+	{:else if $changeStats && $changeStats.files > 0}
+		<ThreadChangesTab
+			stats={{ files: $changeStats.files, additions: $changeStats.additions, deletions: $changeStats.deletions }}
+			onClick={() => {}}
+		/>
+	{/if}
+
+	<!-- ========================================================
 	     Glass Pill Composer
 	     ======================================================== -->
 	<div class="composer-pill" class:is-running={$isGenerating}>
@@ -295,6 +407,7 @@
 				bind:this={textarea}
 				bind:value={messageText}
 				onkeydown={handleKeyDown}
+				onpaste={handlePaste}
 				placeholder={getPlaceholder()}
 				{disabled}
 				rows={1}
@@ -339,6 +452,18 @@
 					</svg>
 				</button>
 
+				<button
+					class="control-btn"
+					class:toggled={showToolPicker}
+					onclick={() => { showToolPicker = !showToolPicker; }}
+					title="Insert tool or command"
+					type="button"
+				>
+					<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+						<path d="M12 2l2 4 4 1-3 3 1 4-4-2-4 2 1-4-3-3 4-1z"/>
+					</svg>
+				</button>
+
 				{#if $isGenerating}
 					<button
 						class="send-btn stop-btn-pill"
@@ -369,7 +494,24 @@
 			</div>
 		</div>
 	</div>
-</div>
+
+	<!-- Tool picker popup -->
+	{#if showToolPicker}
+		<div class="tool-picker">
+				<div class="tool-picker-header">
+					<span class="tool-picker-title">Insert</span>
+					<span class="tool-picker-hint">@ for files · / for commands</span>
+				</div>
+				<div class="tool-picker-list">
+					{#each availableTools as tool (tool.id)}
+						<button class="tool-picker-item" onclick={() => pickTool(tool)}>
+							<span class="tool-picker-name">{tool.name}</span>
+							<span class="tool-picker-desc">{tool.desc}</span>
+						</button>
+					{/each}
+				</div>
+			</div>
+			{/if}
 
 <style>
 	/* ============================================================
@@ -841,6 +983,78 @@
 
 	.composer-area.focus-mode .composer-pill {
 		border-color: var(--accent-1);
+	}
+
+	/* ============================================================
+	   Tool Picker — slash-command popup
+	   ============================================================ */
+	.tool-picker {
+		background: var(--surface-2);
+		border: var(--border-1) var(--border-color-1);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-lg);
+		width: 280px;
+		max-height: 340px;
+		overflow: hidden;
+		animation: slot-pop 0.15s ease;
+		margin-bottom: var(--space-2);
+	}
+
+	.tool-picker-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 10px 14px;
+		border-bottom: var(--border-1) var(--border-color-2);
+	}
+
+	.tool-picker-title {
+		font-size: var(--font-size-xs);
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.3px;
+		color: var(--text-secondary);
+	}
+
+	.tool-picker-hint {
+		font-size: var(--font-size-xs);
+		color: var(--text-tertiary);
+	}
+
+	.tool-picker-list {
+		overflow-y: auto;
+		padding: var(--space-1) 0;
+	}
+
+	.tool-picker-item {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 8px 14px;
+		width: 100%;
+		background: none;
+		border: none;
+		color: var(--text-primary);
+		cursor: pointer;
+		transition: background var(--transition-fast);
+		font-family: var(--font-system);
+		text-align: left;
+	}
+
+	.tool-picker-item:hover {
+		background: var(--surface-3);
+	}
+
+	.tool-picker-name {
+		font-size: var(--font-size-sm);
+		font-weight: 500;
+		min-width: 50px;
+	}
+
+	.tool-picker-desc {
+		font-size: var(--font-size-xs);
+		color: var(--text-tertiary);
+		flex: 1;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
