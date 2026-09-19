@@ -19,28 +19,7 @@ struct HydraFusedPairIcon: View {
     private var halfWidth: CGFloat { (size - 1) / 2 - gap }
 
     var body: some View {
-        let stops = Self.gradient(lead: lead, heads: heads)
-        let fused = isFused || !animates
-        ZStack {
-            half(of: lead, stops: stops, alignment: .leading)
-                .offset(x: fused ? 0 : -size * 0.35)
-                .opacity(fused ? 1 : 0)
-            half(of: heads, stops: stops, alignment: .trailing)
-                .offset(x: fused ? 0 : size * 0.35)
-                .opacity(fused ? 1 : 0)
-            Capsule()
-                .fill(Chrome.secondaryText.opacity(0.55))
-                .frame(width: 1, height: size * 0.85)
-                .scaleEffect(y: fused ? 1 : 0.15)
-        }
-        .frame(width: size, height: size)
-        .task(id: "\(lead.rawValue)/\(heads.rawValue)") {
-            guard animates else { return }
-            isFused = false
-            try? await Task.sleep(for: .milliseconds(30))
-            withAnimation(reduceMotion ? nil : .spring(duration: 0.55, bounce: 0.25)) { isFused = true }
-        }
-        .accessibilityHidden(true)
+        HydraPairMark(lead: lead, heads: heads, leadSize: size)
     }
 
     /// One provider's icon as a silhouette, one half of it kept, wearing the gradient.

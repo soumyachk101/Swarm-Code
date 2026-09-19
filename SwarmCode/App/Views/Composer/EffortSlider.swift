@@ -423,8 +423,8 @@ private struct HydraPairListRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                HydraFusedPairIcon(lead: pair.provider, heads: pair.headsProvider, size: 16, animates: false)
-                    .frame(width: 18)
+                HydraFusedPairIcon(lead: pair.provider, heads: pair.headsProvider, size: 15, animates: false)
+                    .frame(minWidth: 18, alignment: .leading)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: title)
                         .font(.system(size: 14))

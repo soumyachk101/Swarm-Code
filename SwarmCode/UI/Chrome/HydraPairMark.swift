@@ -11,13 +11,15 @@ struct HydraPairMark: View {
         HStack(spacing: (leadSize * 0.25).rounded()) {
             ProviderIcon(provider: lead, size: leadSize)
                 .foregroundStyle(Chrome.primaryText)
-            Image(systemName: "arrow.right")
-                .font(.system(size: (leadSize * 0.5).rounded(), weight: .semibold))
-                .foregroundStyle(Chrome.secondaryText)
-            ProviderIcon(provider: heads, size: (leadSize * 0.75).rounded())
-                .foregroundStyle(Chrome.primaryText.opacity(0.8))
+            if lead != heads {
+                Image(systemName: "arrow.right")
+                    .font(.system(size: (leadSize * 0.5).rounded(), weight: .semibold))
+                    .foregroundStyle(Chrome.secondaryText)
+                ProviderIcon(provider: heads, size: (leadSize * 0.75).rounded())
+                    .foregroundStyle(Chrome.primaryText.opacity(0.8))
+            }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text("\(lead.displayName) lead, \(heads.displayName) heads"))
+        .accessibilityLabel(Text(lead == heads ? lead.displayName : "\(lead.displayName) lead, \(heads.displayName) heads"))
     }
 }
