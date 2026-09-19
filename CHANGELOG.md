@@ -4,6 +4,22 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.7.2] - 2026-09-19
+
+Swarm Code 1.7.2 delivers complete visual sanitization across all website images, in-app tour assets, and documentation screenshots: replacing all residual Droppy Code logos, water-droplet app icons, and URLs with authentic Swarm Code golden bee branding, while strictly preserving genuine Hydra marks across toolbars and composers. Apple silicon, macOS 26 or later.
+
+### Bug fixes
+- Welcome tour title rendering: Eliminated background box artifacts and mismatched font weights on `window.webp`, replacing it with a single, seamless, centered "Welcome to Swarm Code" title.
+- App icon squircle: Replaced residual Droppy water-droplet squircles in empty thread backgrounds (`slider.webp`, `pairs.webp`, `recipes.webp`) with the official Swarm Code golden bee app icon.
+- Empty thread prompt: Replaced "What should we build in Droppy Code?" with "What should we build in Swarm Code?" and authentic dotted underline.
+- Diff view header: Corrected the diff file header in `diff.webp` from `DroppyCode/...` to `SwarmCode/...`.
+- Sidebar & Palette project labels: Corrected all thread rows and palette items in `sidebar.webp`, `palette.webp`, `threads.webp`, and `notify.webp` from `Droppy Code` and `getdroppy.app` to `Swarm Code` and `swarmcode.dev`.
+- Terminal build steps: Corrected terminal lines across `queue.webp`, `quote.webp`, `slash.webp`, and `themes.webp` to `SwarmCode build`.
+
+### Refinements
+- Preserved authentic Hydra marks and buttons across all toolbars, composer chips, and tour assets.
+- Regenerated all video posters (including `slider-poster.webp`) and synchronized updated in-app tour assets into `Assets.xcassets`.
+
 ## [1.7.1] - 2026-09-19
 
 Swarm Code 1.7.1 purges all leftover upstream branding assets, restores the official Swarm Code golden bee app icon, and fixes Hydra pair row layout in the model picker with authentic dragon mark silhouettes and clean provider badges. Apple silicon, macOS 26 or later.

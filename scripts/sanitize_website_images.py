@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Sanitizes all website images and tour assets for Swarm Code:
-1. Replaces all Droppy horse/unicorn icons with the official Swarm Bee logo.
-2. Replaces all occurrences of "Droppy Code", "getdroppy.app", and "DroppyCode build"
+Sanitizes all website images, tour assets, video posters, and release screenshots for Swarm Code:
+1. Replaces all residual text occurrences of "Droppy Code", "getdroppy.app", and "DroppyCode build"
    with "Swarm Code", "swarmcode.dev", and "SwarmCode build".
-3. Uses surgical per-column vertical interpolation for seamless text replacement without rectangular box artifacts.
-4. Correctly locates each window's toolbar button center (no hardcoding wrong coordinates across different images).
-5. Outputs pristine WebP files directly into website/assets/app/ and website/assets/app/tour/
-   so the marketing site runs 100% locally with zero external dependencies.
-6. Updates in-app xcassets tour imagesets.
+2. Replaces Droppy water-droplet app icons with the official Swarm Code app icon.
+3. Fixes window.webp with a seamless, unified "Welcome to Swarm Code" modal title and terminal line.
+4. Preserves authentic Hydra features, marks, buttons, cards, and head glyphs.
+   DOES NOT place any Swarm bee logos over Hydra marks!
+5. Outputs pristine WebP files directly into website/assets/app/ and website/assets/app/tour/.
+6. Generates video posters (1320x824 WebP) including slider-poster.webp.
+7. Updates in-app xcassets tour imagesets (1320x824 PNG).
+8. Syncs pristine screenshots into SwarmCode-Release/assets/screenshots/.
 """
 
 import os
@@ -21,105 +23,25 @@ SRC_DIR = ROOT / "build.noindex" / "remote_audit"
 OUT_APP = ROOT / "website" / "assets" / "app"
 OUT_TOUR = OUT_APP / "tour"
 OUT_THEMES = OUT_APP / "themes"
+RELEASE_SCREENSHOTS = ROOT / "SwarmCode-Release" / "assets" / "screenshots"
 XCASSETS = ROOT / "SwarmCode" / "Resources" / "Assets.xcassets"
+APP_ICON_PATH = XCASSETS / "AppIcon.appiconset" / "icon_256x256.png"
+
 FONT_PATH = "/System/Library/Fonts/SFNS.ttf"
 MONO_FONT_PATH = "/System/Library/Fonts/SFNSMono.ttf"
 
 OUT_APP.mkdir(parents=True, exist_ok=True)
 OUT_TOUR.mkdir(parents=True, exist_ok=True)
 OUT_THEMES.mkdir(parents=True, exist_ok=True)
-
-# ----------------------------------------------------------------------
-# Glyphs & Badges
-# ----------------------------------------------------------------------
-
-def make_toolbar_bee_button(size, badge_num=None):
-    hires = size * 4
-    img = Image.new('RGBA', (hires, hires), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    
-    pad = hires * 0.05
-    d.ellipse([(pad, pad), (hires - pad, hires - pad)], fill=(24, 28, 36, 250))
-    
-    rim_w = max(2, round(hires * 0.035))
-    d.arc([(pad, pad), (hires - pad, hires - pad)], start=-90, end=0, fill=(240, 140, 180, 210), width=rim_w)
-    d.arc([(pad, pad), (hires - pad, hires - pad)], start=0, end=90, fill=(120, 200, 240, 210), width=rim_w)
-    d.arc([(pad, pad), (hires - pad, hires - pad)], start=90, end=180, fill=(100, 150, 255, 210), width=rim_w)
-    d.arc([(pad, pad), (hires - pad, hires - pad)], start=180, end=270, fill=(200, 140, 240, 210), width=rim_w)
-    
-    logo_path = XCASSETS / "swarmcode-logo.imageset" / "swarmcode-logo@2x.png"
-    logo = Image.open(logo_path).convert('RGBA')
-    bee_size = round(hires * 0.65)
-    logo_resized = logo.resize((bee_size, bee_size), Image.Resampling.LANCZOS)
-    
-    offset = (hires - bee_size) // 2
-    img.alpha_composite(logo_resized, (offset, offset))
-    
-    if badge_num is not None:
-        bw = round(hires * 0.42)
-        bh = round(hires * 0.36)
-        bx = hires - bw - round(hires * 0.02)
-        by = round(hires * 0.02)
-        d.rounded_rectangle([(bx, by), (bx + bw, by + bh)], radius=round(bh * 0.4), fill=(59, 130, 246, 255))
-        d.rounded_rectangle([(bx, by), (bx + bw, by + bh)], radius=round(bh * 0.4), outline=(255, 255, 255, 120), width=max(1, round(hires * 0.015)))
-        try:
-            bfont = ImageFont.truetype(FONT_PATH, round(bh * 0.72))
-            bfont.set_variation_by_name('Bold')
-            bbox = d.textbbox((0, 0), str(badge_num), font=bfont)
-            tw = bbox[2] - bbox[0]
-            th = bbox[3] - bbox[1]
-            tx = bx + (bw - tw) // 2
-            ty = by + (bh - th) // 2 - round(hires * 0.02)
-            d.text((tx, ty), str(badge_num), fill=(255, 255, 255, 255), font=bfont)
-        except Exception:
-            pass
-            
-    return img.resize((size, size), Image.Resampling.LANCZOS)
-
-
-def make_bee_glyph_aa(size, color, with_check=False):
-    hires = size * 4
-    img = Image.new('RGBA', (hires, hires), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    s = hires / 24.0
-    
-    # Antennae
-    d.line([(10*s, 3.5*s), (7.5*s, 1*s)], fill=color, width=round(1.8*s))
-    d.line([(14*s, 3.5*s), (16.5*s, 1*s)], fill=color, width=round(1.8*s))
-    d.ellipse([(6.5*s, 0.5*s), (8.5*s, 2.5*s)], fill=color)
-    d.ellipse([(15.5*s, 0.5*s), (17.5*s, 2.5*s)], fill=color)
-    
-    # Wings
-    d.ellipse([(3*s, 4*s), (11*s, 11*s)], fill=color)
-    d.ellipse([(13*s, 4*s), (21*s, 11*s)], fill=color)
-    
-    # Body
-    d.polygon([
-        (12*s, 4*s), (16.5*s, 7*s), (16*s, 14*s), (12*s, 21.5*s), (8*s, 14*s), (7.5*s, 7*s)
-    ], fill=color)
-    
-    # Body stripes (dark translucent)
-    bg_dark = (20, 24, 30, 200)
-    d.line([(8*s, 10*s), (16*s, 10*s)], fill=bg_dark, width=round(1.8*s))
-    d.line([(8.8*s, 14*s), (15.2*s, 14*s)], fill=bg_dark, width=round(1.8*s))
-    d.line([(9.8*s, 17.5*s), (14.2*s, 17.5*s)], fill=bg_dark, width=round(1.6*s))
-    
-    if with_check:
-        # Green check circle at bottom-right
-        cx, cy, cr = 17*s, 17*s, 5.5*s
-        d.ellipse([(cx - cr, cy - cr), (cx + cr, cy + cr)], fill=(34, 197, 94, 255), outline=(20, 24, 30, 255), width=max(1, round(1.2*s)))
-        # White checkmark
-        d.line([(cx - 2.5*s, cy), (cx - 0.5*s, cy + 2*s), (cx + 2.5*s, cy - 2*s)], fill=(255, 255, 255, 255), width=max(1, round(1.5*s)))
-        
-    return img.resize((size, size), Image.Resampling.LANCZOS)
+RELEASE_SCREENSHOTS.mkdir(parents=True, exist_ok=True)
 
 
 def inpaint_line(arr, x0, x1, y0, y1):
     """Interpolates vertically between (y0, x) and (y1, x) across all columns in [x0, x1]."""
-    x0 = max(0, x0)
-    x1 = min(arr.shape[1], x1)
-    y0 = max(0, y0)
-    y1 = min(arr.shape[0], y1)
+    x0 = max(0, int(x0))
+    x1 = min(arr.shape[1], int(x1))
+    y0 = max(0, int(y0))
+    y1 = min(arr.shape[0], int(y1))
     
     top = arr[y0, x0:x1]
     bot = arr[y1 - 1, x0:x1]
@@ -131,22 +53,10 @@ def inpaint_line(arr, x0, x1, y0, y1):
         arr[y0 + i, x0:x1] = (1.0 - alpha) * top + alpha * bot
 
 
-def replace_text_seamless(im, x, y, w, h, new_text, font_size=13, weight='Regular', color=(145, 160, 180, 255), mono=False):
-    arr = np.array(im, dtype=np.float32)
-    inpaint_line(arr, x - 2, x + w + 2, y - 2, y + h + 2)
-    im_out = Image.fromarray(arr.astype(np.uint8))
-    d = ImageDraw.Draw(im_out)
-    try:
-        if mono:
-            font = ImageFont.truetype(MONO_FONT_PATH, font_size)
-        else:
-            font = ImageFont.truetype(FONT_PATH, font_size)
-            if weight:
-                font.set_variation_by_name(weight)
-        d.text((x, y), new_text, fill=color, font=font)
-    except Exception as e:
-        print(f"Error rendering text '{new_text}': {e}")
-    return im_out
+def get_swarm_app_icon(size=(102, 102)):
+    """Loads and resizes the official Swarm Code squircle app icon."""
+    im = Image.open(APP_ICON_PATH).convert('RGBA')
+    return im.resize(size, Image.Resampling.LANCZOS)
 
 
 # ----------------------------------------------------------------------
@@ -156,159 +66,210 @@ def replace_text_seamless(im, x, y, w, h, new_text, font_size=13, weight='Regula
 def sanitize_window():
     print("Sanitizing window.webp...")
     im = Image.open(SRC_DIR / "window.webp").convert('RGBA')
+    arr = np.array(im, dtype=np.float32)
     
-    # 1. Header toolbar button: center is (611, 144), diameter 34
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (611 - 17, 144 - 17))
+    # 1. Terminal line: replace 'DroppyCode build' with 'SwarmCode build'
+    inpaint_line(arr, 834, 946, 696, 718)
     
-    # 2. Terminal line: replace 'DroppyCode build' seamlessly using cloned background gradient
-    arr = np.array(im)
-    bg_strip = arr[695:698, 835:935]
-    bg_fill = np.tile(bg_strip.mean(axis=0, keepdims=True), (15, 1, 1)).astype(np.uint8)
-    arr[700:715, 835:935] = bg_fill
-    im = Image.fromarray(arr)
+    # 2. Modal title: replace entire 'Welcome to Droppy Code' line seamlessly
+    # Bounding box is x=720..1360, y=895..965. Center is at x=1040.
+    inpaint_line(arr, 720, 1360, 895, 965)
     
+    im = Image.fromarray(arr.astype(np.uint8))
     d = ImageDraw.Draw(im)
-    font_term = ImageFont.truetype(FONT_PATH, 12)
-    font_term.set_variation_by_name('Bold')
-    d.text((836, 701), "SwarmCode build", fill=(160, 172, 185, 255), font=font_term)
     
-    # 3. Modal title: replace 'Droppy Code' with 'Swarm Code' seamlessly
-    c_modal = im.getpixel((1025, 930))
-    d.rectangle([(1020, 905), (1345, 960)], fill=c_modal)
+    # Draw terminal text
+    font_term = ImageFont.truetype(FONT_PATH, 14)
+    font_term.set_variation_by_name('Medium')
+    d.text((836, 700), "SwarmCode build", fill=(150, 160, 172, 255), font=font_term)
     
+    # Draw unified centered modal title
     font_modal = ImageFont.truetype(FONT_PATH, 46)
     font_modal.set_variation_by_name('Bold')
-    d.text((1025, 910), "Swarm Code", fill=(245, 248, 252, 255), font=font_modal)
+    title_text = "Welcome to Swarm Code"
+    bbox = font_modal.getbbox(title_text)
+    tw = bbox[2] - bbox[0]
+    tx = 1040 - tw // 2
+    ty = 908
+    d.text((tx, ty), title_text, fill=(245, 248, 252, 255), font=font_modal)
     
-    out_path = OUT_TOUR / "window.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
-    print(f"Saved {out_path}")
+    out_tour = OUT_TOUR / "window.webp"
+    im.convert('RGB').save(out_tour, 'WEBP', quality=92, method=6)
+    print(f"Saved {out_tour}")
 
 
-def sanitize_hero():
-    print("Sanitizing hero.webp...")
-    im = Image.open(SRC_DIR / "hero.webp").convert('RGBA')
+def sanitize_slider():
+    print("Sanitizing slider.webp...")
+    im = Image.open(SRC_DIR / "slider.webp").convert('RGBA')
+    arr = np.array(im, dtype=np.float32)
     
-    # 1. Header toolbar button: center (458, 148), diameter 44, badge 2
-    btn = make_toolbar_bee_button(44, badge_num=2)
-    im.alpha_composite(btn, (458 - 22, 148 - 22))
+    # 1. Inpaint old squircle
+    inpaint_line(arr, 985, 1097, 490, 602)
+    # 2. Inpaint text line
+    inpaint_line(arr, 610, 1470, 645, 725)
     
-    # 2. Status card 'Sending out 3 heads'
+    im = Image.fromarray(arr.astype(np.uint8))
+    
+    # 3. Paste Swarm Code AppIcon
+    appicon = get_swarm_app_icon((102, 102))
+    im.paste(appicon, (990, 495), appicon)
+    
+    # 4. Render centered text: 'What should we build in ' + 'Swarm Code' + '?'
+    font = ImageFont.truetype(FONT_PATH, 56)
+    font.set_variation_by_name('Regular')
+    
+    t1 = 'What should we build in '
+    t2 = 'Swarm Code'
+    t3 = '?'
+    
+    bbox1 = font.getbbox(t1)
+    bbox2 = font.getbbox(t2)
+    bbox3 = font.getbbox(t3)
+    
+    w1 = bbox1[2] - bbox1[0]
+    w2 = bbox2[2] - bbox2[0]
+    w3 = bbox3[2] - bbox3[0]
+    total_w = w1 + w2 + w3
+    
+    start_x = int(1040 - total_w / 2)
+    y_text = 658
+    
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle([(872, 452), (908, 488)], radius=6, fill=(45, 55, 68, 255))
-    wbee = make_bee_glyph_aa(26, (230, 240, 250, 240))
-    im.alpha_composite(wbee, (876, 456))
+    text_color = (235, 240, 245, 255)
+    sub_color = (160, 175, 190, 255)
     
-    # 3. Sent out Hank (orange), Walter (blue), Ada (green)
-    obee = make_bee_glyph_aa(24, (249, 115, 22, 255))
-    bbee = make_bee_glyph_aa(24, (59, 130, 246, 255))
-    gbee = make_bee_glyph_aa(24, (34, 197, 94, 255))
+    d.text((start_x, y_text), t1, fill=text_color, font=font)
+    x2 = start_x + w1
+    d.text((x2, y_text), t2, fill=text_color, font=font)
+    x3 = x2 + w2
+    d.text((x3, y_text), t3, fill=text_color, font=font)
     
-    d.rounded_rectangle([(876, 614), (908, 644)], radius=5, fill=(35, 42, 50, 255))
-    im.alpha_composite(obee, (880, 616))
-    
-    d.rounded_rectangle([(876, 674), (908, 704)], radius=5, fill=(35, 42, 50, 255))
-    im.alpha_composite(bbee, (880, 676))
-    
-    d.rounded_rectangle([(876, 734), (908, 764)], radius=5, fill=(35, 42, 50, 255))
-    im.alpha_composite(gbee, (880, 736))
-    
-    # Hank is done
-    d.rounded_rectangle([(876, 816), (908, 846)], radius=5, fill=(45, 52, 60, 255))
-    im.alpha_composite(obee, (880, 818))
-    
-    # 4. Floating subagent panel (bottom left):
-    # In [horse] 3 [v] pill, replace ONLY the horse icon at (251, 953):
-    d.rounded_rectangle([(246, 948), (275, 980)], radius=4, fill=(53, 62, 70, 255))
-    im.alpha_composite(make_bee_glyph_aa(22, (230, 240, 250, 240)), (248, 952))
-    # Digit '3' stays untouched at x=285!
-    
-    # 'Ada working': x=384, y=952
-    d.rounded_rectangle([(378, 946), (416, 982)], radius=6, fill=(48, 62, 64, 255))
-    im.alpha_composite(gbee, (383, 950))
-    
-    # 5. Effort slider icon (bottom right): x=1815, y=1111
-    d.rounded_rectangle([(1810, 1106), (1838, 1132)], radius=4, fill=(48, 54, 62, 255))
-    im.alpha_composite(make_bee_glyph_aa(20, (230, 240, 250, 240)), (1814, 1109))
-    
-    # 6. Prompt chip icon (bottom bar): x=1895, y=1324
-    d.rounded_rectangle([(1890, 1318), (1918, 1344)], radius=4, fill=(38, 44, 52, 255))
-    im.alpha_composite(make_bee_glyph_aa(18, (230, 240, 250, 240)), (1894, 1321))
-    
-    out_path = OUT_TOUR / "hero.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
-    print(f"Saved {out_path}")
+    # Draw dotted/dashed underline under Swarm Code
+    cur_x = x2 + 2
+    underline_y = 717
+    end_underline = x2 + w2 - 2
+    while cur_x < end_underline:
+        d.line([(cur_x, underline_y), (min(cur_x + 8, end_underline), underline_y)], fill=sub_color, width=3)
+        cur_x += 14
+        
+    out_tour = OUT_TOUR / "slider.webp"
+    im.convert('RGB').save(out_tour, 'WEBP', quality=92, method=6)
+    print(f"Saved {out_tour}")
 
 
-def sanitize_hydra():
-    print("Sanitizing hydra.webp...")
-    im = Image.open(SRC_DIR / "hydra.webp").convert('RGBA')
+def sanitize_pairs():
+    print("Sanitizing pairs.webp...")
+    im = Image.open(SRC_DIR / "pairs.webp").convert('RGBA')
+    arr = np.array(im, dtype=np.float32)
     
-    # 1. Header toolbar button: center (511, 168), diameter 44, badge 2
-    btn = make_toolbar_bee_button(44, badge_num=2)
-    im.alpha_composite(btn, (511 - 22, 168 - 22))
+    # 1. Inpaint old squircle
+    inpaint_line(arr, 985, 1097, 490, 602)
+    # 2. Inpaint 'Drop' before the popover edge (x=1246)
+    inpaint_line(arr, 1135, 1246, 650, 725)
     
-    # 2. Status card & pills at x=254
-    d = ImageDraw.Draw(im)
-    wbee = make_bee_glyph_aa(24, (230, 240, 250, 240))
-    obee = make_bee_glyph_aa(22, (249, 115, 22, 255))
-    bbee = make_bee_glyph_aa(22, (59, 130, 246, 255))
-    gbee = make_bee_glyph_aa(22, (34, 197, 94, 255))
+    im = Image.fromarray(arr.astype(np.uint8))
     
-    # Sending out 3 heads
-    d.rounded_rectangle([(250, 426), (284, 458)], radius=5, fill=(45, 55, 68, 255))
-    im.alpha_composite(wbee, (254, 429))
+    # 3. Paste Swarm Code AppIcon
+    appicon = get_swarm_app_icon((102, 102))
+    im.paste(appicon, (990, 495), appicon)
     
-    # Sent out Hank, Walter, Ada
-    d.rounded_rectangle([(250, 602), (282, 630)], radius=4, fill=(35, 42, 50, 255))
-    im.alpha_composite(obee, (254, 604))
+    # 4. Render 'Swarm Code?' masked before popover edge
+    overlay = Image.new('RGBA', im.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    font = ImageFont.truetype(FONT_PATH, 56)
+    font.set_variation_by_name('Regular')
     
-    d.rounded_rectangle([(250, 670), (282, 698)], radius=4, fill=(35, 42, 50, 255))
-    im.alpha_composite(bbee, (254, 671))
+    text_color = (235, 240, 245, 255)
+    sub_color = (160, 175, 190, 255)
     
-    d.rounded_rectangle([(250, 736), (282, 764)], radius=4, fill=(35, 42, 50, 255))
-    im.alpha_composite(gbee, (254, 737))
+    x2 = 1143
+    y_text = 658
+    d.text((x2, y_text), 'Swarm Code?', fill=text_color, font=font)
     
-    # Hank is done
-    d.rounded_rectangle([(250, 824), (282, 854)], radius=4, fill=(45, 52, 60, 255))
-    im.alpha_composite(obee, (254, 826))
+    cur_x = x2 + 2
+    underline_y = 717
+    while cur_x < 1246:
+        d.line([(cur_x, underline_y), (min(cur_x + 8, 1246), underline_y)], fill=sub_color, width=3)
+        cur_x += 14
+        
+    overlay_arr = np.array(overlay)
+    overlay_arr[:, :1135] = 0
+    overlay_arr[:, 1246:] = 0
+    overlay = Image.fromarray(overlay_arr)
     
-    # Walter and Ada are working (at y=924):
-    d.rounded_rectangle([(255, 920), (315, 955)], radius=6, fill=(35, 42, 50, 255))
-    im.alpha_composite(bbee, (260, 926))
-    im.alpha_composite(gbee, (280, 926))
+    im = Image.alpha_composite(im, overlay)
     
-    # Hank finished working (at y=995):
-    d.rounded_rectangle([(306, 990), (345, 1030)], radius=6, fill=(45, 52, 60, 255))
-    im.alpha_composite(make_bee_glyph_aa(22, (249, 115, 22, 255), with_check=True), (310, 994))
+    out_tour = OUT_TOUR / "pairs.webp"
+    im.convert('RGB').save(out_tour, 'WEBP', quality=92, method=6)
+    print(f"Saved {out_tour}")
+
+
+def sanitize_recipes():
+    print("Sanitizing recipes.webp...")
+    im = Image.open(SRC_DIR / "recipes.webp").convert('RGBA')
+    arr = np.array(im, dtype=np.float32)
     
-    # Floating panel (top right in hydra.webp):
-    # In [horse] 3 [v] pill:
-    d.rounded_rectangle([(1190, 288), (1225, 320)], radius=4, fill=(53, 62, 70, 255))
-    im.alpha_composite(wbee, (1194, 292))
-    # Digit '3' stays untouched at 1230!
+    # Squircle in recipes.webp is at (961, 508), size 102x102
+    inpaint_line(arr, 955, 1069, 502, 616)
+    im = Image.fromarray(arr.astype(np.uint8))
     
-    # Ada working pill:
-    d.rounded_rectangle([(1344, 288), (1378, 320)], radius=6, fill=(48, 62, 64, 255))
-    im.alpha_composite(gbee, (1348, 292))
+    appicon = get_swarm_app_icon((102, 102))
+    im.paste(appicon, (961, 508), appicon)
     
-    out_path = OUT_TOUR / "hydra.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
-    print(f"Saved {out_path}")
+    out_app = OUT_APP / "recipes.webp"
+    im.convert('RGB').save(out_app, 'WEBP', quality=92, method=6)
+    print(f"Saved {out_app}")
 
 
 def sanitize_diff():
     print("Sanitizing diff.webp...")
     im = Image.open(SRC_DIR / "diff.webp").convert('RGBA')
-    # Toolbar button at (395, 186)
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (395 - 17, 186 - 17))
+    arr = np.array(im, dtype=np.float32)
     
-    # Header path: DroppyCode/Views/Composer/ComposerView.swift
-    im = replace_text_seamless(im, 643, 288, 450, 18, "SwarmCode/App/Views/Composer/ComposerView.swift", font_size=15, mono=True, color=(210, 225, 240, 255))
+    # Replace diff file path at x=638..1090, y=286..312
+    inpaint_line(arr, 638, 1090, 286, 312)
+    im = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(im)
+    
+    font = ImageFont.truetype(FONT_PATH, 19)
+    font.set_variation_by_name('Regular')
+    full_text = 'SwarmCode/Views/Composer/ComposerView.swift'
+    d.text((640, 288), full_text, fill=(215, 225, 235, 255), font=font)
     
     out_path = OUT_APP / "diff.webp"
+    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
+    print(f"Saved {out_path}")
+
+
+def sanitize_sidebar():
+    print("Sanitizing sidebar.webp...")
+    im = Image.open(SRC_DIR / "sidebar.webp").convert('RGBA')
+    arr = np.array(im, dtype=np.float32)
+    
+    rows = [
+        (299, 'Swarm Code'),
+        (446, 'Swarm Code'),
+        (546, 'swarmcode.dev'),
+        (644, 'Swarm Code'),
+        (742, 'Swarm Code'),
+        (840, 'Swarm Code'),
+        (938, 'Swarm Code'),
+    ]
+    
+    for y_top, text in rows:
+        inpaint_line(arr, 93, 265, y_top - 5, y_top + 28)
+        
+    im = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(im)
+    
+    font = ImageFont.truetype(FONT_PATH, 20)
+    font.set_variation_by_name('Medium')
+    color = (155, 170, 185, 255)
+    
+    for y_top, text in rows:
+        d.text((99, y_top), text, fill=color, font=font)
+        
+    out_path = OUT_APP / "sidebar.webp"
     im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
     print(f"Saved {out_path}")
 
@@ -316,14 +277,28 @@ def sanitize_diff():
 def sanitize_palette():
     print("Sanitizing palette.webp...")
     im = Image.open(SRC_DIR / "palette.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (395 - 17, 186 - 17))
+    arr = np.array(im, dtype=np.float32)
     
-    for y in [371, 445, 594, 668, 742]:
-        im = replace_text_seamless(im, 651, y, 115, 14, "Swarm Code", font_size=13, color=(145, 160, 180, 255))
+    rows = [
+        (368, 'Swarm Code'),
+        (444, 'Swarm Code'),
+        (516, 'swarmcode.dev'),
+        (592, 'Swarm Code'),
+        (664, 'Swarm Code'),
+        (740, 'Swarm Code'),
+    ]
+    for y_top, text in rows:
+        inpaint_line(arr, 645, 765, y_top - 4, y_top + 24)
         
-    im = replace_text_seamless(im, 651, 520, 125, 14, "swarmcode.dev", font_size=13, color=(145, 160, 180, 255))
+    im = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(im)
+    font = ImageFont.truetype(FONT_PATH, 16)
+    font.set_variation_by_name('Regular')
+    color = (145, 160, 180, 255)
     
+    for y_top, text in rows:
+        d.text((650, y_top), text, fill=color, font=font)
+        
     out_path = OUT_APP / "palette.webp"
     im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
     print(f"Saved {out_path}")
@@ -332,10 +307,15 @@ def sanitize_palette():
 def sanitize_queue():
     print("Sanitizing queue.webp...")
     im = Image.open(SRC_DIR / "queue.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (395 - 17, 186 - 17))
+    arr = np.array(im, dtype=np.float32)
     
-    im = replace_text_seamless(im, 704, 817, 115, 18, "SwarmCode", font_size=14, mono=True, color=(180, 195, 210, 255))
+    inpaint_line(arr, 695, 860, 814, 838)
+    im = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(im)
+    
+    font = ImageFont.truetype(FONT_PATH, 14)
+    font.set_variation_by_name('Regular')
+    d.text((698, 818), 'SwarmCode build', fill=(150, 160, 172, 255), font=font)
     
     out_path = OUT_APP / "queue.webp"
     im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
@@ -345,10 +325,15 @@ def sanitize_queue():
 def sanitize_quote():
     print("Sanitizing quote.webp...")
     im = Image.open(SRC_DIR / "quote.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (411 - 17, 137 - 17))
+    arr = np.array(im, dtype=np.float32)
     
-    im = replace_text_seamless(im, 741, 920, 105, 16, "SwarmCode", font_size=14, mono=True, color=(180, 195, 210, 255))
+    inpaint_line(arr, 733, 890, 915, 938)
+    im = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(im)
+    
+    font = ImageFont.truetype(FONT_PATH, 14)
+    font.set_variation_by_name('Regular')
+    d.text((736, 918), 'SwarmCode build', fill=(150, 160, 172, 255), font=font)
     
     out_path = OUT_APP / "quote.webp"
     im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
@@ -358,40 +343,17 @@ def sanitize_quote():
 def sanitize_slash():
     print("Sanitizing slash.webp...")
     im = Image.open(SRC_DIR / "slash.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (411 - 17, 137 - 17))
+    arr = np.array(im, dtype=np.float32)
     
-    im = replace_text_seamless(im, 741, 964, 105, 16, "SwarmCode", font_size=14, mono=True, color=(180, 195, 210, 255))
+    inpaint_line(arr, 734, 890, 959, 983)
+    im = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(im)
+    
+    font = ImageFont.truetype(FONT_PATH, 14)
+    font.set_variation_by_name('Regular')
+    d.text((737, 961), 'SwarmCode build', fill=(150, 160, 172, 255), font=font)
     
     out_path = OUT_APP / "slash.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
-    print(f"Saved {out_path}")
-
-
-def sanitize_slider():
-    print("Sanitizing slider.webp...")
-    im = Image.open(SRC_DIR / "slider.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (518 - 17, 175 - 17))
-    
-    im = replace_text_seamless(im, 1143, 666, 160, 44, "Swarm", font_size=32, weight='Bold', color=(240, 245, 250, 255))
-    
-    out_path = OUT_TOUR / "slider.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
-    print(f"Saved {out_path}")
-
-
-def sanitize_sidebar():
-    print("Sanitizing sidebar.webp...")
-    im = Image.open(SRC_DIR / "sidebar.webp").convert('RGBA')
-    # Sidebar crop has no window toolbar button!
-    
-    for y in [300, 645, 743, 841, 939]:
-        im = replace_text_seamless(im, 98, y, 140, 24, "Swarm Code", font_size=18, weight='Regular', color=(145, 160, 180, 255))
-        
-    im = replace_text_seamless(im, 98, 546, 170, 24, "swarmcode.dev", font_size=18, weight='Regular', color=(145, 160, 180, 255))
-    
-    out_path = OUT_APP / "sidebar.webp"
     im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
     print(f"Saved {out_path}")
 
@@ -399,14 +361,37 @@ def sanitize_sidebar():
 def sanitize_threads():
     print("Sanitizing threads.webp...")
     im = Image.open(SRC_DIR / "threads.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (573 - 17, 169 - 17))
+    arr = np.array(im, dtype=np.float32)
     
-    for y in [394, 517, 683, 765, 847, 930]:
-        im = replace_text_seamless(im, 278, y, 115, 20, "Swarm Code", font_size=15, weight='Regular', color=(145, 160, 180, 255))
+    # Sidebar rows
+    rows = [
+        (392, 'Swarm Code'),
+        (516, 'Swarm Code'),
+        (598, 'swarmcode.dev'),
+        (678, 'Swarm Code'),
+        (764, 'Swarm Code'),
+        (846, 'Swarm Code'),
+        (928, 'Swarm Code'),
+    ]
+    for y_top, text in rows:
+        inpaint_line(arr, 273, 420, y_top - 4, y_top + 26)
         
-    im = replace_text_seamless(im, 277, 600, 140, 20, "swarmcode.dev", font_size=15, weight='Regular', color=(145, 160, 180, 255))
-    im = replace_text_seamless(im, 715, 840, 120, 20, "SwarmCode", font_size=15, mono=True, color=(180, 195, 210, 255))
+    # Terminal line
+    inpaint_line(arr, 708, 890, 834, 862)
+    
+    im = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(im)
+    
+    font_side = ImageFont.truetype(FONT_PATH, 16)
+    font_side.set_variation_by_name('Regular')
+    color_side = (145, 160, 180, 255)
+    
+    for y_top, text in rows:
+        d.text((275, y_top), text, fill=color_side, font=font_side)
+        
+    font_term = ImageFont.truetype(FONT_PATH, 14)
+    font_term.set_variation_by_name('Regular')
+    d.text((711, 837), 'SwarmCode build', fill=(150, 160, 172, 255), font=font_term)
     
     out_path = OUT_APP / "threads.webp"
     im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
@@ -416,14 +401,32 @@ def sanitize_threads():
 def sanitize_notify():
     print("Sanitizing notify.webp...")
     im = Image.open(SRC_DIR / "notify.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (630 - 17, 140 - 17))
+    arr = np.array(im, dtype=np.float32)
     
-    for y in [288, 403, 470, 572, 707, 774, 888]:
-        im = replace_text_seamless(im, 208, y, 110, 18, "Swarm Code", font_size=14, weight='Regular', color=(145, 160, 180, 255))
+    rows = [
+        (284, 'Swarm Code'),
+        (398, 'Swarm Code'),
+        (465, 'Swarm Code'),
+        (568, 'Swarm Code'),
+        (634, 'swarmcode.dev'),
+        (704, 'Swarm Code'),
+        (770, 'Swarm Code'),
+        (885, 'Swarm Code'),
+        (951, 'swarmcode.dev'),
+        (1021, 'swarmcode.dev'),
+    ]
+    for y_top, text in rows:
+        inpaint_line(arr, 203, 330, y_top - 4, y_top + 24)
         
-    for y in [639, 956, 1023]:
-        im = replace_text_seamless(im, 208, y, 130, 18, "swarmcode.dev", font_size=14, weight='Regular', color=(145, 160, 180, 255))
+    im = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(im)
+    
+    font = ImageFont.truetype(FONT_PATH, 14)
+    font.set_variation_by_name('Regular')
+    color = (145, 160, 180, 255)
+    
+    for y_top, text in rows:
+        d.text((205, y_top), text, fill=color, font=font)
         
     out_path = OUT_APP / "notify.webp"
     im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
@@ -433,135 +436,152 @@ def sanitize_notify():
 def sanitize_themes():
     print("Sanitizing themes.webp...")
     im = Image.open(SRC_DIR / "themes.webp").convert('RGBA')
+    arr = np.array(im, dtype=np.float32)
     
-    # 4 quadrants toolbar buttons: (255, 90), (1295, 90), (255, 737), (1295, 737)
-    btn = make_toolbar_bee_button(28)
-    im.alpha_composite(btn, (255 - 14, 90 - 14))
-    im.alpha_composite(btn, (1295 - 14, 90 - 14))
-    im.alpha_composite(btn, (255 - 14, 737 - 14))
-    im.alpha_composite(btn, (1295 - 14, 737 - 14))
+    # 4 panels in themes.webp:
+    # Top-left (dark), Top-right (dark), Bottom-left (light), Bottom-right (dark)
+    panels = [
+        (325, 455, 478, 500, (150, 160, 172, 255)),
+        (1365, 1495, 478, 500, (150, 160, 172, 255)),
+        (325, 455, 1128, 1150, (90, 95, 105, 255)),
+        (1365, 1495, 1128, 1150, (150, 160, 172, 255)),
+    ]
     
-    im = replace_text_seamless(im, 331, 483, 70, 14, "SwarmCode", font_size=10, mono=True, color=(180, 195, 210, 255))
-    im = replace_text_seamless(im, 1370, 483, 70, 14, "SwarmCode", font_size=10, mono=True, color=(180, 195, 210, 255))
-    im = replace_text_seamless(im, 331, 1133, 70, 14, "SwarmCode", font_size=10, mono=True, color=(180, 195, 210, 255))
-    im = replace_text_seamless(im, 1370, 1133, 70, 14, "SwarmCode", font_size=10, mono=True, color=(180, 195, 210, 255))
+    for x0, x1, y0, y1, _ in panels:
+        inpaint_line(arr, x0, x1, y0, y1)
+        
+    im = Image.fromarray(arr.astype(np.uint8))
+    d = ImageDraw.Draw(im)
     
-    out_path = OUT_TOUR / "themes.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
+    font = ImageFont.truetype(FONT_PATH, 11)
+    font.set_variation_by_name('Regular')
+    
+    for x0, _, y0, _, color in panels:
+        d.text((x0 + 2, y0 + 3), 'SwarmCode build', fill=color, font=font)
+        
+    out_tour = OUT_TOUR / "themes.webp"
+    im.convert('RGB').save(out_tour, 'WEBP', quality=92, method=6)
+    print(f"Saved {out_tour}")
+
+
+def sanitize_hero():
+    print("Sanitizing hero.webp (preserving authentic Hydra mark)...")
+    im = Image.open(SRC_DIR / "hero.webp").convert('RGB')
+    out_tour = OUT_TOUR / "hero.webp"
+    out_app = OUT_APP / "hero.webp"
+    im.save(out_tour, 'WEBP', quality=92, method=6)
+    im.save(out_app, 'WEBP', quality=92, method=6)
+    print(f"Saved {out_tour} and {out_app}")
+
+
+def sanitize_hydra():
+    print("Sanitizing hydra.webp (preserving authentic Hydra mark)...")
+    im = Image.open(SRC_DIR / "hydra.webp").convert('RGB')
+    out_path = OUT_TOUR / "hydra.webp"
+    im.save(out_path, 'WEBP', quality=92, method=6)
     print(f"Saved {out_path}")
 
 
 def sanitize_intro():
     print("Sanitizing intro.webp...")
-    im = Image.open(SRC_DIR / "intro.webp").convert('RGBA')
-    # Toolbar button at (437, 196)
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (437 - 17, 196 - 17))
-    # DO NOT paste any random logo in the chat!
-    
+    im = Image.open(SRC_DIR / "intro.webp").convert('RGB')
     out_path = OUT_APP / "intro.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
+    im.save(out_path, 'WEBP', quality=92, method=6)
     print(f"Saved {out_path}")
 
 
 def sanitize_panels():
     print("Sanitizing panels.webp...")
-    im = Image.open(SRC_DIR / "panels.webp").convert('RGBA')
-    # Toolbar button at (411, 137) with badge 2
-    btn = make_toolbar_bee_button(42, badge_num=2)
-    im.alpha_composite(btn, (411 - 21, 137 - 21))
-    
-    d = ImageDraw.Draw(im)
-    wbee = make_bee_glyph_aa(24, (230, 240, 250, 240))
-    obee = make_bee_glyph_aa(22, (249, 115, 22, 255))
-    bbee = make_bee_glyph_aa(22, (59, 130, 246, 255))
-    gbee = make_bee_glyph_aa(22, (34, 197, 94, 255))
-    
-    # Left floating panel (Hank): x=225, y=826
-    d.rounded_rectangle([(220, 820), (248, 850)], radius=4, fill=(45, 52, 60, 255))
-    im.alpha_composite(obee, (224, 824))
-    
-    # Right floating panel (Ada): x=1504, y=826
-    d.rounded_rectangle([(1498, 820), (1528, 850)], radius=4, fill=(48, 62, 64, 255))
-    im.alpha_composite(gbee, (1502, 824))
-    
-    # Main window status rows:
-    d.rounded_rectangle([(768, 348), (796, 376)], radius=4, fill=(45, 55, 68, 255))
-    im.alpha_composite(wbee, (770, 350))
-    
-    d.rounded_rectangle([(770, 488), (798, 516)], radius=4, fill=(35, 42, 50, 255))
-    im.alpha_composite(obee, (772, 490))
-    
-    d.rounded_rectangle([(770, 538), (798, 566)], radius=4, fill=(35, 42, 50, 255))
-    im.alpha_composite(bbee, (772, 540))
-    
-    d.rounded_rectangle([(770, 592), (798, 620)], radius=4, fill=(35, 42, 50, 255))
-    im.alpha_composite(gbee, (772, 594))
-    
-    d.rounded_rectangle([(770, 664), (798, 692)], radius=4, fill=(45, 52, 60, 255))
-    im.alpha_composite(obee, (772, 666))
-    
+    im = Image.open(SRC_DIR / "panels.webp").convert('RGB')
     out_path = OUT_TOUR / "panels.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
-    print(f"Saved {out_path}")
-
-
-def sanitize_pairs():
-    print("Sanitizing pairs.webp...")
-    im = Image.open(SRC_DIR / "pairs.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (518 - 17, 175 - 17))
-    
-    out_path = OUT_TOUR / "pairs.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
-    print(f"Saved {out_path}")
-
-
-def sanitize_recipes():
-    print("Sanitizing recipes.webp...")
-    im = Image.open(SRC_DIR / "recipes.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (491 - 17, 197 - 17))
-    
-    out_path = OUT_APP / "recipes.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
+    im.save(out_path, 'WEBP', quality=92, method=6)
     print(f"Saved {out_path}")
 
 
 def sanitize_question():
     print("Sanitizing question.webp...")
-    im = Image.open(SRC_DIR / "question.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (395 - 17, 186 - 17))
-    
+    im = Image.open(SRC_DIR / "question.webp").convert('RGB')
     out_path = OUT_APP / "question.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
+    im.save(out_path, 'WEBP', quality=92, method=6)
     print(f"Saved {out_path}")
 
 
 def sanitize_plans():
     print("Sanitizing plans.webp...")
-    im = Image.open(SRC_DIR / "plans.webp").convert('RGBA')
-    btn = make_toolbar_bee_button(34)
-    im.alpha_composite(btn, (395 - 17, 186 - 17))
-    
+    im = Image.open(SRC_DIR / "plans.webp").convert('RGB')
     out_path = OUT_APP / "plans.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
+    im.save(out_path, 'WEBP', quality=92, method=6)
     print(f"Saved {out_path}")
 
 
 def sanitize_limits():
     print("Sanitizing limits.webp...")
-    im = Image.open(SRC_DIR / "limits.webp").convert('RGBA')
-    # Limits has no toolbar or Droppy text
+    im = Image.open(SRC_DIR / "limits.webp").convert('RGB')
     out_path = OUT_APP / "limits.webp"
-    im.convert('RGB').save(out_path, 'WEBP', quality=92, method=6)
+    im.save(out_path, 'WEBP', quality=92, method=6)
     print(f"Saved {out_path}")
 
 
-# ----------------------------------------------------------------------
-# Main Execution
-# ----------------------------------------------------------------------
+def generate_posters():
+    print("\nGenerating video posters (1320x824 WebP)...")
+    posters = {
+        "hero-poster.webp": OUT_TOUR / "hero.webp",
+        "slider-poster.webp": OUT_TOUR / "slider.webp",
+        "question-poster.webp": OUT_APP / "question.webp",
+        "queue-poster.webp": OUT_APP / "queue.webp",
+    }
+    for poster_name, src_path in posters.items():
+        im = Image.open(src_path).convert('RGB')
+        im_resized = im.resize((1320, 824), Image.Resampling.LANCZOS)
+        out_path = OUT_APP / poster_name
+        im_resized.save(out_path, 'WEBP', quality=90, method=6)
+        print(f"Saved poster {out_path}")
+
+
+def update_xcassets():
+    print("\nUpdating in-app xcassets tour images (1320x824 PNG)...")
+    tour_assets = {
+        "tour-welcome.imageset/tour-welcome@2x.png": OUT_TOUR / "window.webp",
+        "tour-hydra.imageset/tour-hydra@2x.png": OUT_TOUR / "hydra.webp",
+        "tour-pairs.imageset/tour-pairs@2x.png": OUT_TOUR / "pairs.webp",
+        "tour-slider.imageset/tour-slider@2x.png": OUT_TOUR / "slider.webp",
+        "tour-panels.imageset/tour-panels@2x.png": OUT_TOUR / "panels.webp",
+        "tour-themes.imageset/tour-themes@2x.png": OUT_TOUR / "themes.webp",
+        "tour-recipes.imageset/tour-recipes@2x.png": OUT_APP / "recipes.webp",
+        "tour-threads.imageset/tour-threads@2x.png": OUT_APP / "threads.webp",
+    }
+    for asset_rel, webp_src in tour_assets.items():
+        target = XCASSETS / asset_rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        im = Image.open(webp_src).convert('RGB')
+        im_resized = im.resize((1320, 824), Image.Resampling.LANCZOS)
+        im_resized.save(target, 'PNG')
+        print(f"Updated {target}")
+
+
+def sync_release_screenshots():
+    print("\nSyncing release screenshots into SwarmCode-Release/assets/screenshots/...")
+    mapping = {
+        "hero.webp": (OUT_TOUR / "hero.webp", (1320, 824)),
+        "hydra.webp": (OUT_TOUR / "hydra.webp", (1320, 824)),
+        "hydra-delegation.webp": (OUT_TOUR / "hydra.webp", (1320, 824)),
+        "agents.webp": (OUT_TOUR / "panels.webp", (1320, 824)),
+        "themes.webp": (OUT_TOUR / "themes.webp", (1320, 824)),
+        "diff.webp": (OUT_APP / "diff.webp", (1320, 824)),
+        "palette.webp": (OUT_APP / "palette.webp", (1320, 824)),
+        "plans.webp": (OUT_APP / "plans.webp", (1320, 824)),
+        "question.webp": (OUT_APP / "question.webp", (1320, 824)),
+        "switcher.webp": (OUT_TOUR / "pairs.webp", (1320, 824)),
+        "sidebar.webp": (OUT_APP / "sidebar.webp", (588, 1236)),
+    }
+    for name, (src_file, target_size) in mapping.items():
+        dst = RELEASE_SCREENSHOTS / name
+        im = Image.open(src_file).convert('RGB')
+        if target_size:
+            im = im.resize(target_size, Image.Resampling.LANCZOS)
+        im.save(dst, 'WEBP', quality=90, method=6)
+        print(f"Synced {dst}")
+
 
 def run():
     sanitize_window()
@@ -585,28 +605,11 @@ def run():
     sanitize_plans()
     sanitize_limits()
     
-    print("\nUpdating in-app xcassets tour images...")
-    tour_assets = {
-        "tour-welcome@2x.png": OUT_TOUR / "window.webp",
-        "tour-hydra@2x.png": OUT_TOUR / "hydra.webp",
-        "tour-pairs@2x.png": OUT_TOUR / "pairs.webp",
-        "tour-slider@2x.png": OUT_TOUR / "slider.webp",
-        "tour-panels@2x.png": OUT_TOUR / "panels.webp",
-        "tour-themes@2x.png": OUT_TOUR / "themes.webp",
-        "tour-recipes@2x.png": OUT_APP / "recipes.webp",
-        "tour-threads@2x.png": OUT_APP / "threads.webp",
-    }
-    
-    for asset_name, webp_source in tour_assets.items():
-        folder_name = asset_name.replace("@2x.png", ".imageset")
-        target_path = XCASSETS / folder_name / asset_name
-        if target_path.parent.exists():
-            im = Image.open(webp_source)
-            im_resized = im.resize((1320, 824), Image.Resampling.LANCZOS)
-            im_resized.save(target_path)
-            print(f"  Updated xcasset: {target_path}")
+    generate_posters()
+    update_xcassets()
+    sync_release_screenshots()
+    print("\nAll website images, tour assets, and screenshots sanitized successfully with authentic Hydra marks preserved!")
 
-    print("\nAll images sanitized successfully with zero glitches!")
 
 if __name__ == "__main__":
     run()
