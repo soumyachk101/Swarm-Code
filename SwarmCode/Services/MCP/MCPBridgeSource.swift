@@ -5,142 +5,25 @@ import Foundation
 /// Command Code (a mod). Both dynamic-import it and call `loadMCPTools()`.
 ///
 /// Plain ESM JavaScript (Node 18+, no npm dependencies). The server list comes
-/// from the file at `SWARMCODE_MCP_CONFIG`, `SWARMAI_MCP_CONFIG` or `DROPPY_CODE_MCP_CONFIG`
+/// from the file at `SWARM_CODE_MCP_CONFIG`
 /// (`{"mcpServers": { id: {command, args, env} | {type: "http", url, headers} }}`);
 /// when the variable is unset or the file is missing, nothing is registered.
 enum MCPBridge {
     static let mcpBridgeSource: String = #"""
     import fs from "node:fs";
-    import { spawn, execFileSync } from "node:child_process";
+    import { spawn } from "node:child_process";
 
     const PROTOCOL_VERSION = "2025-06-18";
     const CONNECT_TIMEOUT_MS = 15000;
 
-    /// Shell metacharacters that could enable injection if ever passed to a
-    /// shell or interpreted by a downstream process. Rejected from commands
-    /// and arguments as a defense-in-depth measure.
-    const INJECTION_RE = /[\n\r;|&`$(){}[\]\\"'<>]/;
-
-    function assertNoInjection(label, value) {
-      if (typeof value !== "string" || INJECTION_RE.test(value)) {
-        throw new Error(label + " contains invalid characters.");
-      }
-    }
-
-    /// Environment variables that can hijack runtime behavior or inject code
-    /// into spawned MCP server processes. Any matching key is stripped before
-    /// the env dictionary is merged into the child process environment.
-    const BLOCKED_ENV_KEYS = new Set([
-      "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
-      "NODE_OPTIONS", "NODE_REPL_EXTERNAL_MODULE",
-      "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME",
-      "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB",
-      "BASH_ENV", "ENV", "IFS",
-      "GIT_", "GCONV_PATH", "NSS_WRAPPER_PASSWD", "NSS_WRAPPER_GROUP",
-    ]);
-
-    function cleanEnv(rawEnv) {
-      if (!rawEnv || typeof rawEnv !== "object") return {};
-      const out = {};
-      for (const [key, value] of Object.entries(rawEnv)) {
-        const upper = key.toUpperCase();
-        if ([...BLOCKED_ENV_KEYS].some((blocked) => upper === blocked || upper.startsWith(blocked))) {
-          continue;
-        }
-        out[key] = value;
-      }
-      return out;
-    }
-
-    /// Known-safe MCP server commands. Anything whose resolved path has a
-    /// base name outside this set is rejected before spawning.
-    const ALLOWED_COMMANDS = new Set([
-      "node", "nodejs", "npx", "bun", "deno",
-      "python3", "python", "uv", "uvx",
-      "java", "kotlin", "ruby", "gem",
-      "go", "golang",
-    ]);
-
-    /// Directories trusted to host MCP server executables. The resolved
-    /// absolute path of the command must start with one of these.
-    const TRUSTED_PREFIXES = [
-      "/usr/bin/", "/usr/local/bin/",
-      "/opt/homebrew/bin/",
-      "/usr/lib/", "/Users/", "/home/",
-    ];
-
-    /// Resolve a command name to an absolute path using `which`, then
-    /// validate the resolved path against the allowlist and trusted-prefix list.
-    /// Throws if the command is not safe to launch.
-    function validateCommand(command) {
-      assertNoInjection("command", command);
-      const resolved = execFileSync("which", [command], { encoding: "utf8" }).trim();
-      const base = resolved.split("/").pop().toLowerCase();
-      if (!ALLOWED_COMMANDS.has(base)) {
-        throw new Error("'" + command + "' is not an allowed MCP server command.");
-      }
-      if (!TRUSTED_PREFIXES.some((p) => resolved.startsWith(p))) {
-        throw new Error("'" + command + "' is not in a trusted location: " + resolved);
-      }
-      return resolved;
-    }
-
-    function validateUrl(url) {
-      assertNoInjection("url", url);
-      let parsed;
-      try {
-        parsed = new URL(url);
-      } catch {
-        throw new Error("Invalid URL: " + url);
-      }
-      if (!["http:", "https:"].includes(parsed.protocol)) {
-        throw new Error("URL protocol must be http or https: " + parsed.protocol);
-      }
-      const hostname = parsed.hostname.toLowerCase();
-      // Loopback
-      if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
-        throw new Error("URL targets a loopback address.");
-      }
-      // Link-local (169.254.0.0/16, fe80::/10)
-      if (hostname.startsWith("169.254.") || hostname.startsWith("fe80:")) {
-        throw new Error("URL targets a link-local address.");
-      }
-      // RFC1918 private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-      const octets = hostname.split(".").map(Number);
-      if (octets.length === 4) {
-        if (octets[0] === 10 || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) || (octets[0] === 192 && octets[1] === 168)) {
-          throw new Error("URL targets a private network address.");
-        }
-      }
-      return parsed;
-    }
-
-    /// Validate each argument before spawning: reject shell metacharacters
-    /// and leading `-` (which could smuggle flags into the child process).
-    /// Returns the safe argv to pass to spawn.
-    function validateArgs(args) {
-      const out = [];
-      for (let i = 0; i < args.length; i++) {
-        const arg = String(args[i]);
-        if (INJECTION_RE.test(arg)) {
-          throw new Error("arg " + i + " contains invalid characters.");
-        }
-        if (arg.startsWith("-")) {
-          throw new Error("arg " + i + " cannot start with '-' (flag smuggling guard).");
-        }
-        out.push(arg);
-      }
-      return out;
-    }
-
     function configServers() {
       try {
-        const file = process.env.SWARMCODE_MCP_CONFIG || process.env.SWARMAI_MCP_CONFIG || process.env.DROPPY_CODE_MCP_CONFIG || "";
+        const file = process.env.SWARM_CODE_MCP_CONFIG || "";
         if (!file) return {};
         const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
         if (parsed && typeof parsed === "object" && parsed.mcpServers && typeof parsed.mcpServers === "object") return parsed.mcpServers;
       } catch (error) {
-        console.error("swarmcode mcp: could not read config: " + errorText(error));
+        console.error("swarm mcp: could not read config: " + errorText(error));
       }
       return {};
     }
@@ -194,10 +77,8 @@ enum MCPBridge {
       return new Promise((resolve, reject) => {
         let child = null;
         try {
-          const resolvedCommand = validateCommand(entry.command);
-          const safeArgs = validateArgs(Array.isArray(entry.args) ? entry.args : []);
-          child = spawn(resolvedCommand, safeArgs, {
-            env: { ...process.env, ...cleanEnv(entry.env) },
+          child = spawn(entry.command, Array.isArray(entry.args) ? entry.args : [], {
+            env: { ...process.env, ...((entry.env && typeof entry.env === "object") ? entry.env : {}) },
             stdio: ["pipe", "pipe", "ignore"],
           });
         } catch (error) {
@@ -273,10 +154,7 @@ enum MCPBridge {
     async function postMessage(url, headers, payload, sessionId) {
       const requestHeaders = { ...(headers || {}), "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
       if (sessionId) requestHeaders["mcp-session-id"] = sessionId;
-      const response = await fetch(url, { method: "POST", headers: requestHeaders, body: JSON.stringify(payload), redirect: "manual" });
-      if (!response.url || response.url !== url) {
-        throw new Error("Request was redirected to an unexpected URL: " + response.url);
-      }
+      const response = await fetch(url, { method: "POST", headers: requestHeaders, body: JSON.stringify(payload) });
       const nextSession = response.headers.get("mcp-session-id") || sessionId || null;
       const contentType = response.headers.get("content-type") || "";
       let message = null;
@@ -302,8 +180,7 @@ enum MCPBridge {
 
     function connectRemote(server, entry) {
       return (async () => {
-        const parsedUrl = validateUrl(entry.url);
-        const url = parsedUrl.toString();
+        const url = entry.url;
         const headers = (entry.headers && typeof entry.headers === "object") ? entry.headers : {};
         let sessionId = null;
         let id = 0;
@@ -350,7 +227,7 @@ enum MCPBridge {
             tools.push(...await withTimeout(connectStdio(server, entry)));
           }
         } catch (error) {
-          console.error("swarmcode mcp: skipping " + server + ": " + errorText(error));
+          console.error("swarm mcp: skipping " + server + ": " + errorText(error));
         }
       }
       return tools;
@@ -365,7 +242,7 @@ enum MCPBridge {
             ?? URL(fileURLWithPath: LoginEnvironment.homeDirectory).appendingPathComponent("Library/Application Support")
         let directory = base.appendingPathComponent("\(AppInfo.name)/MCP", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let file = directory.appendingPathComponent("swarmcode-mcp-bridge.mjs")
+        let file = directory.appendingPathComponent("swarm-mcp-bridge.mjs")
         let data = Data(mcpBridgeSource.utf8)
         if (try? Data(contentsOf: file)) != data {
             try data.write(to: file, options: .atomic)

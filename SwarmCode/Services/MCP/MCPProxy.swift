@@ -283,20 +283,22 @@ final class MCPProxy: @unchecked Sendable {
 
     private func routeRequest(connection: NWConnection, method: String, path: String, clientHeaders: [String: String], body: Data) {
         let bare = String(path.prefix(upTo: path.firstIndex(of: "?") ?? path.endIndex))
+        // A path the proxy holds no route for is a bad gateway, never a 404: the app reads a 404
+        // seen through the proxy as the server's own answer (GitLab answers 404 while MCP is off).
         guard bare.hasPrefix("/mcp/") else {
-            respond(connection: connection, status: 404, body: Self.jsonError("unknown server"))
+            respond(connection: connection, status: 502, body: Self.jsonError("unknown server"))
             return
         }
         let serverID = String(bare.dropFirst("/mcp/".count))
         guard !serverID.isEmpty, !serverID.contains("/") else {
-            respond(connection: connection, status: 404, body: Self.jsonError("unknown server"))
+            respond(connection: connection, status: 502, body: Self.jsonError("unknown server"))
             return
         }
         lock.lock()
         let route = routes[serverID]
         lock.unlock()
         guard let route else {
-            respond(connection: connection, status: 404, body: Self.jsonError("unknown server"))
+            respond(connection: connection, status: 502, body: Self.jsonError("unknown server"))
             return
         }
         let box = ConnectionBox(connection: connection)

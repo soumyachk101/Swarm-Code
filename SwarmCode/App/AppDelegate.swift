@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             return
         }
         windows.showMain()
+        windows.model.openThreadOnLaunch()
         if !windows.model.settings.hasSeenTour {
             Task { @MainActor in try? await Task.sleep(for: .milliseconds(700)); Tour.present(model: windows.model) }
         }
@@ -31,15 +32,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         return true
     }
 
+    /// A quit while the team's work is going out waits for it: the merge is a minute or
+    /// two of git and one model call, and losing it half-way leaves the work unmerged
+    /// until the user's next message. Capped, so a stuck merge never holds the quit.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let model, model.isAnyHydraMergeRunning else { return .terminateNow }
+        Task { @MainActor in
+            let deadline = Date.now.addingTimeInterval(4 * 60)
+            while model.isAnyHydraMergeRunning, Date.now < deadline {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         model?.saveBeforeQuit()
+        TokenLedger.shared.flushLiveSpend()
+        // The MCP servers the hub started go with the app.
+        MCPHub.terminateAll()
     }
 
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
+        let threadIDString = notification.request.content.userInfo["threadID"] as? String
+        if let threadIDString, let notifiedID = UUID(uuidString: threadIDString) {
+            let isOpenChat = await MainActor.run {
+                NSApp.isActive && self.model?.selectedThreadID == notifiedID
+            }
+            if isOpenChat { return [] }
+        }
+        return [.banner, .sound]
     }
 
     nonisolated func userNotificationCenter(
@@ -50,6 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let identifier = userInfo["threadID"] as? String
         let isUpdate = userInfo["update"] != nil
         await MainActor.run {
+            if !isUpdate { WindowManager.shared.showMain() }
             if let identifier, let threadID = UUID(uuidString: identifier) {
                 self.model?.selectedThreadID = threadID
             }

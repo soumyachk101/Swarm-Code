@@ -14,8 +14,12 @@ struct AppCommands: Commands {
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .openSettings))
         }
 
+        // File's stock Close sits before the Thread menu and would take ⌘W from Archive thread…,
+        // closing the main window instead. Secondary windows close on ⌘W themselves (SecondaryWindow).
+        CommandGroup(replacing: .saveItem) {}
+
         CommandGroup(before: .windowArrangement) {
-            Button("Swarm Code") { WindowManager.shared.showMain() }
+            Button(AppInfo.name) { WindowManager.shared.showMain() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .showMainWindow))
             Divider()
         }
@@ -54,11 +58,12 @@ struct AppCommands: Commands {
                 .disabled(!(runtime?.isRunning ?? false))
             // Off while the thread is waiting on an approval: the approve button ships with
             // the same ⌘Return, and a menu command always wins over a button's shortcut, so
-            // the queue would swallow the chord the card is asking for.
+            // the queue would swallow the chord the card is asking for. On with nothing to
+            // queue behind: the draft then just goes out (see `queueDraftAsFollowUp`),
+            // rather than the chord doing nothing at all.
             Button("Queue a chat") { runtime?.queueDraftAsFollowUp() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .queueChat))
-                .disabled(!(runtime?.canQueue ?? false)
-                    || (runtime?.draft.isEmpty ?? true)
+                .disabled((runtime?.draftIsEmpty ?? true)
                     || !(runtime?.approvals.isEmpty ?? true))
             Button("Toggle plan mode") {
                 guard let id = model.selectedThreadID else { return }
@@ -71,6 +76,12 @@ struct AppCommands: Commands {
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .previousThread))
             Button("Next thread") { model.selectThread(offset: 1) }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .nextThread))
+            Button(model.topScript.map { "Run \($0.name)" } ?? "Run top script") {
+                guard let script = model.topScript, let threadID = model.selectedThreadID else { return }
+                model.runScript(script, threadID: threadID)
+            }
+            .keyboardShortcut(shortcuts.keyboardShortcut(for: .runScript))
+            .disabled(model.topScript == nil)
             ForEach(1...9, id: \.self) { number in
                 Button("Thread \(number)") { model.selectThread(number: number) }
                     .keyboardShortcut(KeyEquivalent(Character(String(number))), modifiers: .command)
@@ -79,6 +90,12 @@ struct AppCommands: Commands {
             Button(model.finishActionTitle) { model.finishSelectedThread() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .finishThread))
                 .disabled(model.selectedThreadID == nil)
+            Button("Archive thread…") { model.askToArchiveSelectedThread() }
+                .keyboardShortcut(shortcuts.keyboardShortcut(for: .archiveThread))
+                .disabled(model.selectedThreadID == nil)
+            Button(model.selectedThread?.isSettled == true ? "Reopen thread" : "Settle thread") { model.settleSelectedThread() }
+                .keyboardShortcut(shortcuts.keyboardShortcut(for: .settleThread))
+                .disabled(model.selectedThread.map { $0.isHelper } ?? true)
         }
 
         CommandGroup(replacing: .help) {

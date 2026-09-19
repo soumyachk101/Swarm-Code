@@ -42,6 +42,56 @@ enum ThreadFinishAction: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the thread list is shown: as a column beside the chat, as a floating panel whenever the column is collapsed, or as the floating panel alone.
+enum SidebarMode: String, CaseIterable, Identifiable {
+    case column
+    case floating
+    case panelOnly
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .column: "Column"
+        case .floating: "Floating"
+        case .panelOnly: "Panel only"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .column: "A column beside the chat; the list button in the toolbar shows and hides it"
+        case .floating: "With the column collapsed, the thread list floats as a panel over the chat and stays where you leave it"
+        case .panelOnly: "No column and no toolbar button; the floating panel is the sidebar"
+        }
+    }
+}
+
+/// How the activity list shows which project a thread belongs to: the project's own mark
+/// in front of the thread's name on one line, or the project's name under it.
+enum ActivityThreadStyle: String, CaseIterable, Identifiable {
+    /// The project's emoji or SF Symbol before the thread's name: one line per thread.
+    case icon
+    /// The project's name, with a folder mark, on a line under the thread's title.
+    case projectName
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .icon: "Icon"
+        case .projectName: "Project name"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .icon: "Each project's emoji or symbol before the thread's name, one line per thread"
+        case .projectName: "The project's name, with a folder mark, on a line under the thread's title"
+        }
+    }
+}
+
 /// A model the composer's picker offers.
 struct ModelPin: Codable, Hashable, Identifiable, Sendable {
     var provider: ProviderKind
@@ -60,6 +110,10 @@ struct ModelPreference: Codable, Hashable, Sendable {
 @MainActor
 @Observable
 final class AppSettings {
+    /// The per-chat Hydra default's key, owned by `ChatThread`, which seeds new
+    /// threads from it before any settings object is in reach.
+    nonisolated static let hydraDefaultEnabledKey = ChatThread.hydraDefaultKey
+
     private enum Key {
         static let defaultProvider = "defaultProvider"
         static let runtimeMode = "defaultRuntimeMode"
@@ -71,8 +125,11 @@ final class AppSettings {
         static let threadFinishAction = "threadFinishAction"
         static let settleSound = "settleSound"
         static let showReasoning = "showReasoning"
+        static let antiSlopEnabled = "antiSlopEnabled"
+        static let showsWorkingCard = "showsWorkingCard"
         static let chatZoom = "chatZoom"
         static let sidebarActivityView = "sidebarActivityView"
+        static let activityThreadStyle = "activityThreadStyle"
         static let settledCollapsed = "settledSectionCollapsed"
         static let appTheme = "appTheme"
         static let backdropOpacity = "backdropOpacity"
@@ -81,6 +138,7 @@ final class AppSettings {
         static let disabledProviders = "disabledProviders"
         static let models = "lastModels"
         static let efforts = "lastEfforts"
+        static let lastHydraPair = "lastHydraPairID"
         static let textGeneration = "textGeneration"
         static let commitInstructions = "commitInstructions"
         static let terminalHeight = "terminalHeight"
@@ -92,24 +150,44 @@ final class AppSettings {
         static let projectActivationOverrides = "projectActivationOverrides"
         static let deepseekAPIKey = "deepseekAPIKey"
         static let metaAPIKey = "metaAPIKey"
+        static let zaiAPIKey = "zaiAPIKey"
+        static let commandcodeAPIKey = "commandcodeAPIKey"
         static let hydraEnabled = "hydraEnabled"
+        static let panelSize = "floatingPanelSize"
+        static let hydraDefaultEnabled = AppSettings.hydraDefaultEnabledKey
         static let hydraQueueHeads = "hydraQueueHeads"
         static let hydraAlwaysHeads = "hydraAlwaysHeads"
         static let hydraIsolateHeads = "hydraIsolateHeads"
         static let hydraAutoMerge = "hydraAutoMerge"
         static let hydraReviewHeads = "hydraReviewHeads"
         static let hydraAutoClearFinished = "hydraAutoClearFinished"
+        static let hydraAutoHidesIdleHeads = "hydraAutoHidesIdleHeads"
+        static let hydraShowsHeadDetails = "hydraShowsHeadDetails"
+        static let hydraAutoPopsHeads = "hydraAutoPopsHeads"
+        static let hydraTempersHeadEffort = "hydraTempersHeadEffort"
+        static let hydraMaxHeads = "hydraMaxHeads"
+        static let showsUsagePanel = "showsUsagePanel"
+        static let sidebarFloats = "sidebarFloats"
+        static let sidebarOnlyFloats = "sidebarOnlyFloats"
+        static let sidebarPanelOrigin = "sidebarPanelOrigin"
+        static let sidebarPanelSize = "sidebarPanelSize"
+        static let usagePanelDock = "usagePanelDock"
+        static let usagePanelHeight = "usagePanelHeight"
         static let hydraPairs = "hydraPairs"
-        static let hydraHeadProfiles = "hydraHeadProfiles"
-        static let headProfileSelection = "headProfileSelection"
         static let hasSeenTour = "hasSeenTour"
-        static let chronologicalTimelineOrder = "chronologicalTimelineOrder"
+        static let hasSeenHydraIntro = "hasSeenHydraIntro"
     }
 
     static let modelListLimit = 15
 
+    /// Whether turns open in arrival order rather than folded.
+    var chronologicalTimeline: Bool = false
+
     @ObservationIgnored private let defaults = WebsiteCaptures.defaults ?? .standard
 
+    /// The provider last chosen in a composer's model picker (or by a Hydra pair): what a
+    /// new thread starts on when there is no thread to follow. Not a setting of its own
+    /// any more; Settings says as much under New threads.
     var defaultProvider: ProviderKind {
         didSet { defaults.set(defaultProvider.rawValue, forKey: Key.defaultProvider) }
     }
@@ -155,15 +233,44 @@ final class AppSettings {
         didSet { defaults.set(showReasoning, forKey: Key.showReasoning) }
     }
 
+    var antiSlopEnabled: Bool {
+        didSet { defaults.set(antiSlopEnabled, forKey: Key.antiSlopEnabled) }
+    }
+
+    /// The running turn's line as the head panel's progress card (the task, the stave bar
+    /// of the turn's steps, the time); off, it is the one-line badge with the words and the time.
+    var showsWorkingCard: Bool {
+        didSet { defaults.set(showsWorkingCard, forKey: Key.showsWorkingCard) }
+    }
+
     /// How large the conversation reads: a step of `ChatZoom` (see its percentages), which the slider in
     /// the chat's chrome row moves. The row and the chat box keep their own size.
     var chatZoom: Int {
         didSet { defaults.set(chatZoom, forKey: Key.chatZoom) }
     }
 
+    /// The floating panels' size once one has been resized by hand; nil leaves them to
+    /// size themselves to the pane. Every chat's panels share it, and the layout fits it
+    /// to the room there is, so a panel never outgrows the pane it is in.
+    var panelSize: CGSize? {
+        didSet {
+            if let panelSize {
+                defaults.set([panelSize.width, panelSize.height], forKey: Key.panelSize)
+            } else {
+                defaults.removeObject(forKey: Key.panelSize)
+            }
+        }
+    }
+
     /// The sidebar lists every thread by when it was last active, instead of by project.
     var sidebarActivityView: Bool {
         didSet { defaults.set(sidebarActivityView, forKey: Key.sidebarActivityView) }
+    }
+
+    /// How the activity list marks each thread's project: the project's own icon before
+    /// the title on one line, or the project's name under it. The icon style is the default.
+    var activityThreadStyle: ActivityThreadStyle {
+        didSet { defaults.set(activityThreadStyle.rawValue, forKey: Key.activityThreadStyle) }
     }
 
     /// The sidebar's Settled section is folded away. Expanded by default.
@@ -179,7 +286,8 @@ final class AppSettings {
     }
 
     /// How solid the window's backdrop is, 0 (clear glass, the desktop shows through) to
-    /// 1 (a solid base colour). The midpoint is the stock look.
+    /// 1 (a solid base). With a wallpaper the backdrop is the picture, drawn at this same
+    /// value, so the desktop shows through the picture below the solid end.
     var backdropOpacity: Double {
         didSet { defaults.set(backdropOpacity, forKey: Key.backdropOpacity) }
     }
@@ -249,10 +357,11 @@ final class AppSettings {
 
     /// DeepSeek talks to its cloud API directly, so it needs an API key instead of a CLI login.
     /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
-    /// Read once at launch and cached: a Keychain query on every render made Settings lag.
+    /// Read once, on the first ask, and cached: a Keychain query on every render made
+    /// Settings lag, and two of them before the window exists made launch wait on securityd.
     var deepseekAPIKeyInput: String {
         didSet {
-            guard deepseekAPIKeyInput != oldValue else { return }
+            guard !isReadingKeychain, deepseekAPIKeyInput != oldValue else { return }
             let kept = DeepSeekKeychain.setAPIKey(deepseekAPIKeyInput)
             storeAPIKeyFallback(kept ? "" : deepseekAPIKeyInput, forKey: Key.deepseekAPIKey)
         }
@@ -263,10 +372,109 @@ final class AppSettings {
     /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
     var metaAPIKeyInput: String {
         didSet {
-            guard metaAPIKeyInput != oldValue else { return }
+            guard !isReadingKeychain, metaAPIKeyInput != oldValue else { return }
             let kept = MetaKeychain.setAPIKey(metaAPIKeyInput)
             storeAPIKeyFallback(kept ? "" : metaAPIKeyInput, forKey: Key.metaAPIKey)
         }
+    }
+
+    /// Z.ai's GLM Coding Plan talks to https://api.z.ai/api/coding/paas/v4 directly,
+    /// so it needs a ZAI_API_KEY instead of a CLI login.
+    /// Stored in the Keychain when available, with a UserDefaults fallback for migration.
+    /// Read once, on the first ask, and cached: a Keychain query on every render made
+    /// Settings lag, and two of them before the window exists made launch wait on securityd.
+    var zaiAPIKeyInput: String {
+        didSet {
+            guard !isReadingKeychain, zaiAPIKeyInput != oldValue else { return }
+            let kept = ZaiKeychain.setAPIKey(zaiAPIKeyInput)
+            storeAPIKeyFallback(kept ? "" : zaiAPIKeyInput, forKey: Key.zaiAPIKey)
+        }
+    }
+
+    /// Command Code signs in with `cmd login`; a Studio API key here is the alternative,
+    /// handed to the CLI as `COMMAND_CODE_API_KEY`. Stored in the Keychain when available,
+    /// with a UserDefaults fallback for a Mac whose Keychain refused it.
+    var commandcodeAPIKeyInput: String {
+        didSet {
+            guard !isReadingKeychain, commandcodeAPIKeyInput != oldValue else { return }
+            let kept = CommandCodeKeychain.setAPIKey(commandcodeAPIKeyInput)
+            storeAPIKeyFallback(kept ? "" : commandcodeAPIKeyInput, forKey: Key.commandcodeAPIKey)
+        }
+    }
+
+    @ObservationIgnored private var didReadKeychain = false
+    @ObservationIgnored private var isReadingKeychain = false
+
+    /// One provider's key as read: the Keychain's, or the plaintext copy in the defaults
+    /// for a Mac whose Keychain refused it.
+    private struct StoredKey: Sendable {
+        var value: String
+        var inKeychain: Bool
+
+        init(keychain: String, fallback: String) {
+            inKeychain = !keychain.isEmpty
+            value = inKeychain ? keychain : fallback
+        }
+    }
+
+    private struct StoredKeys: Sendable {
+        var deepseek: StoredKey
+        var meta: StoredKey
+        var zai: StoredKey
+        var commandcode: StoredKey
+    }
+
+    private var keyFallbacks: (deepseek: String, meta: String, zai: String, commandcode: String) {
+        (
+            defaults.string(forKey: Key.deepseekAPIKey) ?? "",
+            defaults.string(forKey: Key.metaAPIKey) ?? "",
+            defaults.string(forKey: Key.zaiAPIKey) ?? "",
+            defaults.string(forKey: Key.commandcodeAPIKey) ?? ""
+        )
+    }
+
+    /// One Keychain round trip per key.
+    private nonisolated static func readKeys(fallbacks: (deepseek: String, meta: String, zai: String, commandcode: String)) -> StoredKeys {
+        StoredKeys(
+            deepseek: StoredKey(keychain: DeepSeekKeychain.apiKey(fallback: ""), fallback: fallbacks.deepseek),
+            meta: StoredKey(keychain: MetaKeychain.apiKey(fallback: ""), fallback: fallbacks.meta),
+            zai: StoredKey(keychain: ZaiKeychain.apiKey(fallback: ""), fallback: fallbacks.zai),
+            commandcode: StoredKey(keychain: CommandCodeKeychain.apiKey(fallback: ""), fallback: fallbacks.commandcode)
+        )
+    }
+
+    /// The stored keys, from the Keychain the first time anything asks for one. The fill
+    /// bypasses the observers above, which write keys back to the Keychain and the
+    /// fallback: the fallback must never receive a key it did not already hold.
+    private func readKeychainIfNeeded() {
+        guard !didReadKeychain else { return }
+        fillKeys(Self.readKeys(fallbacks: keyFallbacks))
+    }
+
+    /// Reads the keys off the main thread once the window is up, so neither the first
+    /// frame nor the first ask waits on securityd. An ask that comes first reads for itself.
+    func loadKeychainInBackground() async {
+        guard !didReadKeychain else { return }
+        let fallbacks = keyFallbacks
+        let keys = await Task.detached(priority: .userInitiated) { Self.readKeys(fallbacks: fallbacks) }.value
+        fillKeys(keys)
+    }
+
+    private func fillKeys(_ keys: StoredKeys) {
+        guard !didReadKeychain else { return }
+        didReadKeychain = true
+        isReadingKeychain = true
+        deepseekAPIKeyInput = keys.deepseek.value
+        metaAPIKeyInput = keys.meta.value
+        zaiAPIKeyInput = keys.zai.value
+        commandcodeAPIKeyInput = keys.commandcode.value
+        isReadingKeychain = false
+        // Earlier builds kept a plaintext copy of every key in the defaults; one the
+        // Keychain holds needs none.
+        if keys.deepseek.inKeychain { defaults.removeObject(forKey: Key.deepseekAPIKey) }
+        if keys.meta.inKeychain { defaults.removeObject(forKey: Key.metaAPIKey) }
+        if keys.zai.inKeychain { defaults.removeObject(forKey: Key.zaiAPIKey) }
+        if keys.commandcode.inKeychain { defaults.removeObject(forKey: Key.commandcodeAPIKey) }
     }
 
     /// The plaintext copy in defaults, for a Mac whose Keychain refused the key; an empty
@@ -296,6 +504,13 @@ final class AppSettings {
         didSet { defaults.set(lastEfforts, forKey: Key.efforts) }
     }
 
+    /// The pair a chat was last put in from the model picker, so a new chat with no chat to
+    /// carry from (after a relaunch, say) starts in it rather than on the bare last model.
+    /// Cleared when a chat leaves its pair or the pair is removed.
+    var lastHydraPairID: UUID? {
+        didSet { defaults.set(lastHydraPairID?.uuidString, forKey: Key.lastHydraPair) }
+    }
+
     private(set) var modelList: [ModelPin] {
         didSet { store(modelList, forKey: Key.modelList) }
     }
@@ -304,13 +519,26 @@ final class AppSettings {
         didSet { store(modelPreferences, forKey: Key.modelPreferences) }
     }
 
-    /// Hydra is on for the app: every chat's chrome row shows its mark while it is on.
+    /// Hydra is on for the app from the first launch: what the app is for. Switched
+    /// off in Settings › Hydra, or per chat from the mark.
     var hydraEnabled: Bool {
         didSet { defaults.set(hydraEnabled, forKey: Key.hydraEnabled) }
     }
 
+    /// The per-chat Hydra choice new threads start with. Every per-chat switch flip saves
+    /// here too, so the choice sticks as the default for next threads across relaunch.
+    /// True until the user first switches a chat off.
+    var hydraDefaultEnabled: Bool {
+        didSet { defaults.set(hydraDefaultEnabled, forKey: Key.hydraDefaultEnabled) }
+    }
+
     var hasSeenTour: Bool {
         didSet { defaults.set(hasSeenTour, forKey: Key.hasSeenTour) }
+    }
+
+    /// The first chat's Hydra intro was read (see `HydraIntroPopover`).
+    var hasSeenHydraIntro: Bool {
+        didSet { defaults.set(hasSeenHydraIntro, forKey: Key.hasSeenHydraIntro) }
     }
 
     /// With Hydra on, a follow-up queued while a turn runs goes to a head at once
@@ -333,6 +561,18 @@ final class AppSettings {
         didSet { defaults.set(hydraIsolateHeads, forKey: Key.hydraIsolateHeads) }
     }
 
+    /// The cap on heads at work at once for every chat, set on the Hydra page; nil is
+    /// off. A pair's own cap still counts where it is lower.
+    var hydraMaxHeads: Int? {
+        didSet {
+            if let hydraMaxHeads {
+                defaults.set(hydraMaxHeads, forKey: Key.hydraMaxHeads)
+            } else {
+                defaults.removeObject(forKey: Key.hydraMaxHeads)
+            }
+        }
+    }
+
     /// Once the lead has finished and every head is back, the team's work goes out as a
     /// merge request and lands, and the checkout is brought up to date. Off unless asked.
     var hydraAutoMerge: Bool {
@@ -351,20 +591,108 @@ final class AppSettings {
         didSet { defaults.set(hydraAutoClearFinished, forKey: Key.hydraAutoClearFinished) }
     }
 
+    /// Finished heads leave the sidebar with their card: a chat's heads show there while one
+    /// of them runs, and the card goes once every head of that chat has finished. Off by
+    /// default, so the heads stay in the sidebar until it is asked for.
+    var hydraAutoHidesIdleHeads: Bool {
+        didSet { defaults.set(hydraAutoHidesIdleHeads, forKey: Key.hydraAutoHidesIdleHeads) }
+    }
+
+    /// A head's panel shows its whole conversation instead of the progress bar. Off unless
+    /// asked: the bar says how far it is and how long it took, the steps are the sidebar's
+    /// to show.
+    var hydraShowsHeadDetails: Bool {
+        didSet { defaults.set(hydraShowsHeadDetails, forKey: Key.hydraShowsHeadDetails) }
+    }
+
+    /// While there is room beside the chat, each head after the first gets a panel of
+    /// its own, on the left and the right, until each side is full (see `PanelScene.autoPopped`).
+    var hydraAutoPopsHeads: Bool {
+        didSet { defaults.set(hydraAutoPopsHeads, forKey: Key.hydraAutoPopsHeads) }
+    }
+
+    /// Heads think at a working effort rather than the lead's own: a lead above medium
+    /// sends out medium heads on the same model (a scale without a medium works out at
+    /// its middle rung), unless the pair names an effort for
+    /// them (see `AppModel.hydraHeadsEffort`).
+    var hydraTempersHeadEffort: Bool {
+        didSet { defaults.set(hydraTempersHeadEffort, forKey: Key.hydraTempersHeadEffort) }
+    }
+
+    /// A floating panel with the chat's usage, the plan's limits and credits, beside
+    /// every chat for as long as it is on: the General setting, the popover's pop-out
+    /// button and the panel's own close button all set it, so it stays across threads
+    /// and relaunches.
+    var showsUsagePanel: Bool {
+        didSet { defaults.set(showsUsagePanel, forKey: Key.showsUsagePanel) }
+    }
+
+    /// The sidebar as a floating panel over the chat whenever its column is collapsed, in
+    /// place of the popover from the toolbar button; it stays where it was last left.
+    var sidebarFloats: Bool {
+        didSet { defaults.set(sidebarFloats, forKey: Key.sidebarFloats) }
+    }
+
+    /// Only the floating panel: the column and the toolbar button are gone; meaningful
+    /// with `sidebarFloats` on.
+    var sidebarOnlyFloats: Bool {
+        didSet { defaults.set(sidebarOnlyFloats, forKey: Key.sidebarOnlyFloats) }
+    }
+
+    /// The two sidebar switches as one choice: the settings page offers Column, Floating and Panel only.
+    var sidebarMode: SidebarMode {
+        get {
+            guard sidebarFloats else { return .column }
+            return sidebarOnlyFloats ? .panelOnly : .floating
+        }
+        set {
+            sidebarFloats = newValue != .column
+            sidebarOnlyFloats = newValue == .panelOnly
+        }
+    }
+
+    /// Where the floating sidebar was last left, from the chat area's top-left.
+    var sidebarPanelOrigin: CGPoint? {
+        didSet {
+            if let sidebarPanelOrigin {
+                defaults.set([sidebarPanelOrigin.x, sidebarPanelOrigin.y], forKey: Key.sidebarPanelOrigin)
+            } else {
+                defaults.removeObject(forKey: Key.sidebarPanelOrigin)
+            }
+        }
+    }
+
+    /// The size it was last dragged to.
+    var sidebarPanelSize: CGSize? {
+        didSet {
+            if let sidebarPanelSize {
+                defaults.set([sidebarPanelSize.width, sidebarPanelSize.height], forKey: Key.sidebarPanelSize)
+            } else {
+                defaults.removeObject(forKey: Key.sidebarPanelSize)
+            }
+        }
+    }
+
+    /// The corner the usage panel is docked in, for every chat; it goes where it was
+    /// last dragged.
+    var usagePanelDock: PanelDockCorner {
+        didSet { defaults.set(usagePanelDock.rawValue, forKey: Key.usagePanelDock) }
+    }
+
+    /// The height the usage panel was dragged to, for every chat; nil fits the panel to its rows.
+    var usagePanelHeight: CGFloat? {
+        didSet {
+            if let usagePanelHeight {
+                defaults.set(Double(usagePanelHeight), forKey: Key.usagePanelHeight)
+            } else {
+                defaults.removeObject(forKey: Key.usagePanelHeight)
+            }
+        }
+    }
+
     /// The lead-and-heads pairings, in the order they were added.
     private(set) var hydraPairs: [HydraPair] {
         didSet { store(hydraPairs, forKey: Key.hydraPairs) }
-    }
-
-    /// Saved profiles for head dispatch routing. Empty means no profiles exist.
-    private(set) var hydraHeadProfiles: [HydraHeadProfile] {
-        didSet { store(hydraHeadProfiles, forKey: Key.hydraHeadProfiles) }
-    }
-
-    /// When true, the thread timeline shows messages in chronological (oldest first)
-    /// order. Default false preserves the current newest-first layout.
-    var chronologicalTimelineOrder: Bool {
-        didSet { defaults.set(chronologicalTimelineOrder, forKey: Key.chronologicalTimelineOrder) }
     }
 
     init() {
@@ -379,9 +707,12 @@ final class AppSettings {
         threadFinishAction = ThreadFinishAction(rawValue: defaults.string(forKey: Key.threadFinishAction) ?? "") ?? .settle
         settleSound = defaults.object(forKey: Key.settleSound) as? Bool ?? true
         showReasoning = defaults.object(forKey: Key.showReasoning) as? Bool ?? false
+        antiSlopEnabled = defaults.object(forKey: Key.antiSlopEnabled) as? Bool ?? true
+        showsWorkingCard = defaults.object(forKey: Key.showsWorkingCard) as? Bool ?? true
         chatZoom = ChatZoom.clamped(defaults.object(forKey: Key.chatZoom) as? Int ?? ChatZoom.defaultIndex)
         sidebarActivityView = defaults.bool(forKey: Key.sidebarActivityView)
-        settledCollapsed = defaults.object(forKey: Key.settledCollapsed) as? Bool ?? false
+        activityThreadStyle = ActivityThreadStyle(rawValue: defaults.string(forKey: Key.activityThreadStyle) ?? "") ?? .icon
+        settledCollapsed = defaults.object(forKey: Key.settledCollapsed) as? Bool ?? true
         backdropOpacity = defaults.object(forKey: Key.backdropOpacity) as? Double ?? Self.defaultBackdropOpacity
         // The old System/Light/Dark choice maps straight onto the same themes.
         let initialTheme = AppTheme(rawValue: defaults.string(forKey: Key.appTheme) ?? "")
@@ -400,29 +731,52 @@ final class AppSettings {
         }
         projectsEnabled = defaults.object(forKey: Key.projectsEnabled) as? Bool ?? true
         projectActivationOverrides = Self.load([String: Bool].self, forKey: Key.projectActivationOverrides) ?? [:]
-        deepseekAPIKeyInput = DeepSeekKeychain.apiKey(fallback: defaults.string(forKey: Key.deepseekAPIKey) ?? "")
-        metaAPIKeyInput = MetaKeychain.apiKey(fallback: defaults.string(forKey: Key.metaAPIKey) ?? "")
-        // Earlier builds kept a plaintext copy of every key in the defaults; one the
-        // Keychain holds needs none.
-        if !DeepSeekKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.deepseekAPIKey) }
-        if !MetaKeychain.apiKey(fallback: "").isEmpty { defaults.removeObject(forKey: Key.metaAPIKey) }
+        // Read from the Keychain later (see `loadKeychainInBackground`), not before the first frame.
+        deepseekAPIKeyInput = ""
+        metaAPIKeyInput = ""
+        zaiAPIKeyInput = ""
+        commandcodeAPIKeyInput = ""
         binaryPaths = defaults.dictionary(forKey: Key.binaryPaths) as? [String: String] ?? [:]
         disabledProviders = defaults.stringArray(forKey: Key.disabledProviders) ?? []
         lastModels = defaults.dictionary(forKey: Key.models) as? [String: String] ?? [:]
         lastEfforts = defaults.dictionary(forKey: Key.efforts) as? [String: String] ?? [:]
+        lastHydraPairID = defaults.string(forKey: Key.lastHydraPair).flatMap(UUID.init(uuidString:))
         modelList = Self.load([ModelPin].self, forKey: Key.modelList) ?? []
         modelPreferences = Self.load([String: ModelPreference].self, forKey: Key.modelPreferences) ?? [:]
-        hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? false
+        hydraEnabled = defaults.object(forKey: Key.hydraEnabled) as? Bool ?? true
+        hydraDefaultEnabled = defaults.object(forKey: Key.hydraDefaultEnabled) as? Bool ?? true
         hasSeenTour = defaults.object(forKey: Key.hasSeenTour) as? Bool ?? false
+        hasSeenHydraIntro = defaults.object(forKey: Key.hasSeenHydraIntro) as? Bool ?? false
+        if let stored = defaults.array(forKey: Key.panelSize) as? [Double], stored.count == 2 {
+            panelSize = CGSize(width: stored[0], height: stored[1])
+        }
         hydraQueueHeads = defaults.object(forKey: Key.hydraQueueHeads) as? Bool ?? true
         hydraAlwaysHeads = defaults.object(forKey: Key.hydraAlwaysHeads) as? Bool ?? false
         hydraIsolateHeads = defaults.object(forKey: Key.hydraIsolateHeads) as? Bool ?? true
+        hydraMaxHeads = HydraPair.clampedCap(defaults.object(forKey: Key.hydraMaxHeads) as? Int)
         hydraAutoMerge = defaults.object(forKey: Key.hydraAutoMerge) as? Bool ?? false
         hydraReviewHeads = defaults.object(forKey: Key.hydraReviewHeads) as? Bool ?? false
         hydraAutoClearFinished = defaults.object(forKey: Key.hydraAutoClearFinished) as? Bool ?? false
+        hydraAutoHidesIdleHeads = defaults.object(forKey: Key.hydraAutoHidesIdleHeads) as? Bool ?? false
+        hydraShowsHeadDetails = defaults.object(forKey: Key.hydraShowsHeadDetails) as? Bool ?? false
+        hydraAutoPopsHeads = defaults.object(forKey: Key.hydraAutoPopsHeads) as? Bool ?? false
+        hydraTempersHeadEffort = defaults.object(forKey: Key.hydraTempersHeadEffort) as? Bool ?? true
+        showsUsagePanel = defaults.object(forKey: Key.showsUsagePanel) as? Bool ?? false
+        sidebarFloats = defaults.object(forKey: Key.sidebarFloats) as? Bool ?? false
+        sidebarOnlyFloats = defaults.object(forKey: Key.sidebarOnlyFloats) as? Bool ?? false
+        if let stored = defaults.array(forKey: Key.sidebarPanelOrigin) as? [Double], stored.count == 2 {
+            sidebarPanelOrigin = CGPoint(x: stored[0], y: stored[1])
+        } else {
+            sidebarPanelOrigin = nil
+        }
+        if let stored = defaults.array(forKey: Key.sidebarPanelSize) as? [Double], stored.count == 2 {
+            sidebarPanelSize = CGSize(width: stored[0], height: stored[1])
+        } else {
+            sidebarPanelSize = nil
+        }
+        usagePanelDock = defaults.string(forKey: Key.usagePanelDock).flatMap(PanelDockCorner.init(rawValue:)) ?? .bottomLeading
+        usagePanelHeight = defaults.object(forKey: Key.usagePanelHeight).flatMap { $0 as? Double }.map { CGFloat($0) }
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
-        hydraHeadProfiles = Self.load([HydraHeadProfile].self, forKey: Key.hydraHeadProfiles) ?? []
-        chronologicalTimelineOrder = defaults.object(forKey: Key.chronologicalTimelineOrder) as? Bool ?? false
     }
 
     // MARK: - Hydra pairs
@@ -539,15 +893,19 @@ final class AppSettings {
 
     /// The API key Swarm Code sends to an API-key provider: the value from Settings,
     /// falling back to the provider's env var from the login environment
-    /// (`DEEPSEEK_API_KEY` for DeepSeek, `MODEL_API_KEY` for Meta).
+    /// (`DEEPSEEK_API_KEY` for DeepSeek, `MODEL_API_KEY` for Meta). Command Code's is
+    /// optional: the CLI's own `cmd login` serves when it is empty.
     func apiKey(for provider: ProviderKind) -> String {
+        readKeychainIfNeeded()
         let stored: String = switch provider {
         case .deepseek: deepseekAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         case .meta: metaAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .zai: zaiAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .commandcode: commandcodeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         default: ""
         }
         if !stored.isEmpty { return stored }
-        guard provider.isAPIKeyBased, let envVar = provider.apiKeyEnvVar else { return "" }
+        guard provider.acceptsAPIKey, let envVar = provider.apiKeyEnvVar else { return "" }
         return (LoginEnvironment.current[envVar] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -557,38 +915,27 @@ final class AppSettings {
 
     /// Settings-bound value for the Providers page, per API-key provider.
     func apiKeyInput(for provider: ProviderKind) -> String {
-        switch provider {
+        readKeychainIfNeeded()
+        return switch provider {
         case .deepseek: deepseekAPIKeyInput
         case .meta: metaAPIKeyInput
+        case .zai: zaiAPIKeyInput
+        case .commandcode: commandcodeAPIKeyInput
         default: ""
         }
     }
 
     func setAPIKeyInput(_ value: String, for provider: ProviderKind) {
+        readKeychainIfNeeded()
         switch provider {
+        case .commandcode: commandcodeAPIKeyInput = value
         case .deepseek: deepseekAPIKeyInput = value
         case .meta: metaAPIKeyInput = value
+        case .zai: zaiAPIKeyInput = value
         default: break
         }
     }
-
-    // MARK: - Hydra head profiles
-
-    func addHydraHeadProfile(_ profile: HydraHeadProfile) {
-        guard !hydraHeadProfiles.contains(where: { $0.id == profile.id }) else { return }
-        hydraHeadProfiles.append(profile)
-    }
-
-    func updateHydraHeadProfile(_ id: UUID, _ change: (inout HydraHeadProfile) -> Void) {
-        guard let index = hydraHeadProfiles.firstIndex(where: { $0.id == id }) else { return }
-        var profile = hydraHeadProfiles[index]
-        change(&profile)
-        profile.maxHeads = HydraPair.clampedCap(profile.maxHeads)
-        guard profile != hydraHeadProfiles[index] else { return }
-        hydraHeadProfiles[index] = profile
-    }
-
-    func removeHydraHeadProfile(_ id: UUID) {
-        hydraHeadProfiles.removeAll { $0.id == id }
-    }
 }
+
+/// The registry's view of the settings; the methods are the ones above.
+extension AppSettings: ProviderSettings {}

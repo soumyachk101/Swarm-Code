@@ -1,70 +1,5 @@
 import Foundation
 
-// MARK: - Security constants for MCP stdio servers
-
-private extension MCPHub {
-    /// Environment variables that can hijack runtime behavior or inject code
-    /// into spawned MCP server processes. Any key starting with one of these
-    /// prefixes is stripped before the env dictionary is passed to Process.
-    static let blockedEnvPrefixes: [String] = [
-        "LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
-        "NODE_OPTIONS", "NODE_REPL_EXTERNAL_MODULE",
-        "PYTHONPATH", "PYTHONSTARTUP", "PYTHONHOME",
-        "PERL5OPT", "PERL5LIB", "RUBYOPT", "RUBYLIB",
-        "BASH_ENV", "ENV", "IFS",
-        "GIT_", "GCONV_PATH", "NSS_WRAPPER_PASSWD", "NSS_WRAPPER_GROUP",
-    ]
-
-    /// Known-safe MCP server commands, resolved to absolute paths before
-    /// execution. Anything outside this list is rejected.
-    static let allowedCommandNames: Set<String> = [
-        "node", "nodejs", "npx", "bun", "deno",
-        "python3", "python", "uv", "uvx",
-        "java", "kotlin", "ruby", "gem",
-        "go", "golang",
-    ]
-
-    /// Directories trusted to host MCP server executables. The resolved
-    /// absolute path of the command must start with one of these.
-    static let trustedExecutablePrefixes: [String] = [
-        "/usr/bin/",
-        "/usr/local/bin/",
-        "/opt/homebrew/bin/",
-        "/usr/local/Cellar/",
-        "/opt/homebrew/Cellar/",
-        "/usr/lib/",
-    ]
-
-    /// Returns true if `executable` is safe to launch for the given command name.
-    /// Rejects anything outside trusted directories or whose base name is not in
-    /// the allowlist.
-    static func validateExecutable(_ executable: URL, for commandName: String) throws {
-        let path = executable.path
-        let base = (path as NSString).lastPathComponent.lowercased()
-
-        // Allowlist: base name must be a known-safe command
-        let isAllowedName: Bool
-        if commandName.contains("/") {
-            // Explicit path — still require allowlisted base name
-            isAllowedName = Self.allowedCommandNames.contains(base)
-        } else {
-            // PATH-resolved — must match an allowed command
-            isAllowedName = Self.allowedCommandNames.contains(base)
-        }
-        guard isAllowedName else {
-            throw MCPHubError.server("'\(commandName)' is not an allowed MCP server command.")
-        }
-
-        // Must live in a trusted directory
-        let hasTrustedPrefix = Self.trustedExecutablePrefixes.contains { path.hasPrefix($0) }
-            || path.hasPrefix("/Users/")
-            || path.hasPrefix("/home/")
-        guard hasTrustedPrefix else {
-            throw MCPHubError.server("'\(commandName)' is not in a trusted location: \(path)")
-        }
-    }
-}
-
 enum MCPHubError: LocalizedError, Sendable {
     case unknownTool(String)
     case server(String)
@@ -195,13 +130,9 @@ actor MCPHub {
         var out: [String: MCPServerSpec] = [:]
         for (id, entry) in servers {
             if let command = entry["command"]?.string, !command.isEmpty {
-                let args = entry["args"]?.array?.compactMap { $0.string } ?? []
+                let args = entry["args"]?.array?.compactMap(\.string) ?? []
                 var env: [String: String] = [:]
                 for (key, value) in entry["env"]?.object ?? [:] {
-                    let keyName = key.uppercased()
-                    if Self.blockedEnvPrefixes.contains(where: { keyName == $0 || keyName.hasPrefix($0) }) {
-                        continue
-                    }
                     if let string = value.string { env[key] = string }
                 }
                 out[id] = .stdio(command: command, args: args, env: env)
@@ -394,7 +325,6 @@ private actor MCPClient {
         guard let executable = LoginEnvironment.which(command, in: LoginEnvironment.current) else {
             throw MCPHubError.server("\(command) isn't installed.")
         }
-        try MCPHub.validateExecutable(executable, for: command)
         var environment = LoginEnvironment.current
         for (key, value) in env { environment[key] = value }
 

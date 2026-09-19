@@ -158,6 +158,8 @@ enum MCPProviderConfig {
         write(gemini(servers), to: geminiSettingsURL)
     }
 
+    // An entry here switches that server off for the session by name. Only the server's own name may be used,
+    // because a nested table's path (`imap-email.env`) names an entry that exists nowhere in the user's config and makes Codex reject its whole configuration, which fails every turn at once.
     static func codexUserServerNames() -> [String] {
         let url = URL(fileURLWithPath: LoginEnvironment.homeDirectory).appendingPathComponent(".codex/config.toml")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
@@ -166,9 +168,30 @@ enum MCPProviderConfig {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             guard line.hasPrefix("[mcp_servers.") else { continue }
             var rest = String(line.dropFirst("[mcp_servers.".count))
-            if let end = rest.firstIndex(of: "]") { rest = String(rest[..<end]) }
-            let name = rest.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "\"'")).trimmingCharacters(in: .whitespaces)
-            if !name.isEmpty { names.insert(name) }
+            guard let end = rest.firstIndex(of: "]") else { continue }
+            let tail = String(rest[rest.index(after: end)...]).trimmingCharacters(in: .whitespaces)
+            guard tail.isEmpty || tail.hasPrefix("#") else { continue }
+            rest = String(rest[..<end])
+            // A quoted first segment is the name literally, in either TOML quote; an
+            // unquoted one is the server's name only up to the first dot, which is what
+            // a nested table (`[mcp_servers.imap-email.env]`) splits on.
+            let quote: Character? = rest.hasPrefix("'") ? "'" : (rest.hasPrefix("\"") ? "\"" : nil)
+            var name: String
+            if let quote {
+                let remainder = rest.dropFirst()
+                guard let close = remainder.firstIndex(of: quote) else { continue }
+                name = String(remainder[..<close])
+            } else if let dot = rest.firstIndex(of: ".") {
+                name = String(rest[..<dot])
+            } else {
+                name = rest
+            }
+            name = name.trimmingCharacters(in: .whitespaces)
+            // Only a plain server name goes out: the provider applies this object as a
+            // config patch, where a dot or a quote is read as a path, which mints the
+            // very entry that made it reject its whole configuration.
+            guard !name.isEmpty, !name.contains(where: { $0.isWhitespace || $0 == "[" || $0 == "]" || $0 == "'" || $0 == "\"" || $0 == "," || $0 == "." }) else { continue }
+            names.insert(name)
         }
         return names.sorted()
     }

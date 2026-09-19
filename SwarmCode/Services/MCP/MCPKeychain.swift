@@ -39,7 +39,9 @@ enum MCPKeychain {
             kSecAttrService as String: AppInfo.name,
             kSecAttrAccount as String: account(server: server, field: field),
         ]
-        SecItemDelete(query as CFDictionary)
+        let updated = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if updated == errSecSuccess { return true }
+        guard updated == errSecItemNotFound else { return false }
         let attributes = query.merging([
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
@@ -56,10 +58,11 @@ enum MCPKeychain {
         SecItemDelete(query as CFDictionary)
     }
 
-    static func deleteAll(server: String) {
-        guard let entry = MCPCatalog.entry(id: server) else { return }
+    /// Forgets every secret the entry declares. The entry, not its id: a custom server
+    /// is not in the catalog, so looking it up there would silently delete nothing.
+    static func deleteAll(server entry: MCPCatalogEntry) {
         for field in entry.fields {
-            delete(server: server, field: field.key)
+            delete(server: entry.id, field: field.key)
         }
     }
 }
