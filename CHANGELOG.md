@@ -4,6 +4,19 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.7.4] - 2026-09-19
+
+Swarm Code 1.7.4 guarantees desktop notification banners and audible alerts across all macOS environments, adds Hydra head completion announcements, and introduces an instant notification test button. Apple silicon, macOS 26 or later.
+
+### Bug fixes
+- Guaranteed desktop notifications: Implemented direct AppleScript-based desktop notification delivery with alert sound and system banner support for ad-hoc signed builds, bypassing macOS usernoted drops on unsigned or non-Team ID apps.
+- Hydra head task completion: Hydra heads now announce completion with a soft finish chime, dock bounce, and desktop notification specifying the agent persona and task.
+- Merge completion alerts: Ensured Hydra merge notifications fire reliably even when Swarm Code is focused or active on screen.
+
+### Refinements
+- Instant notification testing: Added a "Test" button beside the notification toggle in Settings to immediately verify desktop alert delivery.
+- Team ID verification: Automatically detects code-signing identity to route through UNUserNotificationCenter when signed with an Apple Developer Team ID or through AppleScript desktop delivery otherwise.
+
 ## [1.7.3] - 2026-09-19
 
 Swarm Code 1.7.3 fixes task completion notifications, ensuring system banners, audible alerts, and dock bounces trigger reliably whenever AI tasks finish. Apple silicon, macOS 26 or later.
