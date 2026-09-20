@@ -1168,10 +1168,10 @@ private struct ChatChromeRow: View {
         // a pass of its own. The spacing is well under the gaps, so nothing morphs together.
         GlassEffectContainer(spacing: 2) {
             HStack(alignment: .center, spacing: 10) {
-                // With the sidebar away, its list is one press away: the button arrives with the
-                // window buttons and leaves with them. Not when the list floats as the only
-                // sidebar (see `AppSettings.sidebarOnlyFloats`): there is nothing to open.
-                if !sidebarVisible, !(model.settings.sidebarFloats && model.settings.sidebarOnlyFloats) {
+                // With the sidebar away, its list is one press away; with the sidebar present,
+                // it folds it back up. Not when the list floats as the only sidebar
+                // (see `AppSettings.sidebarOnlyFloats`): there is nothing to open.
+                if !(model.settings.sidebarFloats && model.settings.sidebarOnlyFloats) {
                     ThreadsButton()
                         .transition(.softAppear)
                 }
@@ -1285,18 +1285,23 @@ private struct ChatChromeTitle: View {
     }
 }
 
-/// The sidebar's list in a popover, for a hidden sidebar: the same search, the same rows,
-/// the same footer, at the sidebar's own width. Picking a thread closes it.
+/// The sidebar's toggle button in the toolbar, showing and hiding the sidebar.
 private struct ThreadsButton: View {
     @Environment(AppModel.self) private var model
     @State private var isPresented = false
 
     var body: some View {
-        // With the list floating over the chat, the button brings the column back instead;
-        // the floating panel is the list while the column is away.
-        let floats = model.settings.sidebarFloats
-        ChromeCircleButton(symbol: "list.bullet", help: floats ? "Show the sidebar" : "Threads") {
-            if floats { model.sidebar.toggle() } else { isPresented.toggle() }
+        let isVisible = model.sidebar.isVisible
+        let helpText = (isVisible ? "Hide sidebar" : "Show sidebar") + ShortcutStore.hint(for: .toggleSidebar)
+        ChromeCircleButton(symbol: "sidebar.left", help: helpText) {
+            withAnimation(Chrome.panelSlide) {
+                model.sidebar.toggle()
+            }
+        }
+        .contextMenu {
+            Button("Threads in popover…") {
+                isPresented = true
+            }
         }
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             SidebarView(inPopover: true, dismiss: { isPresented = false })

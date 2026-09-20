@@ -60,7 +60,7 @@ enum SidebarMode: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
-        case .column: "A column beside the chat; the list button in the toolbar shows and hides it"
+        case .column: "A column beside the chat; the sidebar button in the toolbar shows and hides it"
         case .floating: "With the column collapsed, the thread list floats as a panel over the chat and stays where you leave it"
         case .panelOnly: "No column and no toolbar button; the floating panel is the sidebar"
         }

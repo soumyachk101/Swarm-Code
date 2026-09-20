@@ -436,7 +436,31 @@ private struct GeneralSettingsPage: View {
                 }
                 ChromeRowDivider()
                 ChromeRow(title: "Sidebar", detail: settings.sidebarMode.detail) {
-                    ChromeVisualPicker(options: SidebarMode.allCases.map { ($0, $0.title) }, selection: $settings.sidebarMode) { mode in
+                    ChromeVisualPicker(
+                        options: SidebarMode.allCases.map { ($0, $0.title) },
+                        selection: Binding(
+                            get: { settings.sidebarMode },
+                            set: { newMode in
+                                settings.sidebarMode = newMode
+                                switch newMode {
+                                case .floating:
+                                    if model.sidebar.isVisible {
+                                        withAnimation(Chrome.panelSlide) {
+                                            model.sidebar.toggle()
+                                        }
+                                    }
+                                case .column:
+                                    if !model.sidebar.isVisible {
+                                        withAnimation(Chrome.panelSlide) {
+                                            model.sidebar.toggle()
+                                        }
+                                    }
+                                case .panelOnly:
+                                    break
+                                }
+                            }
+                        )
+                    ) { mode in
                         Image(systemName: mode == .column ? "sidebar.left" : (mode == .floating ? "macwindow.on.rectangle" : "macwindow"))
                     }
                 }
@@ -448,7 +472,7 @@ private struct GeneralSettingsPage: View {
                 }
                 ChromeRowDivider()
                 // Meaningless without a column: dimmed while only the panel is shown.
-                ChromeRow(title: "Open the sidebar at launch", detail: "Collapsed otherwise; the list button in the toolbar shows and hides it any time") {
+                ChromeRow(title: "Open the sidebar at launch", detail: "Collapsed otherwise; the sidebar button in the toolbar shows and hides it any time") {
                     SettingsSwitch(isOn: Binding(
                         get: { model.sidebar.startsOpen },
                         set: { model.sidebar.startsOpen = $0 }
