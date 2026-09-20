@@ -1,6 +1,24 @@
 {
-  "generated_at": "2026-09-20T07:07:27.490340+00:00",
+  "generated_at": "2026-09-20T08:06:20.651130+00:00",
   "releases": [
+    {
+      "version": "1.7.9",
+      "date": "2026-09-20",
+      "platform": "mac",
+      "summary": "Swarm Code 1.7.9 introduces smooth animated sidebar transitions, adds an interactive persistent sidebar toggle button to the chat toolbar, and resolves in-app update code signature verification. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "Refinements",
+          "items": [
+            "Instant sidebar mode transitions: Switching between Column, Floating, and Panel only in Settings now immediately and smoothly animates the sidebar into its target mode using native spring transitions.",
+            "Interactive toolbar sidebar button: Added a persistent `sidebar.left` toggle button to the top toolbar with native tooltips and quick popover context menu, allowing one-click sidebar collapse and expansion.",
+            "Accurate UI settings labels: Clarified sidebar configuration descriptions across the Settings and About pages.",
+            "Updater signature compatibility: Enforced strict bundle identifier sealing and added defensive fallback verification to ensure flawless in-app updates across releases."
+          ]
+        }
+      ],
+      "thanks": []
+    },
     {
       "version": "1.7.8",
       "date": "2026-09-20",
