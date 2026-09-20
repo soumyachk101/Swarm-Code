@@ -458,8 +458,7 @@ struct ComposerView: View {
             // is under way, and this answer is for a word that is gone.
             guard !Task.isCancelled else { return }
             items = paths.map { path in
-                let isDir = path.hasSuffix("/")
-                Suggestion(value: "@\(path) ", title: (path as NSString).lastPathComponent, detail: path, symbol: isDir ? "folder" : "doc")
+                Suggestion(value: "@\(path) ", title: (path as NSString).lastPathComponent, detail: path, symbol: path.hasSuffix("/") ? "folder" : "doc")
             }
         } else if word.hasPrefix("/"), start == 0 {
             kind = .command
