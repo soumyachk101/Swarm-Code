@@ -458,7 +458,8 @@ struct ComposerView: View {
             // is under way, and this answer is for a word that is gone.
             guard !Task.isCancelled else { return }
             items = paths.map { path in
-                Suggestion(value: "@\(path) ", title: (path as NSString).lastPathComponent, detail: path, symbol: "doc")
+                let isDir = path.hasSuffix("/")
+                Suggestion(value: "@\(path) ", title: (path as NSString).lastPathComponent, detail: path, symbol: isDir ? "folder" : "doc")
             }
         } else if word.hasPrefix("/"), start == 0 {
             kind = .command
@@ -1258,7 +1259,20 @@ final class FileIndex {
         let git = Git(directory)
         if await git.isRepository() {
             let files = await git.listFiles()
-            if !files.isEmpty { return Array(files.prefix(60_000)) }
+            if !files.isEmpty {
+                let limited = Array(files.prefix(60_000))
+                // Extract unique parent directories from file paths so that @
+                // mentions can suggest folders alongside files.
+                var dirs = Set<String>()
+                for file in limited {
+                    var path = file
+                    while let slash = path.lastIndex(of: "/") {
+                        path = String(path[..<slash])
+                        if !dirs.insert(path + "/").inserted { break }
+                    }
+                }
+                return dirs.sorted() + limited
+            }
         }
         return enumerate(directory)
     }
@@ -1279,8 +1293,9 @@ final class FileIndex {
                 enumerator.skipDescendants()
                 continue
             }
-            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { continue }
-            results.append(ToolTitles.relativePath(url.path, to: directory))
+            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            let relative = ToolTitles.relativePath(url.path, to: directory)
+            results.append(isDir ? relative + "/" : relative)
             if results.count >= 20_000 { break }
         }
         return results
