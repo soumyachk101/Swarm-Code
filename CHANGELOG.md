@@ -4,6 +4,14 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.7.8] - 2026-09-20
+
+Swarm Code 1.7.8 resolves Antigravity CLI startup crashes for Hydra heads, cleans up MCP server argument routing, and restores seamless multi-head parallel task delegation across large codebases. Apple silicon, macOS 26 or later.
+
+### Bug fixes
+- Antigravity CLI startup fix: Removed unsupported `--allowed-mcp-server-names` flag from `AntigravitySession`, resolving instant exit code 2 crashes when launching Hydra heads (e.g. Walter, Hank) on Google Antigravity / Gemini 3.8 Flash with active MCP servers.
+- Multi-head parallel delegation: Fixed head execution stalls to ensure prompts delegating across large codebases cleanly spawn parallel teams of up to 6+ heads from the Lead Agent without worker head deadlocks.
+
 ## [1.7.7] - 2026-09-20
 
 Swarm Code 1.7.7 brings comprehensive visual asset polish across the tour experience, authentic AppIcon squircles, native Hydra iconography preservation, and WebGL2 hero visual effects. Apple silicon, macOS 26 or later.

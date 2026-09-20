@@ -1,6 +1,22 @@
 {
-  "generated_at": "2026-09-20T06:47:27.768631+00:00",
+  "generated_at": "2026-09-20T07:07:27.490340+00:00",
   "releases": [
+    {
+      "version": "1.7.8",
+      "date": "2026-09-20",
+      "platform": "mac",
+      "summary": "Swarm Code 1.7.8 resolves Antigravity CLI startup crashes for Hydra heads, cleans up MCP server argument routing, and restores seamless multi-head parallel task delegation across large codebases. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "Bug fixes",
+          "items": [
+            "Antigravity CLI startup fix: Removed unsupported `--allowed-mcp-server-names` flag from `AntigravitySession`, resolving instant exit code 2 crashes when launching Hydra heads (e.g. Walter, Hank) on Google Antigravity / Gemini 3.8 Flash with active MCP servers.",
+            "Multi-head parallel delegation: Fixed head execution stalls to ensure prompts delegating across large codebases cleanly spawn parallel teams of up to 6+ heads from the Lead Agent without worker head deadlocks."
+          ]
+        }
+      ],
+      "thanks": []
+    },
     {
       "version": "1.7.7",
       "date": "2026-09-20",
