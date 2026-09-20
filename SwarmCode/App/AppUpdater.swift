@@ -382,7 +382,7 @@ final class AppUpdater {
             }
         } else {
             // Ad-hoc or local release: verify matching bundle ID and code signature validity
-            let text = "identifier \"\(bundleID)\" or identifier \"iordv.swarmai\" or identifier \"iordv.swarmcode\""
+            let text = "identifier \"\(bundleID)\" or identifier \"iordv.swarmai\" or identifier \"iordv.swarmcode\" or identifier \"Swarm Code\" or identifier \"Swarm Code Dev\""
             var requirement: SecRequirement?
             guard SecRequirementCreateWithString(text as CFString, [], &requirement) == errSecSuccess, let requirement else {
                 throw UpdateInstallError("The signature requirement could not be built.")
