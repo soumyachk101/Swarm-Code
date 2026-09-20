@@ -1,6 +1,25 @@
 {
-  "generated_at": "2026-09-19T15:22:48.167586+00:00",
+  "generated_at": "2026-09-20T06:47:27.768631+00:00",
   "releases": [
+    {
+      "version": "1.7.7",
+      "date": "2026-09-20",
+      "platform": "mac",
+      "summary": "Swarm Code 1.7.7 brings comprehensive visual asset polish across the tour experience, authentic AppIcon squircles, native Hydra iconography preservation, and WebGL2 hero visual effects. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "Refinements",
+          "items": [
+            "Tour asset visual fidelity: Sanitized and refreshed all tour presentation shots (`tour-welcome`, `tour-hydra`, `tour-panels`, `tour-pairs`, `tour-slider`, `tour-themes`) with native asset rendering.",
+            "Authentic AppIcon squircles: Replaced legacy droplet squircle placeholders in empty thread prompts and cookbook cards (`pairs`, `slider`, `recipes`) with the official Swarm Code golden bee AppIcon.",
+            "Pristine Hydra mark preservation: Preserved the authentic multi-head dragon mark and rotating chromatic ring throughout the application toolbar and picker headers without improper logo overlays.",
+            "Popover layout seam fixes: Fixed glyph and underline clipping near the model picker popover edge in the pairs tour view for a seamless, pixel-perfect presentation.",
+            "WebGL2 laser hero animation: Added dynamic volumetric blue laser beam illumination and particle wisps to the landing hero view."
+          ]
+        }
+      ],
+      "thanks": []
+    },
     {
       "version": "1.7.6",
       "date": "2026-09-19",
@@ -173,7 +192,7 @@
       "version": "1.6.0",
       "date": "2026-09-18",
       "platform": "mac",
-      "summary": "Swarm Code 1.6.0 folds a finished turn into its \"Worked for \u2026\" line with the turn's steps behind the chevron, keeps a running turn's steps, and the agent's thinking, in the card below its bar, hands a chat stopped by its provider's usage limit a New thread that carries the work on, lets the heads leave the sidebar on their own, and puts a mark of your choosing in front of a project's name; Netlify joins the MCP catalog. Apple silicon, macOS 26 or later. Signed and notarized.",
+      "summary": "Swarm Code 1.6.0 folds a finished turn into its \"Worked for …\" line with the turn's steps behind the chevron, keeps a running turn's steps, and the agent's thinking, in the card below its bar, hands a chat stopped by its provider's usage limit a New thread that carries the work on, lets the heads leave the sidebar on their own, and puts a mark of your choosing in front of a project's name; Netlify joins the MCP catalog. Apple silicon, macOS 26 or later. Signed and notarized.",
       "sections": [
         {
           "title": "New features",
@@ -195,15 +214,15 @@
         {
           "title": "Refinements",
           "items": [
-            "A finished turn reads folded: it shows its final reply with the turn's plans and any warning, and the steps it took, its heads and its changed-files card wait behind the \"Worked for \u2026\" line, which opens them in a card of their own.",
+            "A finished turn reads folded: it shows its final reply with the turn's plans and any warning, and the steps it took, its heads and its changed-files card wait behind the \"Worked for …\" line, which opens them in a card of their own.",
             "A running turn keeps its work on the working line: the progress card stays the card it is, and the steps the turn is taking, with the agent's thinking and what it says between them, open under it once its chevron is clicked; the reply that concludes the turn lands in the chat once the turn ends.",
-            "The Chronological order switch is gone from Settings \u203a Conversation: a turn reads folded until its line is clicked, which is what the app always does now, so the switch had nothing left to change."
+            "The Chronological order switch is gone from Settings › Conversation: a turn reads folded until its line is clicked, which is what the app always does now, so the switch had nothing left to change."
           ]
         }
       ],
       "thanks": [
-        "Ren\u00e9 (@diazdesandi): confined `searchtext` to the project root with a `--` guard against flag smuggling, kept plan mode blocking edits after approve-for-turn, cleared the save timer handle before `saveNow` bails and stopped `WorkingTreeWatch` tearing down the registered watch when a second caller lost the race (!307); one OpenAI-compatible session and one Keychain behind the DeepSeek, Meta and Z.ai providers (!308).",
-        "Bryan Gald\u00e1mez (@JosueGalRe): finished turns open chronologically and a head wears its profile (!283); native heads routed to head profiles on Claude, Codex and Copilot (!285); the pair editor keeps its effort row for a model whose catalog entry declares no efforts yet (!304); a model catalog probe that came back empty is tried again on the next ask instead of closing the provider's list for the rest of the run (!306).",
+        "René (@diazdesandi): confined `searchtext` to the project root with a `--` guard against flag smuggling, kept plan mode blocking edits after approve-for-turn, cleared the save timer handle before `saveNow` bails and stopped `WorkingTreeWatch` tearing down the registered watch when a second caller lost the race (!307); one OpenAI-compatible session and one Keychain behind the DeepSeek, Meta and Z.ai providers (!308).",
+        "Bryan Galdámez (@JosueGalRe): finished turns open chronologically and a head wears its profile (!283); native heads routed to head profiles on Claude, Codex and Copilot (!285); the pair editor keeps its effort row for a model whose catalog entry declares no efforts yet (!304); a model catalog probe that came back empty is tried again on the next ask instead of closing the provider's list for the rest of the run (!306).",
         "Nikita Tsyganov (@nik1tsyganov): named the parts of the Pi usage sum so it type-checks (!293)."
       ]
     },
@@ -238,7 +257,7 @@
           "title": "New features",
           "items": [
             "A pair can carry head profiles: purpose-named configurations (\"quick\", \"deep\", \"visual\" or any word) with their own provider, model or effort, edited in the pair's Head profiles section in Settings. The lead hears which profiles exist and routes each task to one by name in its delegation block; a task without a profile, or with a name the pair does not have, runs on the heads' shared model as before.",
-            "Chronological order, a switch in Settings \u203a Conversation: a running turn's replies and tool runs stay in the order they arrived instead of the steps before the last tool call gathering into the working line. Off by default; finished turns keep their fold either way.",
+            "Chronological order, a switch in Settings › Conversation: a running turn's replies and tool runs stay in the order they arrived instead of the steps before the last tool call gathering into the working line. Off by default; finished turns keep their fold either way.",
             "Heads at once, a row of buttons on the Hydra page: cap how many heads work at a time for every chat, Off or 1 to 8, without setting up a pair. Off by default; a pair with a lower cap of its own keeps it.",
             "A pair can carry a name of its own, typed on the Hydra page in Settings, and shows as a fused icon of its lead's and heads' provider marks in the composer's model picker and model chip."
           ]
@@ -303,17 +322,17 @@
       "version": "1.5.3",
       "date": "2026-09-17",
       "platform": "mac",
-      "summary": "Swarm Code 1.5.3 puts the keyboard in charge: Escape stops a turn and takes it back, \u2318B hides the sidebar, \u23181 to \u23189 switch threads, a drag selects text across a whole reply, and a large Hydra team no longer freezes the app. Apple silicon, macOS 26 or later. Signed and notarized.",
+      "summary": "Swarm Code 1.5.3 puts the keyboard in charge: Escape stops a turn and takes it back, ⌘B hides the sidebar, ⌘1 to ⌘9 switch threads, a drag selects text across a whole reply, and a large Hydra team no longer freezes the app. Apple silicon, macOS 26 or later. Signed and notarized.",
       "sections": [
         {
           "title": "New features",
           "items": [
-            "A drag selects text across a finished reply the way it does in any Mac text view: headings, paragraphs and lists are one run of native text, so the selection runs from one paragraph into the next and \u2318C copies it. Code blocks and tables keep their own views between the runs, and links still open on a click.",
+            "A drag selects text across a finished reply the way it does in any Mac text view: headings, paragraphs and lists are one run of native text, so the selection runs from one paragraph into the next and ⌘C copies it. Code blocks and tables keep their own views between the runs, and links still open on a click.",
             "Escape on a running turn stops it and takes it back: the conversation and the provider's context rewind to before it, and the message returns to the chat box to be changed and sent again. Files stay as the turn left them.",
             "Escape dismisses whatever is in front: a popover, a panel, a sheet, the terminal's search. A field being typed in keeps its Escape.",
-            "\u2318B shows and hides the sidebar.",
-            "\u23181 to \u23189 switch to the first nine threads, before the menu bar sees the chord.",
-            "\u2318W archives the thread, and the question names it: Return archives, Escape keeps it, and Delete sits beside Archive."
+            "⌘B shows and hides the sidebar.",
+            "⌘1 to ⌘9 switch to the first nine threads, before the menu bar sees the chord.",
+            "⌘W archives the thread, and the question names it: Return archives, Escape keeps it, and Delete sits beside Archive."
           ]
         },
         {
@@ -436,7 +455,7 @@
           "items": [
             "The head progress bars cache their staves between frames instead of walking every step of the timeline thirty times a second; three hangs of six seconds each came from that walk.",
             "A question from the agent, or the chat box growing under the last message, brings the conversation's end back into view; a new row while you are reading further up leaves you there.",
-            "Banked resets sit on one line, \"Banked resets \u00b7 2 available\", with the outcome of a spend on a line below it.",
+            "Banked resets sit on one line, \"Banked resets · 2 available\", with the outcome of a spend on a line below it.",
             "The diff view keeps its line numbers in fixed columns, so wrapped code stays in its own column instead of running back under the numbers.",
             "The clear button in the search field keeps its room when the field is empty, so the text no longer shifts when you start typing.",
             "Text in a reply is selected within a paragraph again; the whole-reply drag mode from 1.4.0 is gone."
@@ -542,7 +561,7 @@
             "History loads asynchronously so switching chats is instant.",
             "The app launches straight into the chat.",
             "The model chip and thread rows use right-click popovers.",
-            "While a turn runs, the working line is the head panel's progress card: the task breathing, the stave bar filling with the turn's steps, the time in its pill, and the chevron opening the steps; Settings \u203a Conversation \u203a Show activity while working turns it back into the plain line.",
+            "While a turn runs, the working line is the head panel's progress card: the task breathing, the stave bar filling with the turn's steps, the time in its pill, and the chevron opening the steps; Settings › Conversation › Show activity while working turns it back into the plain line.",
             "The question popover opens on its badge at one size and stays put while you answer; it is plain and native now.",
             "The checklist card hugs its steps like the other badges.",
             "Hydra recipes name current models with flexible effort levels.",
@@ -571,7 +590,7 @@
             "The team's panel and any head popped out of it float over the chat, dock in any corner, stack when they share one, and can be dragged to size; a finished head wears its outcome on its glyph, and every head has its own progress bar with its task and time.",
             "Command Code joins the providers, with approvals, plan limits and remaining credits.",
             "Settle a thread: it drops to the bottom of the sidebar, small and grey, until you reopen it.",
-            "A welcome tour on first launch, six pages of real captures; Help \u203a Welcome tour and About open it again.",
+            "A welcome tour on first launch, six pages of real captures; Help › Welcome tour and About open it again.",
             "A floating usage panel beside the chat, switched on in General settings, with the plan's limits and credits for the model in use or a pair's two; the usage popover's expand button opens it any time.",
             "The usage popover stacks the lead's provider over the heads' when a pair crosses providers.",
             "A Threads button brings the hidden sidebar's list up in a popover, on hover.",
@@ -612,7 +631,7 @@
         {
           "title": "New features",
           "items": [
-            "Settings \u203a About \u203a Licenses shows the app's license, the third-party notices and the trademark policy, shipped inside the app."
+            "Settings › About › Licenses shows the app's license, the third-party notices and the trademark policy, shipped inside the app."
           ]
         },
         {
@@ -636,7 +655,7 @@
       "version": "1.1.0",
       "date": "2026-09-14",
       "platform": "mac",
-      "summary": "Swarm Code 1.1.0 updates itself from here on: Settings \u203a About checks for new versions and installs them with Update & restart. Apple silicon, macOS 26 or later. Signed and notarized.",
+      "summary": "Swarm Code 1.1.0 updates itself from here on: Settings › About checks for new versions and installs them with Update & restart. Apple silicon, macOS 26 or later. Signed and notarized.",
       "sections": [
         {
           "title": "New features",

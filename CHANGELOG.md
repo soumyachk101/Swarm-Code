@@ -4,6 +4,17 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.7.7] - 2026-09-20
+
+Swarm Code 1.7.7 brings comprehensive visual asset polish across the tour experience, authentic AppIcon squircles, native Hydra iconography preservation, and WebGL2 hero visual effects. Apple silicon, macOS 26 or later.
+
+### Refinements
+- Tour asset visual fidelity: Sanitized and refreshed all tour presentation shots (`tour-welcome`, `tour-hydra`, `tour-panels`, `tour-pairs`, `tour-slider`, `tour-themes`) with native asset rendering.
+- Authentic AppIcon squircles: Replaced legacy droplet squircle placeholders in empty thread prompts and cookbook cards (`pairs`, `slider`, `recipes`) with the official Swarm Code golden bee AppIcon.
+- Pristine Hydra mark preservation: Preserved the authentic multi-head dragon mark and rotating chromatic ring throughout the application toolbar and picker headers without improper logo overlays.
+- Popover layout seam fixes: Fixed glyph and underline clipping near the model picker popover edge in the pairs tour view for a seamless, pixel-perfect presentation.
+- WebGL2 laser hero animation: Added dynamic volumetric blue laser beam illumination and particle wisps to the landing hero view.
+
 ## [1.7.6] - 2026-09-19
 
 Swarm Code 1.7.6 delivers guaranteed native macOS desktop notification banners, audible alert sounds, and background dock bounces across all application states (active, minimized, hidden, and background). Apple silicon, macOS 26 or later.

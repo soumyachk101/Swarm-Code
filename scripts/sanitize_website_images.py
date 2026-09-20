@@ -160,47 +160,49 @@ def sanitize_slider():
 def sanitize_pairs():
     print("Sanitizing pairs.webp...")
     im = Image.open(SRC_DIR / "pairs.webp").convert('RGBA')
-    arr = np.array(im, dtype=np.float32)
     
     # 1. Inpaint old squircle
-    inpaint_line(arr, 985, 1097, 490, 602)
-    # 2. Inpaint 'Drop' before the popover edge (x=1246)
-    inpaint_line(arr, 1135, 1246, 650, 725)
+    arr = np.array(im)
+    bg = arr[490, 1040].copy()
+    arr[495:600, 990:1095] = bg
+    im = Image.fromarray(arr)
     
+    # 2. Paste Swarm Code AppIcon
+    appicon = get_swarm_app_icon((102, 102))
+    im.paste(appicon, (992, 496), appicon)
+    
+    # 3. Inpaint old text 'Drop' horizontally between x=1134 and x=1243 (before popover shadow at 1244)
+    arr = np.array(im, dtype=np.float32)
+    left_col = arr[650:717, 1133].copy()
+    right_col = arr[650:717, 1243].copy()
+    w = 1243 - 1134
+    for i in range(w):
+        t = i / float(w - 1)
+        arr[650:717, 1134 + i] = (1.0 - t) * left_col + t * right_col
     im = Image.fromarray(arr.astype(np.uint8))
     
-    # 3. Paste Swarm Code AppIcon
-    appicon = get_swarm_app_icon((102, 102))
-    im.paste(appicon, (990, 495), appicon)
+    # 4. Render complete word 'Swarm' cleanly before popover (ending at x=1239, 4px before popover shadow)
+    draw = ImageDraw.Draw(im)
+    font = ImageFont.truetype(FONT_PATH, 35)
+    sx = 1137
+    sy = 666
+    draw.text((sx, sy), 'Swarm', fill=(240, 246, 252, 255), font=font)
+    bbox = draw.textbbox((sx, sy), 'Swarm', font=font)
     
-    # 4. Render 'Swarm Code?' masked before popover edge
-    overlay = Image.new('RGBA', im.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay)
-    font = ImageFont.truetype(FONT_PATH, 56)
-    font.set_variation_by_name('Regular')
-    
-    text_color = (235, 240, 245, 255)
-    sub_color = (160, 175, 190, 255)
-    
-    x2 = 1143
-    y_text = 658
-    d.text((x2, y_text), 'Swarm Code?', fill=text_color, font=font)
-    
-    cur_x = x2 + 2
-    underline_y = 717
-    while cur_x < 1246:
-        d.line([(cur_x, underline_y), (min(cur_x + 8, 1246), underline_y)], fill=sub_color, width=3)
-        cur_x += 14
+    # Crisp authentic dotted underline under 'Swarm' (ends exactly under 'm', never clipping into popover)
+    cur_x = sx
+    while cur_x + 9 <= bbox[2] + 2:
+        draw.line([(cur_x, 708), (cur_x + 9, 708)], fill=(150, 164, 172, 220), width=2)
+        cur_x += 18
         
-    overlay_arr = np.array(overlay)
-    overlay_arr[:, :1135] = 0
-    overlay_arr[:, 1246:] = 0
-    overlay = Image.fromarray(overlay_arr)
-    
-    im = Image.alpha_composite(im, overlay)
+    # Keep Model Picker popover on the right (x >= 1244) 100% pristine from original capture
+    res_arr = np.array(im)
+    orig_arr = np.array(Image.open(SRC_DIR / "pairs.webp").convert('RGBA'))
+    res_arr[:, 1244:] = orig_arr[:, 1244:]
+    im = Image.fromarray(res_arr)
     
     out_tour = OUT_TOUR / "pairs.webp"
-    im.convert('RGB').save(out_tour, 'WEBP', quality=92, method=6)
+    im.convert('RGB').save(out_tour, 'WEBP', quality=95, method=6)
     print(f"Saved {out_tour}")
 
 
