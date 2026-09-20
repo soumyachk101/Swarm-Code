@@ -39,3 +39,7 @@
 
 - All DMG releases, app updates, and GitHub release publications must ONLY be made to `soumyachk101/Swarm-Code-Release`.
 - Never publish releases or upload binaries/assets to the main source repository (`soumyachk101/Swarm-Code`).
+- **Every release must update the website.** After publishing a new version:
+  1. Update the version string in `website/index.html` (download section badge).
+  2. Add the new release entry to `website/changelog.json`.
+  3. Commit, push to `origin` (GitLab) **and** `github` (GitHub) so Vercel auto-deploys the site.
