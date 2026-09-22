@@ -297,8 +297,8 @@ struct VeiledText: View {
             var out = Text(verbatim: "")
             for segment in segments {
                 switch segment {
-                case .fixed(let t): out = out + t
-                case .prose(let a): out = out + Text(a)
+                case .fixed(let t): out = Text("\(out)\(t)")
+                case .prose(let a): out = Text("\(out)\(Text(a))")
                 }
             }
             return out
@@ -324,10 +324,10 @@ struct VeiledText: View {
             var prose = 0
             for segment in segments {
                 switch segment {
-                case .fixed(let t): out = out + t
+                case .fixed(let t): out = Text("\(out)\(t)")
                 case .prose:
                     let end = styled.characters.index(styled.startIndex, offsetBy: proseEnds[prose])
-                    out = out + Text(AttributedString(styled[cursor..<end]))
+                    out = Text("\(out)\(Text(AttributedString(styled[cursor..<end])))")
                     cursor = end
                     prose += 1
                 }

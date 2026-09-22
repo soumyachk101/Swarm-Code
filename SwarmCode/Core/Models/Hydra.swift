@@ -551,6 +551,71 @@ struct HydraReport: Hashable, Sendable {
     var toolCalls = 0
 }
 
+/// The per-request budgets behind a lead's delegation blocks: how many rounds of heads
+/// have gone out for the user's current request, and how many times the lead has been
+/// told in a turn of its own that a block sent no heads out. A turn the user authored
+/// starts both over; a turn carrying head reports or a refusal notice continues the
+/// same request and does not.
+struct HydraDelegationBudget {
+    /// Rounds of heads gone out for the current request.
+    private(set) var rounds = 0
+    /// Refusals given a turn of their own in the current request.
+    private(set) var refusals = 0
+    /// A dropped block's notice, waiting to ride on the front of the lead's next turn:
+    /// past `maxRefusals` no turn of its own is spent on a refusal, and a turn that
+    /// ended before its block's heads went out spent none to begin with, but the lead
+    /// still hears that its heads never went out. A drop is never quieter than a refusal.
+    private(set) var dropNotice: String?
+
+    /// Whether another round of heads may still go out for this request.
+    var canDelegate: Bool { rounds < HydraPrompts.maxDelegationRounds }
+
+    /// What a new turn does to the budget: `userAuthored` is what `hydraHeads == nil`
+    /// says at turn start — the user's own words, not heads reporting back and not a
+    /// refusal notice. The drop notice is not a turn start's to clear: `takeDropNotice`
+    /// spends it when it actually reaches the lead.
+    mutating func beginTurn(userAuthored: Bool) {
+        guard userAuthored else { return }
+        rounds = 0
+        refusals = 0
+    }
+
+    /// A round of heads went out.
+    mutating func chargeRound() {
+        rounds += 1
+    }
+
+    /// A block sent no heads out. Returns whether the refusal gets a turn of its own;
+    /// past the cap the notice waits for the lead's next turn instead, so a reply that
+    /// still ends in a block ends as a plain reply, but never in silence.
+    mutating func refuse(_ message: String) -> Bool {
+        guard refusals < Self.maxRefusals else {
+            noteDropped(message)
+            return false
+        }
+        refusals += 1
+        return true
+    }
+
+    /// A block dropped without a refusal of its own: the lead hears it on its next
+    /// turn all the same.
+    mutating func noteDropped(_ message: String) {
+        dropNotice = HydraPrompts.droppedBlockNotice(message)
+    }
+
+    /// The notice waiting for the lead, spent: it rides on the front of one turn, once.
+    mutating func takeDropNotice() -> String? {
+        defer { dropNotice = nil }
+        return dropNotice
+    }
+
+    /// How many times one request may tell the lead that its block was unreadable or held
+    /// back, each in a turn of its own. Enough for a lead to fix a malformed block and to
+    /// hear once that its rounds are spent; past it a reply that still ends in a block is
+    /// treated as a plain reply, so no chat ever loops turn after turn on the same refusal.
+    static let maxRefusals = 3
+}
+
 /// The words Hydra puts in front of the lead and the heads, per provider.
 enum HydraPrompts {
     static let workerAgentName = "swarm-worker"
@@ -935,6 +1000,13 @@ enum HydraPrompts {
             return "Merge state: \(merged(last)) \(pending)"
         case .failed:
             return "Merge state: the last merge failed at \(when(last.at)): \(last.detail ?? "no reason recorded"). The work is still in the checkout and is retried once you finish this answer; if the reason needs the user (a sign-in, a conflict), say exactly that."
+        case .held:
+            guard unmergedFiles > 0 else {
+                return "Merge state: the earlier wait has no recorded files left to merge. Do not claim a new merge or promise another one."
+            }
+            return "Merge state: the merge is waiting at \(when(last.at)): \(last.detail ?? "another chat holds this job's files") The work is still in the checkout. Explain the recorded dependency without assuming a completed chat needs more work: active work must finish, while completed jobs merge in order. Hydra retries automatically while this job remains eligible. Do not claim a successful merge."
+        case .settled:
+            return "Merge state: at \(when(last.at)), Hydra found no recorded files left to merge. \(pending) Do not describe this as a new merge."
         case .stray:
             // A stray note right after a merge is a footnote to it: the merge is the news.
             var parts = ["Merge state:"]
@@ -991,6 +1063,23 @@ enum HydraPrompts {
 
     /// What the lead hears when its delegation block is refused: the request has had its
     /// rounds of heads, and the rest is the lead's own.
+    /// What the lead hears when its reply ended before the block's heads could go out:
+    /// the block was dropped, and none of that work was delegated.
+    static func interruptedBlockMessage(stopped: Bool) -> String {
+        """
+        No heads went out.
+        Your reply's delegation block was dropped: the turn \(stopped ? "was stopped" : "failed") before the heads could go out, and none of that work was delegated. Do it yourself, or send the block again.
+        """
+    }
+
+    /// A dropped block's message, riding on the front of the lead's next turn: past the
+    /// refusal cap no turn of its own is spent on it, but the lead still hears that its
+    /// heads never went out. Opens with [Hydra], which the policy tells the lead is
+    /// Swarm Code speaking, not the user.
+    static func droppedBlockNotice(_ message: String) -> String {
+        "[Hydra] " + message + "\n\n---\n\n"
+    }
+
     static func heldBackMessage(count: Int) -> String {
         """
         Hydra held back \(count == 1 ? "a head" : "\(count) heads").

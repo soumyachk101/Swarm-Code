@@ -215,6 +215,7 @@ struct AttachmentVideoThumbnail: View {
         .frame(width: size, height: size)
         .clipShape(.rect(cornerRadius: 12, style: .continuous))
         .task(id: attachment.path) {
+            await AttachmentLargePreview.prefetchVideoSize(for: attachment)
             guard image == nil else { return }
             guard let frame = await PreviewVideos.thumbnail(for: attachment.path, pointSize: size) else { return }
             withAnimation(.easeOut(duration: 0.15)) { image = frame }
@@ -261,17 +262,31 @@ struct AttachmentLargePreview: View {
     /// path above. Falls back to `imageBounds` when the track is unreadable.
     /// The coordinator can pass this as `imageSize` so the panel is sized up
     /// front exactly like a photo; the body uses it as the fallback too.
-    static func videoDisplaySize(for attachment: Attachment) -> CGSize {
+    /// The movie aspect-fitted into `imageBounds`, from the video track's natural size
+    /// (preferred transform applied), by path. The track is loaded with the modern async
+    /// API by the thumbnail's own task (see `prefetchVideoSize`); the panel sizes itself
+    /// before the player exists, so an unloaded track falls back to `imageBounds`.
+    @MainActor private static var videoSizes: [String: CGSize] = [:]
+
+    /// Loads a movie's display size off the tap path, once per path. Called when the
+    /// video thumbnail appears; the panel's `videoDisplaySize` then reads the cache.
+    static func prefetchVideoSize(for attachment: Attachment) async {
+        guard attachment.isVideo, videoSizes[attachment.path] == nil else { return }
         let asset = AVURLAsset(url: attachment.url)
-        if let track = asset.tracks(withMediaType: .video).first {
-            var size = track.naturalSize.applying(track.preferredTransform)
-            size = CGSize(width: abs(size.width), height: abs(size.height))
-            if size.width > 0, size.height > 0 {
-                let scale = min(imageBounds.width / size.width, imageBounds.height / size.height)
-                return CGSize(width: floor(size.width * scale), height: floor(size.height * scale))
-            }
-        }
-        return imageBounds
+        guard let tracks = try? await asset.loadTracks(withMediaType: .video),
+              let track = tracks.first,
+              let (natural, transform) = try? await track.load(.naturalSize, .preferredTransform) else { return }
+        var size = natural.applying(transform)
+        size = CGSize(width: abs(size.width), height: abs(size.height))
+        guard size.width > 0, size.height > 0 else { return }
+        let scale = min(imageBounds.width / size.width, imageBounds.height / size.height)
+        videoSizes[attachment.path] = CGSize(width: floor(size.width * scale), height: floor(size.height * scale))
+    }
+
+    /// The coordinator can pass this as `imageSize` so the panel is sized up front exactly
+    /// like a photo; the body uses it as the fallback too.
+    static func videoDisplaySize(for attachment: Attachment) -> CGSize {
+        videoSizes[attachment.path] ?? imageBounds
     }
 
     var body: some View {

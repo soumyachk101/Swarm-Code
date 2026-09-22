@@ -936,18 +936,18 @@ enum FaviconCache {
         return image
     }
 
+    /// The icon the host itself serves. Fetching `/favicon.ico` from the host keeps the
+    /// hosts a reply links to away from a third-party favicon service; a host that serves
+    /// nothing gets no icon, and a private host is refused before this is reached (see
+    /// `isPublic(host:)`).
     private static func iconData(for host: String) async -> Data? {
-        if let url = URL(string: "https://icons.duckduckgo.com/ip3/\(host).ico"),
-           let (data, response) = try? await URLSession.shared.data(from: url),
-           let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-           NSImage(data: data) != nil {
-            return data
-        }
-        if let url = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=64"),
-           let (data, _) = try? await URLSession.shared.data(from: url) {
-            return data
-        }
-        return nil
+        guard let url = URL(string: "https://\(host)/favicon.ico") else { return nil }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 5
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
+              NSImage(data: data) != nil else { return nil }
+        return data
     }
 
     private static func cleaned(_ data: Data) -> NSImage? {

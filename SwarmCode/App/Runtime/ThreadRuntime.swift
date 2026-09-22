@@ -293,19 +293,12 @@ final class ThreadRuntime {
     /// How many delegated tasks wait for a head to finish before they go out, for the
     /// heads popover to say so: a team held to the cap is not a team that lost its tail.
     private(set) var hydraWaitingCount = 0
-    /// How many times heads have gone out for the user's current request; a message of
-    /// the user's own starts the count over.
-    @ObservationIgnored private var hydraDelegationRounds = 0
+    /// The budgets behind the lead's delegation blocks (rounds, refusals, drop notice).
+    @ObservationIgnored private var hydraBudget = HydraDelegationBudget()
     /// The delegation block being read as the reply streams: which turn and row it
     /// belongs to, the batch its heads go out under, and how many entries have gone
     /// out so far. One block per turn: the first row with one claims it.
     @ObservationIgnored private var hydraStream: (turnID: UUID, entryID: String, batchID: UUID, sent: Int)?
-    /// How many turns of the user's current request were spent telling the lead its block
-    /// could not be read or was held back. Each such message is a turn the lead answers,
-    /// and a lead that answers with the same block again would be told again, without end:
-    /// past `maxRefusedBlocks` the block is simply dropped and the turn ends. Starts over
-    /// with the rounds, on a message of the user's own.
-    @ObservationIgnored private var hydraRefusedBlocks = 0
     /// A Swarm-run head's time for one turn (see `HydraBudget`): past it, the head is
     /// stopped and its next turn is its report.
     @ObservationIgnored private var headBudget: Task<Void, Never>?
@@ -1188,10 +1181,10 @@ final class ThreadRuntime {
         // A settled thread put back to work is open again.
         app.reopenIfSettled(threadID)
         hydraStream = nil
-        if hydraHeads == nil {
-            hydraDelegationRounds = 0
-            hydraRefusedBlocks = 0
-        }
+        // `hydraHeads == nil` marks a turn of the user's own: it starts the request's
+        // delegation budgets over. Turns carrying head reports or a refusal notice are
+        // continuations of the same request and do not.
+        hydraBudget.beginTurn(userAuthored: hydraHeads == nil)
         // A finished head told more from the panel is at work again: its lead's team
         // counts it, and its next report goes out as a fresh one.
         if let info = initialThread.hydra, info.kind == .swarm, info.isFinished {
@@ -1276,7 +1269,7 @@ final class ThreadRuntime {
                 let merge = launch.autoMerges ? HydraPrompts.mergeStatus(merges: hydraMerges, unmergedFiles: app.hydraUnmergedFileCount(of: threadID)) : nil
                 if !launch.runsNatively {
                     let team = HydraPrompts.teamStatus(app.hydraTeam(of: threadID).compactMap(\.hydra))
-                    let canDelegate = hydraDelegationRounds < HydraPrompts.maxDelegationRounds
+                    let canDelegate = hydraBudget.canDelegate
                     if Self.keepsHydraPolicyInSystemPrompt(thread.provider) {
                         prompt = (hydraHeads == nil ? HydraPrompts.fallbackTurnNote(team: team, merge: merge) : HydraPrompts.fallbackReportNote(team: team, merge: merge, canDelegate: canDelegate)) + prompt
                     } else if hydraHeads == nil {
@@ -1315,6 +1308,12 @@ final class ThreadRuntime {
             if let continuation, !continuationSent, SlashCommand.name(in: text) == nil {
                 prompt = continuation.prompt + "\n\n" + prompt
                 injectedContinuation = true
+            }
+            // A block dropped with no refusal turn left to say so still reaches the lead:
+            // its notice rides on the front of whatever turn comes next. Taken here, with
+            // the send about to run, so a turn that aborts while starting keeps it waiting.
+            if let notice = hydraBudget.takeDropNotice() {
+                prompt = notice + prompt
             }
             phase = .running
             try await session.send(TurnInput(
@@ -2417,6 +2416,15 @@ final class ThreadRuntime {
 
     // MARK: - Hydra
 
+    /// An idle provider may still have a report or a user message waiting to run.
+    /// Those continuations must finish before its files take part in a merge.
+    var isReadyForHydraMerge: Bool {
+        phase == .idle && !isLoadingHistory && !isReverting && pendingSend == nil
+            && turns.last?.status == .completed && !hasWorkingHeads
+            && hydraPendingReports.isEmpty && hydraBatches.isEmpty && hydraWaiting.isEmpty
+            && !hydraFlushScheduled
+    }
+
     /// The auto-merge has landed these turns' work: the next merge starts from what came
     /// after them, rather than offering the same files again.
     func markHydraMerged(_ turnIDs: [UUID]) {
@@ -2669,11 +2677,6 @@ final class ThreadRuntime {
     /// practice, and the pair's cap still decides how many run at a time.
     private static let maxDelegatedTasks = 32
 
-    /// How many times one request may tell the lead that its block was unreadable or held
-    /// back, each in a turn of its own. Enough for a lead to fix a malformed block and to
-    /// hear once that its rounds are spent; past it a reply that still ends in a block is
-    /// treated as a plain reply, so no chat ever loops turn after turn on the same refusal.
-    private static let maxRefusedBlocks = 3
 
     /// What a reply's delegation block led to, for the end of the turn.
     private enum DelegationOutcome {
@@ -2710,6 +2713,8 @@ final class ThreadRuntime {
         saveRevision += 1
         scheduleSave()
         appendHydraNote("Hydra sent no heads: the turn \(status == .interrupted ? "was stopped" : "failed") before they could go out. Ask again to send them.")
+        // The timeline note is for the UI; the lead hears it too, on its next turn.
+        hydraBudget.noteDropped(HydraPrompts.interruptedBlockMessage(stopped: status == .interrupted))
     }
 
     private static func holdsDelegationBlock(_ entry: TimelineEntry) -> Bool {
@@ -2745,7 +2750,7 @@ final class ThreadRuntime {
             // reported as lost: only the ceiling of a block, or a request that has had all
             // its rounds of heads, holds a task back, and only that is named in the note.
             var sent = stream.sent
-            if total > sent, hydraDelegationRounds < HydraPrompts.maxDelegationRounds {
+            if total > sent, hydraBudget.canDelegate {
                 let rest = Array(all.dropFirst(sent).prefix(max(0, Self.maxDelegatedTasks - sent)))
                 if !rest.isEmpty {
                     hydraWaiting += rest.map { (delegation: $0, batchID: stream.batchID) }
@@ -2787,14 +2792,14 @@ final class ThreadRuntime {
         }
         // One request gets so many rounds of heads; past that the lead hears why none went
         // out and finishes by itself, so no request chains heads without end.
-        guard hydraDelegationRounds < HydraPrompts.maxDelegationRounds else {
+        guard hydraBudget.canDelegate else {
             message.text = stripped.isEmpty ? "Asking for more heads." : stripped
             entry.item.content = .assistant(message)
             saveRevision += 1
             scheduleSave()
             return refuseBlock(HydraPrompts.heldBackMessage(count: delegations.count), dropped: "This request has had all \(HydraPrompts.maxDelegationRounds) of its rounds of heads, and the lead had been told so already.")
         }
-        hydraDelegationRounds += 1
+        hydraBudget.chargeRound()
         // The card stays a moment in its sent state, then leaves the reply (see `holdSentDelegationBlock`).
         message.text = HydraPrompts.markingDelegationBlockSent(message.text)
         entry.item.content = .assistant(message)
@@ -2850,11 +2855,10 @@ final class ThreadRuntime {
     /// the cap the block is dropped with a note in the timeline saying `dropped`, and the
     /// turn ends as a plain reply would.
     private func refuseBlock(_ message: String, dropped: String) -> DelegationOutcome {
-        guard hydraRefusedBlocks < Self.maxRefusedBlocks else {
+        guard hydraBudget.refuse(message) else {
             appendHydraNote("No heads went out\n\(dropped) The block was dropped from the reply.")
             return .none
         }
-        hydraRefusedBlocks += 1
         Task { await ensureLoaded(); await startTurn(text: message, attachments: [], hydraHeads: []) }
         return .turnStarted
     }
@@ -2872,12 +2876,12 @@ final class ThreadRuntime {
         let sent = hydraStream?.sent ?? 0
         let fresh = Array(streamed.delegations.dropFirst(sent).prefix(max(0, Self.maxDelegatedTasks - sent)))
         guard !fresh.isEmpty else { return }
-        guard hydraDelegationRounds < HydraPrompts.maxDelegationRounds else { return }
+        guard hydraBudget.canDelegate else { return }
         let batchID: UUID
         if hydraStream == nil {
             batchID = UUID()
             hydraBatches[batchID] = HydraBatch(pending: [])
-            hydraDelegationRounds += 1
+            hydraBudget.chargeRound()
             hydraStream = (turnID: turnID, entryID: entryID, batchID: batchID, sent: 0)
         } else {
             batchID = hydraStream!.batchID

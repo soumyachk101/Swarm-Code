@@ -25,29 +25,49 @@ private enum HydraProjectMerge {
 }
 
 extension AppModel {
-    typealias HydraWork = (paths: [String], turnIDs: [UUID], headIDs: [UUID], outside: [String], heads: [HydraMergeHead])
+    /// One project's share of a job: the paths this merge may take, the turns and heads
+    /// they settle, the paths that lie under no checkout, the heads' files, and - of the
+    /// paths the job's own records hold - the ones another chat's unfinished work holds
+    /// instead, each under the name of the chat that holds it.
+    typealias HydraWork = (paths: [String], turnIDs: [UUID], headIDs: [UUID], outside: [String], heads: [HydraMergeHead], held: [String: String])
 
     /// Whether any chat's team work is on its way to the remote right now.
     var isAnyHydraMergeRunning: Bool { liveRuntimes.contains { $0.isHydraMerging } }
 
+    /// How long after its last message a lead is still one the auto-merge visits. It is
+    /// the window `resumeHydraMerges` sweeps, and so also how long a head's claim on its
+    /// files lives once the lead has gone quiet: a lead outside it never merges again,
+    /// and a claim of its heads could only hold those files from every later merge.
+    private static var hydraMergeWindow: TimeInterval { 3 * 24 * 3600 }
+
     /// Merges the last run left unfinished: a lead chat with the auto-merge on, no turn
-    /// running, no head still out, and finished turns whose work never went out. The
-    /// merge itself finds the files and lets a job that changed nothing be.
+    /// running, no head still out, and work of its own that never went out - a finished
+    /// turn's files, or a head whose landing no merge has taken, which stands even when
+    /// every turn reads as spent. The merge itself finds the files and lets a job that
+    /// changed nothing be.
     func resumeHydraMerges() async {
         guard settings.hydraAutoMerge else { return }
-        let cutoff = Date.now.addingTimeInterval(-3 * 24 * 3600)
+        let cutoff = Date.now.addingTimeInterval(-Self.hydraMergeWindow)
         let leads = threads.filter { !$0.isArchived && hydraIsOn($0) && $0.updatedAt > cutoff }
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+        // Load every competitor before choosing the first winner. A cold runtime
+        // must not keep a completed job looking unfinished until the next sweep.
         for lead in leads {
-            let runtime = self.runtime(for: lead.id)
-            await runtime.ensureLoaded()
-            guard runtime.phase == .idle, !runtime.isHydraMerging, runningHydraHeads(of: lead.id) == 0 else { continue }
+            await runtime(for: lead.id).ensureLoaded()
+        }
+        for lead in leads {
+            guard let runtime = existingRuntime(for: lead.id),
+                  runtime.isReadyForHydraMerge, !runtime.isHydraMerging else { continue }
+            // The job is finished, whatever its turns read: a lead whose report-review turn
+            // was booked spent while its head's work never went out has no unmerged turn
+            // left, and requiring one here stranded exactly that head. A head whose landing
+            // no merge has taken yet is work of its own, and the test below counts it.
             let finished = runtime.hydraUnmergedTurns.filter { $0.status == .completed }
-            guard !finished.isEmpty, runtime.turns.last?.status == .completed else { continue }
             // A chat with nothing of its own to show never merges: Hydra merely being
             // switched on is not work, and the checkout sweep would otherwise take whatever
             // else in that checkout had changed, another chat's files or the user's own.
             let hasOwnWork = finished.contains { !($0.touchedPaths ?? []).isEmpty }
-                || hydraTeam(of: lead.id).contains { $0.hydra.map { $0.mergedAt == nil && !($0.landing?.files ?? []).isEmpty } ?? false }
+                || hydraTeam(of: lead.id).contains { $0.hydra.map { $0.mergedAt == nil && ($0.landing?.landed ?? false) } ?? false }
             guard hasOwnWork else { continue }
             await autoMergeHydraWork(of: lead.id)
         }
@@ -56,8 +76,15 @@ extension AppModel {
     /// Lands a lead's finished work, when the setting says so. Runs once per finished job;
     /// what happened lands in the lead's timeline as a note from Hydra.
     func autoMergeHydraWork(of leadID: UUID) async {
+        // `isAnyHydraMergeRunning` holds the one merge flag: several jobs finishing in the
+        // same moment would otherwise each pass their own `isHydraMerging` check, take a
+        // flag of their own and snapshot shared files side by side. The guard and the flag
+        // are set with no suspension between them, so whoever gets here first goes and the
+        // rest are picked up by the resume sweep. A job skipped this way is not forgotten:
+        // `resumeHydraMerges` finds it while it stays eligible.
         guard settings.hydraAutoMerge, let lead = thread(leadID), hydraIsOn(lead), let project = project(lead.projectID),
-              let runtime = existingRuntime(for: leadID), !runtime.isHydraMerging else { return }
+              let runtime = existingRuntime(for: leadID), !runtime.isHydraMerging, !isAnyHydraMergeRunning,
+              runtime.isReadyForHydraMerge else { return }
         runtime.isHydraMerging = true
         runtime.hydraMergeStartedAt = .now
         runtime.hydraMergeNoteID = UUID().uuidString
@@ -74,17 +101,17 @@ extension AppModel {
         // commit is built from must hold the patch whole or not at all. Landings that have
         // not started yet wait for the merge instead (see `waitForSettledCheckout`).
         await runtime.hydraLanding?.value
+        guard runtime.isReadyForHydraMerge else { return }
 
         // What the team touched, and only that, so a sibling's uncommitted work in the
         // same checkout stays behind. The chat's own checkout goes first, then every
         // other sidebar project that holds touched files, one merge each; only paths
         // under no sidebar project at all stay out. What the records do not hold in one
         // of those other checkouts cannot be told apart from a sibling's work there and
-        // stays behind: the note says so, with the count, rather than calling the merge
-        // done and leaving the user to find out.
+        // stays behind without a word: none of it was this merge's to take.
         let ownCheckout = lead.worktreePath ?? project.path
         let own = await hydraWork(of: leadID, runtime: runtime, checkout: ownCheckout, git: Git(ownCheckout), projectID: project.id, leadCheckout: ownCheckout, leadProjectID: project.id, sweepsCheckout: true)
-        var groups: [(project: Project, checkout: String, work: HydraWork)] = own.paths.isEmpty ? [] : [(project, ownCheckout, own)]
+        var groups: [(project: Project, checkout: String, work: HydraWork)] = [(project, ownCheckout, own)]
         // An outside path belongs to the sidebar project with the longest path that
         // holds it, so nested checkouts resolve to the inner one.
         var owners: [String: Project] = [:]
@@ -95,7 +122,7 @@ extension AppModel {
         }
         for other in projects where other.id != project.id && owners.values.contains(where: { $0.id == other.id }) {
             let work = await hydraWork(of: leadID, runtime: runtime, checkout: other.path, git: Git(other.path), projectID: other.id, leadCheckout: ownCheckout, leadProjectID: project.id, sweepsCheckout: false)
-            if !work.paths.isEmpty { groups.append((other, other.path, work)) }
+            groups.append((other, other.path, work))
         }
         // A head's scratch (a throwaway script in /tmp, a stray write into its own copy)
         // is nobody's project and not worth a word; only a real folder outside the
@@ -105,6 +132,19 @@ extension AppModel {
             let shown = paths.prefix(6).map { "`\($0)`" }.joined(separator: ", ") + (paths.count > 6 ? " and \(paths.count - 6) more" : "")
             return "\(paths.count == 1 ? "1 file was" : "\(paths.count) files were") changed outside every project: \(shown). Add the folder that holds them to the sidebar and ask for the merge again."
         }
+        // A hold in any project keeps the whole job pending; otherwise a shared turn
+        // could be marked merged by its unblocked project's share.
+        var held: [String: String] = [:]
+        for group in groups {
+            for (path, owner) in group.work.held {
+                held[(group.checkout as NSString).appendingPathComponent(path)] = owner
+            }
+        }
+        if !held.isEmpty {
+            recordHydraHold(held, leadID: leadID, runtime: runtime)
+            return
+        }
+        groups.removeAll { $0.work.paths.isEmpty }
         guard !groups.isEmpty else {
             guard !stray.isEmpty else {
                 // Nothing to send and nothing outside a project: whatever the turns
@@ -113,6 +153,9 @@ extension AppModel {
                 runtime.markHydraMerged(own.turnIDs)
                 let spentAt = Date.now
                 for headID in own.headIDs { updateHydraHead(headID) { $0.mergedAt = spentAt } }
+                if runtime.hydraMerges.last?.outcome == .held {
+                    recordHydraSettlement(leadID: leadID, runtime: runtime)
+                }
                 return
             }
             runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .stray, project: nil, label: nil, url: nil, files: stray.count, detail: strayBody(stray)))
@@ -134,26 +177,15 @@ extension AppModel {
         if !stray.isEmpty {
             runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .stray, project: nil, label: nil, url: nil, files: stray.count, detail: strayBody(stray)))
             note(leadID, "Hydra left \(stray.count == 1 ? "a file" : "\(stray.count) files") outside every project.", strayBody(stray))
-        }
-        // A merge that took only what the records held can leave work the team did in a
-        // checkout behind. Say so with the count, rather than report nothing pending.
-        for group in groups {
-            let git = Git(group.checkout)
-            guard let tree = try? await git.captureTree(),
-                  let changed = try? await git.changedPaths(from: "HEAD", to: tree) else { continue }
-            var leftover = Set(changed.filter { !TouchedPaths.isBuildOutput($0) })
-            leftover.subtract(await git.ignoredPaths(among: leftover.sorted()))
-            leftover.subtract(siblingOwnedPaths(in: group.checkout, projectID: group.project.id, excluding: leadID))
-            guard !leftover.isEmpty else { continue }
-            let shown = leftover.sorted().prefix(6).map { "`\($0)`" }.joined(separator: ", ") + (leftover.count > 6 ? " and \(leftover.count - 6) more" : "")
-            note(leadID, "Hydra merged \(group.project.name), but left \(leftover.count == 1 ? "a changed file" : "\(leftover.count) changed files") no turn or head recorded.", "\(shown). Still uncommitted in that checkout: name them in a brief, or commit them there by hand.")
+        } else if outcomes.allSatisfy({ $0 == .alreadyOnMain }) {
+            recordHydraSettlement(leadID: leadID, runtime: runtime)
         }
     }
 
     /// A path no sidebar project could ever hold: a head's copy of a checkout under the
     /// worktrees folder, the temporary folders a head drops a throwaway script into,
     /// `~/Library`, and the dot-folders under home where agents keep their own state
-    /// (`~/.claude`, `~/.codex`, `~/.swarm-code-dev`): a lead writing its memory files
+    /// (`~/.claude`, `~/.codex`, `~/.droppy-code-dev`): a lead writing its memory files
     /// is not leaving work behind.
     private static func isScratchPath(_ path: String) -> Bool {
         let full = ((path as NSString).expandingTildeInPath as NSString).standardizingPath
@@ -212,6 +244,19 @@ extension AppModel {
             let head = try await git.commitHash()
             advance(.committing)
             let tree = try await git.captureTree(paths: sorted)
+            // A lead can resume while gathering or capturing files. Check after
+            // the snapshot so no newly active shared work is sent to the remote.
+            guard runtime.isReadyForHydraMerge else { return .failed }
+            let currentClaims = siblingOwnedPaths(in: checkout, projectID: project.id, excluding: leadID).blocking
+            let held = sorted.reduce(into: [String: String]()) { result, path in
+                if let owner = currentClaims[path] {
+                    result[(checkout as NSString).appendingPathComponent(path)] = owner
+                }
+            }
+            guard held.isEmpty else {
+                recordHydraHold(held, leadID: leadID, runtime: runtime)
+                return .failed
+            }
             // Everything the team did is committed already: taken along by another chat's
             // merge from the same checkout, or committed by hand. The job is spent either
             // way, and there is nothing to tell: the work is where it was meant to go.
@@ -325,7 +370,7 @@ extension AppModel {
     /// re-checks it (it may have been refreshed while the push ran) and otherwise tells
     /// the user how to sign in again, and any other failure that left a recovery file is
     /// retried once with `--recover` so its saved options are picked up. Squash and
-    /// remove-source-branch are left to the project's defaults, as before.
+    /// source-branch removal are explicit for GitLab team merges.
     private func hydraCreateMergeRequest(git: Git, title: String, body: String, source: String, target: String) async throws -> URL? {
         guard await git.forge() == .gitlab, LoginEnvironment.which("glab") != nil else {
             return try await git.createPullRequest(title: title, body: body, source: source, target: target)
@@ -334,7 +379,7 @@ extension AppModel {
         // An explicit project keeps glab from resolving the wrong one; it names the same
         // origin remote glab would use on its own. Any credentials embedded in the remote
         // stay out of the arguments.
-        var arguments = ["mr", "create", "--title", title, "--description", body, "--yes"]
+        var arguments = ["mr", "create", "--title", title, "--description", body, "--yes", "--squash-before-merge"]
         if var web = await git.remoteWebURL(), web.host != nil {
             if web.user != nil, var components = URLComponents(url: web, resolvingAgainstBaseURL: false) {
                 components.user = nil
@@ -410,7 +455,7 @@ extension AppModel {
     ///
     /// - the turns of this job, meaning the ones no merge has taken yet, and the paths
     ///   they reported;
-    /// - the heads that worked alongside those turns: what a Swarm-run head landed, and,
+    /// - the heads that worked alongside those turns: what a Droppy-run head landed, and,
     ///   for a head the provider runs inside the lead's own session, the edits its own
     ///   timeline reported. A native head works in this very checkout and lands nothing,
     ///   so without its timeline its files are simply missing and the branch goes out
@@ -426,17 +471,16 @@ extension AppModel {
     private func hydraWork(of leadID: UUID, runtime: ThreadRuntime, checkout: String, git: Git, projectID: UUID, leadCheckout: String, leadProjectID: UUID, sweepsCheckout: Bool) async -> HydraWork {
         let turns = runtime.hydraUnmergedTurns
         var reported: [String] = turns.flatMap { $0.touchedPaths ?? [] }
-        // A head counts until a merge has taken its work (see `HydraHeadInfo.mergedAt`).
-        // Heads from before that mark existed have no mark: one that finished before the
-        // last merged turn began went out with an earlier merge and is left alone; the
-        // rest have work in the checkout that no merge has taken yet.
-        let lastMergedTurnStart = runtime.turns.last { $0.hydraMerged }?.startedAt
-        var headIDs: [UUID] = []
-        var headPaths: [(name: String, index: Int, task: String, paths: [String])] = []
+        // A head counts until a merge has taken its work (see `HydraHeadInfo.mergedAt`),
+        // and only that explicit mark proves a merge took it: a lead turn's `hydraMerged`
+        // flag is bookkeeping, and a turn falsely booked spent would let a timestamp
+        // shortcut discard a head whose files were still in the checkout. A head from
+        // before the mark existed that already went out settles below instead, where the
+        // gathering finds its paths unchanged from HEAD.
+        var headPaths: [(id: UUID, name: String, index: Int, task: String, paths: [String])] = []
         for head in hydraTeam(of: leadID) {
-            guard let info = head.hydra, info.mergedAt == nil else { continue }
-            if let lastMergedTurnStart, let finished = info.finishedAt, finished < lastMergedTurnStart { continue }
-            headIDs.append(head.id)
+            guard let info = head.hydra, info.mergedAt == nil,
+                  info.landing?.patchPath == nil, info.landing?.error == nil else { continue }
             // The checkout the head's work landed in: the chat's own for a head in its
             // project, that project's for a head sent elsewhere. A path the head's tools
             // reported lies in its own copy of that checkout and stands for the same path
@@ -478,7 +522,7 @@ extension AppModel {
                 reported += call.edits.map { anchored($0.path) }
                 for edit in call.edits { collect(edit.path) }
             }
-            headPaths.append((HydraRoster.persona(at: info.index).name, info.index, TextCleanup.singleLine(info.task, limit: 120), own))
+            headPaths.append((head.id, HydraRoster.persona(at: info.index).name, info.index, TextCleanup.singleLine(info.task, limit: 120), own))
         }
 
         // The lead's own tool edits, from its timeline: a lead works in any sidebar project
@@ -512,7 +556,15 @@ extension AppModel {
         // yet: that chat's merge carries them, never this one's. Without this, the
         // sweep below took a sibling's landed files along, and the sibling's own merge
         // then found nothing left and said nothing.
-        let siblingPaths = siblingOwnedPaths(in: checkout, projectID: projectID, excluding: leadID)
+        //
+        // Two sets come back. Every reservation keeps the sweep off a sibling's file this
+        // merge has no record of. The blocking claims are the reservations that also hold
+        // this job: a file only a finished, idle sibling job ranks behind this one owns is
+        // settled by the ordering instead, and this job's own record of it may go out (see
+        // `siblingOwnedPaths`).
+        let siblingFiles = siblingOwnedPaths(in: checkout, projectID: projectID, excluding: leadID)
+        let siblingClaims = Set(siblingFiles.reserved.keys)
+        let blockingClaims = siblingFiles.blocking
         if sweepsCheckout,
            let base = turns.first?.baseCheckpoint,
            let alreadyDirty = try? await git.changedPaths(from: "HEAD", to: base),
@@ -520,13 +572,19 @@ extension AppModel {
            let changedSince = try? await git.changedPaths(from: base, to: now) {
             let theirs = Set(alreadyDirty)
             let fresh = changedSince.filter { !theirs.contains($0) }
-            paths.formUnion(fresh.filter { !siblingPaths.contains($0) })
+            paths.formUnion(fresh.filter { !siblingClaims.contains($0) })
         }
 
-        // A file a live sibling head or chat owns never goes out under this chat, even
+        // A file a live sibling head or chat holds never goes out under this chat, even
         // when this chat's own records list it: a turn's touched paths are read off the
         // checkout's diff, and so can hold a file another chat made while the turn ran.
-        paths.subtract(siblingPaths)
+        // The turns and heads that put those files there are not booked as done here
+        // either: a turn kept open keeps its files pending, so they go out with a later
+        // merge that can take them, instead of reading as merged while lying uncommitted.
+        // A claim the ordering lets this job take is left in `paths`: the file goes out
+        // here, and the sibling's own merge finds it already on the branch.
+        let claimed = paths.intersection(blockingClaims.keys)
+        paths.subtract(blockingClaims.keys)
         paths = paths.filter { !TouchedPaths.isBuildOutput($0) }
         paths.subtract(await git.ignoredPaths(among: paths.sorted()))
         let tracked = await git.trackedPaths(among: paths.sorted())
@@ -539,31 +597,121 @@ extension AppModel {
         let heads = headPaths.map { entry in
             HydraMergeHead(name: entry.name, index: entry.index, task: entry.task, files: entry.paths.filter { paths.contains($0) })
         }
-        return (paths.sorted(), turns.map(\.id), headIDs, outside.sorted(), heads)
+        // What this merge took: every turn and head whose files were all sendable here.
+        // One that still has a file another chat holds stays open, so its files are not
+        // booked as merged before a commit carries them.
+        let turnIDs = turns.filter { turn in
+            (turn.touchedPaths ?? []).allSatisfy { path in
+                guard let relative = TouchedPaths.relative(path, root: checkout) else { return true }
+                return !claimed.contains(relative)
+            }
+        }.map(\.id)
+        let headIDs = headPaths.filter { Set($0.paths).isDisjoint(with: claimed) }.map(\.id)
+        // The held files with the chat holding each, so a job that can send nothing at
+        // all can say who has it rather than being written off in silence.
+        let held = claimed.reduce(into: [String: String]()) { result, path in result[path] = blockingClaims[path] }
+        return (paths.sorted(), turnIDs, headIDs, outside.sorted(), heads, held)
     }
 
     /// Files another chat's team put or is still putting in this same checkout that no
-    /// merge has taken yet. That chat's own merge carries them, so a note here must not
-    /// call them unrecorded. The checkout sweep in `hydraWork` keeps them out of a merge
-    /// the same way.
-    private func siblingOwnedPaths(in checkout: String, projectID: UUID, excluding leadID: UUID) -> Set<String> {
+    /// merge has taken yet, each mapped to the chat that holds it, split in two: every
+    /// reservation, and the claims that hold this job outright. That chat's own merge
+    /// carries them, never this one's, so the checkout sweep in `hydraWork` keeps every
+    /// reservation out of a merge the same way.
+    ///
+    /// A claim holds - `blocking` - unless it is a file only a finished, idle, eligible
+    /// competing job ranks behind this one owns (`hydraIsFinishedIdleEligible`,
+    /// `hydraRanksAfter`): two finished jobs that recorded the same files used to hold
+    /// each other for good, and nothing said so. One ordering by lead UUID settles which
+    /// of them takes a contested file, so the earliest job keeps priority and every job
+    /// reads the same order. Active work, a job that has not completed after an
+    /// interruption, a failed head's partial work, and a pending landing keep their hold.
+    ///
+    /// A claim stands only while the chat that made it can still land its work
+    /// (`canStillMerge`). A head left unmarked by an older merge - its lead merged again
+    /// since, or the job is long over - used to go on claiming its files forever, and
+    /// every chat that later touched one of them went out empty, without a word.
+    private func siblingOwnedPaths(in checkout: String, projectID: UUID, excluding leadID: UUID) -> (reserved: [String: String], blocking: [String: String]) {
         let team = Set(hydraTeam(of: leadID).map(\.id))
-        var paths = Set<String>()
+        var reserved: [String: String] = [:]
+        var blocking: [String: String] = [:]
+        func reserve(_ path: String, owner: String, blocks: Bool) {
+            guard let relative = TouchedPaths.relative(path, root: checkout) else { return }
+            reserved[relative] = owner
+            if blocks { blocking[relative] = owner }
+        }
         for other in threads where other.id != leadID && other.projectID == projectID && !team.contains(other.id) {
             if other.isHydraHead {
                 guard let info = other.hydra, info.mergedAt == nil else { continue }
+                // A head still out has files coming whatever its lead is doing; a head
+                // that has finished holds them only for a lead that can still land them.
+                let parent = other.parentThreadID.flatMap { thread($0) }
+                guard info.status == .running || parent.map(canStillMerge) == true else { continue }
+                // A running head is active work and a stopped or failed one left partial
+                // work behind: both hold whatever their lead is doing. Only a completed
+                // head whose lead is a finished, idle, eligible competitor ranking behind
+                // this job loses its hold to the ordering.
+                let rankedOut = info.status == .completed
+                    && parent.map { hydraRanksAfter($0, leadID) && hydraIsFinishedIdleEligible($0) } == true
                 for file in info.landing?.files ?? [] {
-                    if let relative = TouchedPaths.relative(file.path, root: checkout) { paths.insert(relative) }
+                    reserve(file.path, owner: parent?.title ?? other.title, blocks: !rankedOut)
                 }
             } else if let live = existingRuntime(for: other.id) {
-                for turn in live.hydraUnmergedTurns {
+                // A later completed turn finishes the resumed job, including its
+                // earlier interrupted edits. Without one, readiness remains false
+                // and those partial edits keep their hold.
+                let rankedOut = hydraRanksAfter(other, leadID) && hydraIsFinishedIdleEligible(other)
+                for turn in live.hydraUnmergedTurns where canStillMerge(other) || turn.status != .completed {
                     for path in turn.touchedPaths ?? [] {
-                        if let relative = TouchedPaths.relative(path, root: checkout) { paths.insert(relative) }
+                        reserve(path, owner: other.title, blocks: !rankedOut)
                     }
                 }
             }
         }
-        return paths
+        return (reserved, blocking)
+    }
+
+    /// Whether a lead is a finished job that can still land its own work and so takes part
+    /// in the ordering between competing jobs: idle and not merging, every head in, no
+    /// landing still being written, its last turn completed, and unmerged work that the
+    /// resume sweep can still pick up. A stopped or failed head whose work was kept as a
+    /// patch keeps the whole job out, so its partial files stay protected.
+    private func hydraIsFinishedIdleEligible(_ lead: ChatThread) -> Bool {
+        guard hydraIsOn(lead), let live = existingRuntime(for: lead.id) else { return false }
+        guard live.isReadyForHydraMerge, !live.isHydraMerging,
+              !hydraHasPendingLanding(lead.id) else { return false }
+        return canStillMerge(lead)
+    }
+
+    /// Whether a head's work is still on its way into the checkout: files that have not
+    /// gone in cleanly, which is how a stopped or failed head keeps its partial work as a
+    /// patch. A head that changed nothing carries no files and no work to wait for.
+    private func hydraHasPendingLanding(_ leadID: UUID) -> Bool {
+        hydraTeam(of: leadID).contains { head in
+            guard let info = head.hydra, info.mergedAt == nil, let landing = info.landing else { return false }
+            return !landing.files.isEmpty && !landing.landed
+        }
+    }
+
+    /// One stable total ordering across every project, by lead UUID: the earliest job
+    /// keeps priority and every job reads the same order, so a contested file is never
+    /// settled by a different winner than its neighbours.
+    private func hydraRanksAfter(_ lead: ChatThread, _ other: UUID) -> Bool {
+        lead.id.uuidString > other.uuidString
+    }
+
+    /// Active work keeps its claims regardless of age. Completed head landings stop
+    /// reserving files when their idle lead is no longer eligible for recovery.
+    private func canStillMerge(_ lead: ChatThread) -> Bool {
+        let live = existingRuntime(for: lead.id)
+        if let live, live.phase != .idle || live.isHydraMerging { return true }
+        guard !lead.isArchived, hydraIsOn(lead),
+              lead.updatedAt > Date.now.addingTimeInterval(-Self.hydraMergeWindow) else { return false }
+        // Landed head work no merge has taken keeps the claim alive the same way an
+        // unmerged turn does: this is the eligibility `resumeHydraMerges` uses.
+        let landedHeadWork = hydraTeam(of: lead.id).contains { $0.hydra.map { $0.mergedAt == nil && ($0.landing?.landed ?? false) } ?? false }
+        guard let live else { return lead.lastStatus == .completed }
+        return live.turns.last?.status == .completed && (!live.hydraUnmergedTurns.isEmpty || landedHeadWork)
     }
 
     /// Brings the checkout's default branch up to the merge without touching the working
@@ -678,6 +826,30 @@ extension AppModel {
         }.value
     }
 
+    private func recordHydraSettlement(leadID: UUID, runtime: ThreadRuntime) {
+        guard hydraUnmergedFileCount(of: leadID) == 0 else { return }
+        runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .settled, project: nil, label: nil, url: nil, files: 0, detail: nil))
+        note(leadID, "Hydra has no files left to merge.", "The checkout has no remaining changes from this job to send. No new merge request was needed.")
+    }
+
+    private func recordHydraHold(_ held: [String: String], leadID: UUID, runtime: ThreadRuntime) {
+        let detail = Self.heldDetail(held)
+        let last = runtime.hydraMerges.last
+        guard last?.outcome != .held || last?.detail != detail else { return }
+        runtime.recordHydraMerge(HydraMergeRecord(at: .now, outcome: .held, project: nil, label: nil, url: nil, files: held.count, detail: detail))
+        note(leadID, "Hydra is waiting for another chat's files.", detail + " The work stays in the checkout. Hydra retries after the other chat finishes or its queued merge completes.")
+    }
+
+    /// What to say about files a merge had to leave with another chat's work:
+    /// the files, and the chats holding them. Used for both the note the user reads and
+    /// the record the lead's next message is briefed from, so the two never disagree.
+    private static func heldDetail(_ held: [String: String]) -> String {
+        let files = held.keys.sorted()
+        let shown = files.prefix(6).map { "`\($0)`" }.joined(separator: ", ") + (files.count > 6 ? " and \(files.count - 6) more" : "")
+        let names = Set(held.values).sorted().joined(separator: ", ")
+        return "\(files.count == 1 ? "1 file the team changed is" : "\(files.count) files the team changed are") also claimed by \(names): \(shown)."
+    }
+
     private static func filesLine(_ files: [DiffFile]) -> String {
         let additions = files.reduce(0) { $0 + $1.additions }
         let deletions = files.reduce(0) { $0 + $1.deletions }
@@ -694,10 +866,9 @@ extension AppModel {
         runtime?.hydraMergeNoteID = nil
         runtime?.appendHydraNote(title + "\n" + body, id: id)
         let onScreen = selectedThreadID == leadID
-        if !(NSApp.isActive && onScreen) {
-            updateThread(leadID) { $0.hasUnread = true }
-            updateDockBadge()
-        }
+        guard !(NSApp.isActive && onScreen) else { return }
+        updateThread(leadID) { $0.hasUnread = true }
+        updateDockBadge()
         if settings.notifyWhenFinished, let lead = thread(leadID) {
             notify(threadID: leadID, title: lead.title, body: title)
         }
