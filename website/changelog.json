@@ -1,6 +1,24 @@
 {
-  "generated_at": "2026-09-20T14:02:25.814511+00:00",
+  "generated_at": "2026-09-22T17:54:05.900206+00:00",
   "releases": [
+    {
+      "version": "1.8.1",
+      "date": "2026-09-22",
+      "platform": "mac",
+      "summary": "Swarm Code 1.8.1 resolves Markdown streaming UI stutters, adds asynchronous video aspect ratio prefetching, implements direct origin favicon fetching, and enhances Hydra multi-chat merge contention handling. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "Bug fixes",
+          "items": [
+            "Markdown streaming stability: Eliminated SwiftUI layout jitters and runtime crashes during high-speed token streaming in `StreamVeil` by switching from text concatenation to string interpolation.",
+            "Background video aspect ratio prefetch: Video attachment previews now asynchronously resolve video dimensions via `AVURLAsset` off the main thread, keeping the user interface completely responsive.",
+            "Privacy-preserving direct favicon fetch: Replaced third-party search engine lookup proxies with a direct-origin `/favicon.ico` fetch with 5-second timeouts and size caps.",
+            "Hydra multi-chat merge contention: Added hold and settle mechanics to avoid race conditions when multiple parallel threads complete and touch overlapping repository files."
+          ]
+        }
+      ],
+      "thanks": []
+    },
     {
       "version": "1.8.0",
       "date": "2026-09-20",

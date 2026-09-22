@@ -1,0 +1,569 @@
+<!--
+  Swarm Code — 404: Source code not found
+  ========================================
+  Matches the Liquid Glass dark marketing-site aesthetic exactly:
+  shared tokens, notch nav, morph buttons, binary field, reveal motion.
+  Professional, animated, English. No emojis.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>404 — The source you are looking for is not here · Swarm Code</title>
+  <meta name="description" content="This page has moved, been renamed, or never existed. Head back to the Swarm Code home page.">
+  <link rel="canonical" href="https://swarmcode.vercel.app/">
+  <meta name="theme-color" content="#0b0e14">
+  <meta name="color-scheme" content="dark">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Swarm Code">
+  <meta property="og:title" content="404 — The source you are looking for is not here">
+  <meta property="og:description" content="This page has moved, been renamed, or never existed.">
+  <meta property="og:url" content="https://swarmcode.vercel.app/404.html">
+
+  <!-- Favicon -->
+  <link rel="icon" href="assets/brand/favicon.ico" sizes="any">
+  <link rel="icon" type="image/svg+xml" href="app-icon.svg">
+  <link rel="icon" type="image/png" sizes="96x96" href="assets/brand/swarmcode-icon-96.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/brand/swarmcode-icon-180.png">
+
+  <!-- Fonts: same triple as the main site -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Site shared stylesheet (morph buttons, reveal, glass tokens) -->
+  <link rel="stylesheet" href="assets/css/site.css?v=14">
+
+  <style>
+    /* ================================================================== */
+    /* 404-page additions                                                 */
+    /* ================================================================== */
+
+    /* ---- nav --------------------------------------------------------- */
+    /* Reuse the site's .nav / .nav__pill exactly — they ship in site.css */
+    .nav__logo img { border-radius: 6px; }
+
+    /* ---- hero area -------------------------------------------------- */
+    .notfound {
+      position: relative;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      overflow: hidden;
+    }
+
+    /* Background binary field — matches the hero's canvas treatment */
+    .notfound__field {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .notfound__field canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      opacity: 0.5;
+      mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 15%, transparent 70%);
+      -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, #000 15%, transparent 70%);
+    }
+
+    /* Floating SVG network pattern layer */
+    .notfound__net {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .notfound__net svg {
+      position: absolute;
+      opacity: 0;
+      animation: netDrift 14s ease-in-out infinite;
+    }
+    .notfound__net svg:nth-child(1) { left: 6%;  top: 12%; width: 180px; animation-delay: 0s; }
+    .notfound__net svg:nth-child(2) { right: 8%; top: 18%; width: 140px; animation-delay: 3s; }
+    .notfound__net svg:nth-child(3) { left: 15%; bottom: 20%; width: 200px; animation-delay: 6s; }
+    .notfound__net svg:nth-child(4) { right: 14%; bottom: 26%; width: 160px; animation-delay: 9s; }
+    .notfound__net svg:nth-child(5) { left: 50%; top: 50%; width: 220px; animation-delay: 2s; transform: translate(-50%, -50%); }
+    .notfound__net svg:nth-child(6) { left: 72%; top: 60%; width: 120px; animation-delay: 11s; }
+
+    @keyframes netDrift {
+      0%, 100% { opacity: 0; transform: translateY(0); }
+      20%      { opacity: 0.18; }
+      50%      { opacity: 0.22; transform: translateY(-18px); }
+      80%      { opacity: 0.1; }
+    }
+    /* Keep the centered SVG from also drifting position */
+    .notfound__net svg:nth-child(5) {
+      animation-name: netDriftCenter;
+    }
+    @keyframes netDriftCenter {
+      0%, 100% { opacity: 0; transform: translate(-50%, -50%) translateY(0); }
+      20%      { opacity: 0.18; }
+      50%      { opacity: 0.22; transform: translate(-50%, -50%) translateY(-18px); }
+      80%      { opacity: 0.1; }
+    }
+
+    /* ---- content ---------------------------------------------------- */
+    .notfound__content {
+      position: relative;
+      z-index: 2;
+      max-width: 660px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* Giant 404 — per-digit stagger */
+    .notfound__code {
+      font-family: "Inter Tight", var(--font-display);
+      font-weight: 700;
+      font-size: clamp(7rem, 20vw, 14rem);
+      line-height: 0.88;
+      letter-spacing: -0.07em;
+      color: var(--text-primary);
+      opacity: 0;
+      animation: nfFadeUp 900ms var(--ease-out) 200ms both;
+      position: relative;
+    }
+    .notfound__code span { display: inline-block; }
+    .notfound__code .d1 { animation: nfDigitIn 650ms var(--ease-out) 350ms both; }
+    .notfound__code .d2 { animation: nfDigitIn 650ms var(--ease-out) 480ms both; }
+    .notfound__code .d3 { animation: nfDigitIn 650ms var(--ease-out) 610ms both; }
+
+    @keyframes nfDigitIn {
+      0%   { opacity: 0; transform: translateY(50px) scale(0.6) rotateX(40deg); }
+      65%  { opacity: 1; transform: translateY(-4px) scale(1.03) rotateX(-2deg); }
+      100% { opacity: 1; transform: translateY(0) scale(1) rotateX(0deg); }
+    }
+
+    /* Blue accent glow behind the digits */
+    .notfound__code::before {
+      content: "404";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      font: inherit;
+      color: var(--accent);
+      opacity: 0;
+      filter: blur(40px);
+      animation: nfGlowIn 1800ms ease-out 900ms both;
+      pointer-events: none;
+    }
+    @keyframes nfGlowIn {
+      0%   { opacity: 0; transform: scale(0.7); }
+      40%  { opacity: 0.5; }
+      100% { opacity: 0.18; transform: scale(1.2); }
+    }
+    @keyframes nfFadeUp {
+      0%   { opacity: 0; transform: translateY(30px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ---- headline -------------------------------------------------- */
+    .notfound__headline {
+      margin-top: 8px;
+      font-family: "Inter Tight", var(--font-display);
+      font-weight: 600;
+      letter-spacing: -0.04em;
+      font-size: clamp(1.5rem, 3.8vw, 2.3rem);
+      line-height: 1.12;
+      color: var(--text-primary);
+      opacity: 0;
+      animation: nfFadeUp 900ms var(--ease-out) 750ms both;
+    }
+
+    /* ---- glass card ------------------------------------------------- */
+    .notfound__card {
+      margin-top: 28px;
+      width: 100%;
+      border-radius: 32px;
+      background: var(--bg-well);
+      padding: 36px 32px;
+      text-align: left;
+      opacity: 0;
+      animation: nfFadeUp 900ms var(--ease-out) 950ms both;
+    }
+    .notfound__card p {
+      font-size: 15px;
+      line-height: 1.6;
+      color: var(--text-secondary);
+      margin-bottom: 10px;
+    }
+    .notfound__card p:last-child { margin-bottom: 0; }
+    .notfound__card strong { color: var(--text-primary); font-weight: 600; }
+    .notfound__card code {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-secondary);
+      background: rgba(255, 255, 255, 0.06);
+      padding: 2px 7px;
+      border-radius: 6px;
+    }
+    .notfound__card a {
+      color: var(--accent-text);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      transition: color var(--dur-fast) var(--ease-out);
+    }
+    .notfound__card a:hover { color: var(--text-primary); }
+
+    /* ---- terminal block -------------------------------------------- */
+    .notfound__terminal {
+      margin-top: 22px;
+      width: 100%;
+      border-radius: 16px;
+      background: var(--ink);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      overflow: hidden;
+      opacity: 0;
+      animation: nfFadeUp 900ms var(--ease-out) 1150ms both;
+    }
+    .notfound__terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 11px 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    .notfound__terminal-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .notfound__terminal-dot--red    { background: #ff5f57; }
+    .notfound__terminal-dot--yellow { background: #febc2e; }
+    .notfound__terminal-dot--green  { background: #28c840; }
+    .notfound__terminal-title {
+      margin-left: 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--text-quaternary);
+    }
+    .notfound__terminal-body {
+      padding: 20px 22px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      line-height: 1.75;
+      color: var(--text-tertiary);
+      text-align: left;
+    }
+    .t-prompt   { color: var(--accent-text); }
+    .t-cmd     { color: var(--text-primary); }
+    .t-error   { color: #ff6b6b; }
+    .t-comment { color: var(--text-quaternary); }
+    .t-glow    { color: var(--accent); }
+
+    .cursor-blink {
+      display: inline-block;
+      width: 8px;
+      height: 16px;
+      background: var(--accent);
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%      { opacity: 0; }
+    }
+
+    /* ---- buttons — use the site's classes so morph-hover works ----- */
+    .notfound__actions {
+      margin-top: 34px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      justify-content: center;
+      opacity: 0;
+      animation: nfFadeUp 900ms var(--ease-out) 1350ms both;
+    }
+
+    /* The .btn--applepill and .btn--darkpill styles ship in site.css.
+       We only need to ensure the Apple logo renders inline. */
+    .btn--applepill svg,
+    .btn--darkpill svg {
+      flex-shrink: 0;
+    }
+
+    /* ---- footer note ------------------------------------------------ */
+    .notfound__foot {
+      margin-top: 44px;
+      font-size: 13px;
+      color: var(--text-quaternary);
+      opacity: 0;
+      animation: nfFadeUp 900ms var(--ease-out) 1550ms both;
+    }
+    .notfound__foot a {
+      color: var(--text-tertiary);
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      transition: color var(--dur-fast) var(--ease-out);
+    }
+    .notfound__foot a:hover { color: var(--text-primary); }
+
+    /* ================================================================== */
+    /* Responsive                                                         */
+    /* ================================================================== */
+    @media (max-width: 560px) {
+      .notfound { padding: 100px 18px 60px; }
+      .notfound__card { padding: 28px 22px; border-radius: 26px; }
+      .notfound__terminal-body { font-size: 11px; padding: 14px 16px; }
+      .notfound__actions { flex-direction: column; width: 100%; }
+      .notfound__actions > * { width: 100%; justify-content: center; }
+      .notfound__net svg { display: none; }
+      .notfound__net svg:nth-child(5) { display: block; width: 140px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .notfound__code, .notfound__code span, .notfound__headline,
+      .notfound__card, .notfound__terminal, .notfound__actions,
+      .notfound__foot { animation-duration: 1ms !important; animation-delay: 0ms !important; }
+      .notfound__code::before { animation: none; opacity: 0.15; }
+      .notfound__net svg { animation: none; opacity: 0.12; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- One Apple mark for the Home button -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="apple-mark" viewBox="0 0 16 19.81"><path d="M 15.489 6.754 C 15.375 6.843 13.362 7.986 13.362 10.528 C 13.362 13.468 15.923 14.508 16 14.534 C 15.988 14.597 15.593 15.958 14.65 17.345 C 13.809 18.565 12.93 19.784 11.594 19.784 C 10.257 19.784 9.913 19.001 8.37 19.001 C 6.867 19.001 6.332 19.81 5.11 19.81 C 3.887 19.81 3.035 18.68 2.054 17.293 C 0.918 15.665 0 13.135 0 10.734 C 0 6.883 2.484 4.84 4.929 4.84 C 6.228 4.84 7.311 5.7 8.127 5.7 C 8.903 5.7 10.114 4.788 11.592 4.788 C 12.152 4.788 14.164 4.84 15.489 6.754 Z M 10.89 3.158 C 11.501 2.427 11.934 1.413 11.934 0.398 C 11.934 0.258 11.922 0.115 11.896 0 C 10.902 0.038 9.719 0.668 9.005 1.502 C 8.445 2.144 7.922 3.158 7.922 4.186 C 7.922 4.341 7.948 4.495 7.96 4.545 C 8.023 4.557 8.125 4.571 8.227 4.571 C 9.119 4.571 10.241 3.968 10.89 3.158 Z" fill="currentColor"/></symbol>
+  </svg>
+
+  <!-- ================================================================ -->
+  <!-- Notch navigation (identical markup to index.html)                -->
+  <!-- ================================================================ -->
+  <nav class="nav">
+    <div class="nav__pill">
+      <a class="nav__logo" href="index.html" aria-label="Swarm Code home">
+        <img src="assets/brand/swarmcode-icon-96.png" alt="" width="24" height="24">
+        <span>Swarm Code</span>
+      </a>
+      <div class="nav__links">
+        <a class="nav__link" href="index.html#hydra">Hydra</a>
+        <a class="nav__link" href="index.html#highlights">Highlights</a>
+        <a class="nav__link" href="index.html#features">Features</a>
+        <a class="nav__link" href="index.html#mac">Mac</a>
+        <a class="nav__link" href="index.html#faq">FAQ</a>
+      </div>
+      <button class="nav__menu" type="button" aria-expanded="false" aria-label="Menu">
+        <span></span><span></span><span></span>
+      </button>
+      <a class="btn btn--sm nav__cta" href="index.html#download">Download</a>
+    </div>
+  </nav>
+
+  <!-- ================================================================ -->
+  <!-- 404 stage                                                         -->
+  <!-- ================================================================ -->
+  <div class="notfound">
+
+    <!-- Background binary field (matches hero__field) -->
+    <div class="notfound__field" aria-hidden="true">
+      <canvas id="binaryField"></canvas>
+    </div>
+
+    <!-- Floating network SVG pattern -->
+    <div class="notfound__net" aria-hidden="true">
+      <!-- SVG 1: small cluster -->
+      <svg viewBox="0 0 120 120" fill="none" stroke="rgba(79,156,255,0.35)" stroke-width="1.2" stroke-linecap="round">
+        <circle cx="30" cy="30" r="3" fill="rgba(79,156,255,0.5)"/>
+        <circle cx="85" cy="20" r="2.5" fill="rgba(79,156,255,0.4)"/>
+        <circle cx="60" cy="70" r="3.5" fill="rgba(79,156,255,0.55)"/>
+        <circle cx="95" cy="80" r="2" fill="rgba(79,156,255,0.35)"/>
+        <circle cx="20" cy="90" r="2.5" fill="rgba(79,156,255,0.4)"/>
+        <line x1="30" y1="30" x2="85" y2="20"/><line x1="30" y1="30" x2="60" y2="70"/>
+        <line x1="60" y1="70" x2="95" y2="80"/><line x1="60" y1="70" x2="20" y2="90"/>
+        <line x1="85" y1="20" x2="95" y2="80"/><line x1="30" y1="30" x2="20" y2="90"/>
+      </svg>
+      <!-- SVG 2: chain -->
+      <svg viewBox="0 0 100 100" fill="none" stroke="rgba(79,156,255,0.3)" stroke-width="1" stroke-linecap="round">
+        <circle cx="15" cy="50" r="2.5" fill="rgba(79,156,255,0.4)"/>
+        <circle cx="40" cy="25" r="2" fill="rgba(79,156,255,0.35)"/>
+        <circle cx="70" cy="40" r="3" fill="rgba(79,156,255,0.5)"/>
+        <circle cx="55" cy="75" r="2" fill="rgba(79,156,255,0.3)"/>
+        <circle cx="85" cy="80" r="2.5" fill="rgba(79,156,255,0.4)"/>
+        <line x1="15" y1="50" x2="40" y2="25"/><line x1="40" y1="25" x2="70" y2="40"/>
+        <line x1="70" y1="40" x2="55" y2="75"/><line x1="55" y1="75" x2="85" y2="80"/>
+      </svg>
+      <!-- SVG 3: star burst -->
+      <svg viewBox="0 0 140 140" fill="none" stroke="rgba(79,156,255,0.28)" stroke-width="1" stroke-linecap="round">
+        <circle cx="70" cy="70" r="4" fill="rgba(79,156,255,0.5)"/>
+        <circle cx="25" cy="30" r="2.5" fill="rgba(79,156,255,0.35)"/>
+        <circle cx="115" cy="35" r="2" fill="rgba(79,156,255,0.3)"/>
+        <circle cx="110" cy="110" r="3" fill="rgba(79,156,255,0.4)"/>
+        <circle cx="20" cy="105" r="2" fill="rgba(79,156,255,0.3)"/>
+        <line x1="70" y1="70" x2="25" y2="30"/><line x1="70" y1="70" x2="115" y2="35"/>
+        <line x1="70" y1="70" x2="110" y2="110"/><line x1="70" y1="70" x2="20" y2="105"/>
+        <line x1="25" y1="30" x2="115" y2="35"/><line x1="115" y1="35" x2="110" y2="110"/>
+        <line x1="110" y1="110" x2="20" y2="105"/><line x1="20" y1="105" x2="25" y2="30"/>
+      </svg>
+      <!-- SVG 4: cross -->
+      <svg viewBox="0 0 100 100" fill="none" stroke="rgba(79,156,255,0.3)" stroke-width="1.2" stroke-linecap="round">
+        <circle cx="50" cy="50" r="3.5" fill="rgba(79,156,255,0.5)"/>
+        <circle cx="15" cy="15" r="2" fill="rgba(79,156,255,0.3)"/>
+        <circle cx="85" cy="20" r="2.5" fill="rgba(79,156,255,0.4)"/>
+        <circle cx="80" cy="85" r="2" fill="rgba(79,156,255,0.3)"/>
+        <circle cx="18" cy="82" r="2.5" fill="rgba(79,156,255,0.35)"/>
+        <line x1="50" y1="50" x2="15" y2="15"/><line x1="50" y1="50" x2="85" y2="20"/>
+        <line x1="50" y1="50" x2="80" y2="85"/><line x1="50" y1="50" x2="18" y2="82"/>
+        <line x1="15" y1="15" x2="85" y2="20"/><line x1="85" y1="20" x2="80" y2="85"/>
+      </svg>
+      <!-- SVG 5: ring (centered behind the content) -->
+      <svg viewBox="0 0 200 200" fill="none" stroke="rgba(79,156,255,0.12)" stroke-width="0.8" stroke-linecap="round">
+        <circle cx="100" cy="100" r="70"/>
+        <circle cx="100" cy="100" r="50"/>
+        <circle cx="100" cy="100" r="30"/>
+        <circle cx="100" cy="100" r="3" fill="rgba(79,156,255,0.25)"/>
+        <circle cx="100" cy="30" r="2" fill="rgba(79,156,255,0.2)"/>
+        <circle cx="170" cy="100" r="2" fill="rgba(79,156,255,0.2)"/>
+        <circle cx="100" cy="170" r="2" fill="rgba(79,156,255,0.2)"/>
+        <circle cx="30" cy="100" r="2" fill="rgba(79,156,255,0.2)"/>
+        <line x1="100" y1="100" x2="100" y2="30"/><line x1="100" y1="100" x2="170" y2="100"/>
+        <line x1="100" y1="100" x2="100" y2="170"/><line x1="100" y1="100" x2="30" y2="100"/>
+      </svg>
+      <!-- SVG 6: triangle mesh -->
+      <svg viewBox="0 0 110 100" fill="none" stroke="rgba(79,156,255,0.3)" stroke-width="1" stroke-linecap="round">
+        <circle cx="55" cy="20" r="2.5" fill="rgba(79,156,255,0.4)"/>
+        <circle cx="20" cy="75" r="2" fill="rgba(79,156,255,0.35)"/>
+        <circle cx="90" cy="75" r="2.5" fill="rgba(79,156,255,0.4)"/>
+        <circle cx="55" cy="55" r="2" fill="rgba(79,156,255,0.3)"/>
+        <line x1="55" y1="20" x2="20" y2="75"/><line x1="55" y1="20" x2="90" y2="75"/>
+        <line x1="20" y1="75" x2="90" y2="75"/><line x1="55" y1="20" x2="55" y2="55"/>
+        <line x1="55" y1="55" x2="20" y2="75"/><line x1="55" y1="55" x2="90" y2="75"/>
+      </svg>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Content                                                       -->
+    <!-- ============================================================ -->
+    <div class="notfound__content">
+
+      <div class="notfound__code" aria-label="404 error">
+        <span class="d1">4</span><span class="d2">0</span><span class="d3">4</span>
+      </div>
+
+      <h1 class="notfound__headline">
+        The source you are looking for<br>is not here.
+      </h1>
+
+      <div class="notfound__card">
+        <p>
+          The page you requested does not exist on this server.
+          It may have been renamed, moved, or it never existed at all.
+          The actual source code for Swarm Code lives on GitHub under
+          the MIT license — no secrets, no hidden files, nothing to see here.
+        </p>
+        <p>
+          If you were looking for the app itself, it is a native macOS
+          application built entirely in Swift and SwiftUI with Liquid Glass.
+          The source is open, the build is clean, and we tested it twice.
+        </p>
+      </div>
+
+      <!-- Terminal with git-flavored error messages -->
+      <div class="notfound__terminal">
+        <div class="notfound__terminal-bar">
+          <span class="notfound__terminal-dot notfound__terminal-dot--red"></span>
+          <span class="notfound__terminal-dot notfound__terminal-dot--yellow"></span>
+          <span class="notfound__terminal-dot notfound__terminal-dot--green"></span>
+          <span class="notfound__terminal-title">error — pathspec 'this-page' did not match any file(s) known to git</span>
+        </div>
+        <div class="notfound__terminal-body">
+          <div><span class="t-prompt">soumya@swarmcode</span>:<span class="t-glow">~/Swarm-Code</span>$ git ls-files 404.html</div>
+          <div><span class="t-error">fatal: pathspec '404.html' did not match any file(s) known to git</span></div>
+          <div><span class="t-comment"># (this page has never been committed. Honest.)</span></div>
+          <div><span class="t-prompt">soumya@swarmcode</span>:<span class="t-glow">~/Swarm-Code</span>$ git log --all --oneline -- 404.html</div>
+          <div><span class="t-comment"># (no commits found — the file exists only in your imagination)</span></div>
+          <div>&nbsp;</div>
+          <div><span class="t-prompt">soumya@swarmcode</span>:<span class="t-glow">~/Swarm-Code</span>$ <span class="cursor-blink"></span></div>
+        </div>
+      </div>
+
+      <div class="notfound__actions">
+        <a class="btn--applepill" href="index.html" data-morph-glyph="house" aria-label="Back to Swarm Code home">
+          <svg width="14" height="17" aria-hidden="true" focusable="false"><use href="#apple-mark"/></svg>
+          <span>Back to Swarm Code</span>
+        </a>
+        <a class="btn--darkpill" href="https://github.com/soumyachk101/Swarm-Code" target="_blank" rel="noopener" data-morph-glyph="arrow-up-right">
+          <span>View source on GitHub</span>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12 12 4M5 4h7v7"/></svg>
+        </a>
+      </div>
+
+      <p class="notfound__foot">
+        Swarm Code is free and open source under the
+        <a href="https://github.com/soumyachk101/Swarm-Code/blob/main/LICENSE" target="_blank" rel="noopener">MIT License</a>.
+      </p>
+    </div>
+  </div>
+
+  <!-- ================================================================ -->
+  <!-- Binary field canvas (same approach as the hero)                  -->
+  <!-- ================================================================ -->
+  <script>
+    (function () {
+      var canvas = document.getElementById('binaryField');
+      if (!canvas) return;
+      var ctx = canvas.getContext('2d');
+      var chars = '01';
+      var fontSize = 14;
+      var columns, drops = [];
+      var raf;
+
+      function resize () {
+        canvas.width  = canvas.offsetWidth  || window.innerWidth;
+        canvas.height = canvas.offsetHeight || window.innerHeight;
+        columns = Math.floor(canvas.width / fontSize);
+        drops = [];
+        for (var i = 0; i < columns; i++) {
+          drops[i] = Math.random() * -canvas.height / fontSize;
+        }
+      }
+
+      function draw () {
+        ctx.fillStyle = 'rgba(11, 14, 20, 0.12)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.font = fontSize + 'px ui-monospace, SF Mono, Menlo, monospace';
+        for (var i = 0; i < columns; i++) {
+          var ch = chars[Math.floor(Math.random() * chars.length)];
+          var bright = Math.random() > 0.96;
+          ctx.fillStyle = bright
+            ? 'rgba(140, 196, 255, 0.7)'
+            : 'rgba(79, 156, 255, 0.16)';
+          ctx.fillText(ch, i * fontSize, drops[i] * fontSize);
+          if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) drops[i] = 0;
+          drops[i] += 0.55;
+        }
+        raf = requestAnimationFrame(draw);
+      }
+
+      resize();
+      draw();
+      window.addEventListener('resize', function () {
+        cancelAnimationFrame(raf);
+        resize();
+        draw();
+      });
+    })();
+  </script>
+
+  <!-- ================================================================ -->
+  <!-- Site shared script (reveal, morph, FAQ, nav, guard)              -->
+  <!-- ================================================================ -->
+  <script src="assets/js/site.js?v=5" defer></script>
+
+</body>
+</html>

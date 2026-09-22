@@ -4,6 +4,16 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.8.1] - 2026-09-22
+
+Swarm Code 1.8.1 resolves Markdown streaming UI stutters, adds asynchronous video aspect ratio prefetching, implements direct origin favicon fetching, and enhances Hydra multi-chat merge contention handling. Apple silicon, macOS 26 or later.
+
+### Bug fixes
+- Markdown streaming stability: Eliminated SwiftUI layout jitters and runtime crashes during high-speed token streaming in `StreamVeil` by switching from text concatenation to string interpolation.
+- Background video aspect ratio prefetch: Video attachment previews now asynchronously resolve video dimensions via `AVURLAsset` off the main thread, keeping the user interface completely responsive.
+- Privacy-preserving direct favicon fetch: Replaced third-party search engine lookup proxies with a direct-origin `/favicon.ico` fetch with 5-second timeouts and size caps.
+- Hydra multi-chat merge contention: Added hold and settle mechanics to avoid race conditions when multiple parallel threads complete and touch overlapping repository files.
+
 ## [1.8.0] - 2026-09-20
 
 Swarm Code 1.8.0 adds folder suggestions to @ mentions in the composer. Apple silicon, macOS 26 or later.
