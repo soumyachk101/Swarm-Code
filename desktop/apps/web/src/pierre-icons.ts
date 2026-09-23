@@ -46,6 +46,8 @@ export const SWARM_CODE_PIERRE_ICONS = {
   ),
 } satisfies FileTreeIcons;
 
+export const T3_PIERRE_ICONS = SWARM_CODE_PIERRE_ICONS;
+
 const completeIconResolver = createFileTreeIconResolver(SWARM_CODE_PIERRE_ICONS);
 
 const LANGUAGE_EXTENSION_ALIASES: Record<string, string> = {

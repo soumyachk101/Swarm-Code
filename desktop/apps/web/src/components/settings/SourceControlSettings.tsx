@@ -3,6 +3,7 @@ import { ChevronDownIcon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
+import { MCPSettingsPanel } from "./MCPSettingsPanel";
 import type {
   BackgroundActivitySettings,
   SourceControlProviderKind,
@@ -501,6 +502,7 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
+  const [activeTab, setActiveTab] = useState<"mcp" | "git">("mcp");
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   // Discovery scans one machine's tools, so it shows the representative
   // environment (named in the section title when several are selected);
@@ -544,63 +546,95 @@ export function SourceControlSettingsPanel() {
   );
 
   return (
-    <SettingsPageContainer>
-      <ProjectDefaultsSettings category="source-control" />
-      {environmentId === null ? (
-        <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
-          <p className="px-4 py-3 text-sm text-muted-foreground">
-            Connect an environment to inspect its version control tools and hosting integrations.
-          </p>
-        </SettingsSection>
-      ) : isInitialScanPending ? (
-        <>
-          <SourceControlSectionSkeleton
-            title={`Version Control${environmentSuffix}`}
-            headerAction={scanButton}
-          />
-          <SourceControlSectionSkeleton title="Source Control Providers" />
-        </>
-      ) : hasDiscoveryItems ? (
-        <>
-          {hasVersionControlSystems ? (
-            <SettingsSection
-              id={searchableSetting("source-control").id}
-              title={`Version Control${environmentSuffix}`}
-              headerAction={scanButton}
-            >
-              {result.versionControlSystems.map((item) => (
-                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
-                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
-                </DiscoveryItemRow>
-              ))}
-            </SettingsSection>
-          ) : null}
+    <div className="flex flex-col flex-1 min-h-0">
+      {/* Top Tab Switcher */}
+      <div className="px-6 pt-3 pb-2 flex items-center gap-2 border-b border-border/40 shrink-0 bg-background/50">
+        <button
+          type="button"
+          onClick={() => setActiveTab("mcp")}
+          className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
+            activeTab === "mcp"
+              ? "bg-[#af52de] text-white shadow-xs"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+          }`}
+        >
+          MCP Servers
+        </button>
+        <button
+          type="button"
+          onClick={() => setActiveTab("git")}
+          className={`px-3.5 py-1.5 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
+            activeTab === "git"
+              ? "bg-[#af52de] text-white shadow-xs"
+              : "text-muted-foreground hover:text-foreground hover:bg-muted/40"
+          }`}
+        >
+          Git & Repository Config
+        </button>
+      </div>
 
-          {result.sourceControlProviders.length > 0 ? (
-            <SettingsSection
-              id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title={
-                hasVersionControlSystems
-                  ? "Source Control Providers"
-                  : `Source Control Providers${environmentSuffix}`
-              }
-              headerAction={hasVersionControlSystems ? null : scanButton}
-            >
-              {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
-              ))}
-            </SettingsSection>
-          ) : null}
-        </>
+      {activeTab === "mcp" ? (
+        <MCPSettingsPanel />
       ) : (
-        <EmptySourceControlDiscovery
-          error={discovery.error}
-          isPending={discovery.isPending}
-          onScan={handleScan}
-        />
-      )}
+        <SettingsPageContainer>
+          <ProjectDefaultsSettings category="source-control" />
+          {environmentId === null ? (
+            <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
+              <p className="px-4 py-3 text-sm text-muted-foreground">
+                Connect an environment to inspect its version control tools and hosting integrations.
+              </p>
+            </SettingsSection>
+          ) : isInitialScanPending ? (
+            <>
+              <SourceControlSectionSkeleton
+                title={`Version Control${environmentSuffix}`}
+                headerAction={scanButton}
+              />
+              <SourceControlSectionSkeleton title="Source Control Providers" />
+            </>
+          ) : hasDiscoveryItems ? (
+            <>
+              {hasVersionControlSystems ? (
+                <SettingsSection
+                  id={searchableSetting("source-control").id}
+                  title={`Version Control${environmentSuffix}`}
+                  headerAction={scanButton}
+                >
+                  {result.versionControlSystems.map((item) => (
+                    <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
+                      {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
+                    </DiscoveryItemRow>
+                  ))}
+                </SettingsSection>
+              ) : null}
 
-      <SourceControlWritingSettingsSection />
-    </SettingsPageContainer>
+              {result.sourceControlProviders.length > 0 ? (
+                <SettingsSection
+                  id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
+                  title={
+                    hasVersionControlSystems
+                      ? "Source Control Providers"
+                      : `Source Control Providers${environmentSuffix}`
+                  }
+                  headerAction={hasVersionControlSystems ? null : scanButton}
+                >
+                  {result.sourceControlProviders.map((item) => (
+                    <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
+                  ))}
+                </SettingsSection>
+              ) : null}
+            </>
+          ) : (
+            <EmptySourceControlDiscovery
+              error={discovery.error}
+              isPending={discovery.isPending}
+              onScan={handleScan}
+            />
+          )}
+
+          <SourceControlWritingSettingsSection />
+        </SettingsPageContainer>
+      )}
+    </div>
   );
 }

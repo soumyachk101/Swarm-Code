@@ -484,6 +484,16 @@ private struct GeneralSettingsPage: View {
             WallpaperCard()
             ChatTextSizeCard(index: $settings.chatZoom)
         }
+        ChromeSection(title: "Accessibility") {
+            ChromeCard {
+                ChromeRow(
+                    title: "Reduce motion",
+                    detail: "Disable spring animations for panels and transitions"
+                ) {
+                    SettingsSwitch(isOn: $settings.reducedMotion)
+                }
+            }
+        }
     }
 }
 

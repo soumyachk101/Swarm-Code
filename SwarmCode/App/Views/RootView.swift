@@ -1,6 +1,320 @@
 import AppKit
 import SwiftUI
 
+// MARK: - AgentActivityOverview
+
+struct AgentActivityOverview: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 22) {
+                if activeThreadGroups.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(activeThreadGroups) { group in
+                        ChromeSection(title: group.threadTitle) {
+                            ChromeCard {
+                                ForEach(group.heads) { info in
+                                    if info != group.heads.first { ChromeRowDivider() }
+                                    AgentHeadRow(info: info)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: 580)
+                    }
+                }
+            }
+            .padding(.horizontal, 48)
+            .padding(.vertical, 24)
+        }
+        .scrollIndicators(.never)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "antenna.radiowaves.left.and.right")
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(Chrome.secondaryText)
+            Text("No active agents")
+                .font(.system(size: 15))
+                .foregroundStyle(Chrome.secondaryText)
+            Text("Active Hydra heads across all projects will appear here.")
+                .font(.system(size: 12))
+                .foregroundStyle(Chrome.secondaryText.opacity(0.6))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 60)
+    }
+
+    private var activeThreadGroups: [HydraThreadGroup] {
+        var seen = Set<UUID>()
+        var groups: [HydraThreadGroup] = []
+
+        for thread in model.threads {
+            if thread.isHydraHead { continue }
+            let heads = model.hydraTeam(of: thread.id)
+                .filter { $0.hydra != nil }
+            guard !heads.isEmpty else { continue }
+            if seen.contains(thread.id) { continue }
+            seen.insert(thread.id)
+
+            let headInfos = heads.compactMap { head -> HydraHeadDisplayInfo? in
+                guard let info = head.hydra else { return nil }
+                let liveInfo = HydraLiveInfo.shown(info, model.existingRuntime(for: head.id))
+                return HydraHeadDisplayInfo(
+                    threadID: head.id,
+                    persona: liveInfo.persona,
+                    displayName: liveInfo.displayName,
+                    task: liveInfo.task,
+                    status: liveInfo.status,
+                    activity: liveInfo.activity,
+                    toolCalls: liveInfo.toolCalls,
+                    startedAt: liveInfo.startedAt,
+                    finishedAt: liveInfo.finishedAt,
+                    summary: liveInfo.summary,
+                    kind: liveInfo.kind
+                )
+            }
+
+            guard !headInfos.isEmpty else { continue }
+
+            groups.append(HydraThreadGroup(
+                threadID: thread.id,
+                threadTitle: thread.title.isEmpty ? "Untitled thread" : thread.title,
+                heads: headInfos
+            ))
+        }
+
+        groups.sort { group in
+            let hasRunning = group.heads.contains { $0.status == .running }
+            return hasRunning
+        }
+        return groups
+    }
+}
+
+private struct HydraThreadGroup: Identifiable {
+    let threadID: UUID
+    let threadTitle: String
+    let heads: [HydraHeadDisplayInfo]
+}
+
+private struct HydraHeadDisplayInfo: Identifiable, Equatable {
+    let id: UUID
+    let persona: HydraPersona
+    let displayName: String
+    let task: String
+    let status: HydraHeadInfo.Status
+    let activity: String?
+    let toolCalls: Int
+    let startedAt: Date
+    let finishedAt: Date?
+    let summary: String?
+    let kind: HydraHeadInfo.Kind
+}
+
+private struct AgentHeadRow: View {
+    let info: HydraHeadDisplayInfo
+
+    @State private var elapsedTick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        let isRunning = info.status == .running
+        HStack(alignment: .top, spacing: 12) {
+            HydraGlyph(persona: info.persona, size: 22, isRunning: isRunning, status: isRunning ? nil : info.status)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(verbatim: info.displayName)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.primary)
+
+                    statusBadge
+
+                    if isRunning {
+                        MiniSpinner(cellSize: 2.2)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    elapsedLabel
+                }
+
+                if !info.task.isEmpty {
+                    Text(verbatim: info.task)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText)
+                        .lineLimit(2)
+                        .truncationMode(.tail)
+                }
+
+                if isRunning, let activity = info.activity, !activity.isEmpty {
+                    Text(verbatim: activity)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Chrome.secondaryText.opacity(0.85))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+
+                if info.toolCalls > 0 {
+                    HStack(spacing: 4) {
+                        Text("\(info.toolCalls) step\(info.toolCalls == 1 ? "" : "s")")
+                            .font(.system(size: 10).monospacedDigit())
+                            .foregroundStyle(Chrome.secondaryText.opacity(0.7))
+                        if isRunning {
+                            Text("· elapsed")
+                                .font(.system(size: 10))
+                                .foregroundStyle(Chrome.secondaryText.opacity(0.5))
+                        }
+                    }
+                }
+            }
+
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .onReceive(elapsedTick) { _ in }
+        .onDisappear {
+            elapsedTick.upstream.connect().cancel()
+        }
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        let (text, color): (String, Color) = switch info.status {
+        case .running: ("working", Chrome.accent)
+        case .completed: ("done", Chrome.success)
+        case .failed: ("failed", Chrome.danger)
+        case .stopped: ("stopped", Chrome.secondaryText)
+        }
+        Text(verbatim: text)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(color.opacity(0.15))
+            )
+    }
+
+    private var elapsedLabel: some View {
+        let seconds = isRunning
+            ? Int(Date.now.timeIntervalSince(info.startedAt))
+            : (info.finishedAt.map { Int($0.timeIntervalSince(info.startedAt)) } ?? 0)
+        let text: String = {
+            guard seconds > 0 else { return "" }
+            if seconds < 60 { return "\(seconds)s" }
+            return "\(seconds / 60)m \(seconds % 60)s"
+        }()
+        return Text(verbatim: text)
+            .font(.system(size: 11).monospacedDigit())
+            .foregroundStyle(Chrome.secondaryText.opacity(0.6))
+            .frame(minWidth: 32, alignment: .trailing)
+    }
+}
+
+// MARK: - WelcomeView with activity toggle
+
+struct WelcomeView: View {
+    @Environment(AppModel.self) private var model
+    @State private var showsActivity = false
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 30) {
+                VStack(spacing: 14) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 104, height: 104)
+                    Text("Swarm Code")
+                        .font(.system(size: 34, weight: .semibold))
+                    Text("The coding app by Swarm. A calm, native home for your coding agents.")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Chrome.secondaryText)
+                }
+
+                viewToggle
+
+                if showsActivity {
+                    AgentActivityOverview()
+                        .transition(
+                            .asymmetric(
+                                insertion: .scale(scale: 0.95).combined(with: .opacity),
+                                removal: .scale(scale: 0.96).combined(with: .opacity)
+                            )
+                        )
+                } else {
+                    welcomeContent
+                        .transition(
+                            .asymmetric(
+                                insertion: .scale(scale: 0.95).combined(with: .opacity),
+                                removal: .scale(scale: 0.96).combined(with: .opacity)
+                            )
+                        )
+                }
+            }
+            .padding(48)
+            .frame(maxWidth: .infinity)
+            .animation(Chrome.panelSlide, value: showsActivity)
+        }
+        .scrollIndicators(.never)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private var viewToggle: some View {
+        ChromeSection(title: "View") {
+            ChromeCard {
+                ChromeSegmentedPicker(
+                    options: [
+                        ChromeSegmentedOption(value: false, title: "Welcome", symbol: "house"),
+                        ChromeSegmentedOption(value: true, title: "Agent Activity", symbol: "antenna.radiowaves.left.and.right"),
+                    ],
+                    selection: $showsActivity
+                )
+                .padding(.vertical, 4)
+            }
+        }
+        .frame(maxWidth: 480)
+    }
+
+    private var welcomeContent: some View {
+        VStack(spacing: 30) {
+            VStack(spacing: 10) {
+                Button {
+                    model.chooseProjectFolder()
+                } label: {
+                    Label("Add a project", systemImage: "folder.badge.plus")
+                        .padding(.horizontal, 6)
+                }
+                .buttonStyle(.glassProminent)
+                .controlSize(.extraLarge)
+                Text("Or drop a folder anywhere in this window.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Chrome.secondaryText)
+            }
+            ChromeSection(title: "Activity list") {
+                ChromeCard {
+                    ChromeRow(title: "Project mark", detail: model.settings.activityThreadStyle.detail) {
+                        ChromeVisualPicker(options: ActivityThreadStyle.allCases.map { ($0, $0.title) }, selection: $model.settings.activityThreadStyle) { style in
+                            Image(systemName: style == .icon ? "list.bullet" : "text.alignleft")
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: 480)
+            ChromeSection(title: "Providers") {
+                ProviderChecklist()
+            }
+            .frame(maxWidth: 480)
+        }
+        .transition(.softAppear)
+    }
+}
+
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @State private var detailSize: CGSize = .zero
@@ -192,6 +506,7 @@ struct DetailView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .detailSheet()
+            .transition(.opacity)
         }
     }
 }
@@ -326,59 +641,6 @@ private struct ThreadColumns: NSViewRepresentable {
     }
 }
 
-struct WelcomeView: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        @Bindable var settings = model.settings
-        ScrollView {
-            VStack(spacing: 30) {
-                VStack(spacing: 14) {
-                    Image(nsImage: NSApp.applicationIconImage)
-                        .resizable()
-                        .frame(width: 104, height: 104)
-                    Text("Swarm Code")
-                        .font(.system(size: 34, weight: .semibold))
-                    Text("The coding app by Swarm. A calm, native home for your coding agents.")
-                        .font(.system(size: 15))
-                        .foregroundStyle(Chrome.secondaryText)
-                }
-                VStack(spacing: 10) {
-                    Button {
-                        model.chooseProjectFolder()
-                    } label: {
-                        Label("Add a project", systemImage: "folder.badge.plus")
-                            .padding(.horizontal, 6)
-                    }
-                    .buttonStyle(.glassProminent)
-                    .controlSize(.extraLarge)
-                    Text("Or drop a folder anywhere in this window.")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Chrome.secondaryText)
-                }
-                ChromeSection(title: "Activity list") {
-                    ChromeCard {
-                        ChromeRow(title: "Project mark", detail: settings.activityThreadStyle.detail) {
-                            ChromeVisualPicker(options: ActivityThreadStyle.allCases.map { ($0, $0.title) }, selection: $settings.activityThreadStyle) { style in
-                                Image(systemName: style == .icon ? "list.bullet" : "text.alignleft")
-                            }
-                        }
-                    }
-                }
-                .frame(maxWidth: 480)
-                ChromeSection(title: "Providers") {
-                    ProviderChecklist()
-                }
-                .frame(maxWidth: 480)
-            }
-            .padding(48)
-            .frame(maxWidth: .infinity)
-        }
-        .scrollIndicators(.never)
-        .scrollBounceBehavior(.basedOnSize)
-    }
-}
-
 struct ProviderChecklist: View {
     @Environment(AppModel.self) private var model
 
@@ -482,28 +744,65 @@ struct CopyCommandButton: View {
 
 struct NoThreadView: View {
     @Environment(AppModel.self) private var model
+    @State private var showsActivity = false
 
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "bubble.left.and.text.bubble.right")
-                .font(.system(size: 46, weight: .light))
-                .foregroundStyle(Chrome.secondaryText)
-            Text("Pick a thread or start a new one")
-                .font(.system(size: 17, weight: .medium))
-            Button {
-                model.newThread()
-            } label: {
-                Label("New thread", systemImage: "square.and.pencil")
-            }
-            .buttonStyle(.glassProminent)
-            .controlSize(.large)
-            // The chord as the store has it now, so a remap never leaves a stale key here.
-            if let chord = ShortcutStore.label(for: .newThread) {
-                Text(verbatim: chord)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Chrome.secondaryText)
+        ScrollView {
+            VStack(spacing: 24) {
+                viewToggle
+
+                if showsActivity {
+                    AgentActivityOverview()
+                        .transition(
+                            .asymmetric(
+                                insertion: .scale(scale: 0.95).combined(with: .opacity),
+                                removal: .scale(scale: 0.96).combined(with: .opacity)
+                            )
+                        )
+                } else {
+                    VStack(spacing: 16) {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                            .font(.system(size: 46, weight: .light))
+                            .foregroundStyle(Chrome.secondaryText)
+                        Text("Pick a thread or start a new one")
+                            .font(.system(size: 17, weight: .medium))
+                        Button {
+                            model.newThread()
+                        } label: {
+                            Label("New thread", systemImage: "square.and.pencil")
+                        }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
+                        // The chord as the store has it now, so a remap never leaves a stale key here.
+                        if let chord = ShortcutStore.label(for: .newThread) {
+                            Text(verbatim: chord)
+                                .font(.system(size: 11))
+                                .foregroundStyle(Chrome.secondaryText)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .transition(.softAppear)
+                }
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(Chrome.panelSlide, value: showsActivity)
+        .scrollIndicators(.never)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private var viewToggle: some View {
+        ChromeSection(title: "View") {
+            ChromeCard {
+                ChromeSegmentedPicker(
+                    options: [
+                        ChromeSegmentedOption(value: false, title: "Threads", symbol: "bubble.left.and.text.bubble.right"),
+                        ChromeSegmentedOption(value: true, title: "Agent Activity", symbol: "antenna.radiowaves.left.and.right"),
+                    ],
+                    selection: $showsActivity
+                )
+                .padding(.vertical, 4)
+            }
+        }
+        .frame(maxWidth: 480)
     }
 }

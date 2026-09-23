@@ -95,8 +95,13 @@ enum Chrome {
 
     static var hover: Animation { .easeOut(duration: 0.1) }
 
+    /// If the user has set a preference for reduced motion, that takes priority;
+    /// otherwise fall back to the system's accessibility setting.
+    nonisolated(unsafe) static var reducedMotionOverride: Bool? = nil
+
     static var panelSlide: Animation {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduce = reducedMotionOverride ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        return reduce
             ? .easeOut(duration: 0.18)
             : .spring(response: 0.32, dampingFraction: 0.9)
     }
@@ -108,7 +113,8 @@ enum Chrome {
     /// The rows making room as a thread settles to the bottom of the sidebar or comes back
     /// up: the glide's own spring, so the ghost and the rows land together.
     static var settleFlight: Animation {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduce = reducedMotionOverride ?? NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        return reduce
             ? .easeOut(duration: 0.2)
             : .spring(glideSpring)
     }

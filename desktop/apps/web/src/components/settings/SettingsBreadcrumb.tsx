@@ -67,6 +67,14 @@ export function SettingsBreadcrumb({
 }) {
   const sectionLabel = settingsBreadcrumbLabel(pathname);
 
+  if (pathname === "/settings/about") {
+    return (
+      <div className="flex items-center">
+        <h1 className="text-base sm:text-lg font-semibold tracking-tight text-foreground">About</h1>
+      </div>
+    );
+  }
+
   return (
     <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
       {sectionLabel ? (

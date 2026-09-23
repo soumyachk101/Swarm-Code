@@ -1,0 +1,186 @@
+- generic [ref=f3e1]:
+  - generic [ref=f3e4]:
+    - generic [ref=f3e7]:
+      - link "Go to threads" [ref=f3e9] [cursor=pointer]:
+        - /url: /
+        - generic [ref=f3e10]:
+          - img "Swarm Code" [ref=f3e11]
+          - generic [ref=f3e24]: Swarm
+          - generic [ref=f3e25]: Code
+      - generic [ref=f3e28]:
+        - combobox "Search threads" [ref=f3e34]
+        - generic [ref=f3e35]:
+          - combobox "Filter threads by project" [ref=f3e36] [cursor=pointer]
+          - textbox [aria-hidden] [ref=f3e39]: all
+          - button "New project" [ref=f3e40] [cursor=pointer]
+          - button "New thread" [ref=f3e43] [cursor=pointer]
+      - generic [ref=f3e49]:
+        - list [ref=f3e50]:
+          - listitem
+          - listitem
+          - listitem
+          - listitem [ref=f3e51]:
+            - button "server 1d Snooze thread Settle thread spawn 5 agents main" [ref=f3e52] [cursor=pointer]:
+              - generic [ref=f3e53]:
+                - generic [ref=f3e54]:
+                  - img [ref=f3e56]:
+                    - generic [ref=f3e57]: SR
+                  - generic [ref=f3e58]: server
+                  - generic [ref=f3e59]:
+                    - generic: 1d
+                    - generic:
+                      - button "Snooze thread"
+                      - button "Settle thread": Settle
+                - generic [ref=f3e60]: spawn 5 agents
+                - generic [ref=f3e62]: main
+          - listitem [ref=f3e65]:
+            - button "server 1d Snooze thread Settle thread hi main" [ref=f3e66] [cursor=pointer]:
+              - generic [ref=f3e67]:
+                - generic [ref=f3e68]:
+                  - img [ref=f3e70]:
+                    - generic [ref=f3e71]: SR
+                  - generic [ref=f3e72]: server
+                  - generic [ref=f3e73]:
+                    - generic: 1d
+                    - generic:
+                      - button "Snooze thread"
+                      - button "Settle thread": Settle
+                - generic [ref=f3e74]: hi
+                - generic [ref=f3e76]: main
+          - listitem [ref=f3e79]:
+            - button "server 1d Snooze thread Settle thread spawn 3 hydra main" [ref=f3e80] [cursor=pointer]:
+              - generic [ref=f3e81]:
+                - generic [ref=f3e82]:
+                  - img [ref=f3e84]:
+                    - generic [ref=f3e85]: SR
+                  - generic [ref=f3e86]: server
+                  - generic [ref=f3e87]:
+                    - generic: 1d
+                    - generic:
+                      - button "Snooze thread"
+                      - button "Settle thread": Settle
+                - generic [ref=f3e88]: spawn 3 hydra
+                - generic [ref=f3e90]: main
+          - listitem [ref=f3e93]:
+            - button "server 1d Snooze thread Settle thread New thread" [ref=f3e94] [cursor=pointer]:
+              - generic [ref=f3e95]:
+                - generic [ref=f3e96]:
+                  - img [ref=f3e98]:
+                    - generic [ref=f3e99]: SR
+                  - generic [ref=f3e100]: server
+                  - generic [ref=f3e101]:
+                    - generic: 1d
+                    - generic:
+                      - button "Snooze thread"
+                      - button "Settle thread": Settle
+                - generic [ref=f3e102]: New thread
+          - listitem [ref=f3e105]:
+            - button "server 2d Snooze thread Settle thread hi main" [ref=f3e106] [cursor=pointer]:
+              - generic [ref=f3e107]:
+                - generic [ref=f3e108]:
+                  - img [ref=f3e110]:
+                    - generic [ref=f3e111]: SR
+                  - generic [ref=f3e112]: server
+                  - generic [ref=f3e113]:
+                    - generic: 2d
+                    - generic:
+                      - button "Snooze thread"
+                      - button "Settle thread": Settle
+                - generic [ref=f3e114]: hi
+                - generic [ref=f3e116]: main
+          - listitem [ref=f3e119]:
+            - button "server 2d Snooze thread Settle thread hi" [ref=f3e120] [cursor=pointer]:
+              - generic [ref=f3e121]:
+                - generic [ref=f3e122]:
+                  - img [ref=f3e124]:
+                    - generic [ref=f3e125]: SR
+                  - generic [ref=f3e126]: server
+                  - generic [ref=f3e127]:
+                    - generic: 2d
+                    - generic:
+                      - button "Snooze thread"
+                      - button "Settle thread": Settle
+                - generic [ref=f3e128]: hi
+          - listitem [ref=f3e131]:
+            - button "Settled (0)" [ref=f3e132] [cursor=pointer]
+          - listitem
+        - status [ref=f3e137]
+      - list [ref=f3e139]:
+        - listitem [ref=f3e140]:
+          - button "Settings" [ref=f3e141] [cursor=pointer]
+        - listitem [ref=f3e145]:
+          - button "Pull Requests" [ref=f3e146] [cursor=pointer]
+        - listitem [ref=f3e152]:
+          - button "Usage" [ref=f3e153] [cursor=pointer]
+      - button "Resize Sidebar" [ref=f3e155]
+    - main [ref=f3e156]:
+      - generic [ref=f3e158]:
+        - generic [ref=f3e159]:
+          - generic:
+            - generic [aria-hidden]:
+              - button
+            - generic [ref=f3e161]:
+              - button "Toggle terminal drawer" [ref=f3e163] [cursor=pointer]
+              - button "Toggle right panel" [ref=f3e165] [cursor=pointer]
+          - generic [ref=f3e166]:
+            - navigation "Thread breadcrumb" [ref=f3e167]:
+              - list [ref=f3e168]:
+                - listitem [ref=f3e169]:
+                  - button "New thread in server" [ref=f3e170] [cursor=pointer]:
+                    - img [ref=f3e172]:
+                      - generic [ref=f3e173]: SR
+                    - generic [ref=f3e174]: server
+                - listitem [aria-hidden] [ref=f3e175]:
+                  - generic [ref=f3e176]: /
+                - listitem [ref=f3e177]:
+                  - button "Thread actions for New thread" [ref=f3e178] [cursor=pointer]:
+                    - heading "New thread" [level=2] [ref=f3e179]
+            - generic [ref=f3e185]:
+              - button "Add action" [ref=f3e186] [cursor=pointer]
+              - group "Open in editor" [ref=f3e188]:
+                - button "Open" [ref=f3e189] [cursor=pointer]
+                - separator
+                - button "Choose editor" [ref=f3e191] [cursor=pointer]
+              - group "Git actions" [ref=f3e192]:
+                - button "Commit & push" [ref=f3e193] [cursor=pointer]
+                - separator
+                - button "Git action options" [ref=f3e195] [cursor=pointer]
+        - generic [ref=f3e202]:
+          - generic [ref=f3e205]:
+            - generic [ref=f3e210]:
+              - status [ref=f3e212]
+              - status [ref=f3e215]: Loading messages...
+            - generic [ref=f3e218]:
+              - generic [ref=f3e221]:
+                - paragraph [ref=f3e224]
+                - generic: Ask for changes, send follow-ups, or attach images
+              - generic [ref=f3e225]:
+                - generic [ref=f3e226]:
+                  - button "Claude Opus 5" [ref=f3e227] [cursor=pointer]
+                  - generic [ref=f3e232]:
+                    - separator [ref=f3e233]
+                    - button "High · 1M" [ref=f3e234] [cursor=pointer]
+                  - generic [ref=f3e236]:
+                    - separator [ref=f3e237]
+                    - combobox "Runtime mode" [ref=f3e238] [cursor=pointer]:
+                      - generic [ref=f3e239]: Full access
+                    - textbox [aria-hidden] [ref=f3e241]: full-access
+                - generic [ref=f3e242]:
+                  - button "Attach files" [ref=f3e243] [cursor=pointer]
+                  - button "Messages loading" [disabled]
+          - generic [ref=f3e247]:
+            - generic [ref=f3e248]:
+              - combobox "Workspace" [ref=f3e249] [cursor=pointer]:
+                - generic [ref=f3e250]: Current checkout
+              - textbox [aria-hidden] [ref=f3e253]: local
+            - generic [ref=f3e255]:
+              - combobox [disabled]:
+                - generic:
+                  - generic "main"
+            - textbox [aria-hidden] [ref=f3e256]: main
+    - button "Toggle main sidebar" [pressed] [ref=f3e258] [cursor=pointer]:
+      - generic [ref=f3e259]: Toggle Sidebar
+  - generic:
+    - region "Notifications"
+  - generic:
+    - region "Notifications"

@@ -12,17 +12,21 @@ import {
 } from "./settingsScope";
 
 export type SettingsPath =
-  | "/settings/projects"
   | "/settings/general"
-  | "/settings/appearance"
-  | "/settings/keybindings"
-  | "/settings/snap-shot"
+  | "/settings/hydra"
   | "/settings/providers"
-  | "/settings/integrations"
+  | "/settings/mcp"
+  | "/settings/models"
   | "/settings/source-control"
+  | "/settings/keybindings"
+  | "/settings/archived"
+  | "/settings/about"
+  | "/settings/appearance"
+  | "/settings/projects"
   | "/settings/storage"
   | "/settings/connections"
-  | "/settings/archived";
+  | "/settings/snap-shot"
+  | "/settings/integrations";
 
 /**
  * Where a setting can be edited. Device-local rows have no scope: they render
@@ -81,17 +85,21 @@ export interface SettingsSearchAvailability {
  * subtitles both render from this record, so each label exists once.
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
-  "/settings/projects": "Project",
   "/settings/general": "General",
-  "/settings/appearance": "Appearance",
-  "/settings/keybindings": "Keybindings",
-  "/settings/snap-shot": "SnapShots",
+  "/settings/hydra": "Hydra",
   "/settings/providers": "Providers",
-  "/settings/integrations": "Integrations",
-  "/settings/source-control": "Source Control",
+  "/settings/mcp": "MCP",
+  "/settings/models": "Models",
+  "/settings/source-control": "Source control",
+  "/settings/keybindings": "Shortcuts",
+  "/settings/archived": "Archive",
+  "/settings/about": "About",
+  "/settings/appearance": "Appearance",
+  "/settings/projects": "Project",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
-  "/settings/archived": "Archive",
+  "/settings/snap-shot": "SnapShots",
+  "/settings/integrations": "Integrations",
 };
 
 /** Anchor id of the first row bound to `command` on the Keybindings page. */
@@ -802,6 +810,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/archived",
     searchTerms: ["restore reopen deleted history projects"],
   },
+  {
+    id: "mcp",
+    title: "MCP Servers",
+    to: "/settings/mcp",
+    searchTerms: [
+      "model context protocol github gitlab sentry playwright postgres tools custom servers developer browser search work data cloud knowledge",
+    ],
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
@@ -818,10 +834,14 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/integrations": null,
+  "/settings/mcp": null,
+  "/settings/models": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
   "/settings/archived": "project-defaults",
+  "/settings/hydra": null,
+  "/settings/about": null,
 };
 
 /** Search keeps the selected target. A missing row can explain its owning scope instead. */

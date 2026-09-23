@@ -45,6 +45,12 @@ struct AppCommands: Commands {
             Button("Toggle changes") { runtime?.toggleDiff() }
                 .keyboardShortcut(shortcuts.keyboardShortcut(for: .toggleChanges))
                 .disabled(model.selectedThreadID == nil)
+            Button("Toggle Hydra panel") {
+                guard let runtime else { return }
+                withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden.toggle() }
+            }
+            .keyboardShortcut(shortcuts.keyboardShortcut(for: .toggleHydraPanel))
+            .disabled(model.selectedThreadID == nil)
             Button("Toggle activity view") {
                 withAnimation(Chrome.panelSlide) { model.settings.sidebarActivityView.toggle() }
             }

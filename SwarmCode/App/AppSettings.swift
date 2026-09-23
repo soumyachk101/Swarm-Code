@@ -176,6 +176,7 @@ final class AppSettings {
         static let hydraPairs = "hydraPairs"
         static let hasSeenTour = "hasSeenTour"
         static let hasSeenHydraIntro = "hasSeenHydraIntro"
+        static let reducedMotion = "reducedMotion"
     }
 
     static let modelListLimit = 15
@@ -541,6 +542,14 @@ final class AppSettings {
         didSet { defaults.set(hasSeenHydraIntro, forKey: Key.hasSeenHydraIntro) }
     }
 
+    /// Disable spring animations for panels and transitions.
+    var reducedMotion: Bool {
+        didSet {
+            defaults.set(reducedMotion, forKey: Key.reducedMotion)
+            Chrome.reducedMotionOverride = reducedMotion
+        }
+    }
+
     /// With Hydra on, a follow-up queued while a turn runs goes to a head at once
     /// instead of waiting for the turn.
     var hydraQueueHeads: Bool {
@@ -777,6 +786,8 @@ final class AppSettings {
         usagePanelDock = defaults.string(forKey: Key.usagePanelDock).flatMap(PanelDockCorner.init(rawValue:)) ?? .bottomLeading
         usagePanelHeight = defaults.object(forKey: Key.usagePanelHeight).flatMap { $0 as? Double }.map { CGFloat($0) }
         hydraPairs = Self.load([Lenient<HydraPair>].self, forKey: Key.hydraPairs)?.compactMap(\.value) ?? []
+        reducedMotion = defaults.object(forKey: Key.reducedMotion) as? Bool ?? false
+        Chrome.reducedMotionOverride = reducedMotion
     }
 
     // MARK: - Hydra pairs

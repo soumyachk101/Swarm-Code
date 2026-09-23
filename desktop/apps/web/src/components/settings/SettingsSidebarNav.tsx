@@ -13,22 +13,31 @@ import {
   ArchiveIcon,
   BlocksIcon,
   BotIcon,
+  ChevronDownIcon,
+  CommandIcon,
+  CpuIcon,
   createLucideIcon,
   GitBranchIcon,
   HardDriveIcon,
+  InfoIcon,
   PanelsTopLeftIcon,
   KeyboardIcon,
   Link2Icon,
   PaletteIcon,
+  PlugIcon,
+  PuzzleIcon,
   SearchIcon,
   Settings2Icon,
+  SlidersHorizontalIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { HydraMarkSvg } from "./HydraSettingsPanel";
 
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Kbd } from "../ui/kbd";
+import { cn } from "~/lib/utils";
 import {
   SidebarContent,
   SidebarFooter,
@@ -73,21 +82,45 @@ const SwarmConnectSidebarAvatar = lazy(() =>
   })),
 );
 
+function HydraNavIcon({ className }: { className?: string }) {
+  return (
+    <span className="flex size-3.5 items-center justify-center text-teal-400">
+      <HydraMarkSvg className={className ?? "size-3.5"} />
+    </span>
+  );
+}
+
 const SETTINGS_SECTION_ICONS: Readonly<
   Record<SettingsPath, ComponentType<{ className?: string }>>
 > = {
   "/settings/general": Settings2Icon,
+  "/settings/hydra": HydraNavIcon,
+  "/settings/providers": CpuIcon,
+  "/settings/mcp": PuzzleIcon,
+  "/settings/models": SlidersHorizontalIcon,
+  "/settings/source-control": GitBranchIcon,
+  "/settings/keybindings": CommandIcon,
+  "/settings/archived": ArchiveIcon,
+  "/settings/about": InfoIcon,
   "/settings/appearance": PaletteIcon,
   "/settings/projects": PanelsTopLeftIcon,
-  "/settings/keybindings": KeyboardIcon,
-  "/settings/snap-shot": SnapShotIcon,
-  "/settings/providers": BotIcon,
-  "/settings/integrations": BlocksIcon,
-  "/settings/source-control": GitBranchIcon,
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,
-  "/settings/archived": ArchiveIcon,
+  "/settings/snap-shot": SnapShotIcon,
+  "/settings/integrations": BlocksIcon,
 };
+
+const PRIMARY_PATHS: ReadonlySet<SettingsPath> = new Set([
+  "/settings/general",
+  "/settings/hydra",
+  "/settings/providers",
+  "/settings/mcp",
+  "/settings/models",
+  "/settings/source-control",
+  "/settings/keybindings",
+  "/settings/archived",
+  "/settings/about",
+]);
 
 const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   label: string;
@@ -112,6 +145,23 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navItems = SETTINGS_NAV_ITEMS.filter(
     (item) => item.to !== "/settings/projects" || isSettingsOverviewVisible(scopeSearch),
   );
+  const primaryNavItems = useMemo(
+    () => navItems.filter((item) => PRIMARY_PATHS.has(item.to)),
+    [navItems],
+  );
+  const secondaryNavItems = useMemo(
+    () => navItems.filter((item) => !PRIMARY_PATHS.has(item.to)),
+    [navItems],
+  );
+  const isSecondaryActive = secondaryNavItems.some(
+    (item) => pathname === item.to || pathname.startsWith(`${item.to}/`),
+  );
+  const [showMore, setShowMore] = useState(isSecondaryActive);
+
+  useEffect(() => {
+    if (isSecondaryActive) setShowMore(true);
+  }, [isSecondaryActive]);
+
   const { isMobile, setOpenMobile, open, setOpen } = useSidebar();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -235,8 +285,18 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     <>
       <SidebarContent className="overflow-x-hidden">
         <SidebarGroup className="gap-2 p-[var(--sidebar-content-inset)]">
-          <div className="flex h-8 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground">
-            <SearchIcon className="size-4 shrink-0 text-sidebar-muted-foreground/80" />
+          {/* Swarm Code logo header */}
+          <div className="flex items-center gap-2.5 px-2 py-1.5">
+            <HydraMarkSvg className="size-5 shrink-0 text-[#b070ff]" />
+            <span className="text-sm font-semibold tracking-tight text-foreground">Swarm Code</span>
+          </div>
+
+          {/* Separator below logo */}
+          <div className="mx-2 h-px bg-white/[0.06]" />
+
+          {/* Search */}
+          <div className="flex h-8 items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground bg-white/[0.04] border border-white/[0.06]">
+            <SearchIcon className="size-3.5 shrink-0 text-sidebar-muted-foreground/70" />
             <Input
               ref={searchInputRef}
               nativeInput
@@ -259,7 +319,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                   ? `settings-search-result-${results[activeResultIndex].id}`
                   : undefined
               }
-              className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-sm [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-sidebar-foreground [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground"
+              className="min-w-0 flex-1 [&_[data-slot=input]]:h-auto [&_[data-slot=input]]:p-0 [&_[data-slot=input]]:leading-normal [&_[data-slot=input]]:text-[13px] [&_[data-slot=input]]:font-medium [&_[data-slot=input]]:text-foreground [&_[data-slot=input]]:placeholder:text-sidebar-muted-foreground/70"
             />
             {isSearching ? (
               <Button
@@ -276,7 +336,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                 <XIcon className="size-3" />
               </Button>
             ) : (
-              <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">/</Kbd>
+              <Kbd className="h-3.5 min-w-0 rounded-sm px-1 text-[9px] font-sans">/</Kbd>
             )}
           </div>
           {isSearching && results.length === 0 ? (
@@ -321,26 +381,75 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               ))}
             </SidebarMenu>
           ) : (
-            <SidebarMenu className="ps-px">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                const isGeneralDetailPage =
-                  item.to === "/settings/general" && pathname === "/settings/open-source-licenses";
-                const isActive =
-                  isGeneralDetailPage || pathname === item.to || pathname.startsWith(`${item.to}/`);
-                return (
-                  <SidebarMenuItem key={item.to}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => handleSectionClick(item.to)}
-                    >
-                      <Icon />
-                      <span className="truncate">{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
+            <div className="space-y-3">
+              <SidebarMenu className="ps-px">
+                {primaryNavItems.map((item) => {
+                  const Icon = item.icon;
+                  const isGeneralDetailPage =
+                    item.to === "/settings/general" && pathname === "/settings/open-source-licenses";
+                  const isActive =
+                    isGeneralDetailPage || pathname === item.to || pathname.startsWith(`${item.to}/`);
+                  return (
+                    <SidebarMenuItem key={item.to}>
+                      <SidebarMenuButton
+                        isActive={isActive}
+                        onClick={() => handleSectionClick(item.to)}
+                        className={cn(
+                          "rounded-xl transition-all duration-150 h-8",
+                          isActive && "bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-foreground font-medium shadow-xs",
+                        )}
+                      >
+                        <Icon />
+                        <span className="truncate">{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+
+              {secondaryNavItems.length > 0 && (
+                <div className="pt-1.5 border-t border-white/[0.06] space-y-0.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowMore(!showMore)}
+                    className="flex w-full items-center justify-between px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-sidebar-muted-foreground/60 hover:text-sidebar-muted-foreground transition-colors rounded-md hover:bg-sidebar-control-surface/50"
+                  >
+                    <span>More</span>
+                    <ChevronDownIcon
+                      className={cn(
+                        "size-3 transition-transform duration-200",
+                        showMore && "rotate-180",
+                      )}
+                    />
+                  </button>
+
+                  {showMore && (
+                    <SidebarMenu className="ps-px pt-0.5">
+                      {secondaryNavItems.map((item) => {
+                        const Icon = item.icon;
+                        const isActive =
+                          pathname === item.to || pathname.startsWith(`${item.to}/`);
+                        return (
+                          <SidebarMenuItem key={item.to}>
+                            <SidebarMenuButton
+                              isActive={isActive}
+                              onClick={() => handleSectionClick(item.to)}
+                              className={cn(
+                                "h-7 rounded-lg transition-all duration-150 text-[13px]",
+                                isActive && "bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-foreground font-medium shadow-xs",
+                              )}
+                            >
+                              <Icon />
+                              <span className="truncate">{item.label}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        );
+                      })}
+                    </SidebarMenu>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </SidebarGroup>
       </SidebarContent>

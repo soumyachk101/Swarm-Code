@@ -171,6 +171,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
+import { NativeGeneralSettingsCards } from "./NativeGeneralSettingsCards";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -2189,8 +2190,10 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <ProjectDefaultsSettings category="general" />
-      <SettingsSection id="organization" title="Organization">
+      <NativeGeneralSettingsCards />
+      <div className="pt-6 border-t border-white/5 space-y-6">
+        <ProjectDefaultsSettings category="general" />
+        <SettingsSection id="organization" title="Organization">
         <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."
@@ -3234,7 +3237,8 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
-      <LegacyFeaturesSection />
+        <LegacyFeaturesSection />
+      </div>
     </SettingsPageContainer>
   );
 }

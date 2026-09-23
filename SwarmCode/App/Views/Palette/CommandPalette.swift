@@ -169,6 +169,9 @@ struct CommandPalette: View {
             actions.append(Item(id: "changes", title: "Toggle changes", symbol: "plusminus", shortcut: ShortcutStore.label(for: .toggleChanges)) {
                 runtime.toggleDiff()
             })
+            actions.append(Item(id: "hydra-panel", title: "Toggle Hydra panel", symbol: "eye.slash", shortcut: ShortcutStore.label(for: .toggleHydraPanel)) {
+                withAnimation(.easeInOut(duration: 0.25)) { runtime.isHydraPanelHidden.toggle() }
+            })
             actions.append(Item(id: "finish", title: model.finishActionTitle, symbol: model.finishActionSymbol, shortcut: ShortcutStore.label(for: .finishThread)) {
                 model.finishSelectedThread()
             })

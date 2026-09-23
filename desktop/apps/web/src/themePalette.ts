@@ -19,6 +19,7 @@ import {
   type ThemeDefinition,
   type ThemeVariants,
 } from "@swarmcode/shared/themePalettes";
+import { SWARM_CODE_CANONICAL_THEME_SPECS } from "./canonicalThemes";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, SWARM_CODE_CHAT_THEME, SWARM_CODE_CHAT_THEME as T3_CHAT_THEME, THEME_COLOR_ROLES };
 export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
@@ -1068,7 +1069,20 @@ export function updateThemeColorFamily(
   }
 }
 
-const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = BUILT_IN_THEMES;
+export const CANONICAL_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> =
+  SWARM_CODE_CANONICAL_THEME_SPECS.map((spec) => ({
+    id: spec.id,
+    label: spec.label,
+    appearance: spec.appearance,
+    colors: createVividThemeColors(spec.appearance, spec.canvas, spec.accent),
+    sidebarArtwork: spec.appearance === "dark",
+    managed: false,
+  }));
+
+const BUILT_IN_THEME_DEFINITIONS: ReadonlyArray<ThemeDefinition> = [
+  ...BUILT_IN_THEMES,
+  ...CANONICAL_THEME_DEFINITIONS,
+];
 
 export function getThemeDefinition(theme: ThemePreference): ThemeDefinition | null {
   const themeId = themeIdFromPreference(theme);
@@ -1530,10 +1544,28 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
+    if (palette.id === "liquid-glass") {
+      root.style.setProperty("--bg-well", "#131823");
+      root.style.setProperty("--bg-well-raised", "#1a2030");
+      root.style.setProperty("--ink", "#05070b");
+      root.style.setProperty("--accent-glow", "rgba(79, 156, 255, 0.45)");
+      root.style.setProperty("--accent-soft", "rgba(79, 156, 255, 0.16)");
+    } else {
+      root.style.removeProperty("--bg-well");
+      root.style.removeProperty("--bg-well-raised");
+      root.style.removeProperty("--ink");
+      root.style.removeProperty("--accent-glow");
+      root.style.removeProperty("--accent-soft");
+    }
     return;
   }
 
   delete root.dataset.themeId;
+  root.style.removeProperty("--bg-well");
+  root.style.removeProperty("--bg-well-raised");
+  root.style.removeProperty("--ink");
+  root.style.removeProperty("--accent-glow");
+  root.style.removeProperty("--accent-soft");
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);
   }

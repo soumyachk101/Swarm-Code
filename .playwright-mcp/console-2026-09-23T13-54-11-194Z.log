@@ -1,0 +1,112 @@
+[   36626ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5733/node_modules/.vite/deps/react-dom_client.js?v=e5946a24:14088
+[   37268ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   37785ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   38293ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   38800ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   39307ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   39814ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   40320ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   40827ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   41333ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   41841ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   42373ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   42880ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   43387ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   43894ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   44401ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   44906ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   45412ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   45918ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   46425ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   46930ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   47436ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   47944ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   48451ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   48959ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   49465ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   49972ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   50482ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   50989ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   51495ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   52001ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   52061ms] [ERROR] %o
+
+%s
+
+%s
+ PrimaryEnvironmentRequestError: Primary environment request failed during fetch-session-state (HTTP 502).
+    at PrimaryEnvironmentRequestError.fromCause (http://localhost:5733/src/environments/primary/auth.ts:28:10)
+    at http://localhost:5733/src/environments/primary/auth.ts:100:41
+    at async retryTransientBootstrap (http://localhost:5733/src/environments/primary/auth.ts:169:11)
+    at async bootstrapServerAuth (http://localhost:5733/src/environments/primary/auth.ts:196:25)
+    at async Object.beforeLoad (http://localhost:5733/src/routes/__root.tsx:63:25)
+    at async loadMatches (http://localhost:5733/node_modules/.vite/deps/@tanstack_react-router.js?v=e5946a24:2111:31)
+    at async http://localhost:5733/node_modules/.vite/deps/@tanstack_react-router.js?v=e5946a24:3375:7 The above error occurred in the <MatchInnerImpl> component. React will try to recreate this component tree from scratch using the error boundary you provided, CatchBoundaryImpl. @ http://localhost:5733/@vite/client:532
+[   52064ms] [WARNING] Warning: Error in route match: __root__/ @ http://localhost:5733/@vite/client:532
+[   52137ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   52217ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   52220ms] [LOG] [19:25:03.413] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Remote environment endpoint http://localhost:5733/.well-known/t3/environm…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   52665ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   53172ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   53678ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   54184ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   54736ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   55285ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   55286ms] [LOG] [19:25:06.479] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Remote environment endpoint http://localhost:5733/.well-known/t3/environm…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   55296ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   55807ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   56388ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   56894ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   57400ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   57907ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   58301ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   58303ms] [LOG] [19:25:09.496] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Remote environment endpoint http://localhost:5733/.well-known/t3/environm…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   58413ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   58937ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   59444ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   59954ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   60462ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   60979ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   61311ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   61312ms] [LOG] [19:25:12.505] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Remote environment endpoint http://localhost:5733/.well-known/t3/environm…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   61505ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   62011ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   62517ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   63027ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   63534ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   64059ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   64321ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   64322ms] [LOG] [19:25:15.515] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Remote environment endpoint http://localhost:5733/.well-known/t3/environm…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   64567ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   65077ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   65827ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   66391ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   66900ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   67329ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   67330ms] [LOG] [19:25:18.524] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Remote environment endpoint http://localhost:5733/.well-known/t3/environm…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   67406ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5733/api/auth/session:0
+[   67421ms] [ERROR] %o
+
+%s
+
+%s
+ PrimaryEnvironmentRequestError: Primary environment request failed during fetch-session-state (HTTP 502).
+    at PrimaryEnvironmentRequestError.fromCause (http://localhost:5733/src/environments/primary/auth.ts:28:10)
+    at http://localhost:5733/src/environments/primary/auth.ts:100:41
+    at async retryTransientBootstrap (http://localhost:5733/src/environments/primary/auth.ts:169:11)
+    at async bootstrapServerAuth (http://localhost:5733/src/environments/primary/auth.ts:196:25)
+    at async Object.beforeLoad (http://localhost:5733/src/routes/__root.tsx:63:25)
+    at async loadMatches (http://localhost:5733/node_modules/.vite/deps/@tanstack_react-router.js?v=e5946a24:2111:31)
+    at async http://localhost:5733/node_modules/.vite/deps/@tanstack_react-router.js?v=e5946a24:3375:7 The above error occurred in the <MatchInnerImpl> component. React will try to recreate this component tree from scratch using the error boundary you provided, CatchBoundaryImpl. @ http://localhost:5733/@vite/client:532
+[   67422ms] [WARNING] Warning: Error in route match: __root__/ @ http://localhost:5733/@vite/client:532
+[   67717ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5733/@vite/client:1004
+[   70335ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   70337ms] [LOG] [19:25:21.530] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Failed to fetch remote environment endpoint http://localhost:5733/.well-k…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   73342ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   73343ms] [LOG] [19:25:24.536] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Failed to fetch remote environment endpoint http://localhost:5733/.well-k…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   76352ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   76352ms] [LOG] [19:25:27.546] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Failed to fetch remote environment endpoint http://localhost:5733/.well-k…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   79358ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   79358ms] [LOG] [19:25:30.552] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Failed to fetch remote environment endpoint http://localhost:5733/.well-k…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669
+[   82363ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:5733/.well-known/swarmcode/environment:0
+[   82364ms] [LOG] [19:25:33.557] WARN (#72): Could not discover the primary environment. {error: ConnectionTransientError: Failed to fetch remote environment endpoint http://localhost:5733/.well-k…} @ http://localhost:5733/node_modules/.vite/deps/effect-CJujuTUI.js?v=e5946a24:3669

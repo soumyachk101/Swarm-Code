@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import { AboutHeaderPills } from "../components/settings/AboutSettingsPanel";
 
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SidebarInset } from "../components/ui/sidebar";
@@ -52,6 +53,10 @@ const DEVICE_ONLY_PATHS = new Set([
   "/settings/appearance",
   "/settings/snap-shot",
   "/settings/connections",
+  "/settings/about",
+  "/settings/mcp",
+  "/settings/hydra",
+  "/settings/models",
 ]);
 
 function SettingsScopeBoundary({ pathname, children }: { pathname: string; children: ReactNode }) {
@@ -170,6 +175,11 @@ function SettingsContentLayout() {
                 <RestoreDeviceDefaultsButton
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
+              </div>
+            ) : null}
+            {location.pathname === "/settings/about" ? (
+              <div className="ms-auto flex shrink-0 items-center gap-2">
+                <AboutHeaderPills />
               </div>
             ) : null}
           </div>

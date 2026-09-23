@@ -287,6 +287,21 @@ export const LoadBalancingWeights = Schema.Record(
 
 export const DiffColorScheme = Schema.Literals(["red-green", "blue-orange"]);
 
+export const HydraPair = Schema.Struct({
+  id: Schema.String,
+  provider: Schema.String,
+  headsProvider: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(Schema.String),
+  maxHeads: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  customEfforts: Schema.optionalKey(
+    Schema.Struct({
+      lead: Schema.optionalKey(Schema.String),
+      heads: Schema.optionalKey(Schema.String),
+    }),
+  ),
+});
+export type HydraPair = typeof HydraPair.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -484,6 +499,22 @@ export const ClientSettingsSchema = Schema.Struct({
   snapShotFlash: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   snapShotAnimations: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   wordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Hydra multi-head session controls.
+  hydraEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  hydraIsolateHeads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  hydraMaxHeads: Schema.NullOr(Schema.Number).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  hydraAutoClearFinished: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  hydraAutoHidesIdleHeads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  hydraShowsHeadDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  hydraAutoPopsHeads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  hydraTempersHeadEffort: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  hydraQueueHeads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  hydraAlwaysHeads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  hydraReviewHeads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  hydraAutoMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  hydraPairs: Schema.Array(HydraPair).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -1605,5 +1636,18 @@ export const ClientSettingsPatch = Schema.Struct({
   snapShotFlash: Schema.optionalKey(Schema.Boolean),
   snapShotAnimations: Schema.optionalKey(Schema.Boolean),
   wordWrap: Schema.optionalKey(Schema.Boolean),
+  hydraEnabled: Schema.optionalKey(Schema.Boolean),
+  hydraIsolateHeads: Schema.optionalKey(Schema.Boolean),
+  hydraMaxHeads: Schema.optionalKey(Schema.NullOr(Schema.Number)),
+  hydraAutoClearFinished: Schema.optionalKey(Schema.Boolean),
+  hydraAutoHidesIdleHeads: Schema.optionalKey(Schema.Boolean),
+  hydraShowsHeadDetails: Schema.optionalKey(Schema.Boolean),
+  hydraAutoPopsHeads: Schema.optionalKey(Schema.Boolean),
+  hydraTempersHeadEffort: Schema.optionalKey(Schema.Boolean),
+  hydraQueueHeads: Schema.optionalKey(Schema.Boolean),
+  hydraAlwaysHeads: Schema.optionalKey(Schema.Boolean),
+  hydraReviewHeads: Schema.optionalKey(Schema.Boolean),
+  hydraAutoMerge: Schema.optionalKey(Schema.Boolean),
+  hydraPairs: Schema.optionalKey(Schema.Array(HydraPair)),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

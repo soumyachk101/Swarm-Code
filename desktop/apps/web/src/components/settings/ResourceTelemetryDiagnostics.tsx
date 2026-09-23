@@ -136,8 +136,10 @@ function categoryLabel(category: ResourceTelemetryProcessCategory): string {
       return "Electron utility";
     case "resource-monitor":
       return "Monitor";
-    case "unknown-t3":
-      return "T3 process";
+    case "unknown-swarmcode":
+      return "Swarm Code process";
+    default:
+      return "Process";
   }
 }
 

@@ -27,6 +27,7 @@ import {
   GROVE_THEME,
   IRIS_THEME,
   OCEAN_THEME,
+  CANONICAL_THEME_DEFINITIONS,
 } from "../../themePalette";
 import {
   AlertDialog,
@@ -811,6 +812,27 @@ export function ThemeLibrary({
               }
               onUse={() => persistTheme(maintainerTheme.id)}
               onUseMode={handlePairPick(maintainerTheme.id)}
+              theme={card}
+            />
+          );
+        })}
+        {CANONICAL_THEME_DEFINITIONS.map((canonicalTheme) => {
+          const card = getThemeCardDefinition(canonicalTheme);
+          return (
+            <ThemeLibraryCard
+              activeModes={pickedModesFor(canonicalTheme.id)}
+              isActive={false}
+              key={canonicalTheme.id}
+              onDuplicate={() =>
+                openThemeEditor({
+                  editingThemeId: null,
+                  seedThemeId: canonicalTheme.id,
+                  seedName: `${canonicalTheme.label} copy`,
+                  initialAppearance,
+                })
+              }
+              onUse={() => persistTheme(canonicalTheme.id)}
+              onUseMode={handlePairPick(canonicalTheme.id)}
               theme={card}
             />
           );

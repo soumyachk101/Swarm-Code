@@ -1184,6 +1184,12 @@ private struct ChatChromeRow: View {
                     if model.settings.hydraEnabled, !thread.isHelper {
                         HydraButton(thread: thread, runtime: runtime)
                             .transition(.softAppear)
+                        ChromeCircleButton(
+                            symbol: runtime.isHydraPanelHidden ? "eye.slash" : "eye",
+                            help: runtime.isHydraPanelHidden ? "Show Hydra panel" + ShortcutStore.hint(for: .toggleHydraPanel) : "Hide Hydra panel" + ShortcutStore.hint(for: .toggleHydraPanel)
+                        ) {
+                            withAnimation(Chrome.panelSlide) { runtime.isHydraPanelHidden.toggle() }
+                        }
                     }
                     PermissionMenu(thread: thread)
                 }
