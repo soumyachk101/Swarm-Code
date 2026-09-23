@@ -1,6 +1,28 @@
 {
-  "generated_at": "2026-09-23T15:28:00.000000+00:00",
+  "generated_at": "2026-09-23T17:21:00.000000+00:00",
   "releases": [
+    {
+      "version": "1.8.5",
+      "date": "2026-09-23",
+      "platform": "mac",
+      "summary": "Swarm Code 1.8.5 fixes working indicator timeline layout by removing horizontal over-expansion, restores native macOS notifications with the official app icon, and refines timeline styling. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "Bug fixes",
+          "items": [
+            "Working Card Layout: Fixed an issue where the collapsed working card expanded across the entire timeline, leaving an empty blank area on the right side. The card now neatly hugs its 380pt width and only expands when thinking steps are unfolded.",
+            "Notification App Icon: Resolved an issue where turn and Hydra head completion alerts displayed the Script Editor/AppleScript runner icon. Notifications now deliver directly through native `UNUserNotificationCenter` with the official Swarm Code application icon."
+          ]
+        },
+        {
+          "title": "Refinements",
+          "items": [
+            "Timeline Aesthetics: Cleaned up extraneous timeline divider lines under running blocks for a cleaner conversation view."
+          ]
+        }
+      ],
+      "thanks": []
+    },
     {
       "version": "1.8.4",
       "date": "2026-09-23",

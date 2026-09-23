@@ -4,6 +4,17 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.8.5] - 2026-09-23
+
+Swarm Code 1.8.5 fixes working indicator timeline layout by removing horizontal over-expansion, restores native macOS notifications with the official app icon, and refines timeline styling. Apple silicon, macOS 26 or later.
+
+### Bug fixes
+- Working Card Layout: Fixed an issue where the collapsed working card expanded across the entire timeline, leaving an empty blank area on the right side. The card now neatly hugs its 380pt width and only expands when thinking steps are unfolded.
+- Notification App Icon: Resolved an issue where turn and Hydra head completion alerts displayed the Script Editor/AppleScript runner icon. Notifications now deliver directly through native `UNUserNotificationCenter` with the official Swarm Code application icon.
+
+### Refinements
+- Timeline Aesthetics: Cleaned up extraneous timeline divider lines under running blocks for a cleaner conversation view.
+
 ## [1.8.4] - 2026-09-23
 
 Swarm Code 1.8.4 introduces a redesigned dynamic model picker with a dedicated provider rail, live model count badges, and support for dynamically detected providers like Cursor alongside performance refinements. Apple silicon, macOS 26 or later.
