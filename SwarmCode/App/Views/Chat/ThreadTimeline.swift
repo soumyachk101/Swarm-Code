@@ -2034,7 +2034,7 @@ struct TimelineGroupView: View {
             case .reasoning: EmptyView()
             case .tool: WorkGroup(entries: [entry], runtime: runtime, workingDirectory: context.workingDirectory)
             case .plan: PlanCard(entry: entry, runtime: runtime)
-            case .todos: TodoListRow(entry: entry)
+            case .todos: TodoListRow(entry: entry, runtime: runtime)
             case .notice: NoticeRow(entry: entry)
             case .turnEnd:
                 if case .turnEnd(let summary) = entry.item.content {

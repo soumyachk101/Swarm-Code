@@ -195,6 +195,24 @@ struct TodoStep: Codable, Hashable, Sendable {
 
     var text: String
     var status: Status
+    var files: [FileEdit] = []
+
+    init(text: String, status: Status, files: [FileEdit] = []) {
+        self.text = text
+        self.status = status
+        self.files = files
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case text, status, files
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        text = try container.decode(String.self, forKey: .text)
+        status = try container.decode(Status.self, forKey: .status)
+        files = try container.decodeIfPresent([FileEdit].self, forKey: .files) ?? []
+    }
 }
 
 struct Notice: Codable, Hashable, Sendable {

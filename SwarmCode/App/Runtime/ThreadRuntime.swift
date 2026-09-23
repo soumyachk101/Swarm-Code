@@ -276,6 +276,8 @@ final class ThreadRuntime {
     private(set) var hydraToolHeads: [String: UUID] = [:]
     /// Heads by the provider's own id for them, for the events that come from inside them.
     @ObservationIgnored private var hydraNativeHeads: [String: UUID] = [:]
+    /// Maps subagent IDs to their tool row IDs when Hydra is off, so in-chat subtasks stream live.
+    @ObservationIgnored private var localSubagents: [String: String] = [:]
     /// Reports from Swarm-run heads waiting for the lead to be idle.
     @ObservationIgnored private var hydraPendingReports: [HydraReport] = []
     /// The reports' turn is on its way (see `flushHydraReports`): a head finishing in the
@@ -2196,11 +2198,20 @@ final class ThreadRuntime {
         case .agentEvent(let agentID, let event):
             hydraAgentEvent(agentID, event)
         case .agentProgress(let agentID, let summary, let lastTool, let tokens, let toolCalls):
-            guard let headID = hydraNativeHeads[agentID], let headRuntime = app?.runtime(for: headID) else { break }
-            if let summary, !summary.isEmpty { headRuntime.hydraActivity = summary } else if let lastTool { headRuntime.hydraActivity = lastTool }
-            if let tokens { headRuntime.hydraTokens = tokens }
-            if let toolCalls { headRuntime.hydraToolCalls = toolCalls }
-            headRuntime.hydraLastEventAt = .now
+            if let headID = hydraNativeHeads[agentID], let headRuntime = app?.runtime(for: headID) {
+                if let summary, !summary.isEmpty { headRuntime.hydraActivity = summary } else if let lastTool { headRuntime.hydraActivity = lastTool }
+                if let tokens { headRuntime.hydraTokens = tokens }
+                if let toolCalls { headRuntime.hydraToolCalls = toolCalls }
+                headRuntime.hydraLastEventAt = .now
+            } else {
+                let toolID = localSubagents[agentID] ?? agentID
+                if let entry = entryIndex[toolID], case .tool(var call) = entry.item.content {
+                    if let summary, !summary.isEmpty { call.detail = summary }
+                    else if let lastTool { call.detail = lastTool }
+                    entry.item.content = .tool(call)
+                    saveRevision += 1
+                }
+            }
         case .agentFinished(let agentID, let status, let summary):
             hydraAgentFinished(agentID, status: status, summary: summary)
         }
@@ -2470,7 +2481,22 @@ final class ThreadRuntime {
     /// A head the provider started inside this session, or more said about one already
     /// known: a name for the tool call that spawned it, its brief.
     private func hydraAgentStarted(_ spawn: AgentSpawn) {
-        guard let app, let thread, app.hydraIsOn(thread) else { return }
+        guard let app, let thread else { return }
+        if !app.hydraIsOn(thread) {
+            let toolID = spawn.toolUseID ?? spawn.id
+            localSubagents[spawn.id] = toolID
+            if let taskID = spawn.taskID { localSubagents[taskID] = toolID }
+            if let entry = entryIndex[toolID], case .tool(var call) = entry.item.content {
+                let desc = (!spawn.description.isEmpty && spawn.description != "Subagent") ? spawn.description : call.title
+                if !desc.isEmpty && desc != "Subagent" { call.title = desc }
+                if let prompt = spawn.prompt, (call.detail == nil || call.detail?.isEmpty == true) {
+                    call.detail = TextCleanup.singleLine(prompt, limit: 120)
+                }
+                entry.item.content = .tool(call)
+                saveRevision += 1
+            }
+            return
+        }
         if let headID = hydraNativeHeads[spawn.id] {
             let named = !spawn.description.isEmpty && spawn.description != "Subagent"
             app.updateThread(headID) { head in
@@ -2501,7 +2527,10 @@ final class ThreadRuntime {
         if hydraNativeHeads[agentID] == nil, let entry = entryIndex[agentID], case .tool(let call) = entry.item.content, call.kind == .agent {
             hydraAgentStarted(AgentSpawn(id: agentID, taskID: nil, toolUseID: agentID, description: call.title, prompt: nil, model: nil, isBackground: false))
         }
-        guard let headID = hydraNativeHeads[agentID], let headRuntime = app.existingRuntime(for: headID) else { return }
+        guard let headID = hydraNativeHeads[agentID], let headRuntime = app.existingRuntime(for: headID) else {
+            handleLocalSubagentEvent(agentID, event)
+            return
+        }
         switch event {
         case .turnStarted:
             // A head briefed again by its lead works another turn.
@@ -2532,13 +2561,91 @@ final class ThreadRuntime {
         }
     }
 
+    private func handleLocalSubagentEvent(_ agentID: String, _ event: ProviderEvent) {
+        let toolID = localSubagents[agentID] ?? agentID
+        guard let entry = entryIndex[toolID], case .tool(var call) = entry.item.content else { return }
+        switch event {
+        case .turnStarted:
+            call.status = .running
+        case .toolStarted(_, let subCall):
+            call.status = .running
+            call.detail = ToolPresentation.label(for: subCall)
+            if !subCall.edits.isEmpty {
+                var current = call.edits
+                for edit in subCall.edits where !current.contains(where: { $0.path == edit.path }) {
+                    current.append(edit)
+                }
+                call.edits = current
+                noteHydraEdits(subCall.edits)
+                recordEditsInActiveTodo(subCall.edits)
+            }
+        case .toolUpdated(_, let update):
+            if let label = update.title ?? update.detail {
+                call.detail = label
+            }
+            if let edits = update.edits, !edits.isEmpty {
+                var current = call.edits
+                for edit in edits where !current.contains(where: { $0.path == edit.path }) {
+                    current.append(edit)
+                }
+                call.edits = current
+                noteHydraEdits(edits)
+                recordEditsInActiveTodo(edits)
+            }
+            if let output = update.output, !output.isEmpty {
+                call.appendOutput(output)
+            }
+        case .messageDelta(_, let text):
+            call.appendOutput(text)
+        case .messageCompleted(_, let text):
+            if !text.isEmpty {
+                call.detail = TextCleanup.singleLine(text, limit: 100)
+                call.appendOutput(text + "\n")
+            }
+        case .turnCompleted(let status, let error):
+            switch status {
+            case .completed:
+                call.finish(.completed)
+            case .failed:
+                call.finish(.failed)
+                if let error { call.appendOutput("\nError: \(error)") }
+            case .interrupted:
+                call.finish(.declined)
+            case .running:
+                call.status = .running
+            }
+        default:
+            break
+        }
+        entry.item.content = .tool(call)
+        saveRevision += 1
+        scheduleSave()
+    }
+
     /// A head finished: its timeline closes and its status lands, and the tool row that
     /// sent it out completes if the provider left it running in the background.
     private func hydraAgentFinished(_ agentID: String, status: TurnStatus, summary: String?) {
-        guard let app, let headID = hydraNativeHeads[agentID] else { return }
-        app.finishHydraHead(headID, status: status, summary: summary)
-        if let headRuntime = app.existingRuntime(for: headID), headRuntime.isRunning {
-            headRuntime.rehearse(.turnCompleted(status: status, error: nil))
+        if let headID = hydraNativeHeads[agentID], let app {
+            app.finishHydraHead(headID, status: status, summary: summary)
+            if let headRuntime = app.existingRuntime(for: headID), headRuntime.isRunning {
+                headRuntime.rehearse(.turnCompleted(status: status, error: nil))
+            }
+            return
+        }
+        let toolID = localSubagents[agentID] ?? agentID
+        if let entry = entryIndex[toolID], case .tool(var call) = entry.item.content {
+            switch status {
+            case .completed: call.finish(.completed)
+            case .failed: call.finish(.failed)
+            case .interrupted: call.finish(.declined)
+            case .running: call.status = .running
+            }
+            if let summary, !summary.isEmpty {
+                call.detail = summary
+            }
+            entry.item.content = .tool(call)
+            saveRevision += 1
+            scheduleSave()
         }
     }
 
@@ -3215,6 +3322,7 @@ final class ThreadRuntime {
         if let edits = update.edits, !edits.isEmpty {
             if call.edits.isEmpty { landed = edits.count }
             call.edits = Self.capped(edits)
+            recordEditsInActiveTodo(edits)
         }
         if let output = update.output { call.setOutput(output) }
         if let exitCode = update.exitCode { call.exitCode = exitCode }
@@ -3311,6 +3419,7 @@ final class ThreadRuntime {
             entry.item.content = .tool(call)
             saveRevision += 1
             noteHydraHeadEvent(edits: edits.count)
+            recordEditsInActiveTodo(edits)
             scheduleSave()
         }
     }
@@ -3416,12 +3525,38 @@ final class ThreadRuntime {
         }
     }
 
+    private func recordEditsInActiveTodo(_ edits: [FileEdit]) {
+        guard !edits.isEmpty else { return }
+        guard let id = todosEntryID, let entry = entryIndex[id], entry.item.turnID == currentTurnID,
+              case .todos(var steps) = entry.item.content else { return }
+        let targetIndex = steps.firstIndex(where: { $0.status == .active }) ?? steps.lastIndex(where: { $0.status != .done })
+        guard let index = targetIndex else { return }
+        var currentFiles = steps[index].files
+        for edit in edits {
+            if let existing = currentFiles.firstIndex(where: { $0.path == edit.path }) {
+                currentFiles[existing] = edit
+            } else {
+                currentFiles.append(edit)
+            }
+        }
+        steps[index].files = currentFiles
+        entry.item.content = .todos(steps)
+        saveRevision += 1
+    }
+
     private func upsertTodos(_ steps: [TodoStep]) {
+        var mergedSteps = steps
         // The row is remembered rather than searched for: a turn rewrites its list many
         // times, and the timeline behind it can hold thousands of rows. Without it, the
         // running turn's entries are the last ones, and an earlier turn ends the walk.
-        if let id = todosEntryID, let entry = entryIndex[id], entry.item.turnID == currentTurnID {
-            entry.item.content = .todos(steps)
+        if let id = todosEntryID, let entry = entryIndex[id], entry.item.turnID == currentTurnID,
+           case .todos(let existingSteps) = entry.item.content {
+            for i in 0..<mergedSteps.count {
+                if i < existingSteps.count, !existingSteps[i].files.isEmpty {
+                    mergedSteps[i].files = existingSteps[i].files
+                }
+            }
+            entry.item.content = .todos(mergedSteps)
             saveRevision += 1
             return
         }
@@ -3432,10 +3567,17 @@ final class ThreadRuntime {
         }
         if let entry = existing {
             todosEntryID = entry.id
-            entry.item.content = .todos(steps)
+            if case .todos(let existingSteps) = entry.item.content {
+                for i in 0..<mergedSteps.count {
+                    if i < existingSteps.count, !existingSteps[i].files.isEmpty {
+                        mergedSteps[i].files = existingSteps[i].files
+                    }
+                }
+            }
+            entry.item.content = .todos(mergedSteps)
             saveRevision += 1
-        } else if !steps.isEmpty {
-            let item = TimelineItem(turnID: turnIDForNewRows, content: .todos(steps))
+        } else if !mergedSteps.isEmpty {
+            let item = TimelineItem(turnID: turnIDForNewRows, content: .todos(mergedSteps))
             todosEntryID = item.id
             append(item)
         }

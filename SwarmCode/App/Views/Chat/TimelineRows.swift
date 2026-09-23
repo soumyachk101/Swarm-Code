@@ -1771,14 +1771,15 @@ struct ToolRow: View {
         // The slot alone: the hover responder and the anchor view must not keep this
         // row's entry (and its text) alive after it scrolls away.
         let previewSlot = preview
+        let isHydraOn = model.thread(runtime.threadID).map(model.hydraIsOn) ?? false
         // A row that sent out a head wears the head's glyph and name, in the badge the
         // finished turn's card and the working line wear, rather than as a line of text.
-        let head = call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
+        let head = isHydraOn && call.kind == .agent ? runtime.hydraHead(forTool: entry.id).flatMap { model.thread($0)?.hydra } : nil
         // Before the head's thread is linked to the call (the moment it goes out, or a
         // call that failed to send one), the row still wears a head's glyph and speaks of
         // sending it out: the name from the call's own title when it leads with one from
         // the roster, else the team's first face. Never a spinner and "Delegating Subagent".
-        let departing: (persona: HydraPersona, name: String?, task: String)? = call.kind == .agent && head == nil ? Self.departingHead(for: call) : nil
+        let departing: (persona: HydraPersona, name: String?, task: String)? = isHydraOn && call.kind == .agent && head == nil ? Self.departingHead(for: call) : nil
         let mcp = ToolPresentation.mcpParts(call)
         let isBadge = head != nil || departing != nil || mcp != nil
         HStack(spacing: TimelineMetrics.iconSpacing) {
@@ -2354,6 +2355,7 @@ struct PlanCard: View {
 struct TodoListRow: View {
     @Environment(\.chatZoom) private var zoom
     let entry: TimelineEntry
+    var runtime: ThreadRuntime? = nil
 
     var body: some View {
         if case .todos(let steps) = entry.item.content, !steps.isEmpty {
@@ -2371,6 +2373,9 @@ struct TodoListRow: View {
                         Text(step.text)
                             .foregroundStyle(step.status == .done ? .secondary : .primary)
                             .strikethrough(step.status == .done, color: .secondary)
+                        if !step.files.isEmpty {
+                            TodoStepChangesBadge(step: step, turnID: entry.turnID, runtime: runtime)
+                        }
                     }
                     .font(.chat(.callout, zoom: zoom))
                 }
@@ -2393,6 +2398,64 @@ struct TodoListRow: View {
         case .pending: "circle"
         case .active: "circle.dotted.circle"
         case .done: "checkmark.circle.fill"
+        }
+    }
+}
+
+private struct TodoStepChangesBadge: View {
+    @Environment(\.chatZoom) private var zoom
+    let step: TodoStep
+    let turnID: UUID?
+    let runtime: ThreadRuntime?
+
+    @State private var anchor = WeakView()
+    @State private var needsAnchor = false
+    @State private var isHovering = false
+
+    var body: some View {
+        let count = step.files.count
+        let additions = step.files.reduce(0) { $0 + $1.additions }
+        let deletions = step.files.reduce(0) { $0 + $1.deletions }
+        let title = count == 1 ? "1 file" : "\(count) files"
+        let anchorBox = anchor
+        let rt = runtime
+        let files = step.files
+        let turn = turnID
+
+        Button {
+            guard let view = anchorBox.value else { return }
+            rt?.showDiff(on: view, edge: .minY, turn: turn, focusEdits: files)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "pencil")
+                    .font(.chat(.caption2, zoom: zoom))
+                    .foregroundStyle(Chrome.secondaryText)
+                Text(title)
+                    .font(.chat(.caption, weight: .medium, zoom: zoom))
+                    .foregroundStyle(Chrome.primaryText.opacity(0.85))
+                if additions > 0 || deletions > 0 {
+                    DiffStatLabel(additions: additions, deletions: deletions)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.chat(.caption2, weight: .semibold, zoom: zoom))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Chrome.overlay(isHovering ? 0.22 : 0.12), in: .rect(cornerRadius: 6, style: .continuous))
+            .contentShape(.rect(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(runtime == nil)
+        .help("Show changes for this task (\(files.map(\.path).joined(separator: ", ")))")
+        .onHover { hovering in
+            if hovering && !needsAnchor { needsAnchor = true }
+            withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+        }
+        .background {
+            if needsAnchor {
+                AttachmentAnchorCapture { [weak anchorBox] in anchorBox?.value = $0 }
+            }
         }
     }
 }
@@ -2659,7 +2722,7 @@ struct TurnFinishedBlock: View {
                             case .plan:
                                 PlanCard(entry: entry, runtime: runtime)
                             case .todos:
-                                TodoListRow(entry: entry)
+                                TodoListRow(entry: entry, runtime: runtime)
                             case .notice:
                                 NoticeRow(entry: entry)
                             case .user, .reasoning, .turnEnd:
