@@ -5,6 +5,8 @@ struct SwarmCodeApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     init() {
+        // Permanently disallow interactive Keychain UI prompts across the entire app process.
+        SecKeychainSetUserInteractionAllowed(false)
         // Before anything posts a notification: a framework observer that raises while one is posted
         // (the popover window ordering on macOS 27) then costs a log line, not the app.
         DCInstallNotificationGuard()

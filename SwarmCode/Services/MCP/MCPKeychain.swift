@@ -11,6 +11,7 @@ enum MCPKeychain {
 
     static func value(server: String, field: String) -> String? {
         guard !CaptureRun.isEnabled else { return nil }
+        SecKeychainSetUserInteractionAllowed(false)
         let context = LAContext()
         context.interactionNotAllowed = true
         let query: [String: Any] = [
@@ -20,6 +21,7 @@ enum MCPKeychain {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,

@@ -1,6 +1,29 @@
 {
-  "generated_at": "2026-09-23T07:51:30.516030+00:00",
+  "generated_at": "2026-09-23T10:54:12.992716+00:00",
   "releases": [
+    {
+      "version": "1.8.3",
+      "date": "2026-09-23",
+      "platform": "mac",
+      "summary": "Swarm Code 1.8.3 prevents interactive Keychain password prompts across provider and MCP credential queries, enforces strict non-interactive Keychain policies, and refines updater asset resolution. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "Bug fixes",
+          "items": [
+            "Keychain modal prompt suppression: Suppressed interactive system Keychain password prompts globally across the app process, preventing unexpected OS dialogs during background credential lookups.",
+            "Non-interactive Keychain queries: Enforced strict non-interactive authentication flags (`kSecUseAuthenticationUIFail`) on MCP and provider Keychain reads so unauthorized reads fail immediately without hanging or prompting.",
+            "Update asset resolution: Improved release asset discovery and matching in the in-app update checker."
+          ]
+        },
+        {
+          "title": "Refinements",
+          "items": [
+            "Canonical bundle identity: Packaged disk images enforce canonical code signing identity to preserve persistent Keychain access permissions across application updates."
+          ]
+        }
+      ],
+      "thanks": []
+    },
     {
       "version": "1.8.2",
       "date": "2026-09-23",

@@ -46,6 +46,7 @@ enum APIKeychain {
     }
 
     private static func read(_ account: String) -> String? {
+        SecKeychainSetUserInteractionAllowed(false)
         let context = LAContext()
         context.interactionNotAllowed = true
         let query: [String: Any] = [
@@ -55,6 +56,7 @@ enum APIKeychain {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
