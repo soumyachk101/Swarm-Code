@@ -64,7 +64,7 @@ struct AgentActivityOverview: View {
                 guard let info = head.hydra else { return nil }
                 let liveInfo = HydraLiveInfo.shown(info, model.existingRuntime(for: head.id))
                 return HydraHeadDisplayInfo(
-                    threadID: head.id,
+                    id: head.id,
                     persona: liveInfo.persona,
                     displayName: liveInfo.displayName,
                     task: liveInfo.task,
@@ -87,15 +87,18 @@ struct AgentActivityOverview: View {
             ))
         }
 
-        groups.sort { group in
-            let hasRunning = group.heads.contains { $0.status == .running }
-            return hasRunning
+        groups.sort { a, b in
+            let aRunning = a.heads.contains { $0.status == .running }
+            let bRunning = b.heads.contains { $0.status == .running }
+            if aRunning != bRunning { return aRunning && !bRunning }
+            return a.threadTitle.localizedStandardCompare(b.threadTitle) == .orderedAscending
         }
         return groups
     }
 }
 
 private struct HydraThreadGroup: Identifiable {
+    var id: UUID { threadID }
     let threadID: UUID
     let threadTitle: String
     let heads: [HydraHeadDisplayInfo]
@@ -117,6 +120,10 @@ private struct HydraHeadDisplayInfo: Identifiable, Equatable {
 
 private struct AgentHeadRow: View {
     let info: HydraHeadDisplayInfo
+
+    private var isRunning: Bool {
+        info.status == .running
+    }
 
     @State private var elapsedTick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -282,7 +289,8 @@ struct WelcomeView: View {
     }
 
     private var welcomeContent: some View {
-        VStack(spacing: 30) {
+        @Bindable var settings = model.settings
+        return VStack(spacing: 30) {
             VStack(spacing: 10) {
                 Button {
                     model.chooseProjectFolder()
@@ -298,8 +306,8 @@ struct WelcomeView: View {
             }
             ChromeSection(title: "Activity list") {
                 ChromeCard {
-                    ChromeRow(title: "Project mark", detail: model.settings.activityThreadStyle.detail) {
-                        ChromeVisualPicker(options: ActivityThreadStyle.allCases.map { ($0, $0.title) }, selection: $model.settings.activityThreadStyle) { style in
+                    ChromeRow(title: "Project mark", detail: settings.activityThreadStyle.detail) {
+                        ChromeVisualPicker(options: ActivityThreadStyle.allCases.map { ($0, $0.title) }, selection: $settings.activityThreadStyle) { style in
                             Image(systemName: style == .icon ? "list.bullet" : "text.alignleft")
                         }
                     }

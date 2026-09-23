@@ -246,6 +246,19 @@ final class ProviderRegistry {
                 }
             }
             return candidates
+        case .cursor:
+            let home = LoginEnvironment.homeDirectory
+            return [
+                "\(home)/.local/bin/cursor-agent",
+                "\(home)/.cursor/bin/cursor-agent",
+                "/usr/local/bin/cursor-agent",
+                "/opt/homebrew/bin/cursor-agent",
+                "/Applications/Cursor.app/Contents/Resources/app/bin/cursor-agent",
+                "\(home)/.local/bin/cursor",
+                "/usr/local/bin/cursor",
+                "/opt/homebrew/bin/cursor",
+                "/Applications/Cursor.app/Contents/Resources/app/bin/cursor"
+            ].map { URL(fileURLWithPath: $0) }
         case .pi:
             let home = LoginEnvironment.homeDirectory
             return ["\(home)/.npm-global/bin/pi", "/opt/homebrew/bin/pi", "/usr/local/bin/pi", "\(home)/.local/bin/pi", "\(home)/.volta/bin/pi", "\(home)/.bun/bin/pi"].map { URL(fileURLWithPath: $0) }

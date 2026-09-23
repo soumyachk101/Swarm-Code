@@ -266,6 +266,8 @@ struct ModelList: View {
     let onBack: () -> Void
 
     @State private var searchText = ""
+    @State private var selectedProvider: ProviderKind?
+    @State private var hoveredProvider: ProviderKind?
 
     /// A pair row carries two lines, like a model row with its provider under it.
     private static let pairRowHeight: CGFloat = 46
@@ -274,23 +276,33 @@ struct ModelList: View {
 
     var body: some View {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseEntries = ModelCatalog.entries(model, including: thread)
-        let candidateEntries: [ModelCatalog.Entry] = if query.isEmpty {
-            baseEntries
-        } else {
-            // When searching, search across all available providers so any model can be found
-            model.providers.availableProviders.flatMap { provider in
-                model.providers.models(for: provider).map { ModelCatalog.Entry(provider: provider, option: $0) }
+
+        // Dynamically collect all available providers, ensuring current thread's provider is included
+        let available = model.providers.availableProviders
+        let providers: [ProviderKind] = {
+            var list = available
+            if !list.contains(thread.provider) {
+                list.append(thread.provider)
             }
-        }
-        let entries = candidateEntries.filter { entry in
-            guard !query.isEmpty else { return true }
-            return ModelsSettingsPage.matches(entry.option, id: entry.option.id, provider: entry.provider, query: query)
+            return list.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+        }()
+
+        let activeProvider = providers.contains(selectedProvider ?? thread.provider) ? (selectedProvider ?? thread.provider) : (providers.first ?? thread.provider)
+
+        // Get all models for the active provider
+        let activeModels = model.providers.models(for: activeProvider)
+        let entries: [ModelCatalog.Entry] = activeModels.compactMap { option in
+            let entry = ModelCatalog.Entry(provider: activeProvider, option: option)
+            if query.isEmpty || ModelsSettingsPage.matches(entry.option, id: entry.option.id, provider: entry.provider, query: query) {
+                return entry
+            }
+            return nil
         }
 
         // The pairs are Hydra's: on offer while it is on, out of sight otherwise.
         let allPairs = model.hydraIsOn(thread) ? model.hydraPickerPairs : []
         let pairs = allPairs.filter { pair in
+            guard pair.provider == activeProvider || pair.headsProvider == activeProvider else { return false }
             guard !query.isEmpty else { return true }
             let title = HydraPairSummary.title(pair, registry: model.providers)
             let pairDetail = detail(for: pair)
@@ -301,11 +313,10 @@ struct ModelList: View {
         // A chat leads with one pair or runs one model, never both: the checkmark sits on
         // the pair while the chat is in one, even though the pair's lead model is a row too.
         let leadsWithPair = pairs.contains { model.leadsWithHydraPair($0, thread: thread) }
-        let showsProviders = Set(candidateEntries.map(\.provider)).count > 1 || model.providers.availableProviders.count > 1
         // Fixed row heights let the popover size itself in one pass instead of measuring and resizing.
-        let rowHeight: CGFloat = showsProviders ? 46 : 34
+        let rowHeight: CGFloat = 36
         let pairsHeight = pairs.isEmpty ? 0 : Self.sectionHeaderHeight * 2 + CGFloat(pairs.count) * (Self.pairRowHeight + 1)
-        let targetHeight: CGFloat = min(max(72 + pairsHeight + CGFloat(max(entries.count, pairs.isEmpty ? 1 : 0)) * (rowHeight + 1), 180), 440)
+        let targetHeight: CGFloat = min(max(72 + pairsHeight + CGFloat(max(entries.count, pairs.isEmpty ? 1 : 0)) * (rowHeight + 1), 180), 450)
 
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
@@ -322,6 +333,15 @@ struct ModelList: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Chrome.secondaryText)
                 Spacer()
+                HStack(spacing: 5) {
+                    ProviderIcon(provider: activeProvider, size: 14)
+                    Text(verbatim: activeProvider.displayName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Chrome.primaryText)
+                    Text("\(entries.count)")
+                        .font(.system(size: 11, weight: .medium, design: .rounded).monospacedDigit())
+                        .foregroundStyle(Chrome.secondaryText)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.top, 8)
@@ -331,56 +351,108 @@ struct ModelList: View {
                 .padding(.horizontal, 6)
                 .padding(.bottom, 6)
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    if !pairs.isEmpty {
-                        PopoverSectionHeader("Pairs")
-                        ForEach(pairs) { pair in
-                            HydraPairListRow(
-                                pair: pair,
-                                title: HydraPairSummary.title(pair, registry: model.providers),
-                                detail: detail(for: pair),
-                                rowHeight: Self.pairRowHeight,
-                                isSelected: model.leadsWithHydraPair(pair, thread: thread),
-                                isEnabled: true
-                            ) {
-                                onEnterPair(pair)
+            HStack(alignment: .top, spacing: 6) {
+                if providers.count > 1 {
+                    ScrollView(.vertical) {
+                        VStack(spacing: 4) {
+                            ForEach(providers, id: \.self) { provider in
+                                let count = model.providers.models(for: provider).count
+                                Button {
+                                    selectedProvider = provider
+                                } label: {
+                                    ProviderIcon(provider: provider, size: 19)
+                                        .frame(width: 34, height: 34)
+                                        .background {
+                                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                                .fill(activeProvider == provider ? Chrome.overlay(0.14) : (hoveredProvider == provider ? Chrome.overlay(0.06) : Color.clear))
+                                        }
+                                        .contentShape(.rect)
+                                }
+                                .buttonStyle(.plain)
+                                .help("\(provider.displayName) · \(count) models")
+                                .accessibilityLabel("\(provider.displayName), \(count) models")
+                                .accessibilityAddTraits(activeProvider == provider ? .isSelected : [])
+                                .onHover { hovering in
+                                    withAnimation(Chrome.hover) {
+                                        hoveredProvider = hovering ? provider : nil
+                                    }
+                                }
                             }
                         }
-                        if !entries.isEmpty {
-                            PopoverSectionHeader("Models")
-                        }
                     }
-                    ForEach(entries) { entry in
-                        ModelListRow(
-                            entry: entry,
-                            detail: showsProviders ? entry.provider.displayName : nil,
-                            showsIcon: showsProviders,
-                            rowHeight: rowHeight,
-                            isSelected: !leadsWithPair && entry.provider == thread.provider && entry.option.id == thread.model,
-                            isEnabled: true
-                        ) {
-                            onChoose(entry)
+                    .scrollIndicators(.hidden)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(width: 36, height: targetHeight, alignment: .top)
+                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        if !pairs.isEmpty {
+                            PopoverSectionHeader("Pairs")
+                            ForEach(pairs) { pair in
+                                HydraPairListRow(
+                                    pair: pair,
+                                    title: HydraPairSummary.title(pair, registry: model.providers),
+                                    detail: detail(for: pair),
+                                    rowHeight: Self.pairRowHeight,
+                                    isSelected: model.leadsWithHydraPair(pair, thread: thread),
+                                    isEnabled: true
+                                ) {
+                                    onEnterPair(pair)
+                                }
+                            }
+                            if !entries.isEmpty {
+                                PopoverSectionHeader("Models")
+                            }
                         }
-                    }
-                    if entries.isEmpty && pairs.isEmpty {
-                        if !query.isEmpty {
-                            Text("No models found")
-                                .font(.system(size: 13))
-                                .foregroundStyle(Chrome.secondaryText)
+                        ForEach(entries) { entry in
+                            ModelListRow(
+                                entry: entry,
+                                detail: nil,
+                                showsIcon: false,
+                                rowHeight: rowHeight,
+                                isSelected: !leadsWithPair && entry.provider == thread.provider && entry.option.id == thread.model,
+                                isEnabled: true
+                            ) {
+                                onChoose(entry)
+                            }
+                        }
+                        if entries.isEmpty && pairs.isEmpty {
+                            if model.providers.loadingCatalogs.contains(activeProvider) {
+                                VStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text("Loading models…")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(Chrome.secondaryText)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 24)
+                            } else if !query.isEmpty {
+                                Text("No models found")
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(Chrome.secondaryText)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(16)
+                            } else {
+                                VStack(spacing: 8) {
+                                    Text("No models available")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(Chrome.secondaryText)
+                                    Button("Load models") {
+                                        Task { await model.providers.loadCatalog(activeProvider, force: true) }
+                                    }
+                                    .buttonStyle(.link)
+                                    .font(.system(size: 12))
+                                }
                                 .frame(maxWidth: .infinity, alignment: .center)
                                 .padding(16)
-                        } else {
-                            Text("Loading models…")
-                                .font(.system(size: 13))
-                                .foregroundStyle(Chrome.secondaryText)
-                                .padding(10)
+                            }
                         }
                     }
                 }
+                .scrollBounceBehavior(.basedOnSize)
+                .frame(height: targetHeight)
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .frame(height: targetHeight)
         }
         .padding(6)
         .task {
@@ -392,6 +464,12 @@ struct ModelList: View {
             for provider in model.providers.availableProviders where provider != thread.provider {
                 await model.providers.loadCatalog(provider)
             }
+        }
+        .task(id: activeProvider) {
+            await model.providers.loadCatalog(activeProvider)
+        }
+        .onChange(of: thread.provider) { _, provider in
+            selectedProvider = provider
         }
     }
 
@@ -480,7 +558,7 @@ private struct ModelListRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 if showsIcon {
                     ProviderIcon(provider: entry.provider, size: 14)
                         .foregroundStyle(Chrome.secondaryText)
@@ -488,30 +566,33 @@ private struct ModelListRow: View {
                 }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: entry.option.shortName)
-                        .font(.system(size: 14))
+                        .font(.system(size: 13.5, weight: .regular))
                         .foregroundStyle(Chrome.primaryText)
+                        .lineLimit(1)
                     if let detail {
                         Text(verbatim: detail)
-                            .font(.system(size: 12))
+                            .font(.system(size: 11.5))
                             .foregroundStyle(Chrome.secondaryText)
+                            .lineLimit(1)
                     }
                 }
-                Spacer(minLength: 12)
+                Spacer(minLength: 8)
                 if entry.option.supportsFast {
                     Image(systemName: "bolt")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Chrome.secondaryText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Chrome.secondaryText.opacity(0.8))
                 }
                 Image(systemName: "checkmark")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Chrome.primaryText)
                     .opacity(isSelected ? 1 : 0)
+                    .frame(width: 14)
             }
             .padding(.horizontal, 10)
             .frame(height: rowHeight)
             .background {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(isHovering && isEnabled ? Chrome.overlay(0.1) : Color.clear)
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(isHovering && isEnabled ? Chrome.overlay(0.08) : Color.clear)
             }
             .contentShape(.rect)
         }
