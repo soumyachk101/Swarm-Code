@@ -1,6 +1,28 @@
 {
-  "generated_at": "2026-09-22T17:54:05.900206+00:00",
+  "generated_at": "2026-09-23T07:51:30.516030+00:00",
   "releases": [
+    {
+      "version": "1.8.2",
+      "date": "2026-09-23",
+      "platform": "mac",
+      "summary": "Swarm Code 1.8.2 displays real-time task and subtask changes directly on the chat screen when Hydra is off, adds interactive diff badges to task checklist steps, and integrates local subagent execution output into the main timeline. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "New features",
+          "items": [
+            "Task changes in chat: When Hydra is off, task checklist steps track modified files in real-time with an interactive diff badge (`[✎ N files +add −del >]`). Tapping a badge opens the native diff viewer focused on that step's changes.",
+            "Non-Hydra subtask integration: Subagents dispatched while Hydra is disabled stream tool progress, file edits, and outputs directly into chat tool rows, preventing hangs and dropped events."
+          ]
+        },
+        {
+          "title": "Bug fixes",
+          "items": [
+            "Subagent event dropping: Resolved an issue where subagent completion events and output were ignored when Hydra was disabled, which previously left subagent rows stuck in a running state."
+          ]
+        }
+      ],
+      "thanks": []
+    },
     {
       "version": "1.8.1",
       "date": "2026-09-22",
