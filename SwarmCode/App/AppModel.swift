@@ -1284,23 +1284,6 @@ final class AppModel {
         notify(threadID: UUID(), title: "Swarm Code", body: "Task notifications are working perfectly!", sound: .default)
     }
 
-    func deliverDesktopNotification(title: String, body: String) {
-        let displayTitle = title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Swarm Code" : title
-        let displayBody = body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Task finished." : body
-        DispatchQueue.global(qos: .userInitiated).async {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-            process.arguments = [
-                "-e", "on run {t, b}",
-                "-e", "display notification b with title t sound name \"default\"", 
-                "-e", "end run",
-                displayTitle,
-                displayBody
-            ]
-            try? process.run()
-        }
-    }
-
     func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
         guard !WebsiteCaptures.isEnabled else { return }
 
@@ -1312,12 +1295,7 @@ final class AppModel {
             NSApp.requestUserAttention(.informationalRequest)
         }
 
-        // 3. Guaranteed Desktop Notification via independent system subprocess
-        // Runs as an independent process so macOS security treats it as trusted system notification,
-        // displaying native banners & sound even for ad-hoc signed builds or when minimized/backgrounded.
-        deliverDesktopNotification(title: title, body: body)
-
-        // 4. Modern macOS notification with Time-Sensitive interruption level
+        // 3. Modern macOS notification with Time-Sensitive interruption level
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body

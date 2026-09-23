@@ -1906,11 +1906,6 @@ private struct DisplayBlockView: View, Equatable {
                 }
             case .working(_, let liveWork):
                 WorkingBlockView(runtime: runtime, liveWork: liveWork, workingDirectory: context.workingDirectory)
-                // Subtle separator so the thinking state reads as a distinct section,
-                // separating it from whatever message row follows.
-                Divider()
-                    .opacity(0.18)
-                    .padding(.horizontal, TimelineMetrics.pillLeading)
             case .merging:
                 // Routed through `hydraMergePhase` above; never reached.
                 EmptyView()
@@ -1981,9 +1976,6 @@ private struct TurnRunningBlock: View {
                     earlierEntries: showsWorking ? nil : entries
                 )
                     .transition(ThreadTimeline.rowTransition)
-                Divider()
-                    .opacity(0.18)
-                    .padding(.horizontal, TimelineMetrics.pillLeading)
             }
         }
     }
@@ -2132,7 +2124,7 @@ private struct WorkingIndicator: View {
                 .padding(.leading, showsCard ? 14 : TimelineMetrics.pillLeading)
                 .padding(.trailing, showsCard ? 14 : TimelineMetrics.pillTrailing)
                 .padding(.vertical, verticalPad)
-                .frame(width: showsCard ? Self.cardWidth : nil, alignment: .leading)
+                .frame(width: showsCard ? Self.cardWidth : nil)
                 .contentShape(RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous))
                 .geometryGroup()
             }
@@ -2158,17 +2150,12 @@ private struct WorkingIndicator: View {
                         WorkSteps(entries: liveWork, runtime: runtime, workingDirectory: workingDirectory, showsAll: $showsAllSteps)
                             .transition(.softAppear)
                     }
-                    // Subtle separator between the thinking/work content and the next row,
-                    // giving the thinking block a clear visual boundary.
-                    Divider()
-                        .opacity(0.18)
-                        .transition(.opacity)
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, verticalPad)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: isExpanded ? .infinity : nil, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: TimelineMetrics.pillRadius, style: .continuous)
                 .fill(.quaternary.opacity(0.32))
