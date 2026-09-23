@@ -243,6 +243,7 @@ final class UpdateChecker {
     nonisolated static let projectURL = URL(string: "https://github.com/soumyachk101/Swarm-Code-Release")!
     nonisolated static let releasesURL = URL(string: "https://github.com/soumyachk101/Swarm-Code-Release/releases")!
     nonisolated static let apiURL = URL(string: "https://api.github.com/repos/soumyachk101/Swarm-Code-Release/releases?per_page=20")!
+    nonisolated static let latestAPIURL = URL(string: "https://api.github.com/repos/soumyachk101/Swarm-Code-Release/releases/latest")!
 
     /// How often the background check runs, and how stale a check may be before the app
     /// coming to the front runs another.
@@ -379,7 +380,36 @@ final class UpdateChecker {
             }
             throw UpdateError.badResponse(status)
         }
-        return try JSONDecoder().decode([GitHubRelease].self, from: data)
+        var releases = try JSONDecoder().decode([GitHubRelease].self, from: data)
+
+        // GitHub's releases list endpoint can have cached / empty assets for newly published releases.
+        // Also fetch the single latest release endpoint to ensure assets are present for the latest version.
+        if let latest = try? await fetchLatestRelease() {
+            if let index = releases.firstIndex(where: { $0.tagName == latest.tagName }) {
+                if releases[index].assets.isEmpty && !latest.assets.isEmpty {
+                    releases[index] = latest
+                }
+            } else if !latest.prerelease && !latest.draft {
+                releases.insert(latest, at: 0)
+            }
+        }
+
+        return releases
+    }
+
+    private func fetchLatestRelease() async throws -> GitHubRelease {
+        var request = URLRequest(url: Self.latestAPIURL)
+        request.setValue("SwarmCode/\(AppInfo.version)", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        if let token = GitHubAuth.resolveToken(), !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw UpdateError.badResponse(status)
+        }
+        return try JSONDecoder().decode(GitHubRelease.self, from: data)
     }
 
     /// The newest stable release that ships a disk image. Prereleases and drafts
@@ -389,15 +419,16 @@ final class UpdateChecker {
         for release in releases {
             guard !release.prerelease, !release.draft, let version = AppVersion(release.tagName) else { continue }
             if let publishedAt = release.publishedAt, publishedAt > .now { continue }
-            guard let asset = release.assets.first(where: { $0.isDiskImage }) else { continue }
-            guard let downloadURL = URL(string: asset.browserDownloadURL) else { continue }
+            let asset = release.assets.first(where: { $0.isDiskImage })
+            let fallbackDownloadURL = releasesURL.appending(path: "download/\(release.tagName)/Swarm-Code.dmg")
+            let downloadURL = asset.flatMap({ URL(string: $0.browserDownloadURL) }) ?? fallbackDownloadURL
             let pageURL = release.htmlURL.flatMap(URL.init(string:)) ?? releasesURL.appending(path: "tag/\(release.tagName)")
             let candidate = AvailableUpdate(
                 version: AppVersion.text(ofTag: release.tagName),
                 tag: release.tagName,
                 downloadURL: downloadURL,
-                assetId: asset.id,
-                size: asset.size,
+                assetId: asset?.id,
+                size: asset?.size,
                 notes: release.body ?? "",
                 releasedAt: release.publishedAt,
                 pageURL: pageURL

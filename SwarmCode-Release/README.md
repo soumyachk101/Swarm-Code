@@ -21,227 +21,399 @@
   <i>One Liquid Glass window. Your subscriptions. No middleman. No cloud. No compromise.</i>
 </p>
 
----
-
 </div>
+
+---
 
 ## What is Swarm Code?
 
-**Swarm Code** is a native macOS desktop app that unifies all your AI coding agents into one beautiful, powerful interface.
+**Swarm Code** is a native macOS desktop application that unifies AI coding agents into one powerful, beautiful interface.
 
-Built entirely in **Swift and SwiftUI** with Apple's **Liquid Glass** design language, Swarm Code drives the coding agents you already have installed — on your own subscriptions, with zero markup, zero cloud, zero compromise.
+Built entirely in **Swift and SwiftUI** with Apple's **Liquid Glass** design language, Swarm Code drives the coding agents you already have — on your own subscriptions, with zero markup, zero cloud, zero compromise.
 
 > **Built by [Soumya Chakraborty](https://github.com/soumyachk101). For Mac, only Mac, forever.**
 
 ---
 
-## Screenshots
+## Architecture
 
-|  |  |
-|:---:|:---:|
-| <img src="assets/screenshots/hero.webp" alt="Main window streaming reply" width="100%"><br>**Streaming replies** with live diff | <img src="assets/screenshots/palette.webp" alt="Command palette" width="100%"><br>**Command palette** — ⌘K for everything |
-| <img src="assets/screenshots/switcher.webp" alt="Model switcher" width="100%"><br>**Model picker** — any model, any provider | <img src="assets/screenshots/sidebar.webp" alt="Project sidebar" width="100%"><br>**Sidebar** — projects, threads, search |
-| <img src="assets/screenshots/plans.webp" alt="Plan mode" width="100%"><br>**Plan mode** — approvals before changes | <img src="assets/screenshots/diff.webp" alt="Diff viewer" width="100%"><br>**Diff** — every turn, a checkpoint |
-| <img src="assets/screenshots/themes.webp" alt="Theme picker" width="100%"><br>**26 themes** — System, Catppuccin, Dracula… | <img src="assets/screenshots/question.webp" alt="Question mode" width="100%"><br>**Questions** — inline approvals |
+### System Overview
+
+Swarm Code is a dual-implementation platform with a native macOS frontend and a cross-platform desktop port:
+
+<details>
+<summary><b>Native macOS App — Swift/SwiftUI</b></summary>
+
+The primary product. A single Xcode target built with Swift 6, SwiftUI, and the Liquid Glass design language. Uses only one external dependency: SwiftTerm for terminal emulation.
+
+**Key characteristics:**
+- 100% native SwiftUI with AppKit windowing
+- Hardened runtime, signed and notarized
+- Apple silicon (arm64) only, macOS 26+
+- Four-layer architecture (Core → Services/UI → App)
+- Zero telemetry, zero cloud sync, zero analytics
+- Direct process spawning for CLI agents (Claude, Codex, Cursor, etc.)
+- macOS Keychain for API key storage
+
+</details>
+
+<details>
+<summary><b>Cross-Platform Desktop — Electron/Tauri + TypeScript</b></summary>
+
+A parallel implementation using modern web technologies for broader platform reach:
+
+- **Frontend:** React 19, Svelte 5, TanStack Router, Tailwind CSS v4
+- **Backend:** Node.js 22+, Effect-TS for structured concurrency
+- **Shell:** Electron 44 for desktop packaging (DMG, EXE, MSI, AppImage)
+- **Monorepo:** pnpm workspaces with 10+ internal packages
+- **Rust sidecar:** Native resource monitoring via sysinfo
+
+</details>
+
+### Application Architecture (Four-Layer Model)
+
+The SwiftUI app follows a strict dependency hierarchy enforced by folder convention:
+
+```mermaid
+graph TB
+    subgraph Layer4["App Layer — Entry, Runtime, Views"]
+        direction TB
+        A1[SwarmCodeApp.swift<br/>@main entry point]
+        A2[AppModel.swift<br/>Central observable state]
+        A3[ThreadRuntime.swift<br/>Per-thread execution]
+        A4[WindowManager.swift<br/>NSWindow lifecycle]
+        A5[Views/<br/>Chat · Composer · Diff<br/>Palette · Settings · Sidebar]
+    end
+
+    subgraph Layer3["UI Layer — Chrome, Markdown, Theme, Sound"]
+        direction TB
+        U1[Chrome/<br/>Window chrome, panels]
+        U2[Markdown/<br/>Streaming renderer]
+        U3[Theme/<br/>26 tinted-glass themes]
+        U4[Sound/<br/>Chimes, tone synth]
+    end
+
+    subgraph Layer2["Services Layer — Git, Store, Providers, MCP"]
+        direction TB
+        S1[Git/<br/>DiffParser, WorkingTreeWatch]
+        S2[Store/<br/>JSON persistence]
+        S3[Providers/<br/>9+ adapters<br/>Claude, Codex, Cursor…]
+        S4[MCP/<br/>Hub, Proxy, Bridge]
+    end
+
+    subgraph Layer1["Core Layer — Pure Models & Support"]
+        direction TB
+        C1[Models/<br/>Hydra, Provider, Library<br/>MCP, Timeline, Requests]
+        C2[Support/<br/>Shell, JSON-RPC<br/>ObservedValue, Stdio]
+    end
+
+    A1 --> A2
+    A2 --> A3
+    A3 --> S3
+    A3 --> S1
+    A5 --> U2
+    A5 --> U1
+
+    S3 --> C1
+    S2 --> C2
+    S1 --> C2
+    S4 --> C1
+
+    U3 --> C1
+    U2 --> C1
+    U4 --> C1
+
+    style Layer4 fill:#1a2030,stroke:#4f9cff,stroke-width:2px,color:#e8edf5
+    style Layer3 fill:#1e2740,stroke:#818cf8,stroke-width:1.5px,color:#e8edf5
+    style Layer2 fill:#222d45,stroke:#c084fc,stroke-width:1.5px,color:#e8edf5
+    style Layer1 fill:#2a3550,stroke:#f472b6,stroke-width:1.5px,color:#e8edf5
+
+    class A1,A2,A3,A4,A5 appStyle
+    class U1,U2,U3,U4 uiStyle
+    class S1,S2,S3,S4 svcStyle
+    class C1,C2 coreStyle
+```
+
+**Dependency rule:** Core depends on nothing. Services and UI depend only on Core. App depends on all layers. This keeps the domain model pure and testable.
+
+### Hydra Multi-Agent System
+
+Hydra is Swarm Code's defining feature — parallel agent delegation with isolated worktrees:
+
+```mermaid
+graph LR
+    subgraph Chat["Your Chat Thread"]
+        Lead["Lead Agent<br/>(Claude Opus / Codex Astra…)"]
+    end
+
+    subgraph HydraCore["Hydra Orchestration"]
+        Brief["Brief Writer<br/>Writes head instructions"]
+        Dispatch["Dispatcher<br/>Launches heads in parallel"]
+        Merge["Merge Engine<br/>Three-way merge + landing"]
+        Budget["Budget Controller<br/>Tool pacing & time limits"]
+    end
+
+    subgraph Heads["Parallel Head Agents (1–8)"]
+        H1["Hank<br/>🟦 Worker"]
+        H2["Walter<br/>🟧 Worker"]
+        H3["Ada<br/>🟩 Worker"]
+        H4["…up to 8 heads"]
+    end
+
+    subgraph Worktrees["Isolated Git Worktrees"]
+        W1[".swarm-code/worktree/hank/"]
+        W2[".swarm-code/worktree/walter/"]
+        W3[".swarm-code/worktree/ada/"]
+    end
+
+    Lead --> Brief
+    Brief --> Dispatch
+    Dispatch --> Heads
+    Heads --> Worktrees
+    Worktrees --> Merge
+    Merge --> Chat
+
+    Budget -.-> Heads
+
+    style Chat fill:#0f172a,stroke:#38bdf8,stroke-width:2px,color:#e8edf5
+    style HydraCore fill:#1e1b4b,stroke:#a78bfa,stroke-width:2px,color:#e8edf5
+    style Heads fill:#14532d,stroke:#4ade80,stroke-width:1.5px,color:#e8edf5
+    style Worktrees fill:#1c1917,stroke:#fbbf24,stroke-width:1.5px,color:#e8edf5
+```
+
+**How it works:**
+
+1. **Lead** agent receives your task and writes briefs for each head
+2. **Dispatcher** launches up to 8 heads in parallel, each in its own git worktree
+3. **Heads** execute independently — different models, different providers, different effort levels
+4. **Merge Engine** lands their work back as a single merge in your checkout
+5. **Budget Controller** paces tool calls (24 pacing → 120 wrap-up → 160 hard stop) and enforces a 35-minute time limit
+
+**Head types:**
+- **Native heads:** Run inside the lead's session (Claude's Agent tool, Codex's `spawn_agent`, Copilot's task tool)
+- **Swarm-run heads:** Separate sessions launched by Swarm Code, typically when heads use a different provider than the lead
+
+### Provider Ecosystem
+
+Swarm Code abstracts 10+ AI providers behind a unified protocol:
+
+| Provider | Protocol | Auth | Key Feature |
+|----------|----------|------|-------------|
+| **Claude** (Anthropic) | stream-json + permission prompts | Terminal session | Native agent tools, reasoning effort |
+| **Codex** (OpenAI) | App-server JSON-RPC | Terminal session | Banked resets, async task tracking |
+| **Cursor** | Agent Client Protocol (ACP) | Terminal session | Plans, todos, permission requests |
+| **OpenCode** | Agent Client Protocol (ACP) | Terminal session | Resume cursor versioning |
+| **Grok** (xAI) | Agent Client Protocol (ACP) | Terminal session | ACP-based subagents |
+| **Antigravity** (Google) | stream-json headless | Terminal session | Sign-in flow, subagent tools |
+| **Copilot** (GitHub) | headless JSON-RPC | Terminal session | Custom agents, SDK protocol |
+| **Command Code** | NDJSON events + session mod | Terminal session | One run per turn, approval gate |
+| **Pi** (Inflection) | JSONL over stdio | Terminal session | Gate extension for approvals |
+| **DeepSeek** | Native API (OpenAI-compatible) | API key (Keychain) | Pay-as-you-go credits |
+| **Meta** | Native API (Muse Spark) | API key (Keychain) | Direct API at api.meta.ai/v1 |
+| **** | Native API ( Coding Plan) | API key (Keychain) | OpenAI-compatible |
+
+### Data Flow: Request to Response
+
+```
+User Input
+    │
+    ▼
+ComposerView → PromptEditor → ProviderSession
+    │
+    ▼
+ThreadRuntime → ProviderAdapter (Claude/Codex/Cursor…)
+    │
+    ├──► Native agent tools (Claude Agent, Codex spawn_agent…)
+    │         │
+    │         ▼
+    │    ProviderEvent.messageDelta / toolStarted / agentFinished
+    │         │
+    │         ▼
+    │    TimelineRow (live streaming)
+    │
+    └──► Hydra delegation block
+              │
+              ▼
+         HydraDelegationStreamParser
+              │
+              ▼
+         Swarm-run heads (parallel worktrees)
+              │
+              ▼
+         HydraMergeRecord → patch → checkout
+```
+
+### MCP Integration
+
+Swarm Code includes a full Model Context Protocol hub:
+
+```
+MCPStore (app-wide connection manager)
+    │
+    ├──► Local stdio servers (MCPHub)
+    ├──► Remote SSE servers
+    ├──► OAuth flows (MCPProxy)
+    └──► Provider injection (MCPBridgeSource)
+              │
+              ▼
+         Each provider session receives connected MCP servers
+              │
+              ▼
+         MCP tools appear in the agent's tool namespace
+```
+
+**30+ preconfigured tools** across Developer, Browser, Search, Work, Data, Cloud, and Knowledge categories.
+
+### Build & Release Pipeline
+
+```
+Source → xcodegen → Xcode project → xcodebuild (Debug)
+    │
+    ├──► scripts/quick_run.sh → /Applications/Swarm Code Dev.app
+    │
+    └──► scripts/release.sh
+              │
+              ├── Archive + sign (Developer ID)
+              ├── Notarize + staple
+              ├── Package DMG (stylized with background + .DS_Store)
+              └──► build.noindex/Swarm-Code-<version>.dmg
+                        │
+                        ▼
+                   scripts/publish_release.sh
+                        │
+                        ├──► Tag + push to GitLab
+                        └──► GitHub Release on soumyachk101/Swarm-Code-Release
+                                  │
+                                  ▼
+                             Website update (changelog.json + version badge)
+                                  │
+                                  ▼
+                             Vercel auto-deploy → swarmcode.vercel.app
+```
 
 ---
 
 ## Features
 
-### 8 Agents, One Window
+### Multi-Agent Orchestration
 
-Drive **Codex**, **Claude**, **Cursor**, **OpenCode**, **Grok**, **Antigravity**, **DeepSeek**, and **Meta** from one interface. Sign in once in your terminal — Swarm Code picks it up automatically. No keys to paste, no middleman.
+- **Hydra parallel execution** — Lead agent delegates to up to 8 heads in parallel
+- **Cross-provider pairs** — Claude lead with Gemini heads, Codex lead with Terra heads
+- **Named head profiles** — Purpose-built configurations (quick, deep, visual)
+- **Hydra Cookbook** — 9 curated pair recipes with effort presets
+- **25 named head personas** — Hank, Walter, Ada, Otto, Nova, Remy, and more
+- **Git worktree isolation** — Each head works in its own copy of the project
+- **Automatic merging** — Heads' work lands as one merge with conflict handling
+- **Live model switching** — Change provider/model mid-chat without losing context
 
-### Hydra: One Chat, Many Heads
+### Chat & Threading
 
-Turn a big job into a team. The lead writes the briefs, sends heads out in parallel — each in its own git worktree — and their work lands back in your checkout. Pair a strong lead with quick heads, fuse effort across the team.
+- **Projects and threads** in a collapsible sidebar with search
+- **Thread modes** — Column, Floating, Panel (animated transitions)
+- **Thread pinning, settling, archiving** — Settled threads dim until reopened
+- **Follow-up queue** — Type while a turn runs; messages queue and send after
+- **Inline approvals** — Agent plans, you approve right in the timeline
+- **Reply quotes** — Quote part of a reply to answer in-place
+- **Command palette** — ⌘K for threads, projects, actions
+- **Keyboard shortcuts** — ⌘1-9 switch threads, ⌘B toggle sidebar, ⌘W archive
 
-### Streaming & Live Diffs
+### Diffs & Version History
 
-Watch streaming replies arrive in real time — reasoning, reads, edits, to-dos, builds. Every turn gets a checkpoint with a diff. Read the change, revert the turn, or rewind the whole thread.
+- **Diff for every turn** — Hidden git checkpoint after each reply
+- **Stacked or split diff view** — Choose your preferred layout
+- **Diff color schemes** — Red-green or blue-orange
+- **Revert any turn** or rewind the whole thread
+- **Diff ignore whitespace** toggle
 
-### Follow-up Queue
+### Git Integration
 
-Type while it works. Follow-ups line up above the chat box and go out one after another when the turn ends. Never lose a thought mid-turn.
+- **Automatic worktree creation** — New threads start in isolated worktrees
+- **Commit, push, pull requests** — Generated messages and thread titles
+- **GitHub, GitLab, Forgejo, Azure DevOps, Bitbucket** hosting support
+- **Working tree watch** — Background refresh of remote branches
+- **Pull request landing** — Right-click merge in helper thread
 
-### Inline Approvals
+### MCP (Model Context Protocol)
 
-The agent proposes a plan, asks before it pushes, and you approve right in the timeline. Plan mode, model selection, and four permission modes per thread.
+- **Local MCP Hub** — Run stdio and SSE servers from Settings
+- **OAuth authentication** — Full OAuth flow with token injection
+- **30+ preconfigured tools** — GitHub, Filesystem, Playwright, Brave Search, Slack, Notion, Linear, Figma, Stripe, Supabase, PostgreSQL, Vercel, Cloudflare, Context7, DeepWiki, and more
+- **Custom MCP servers** — Add your own with configuration UI
 
-### Model Picker with Search
+### Themes & Appearance
 
-Find any model from any provider instantly. Switch models and providers mid-chat while preserving conversation history and context.
+- **26 tinted-glass themes** — System, Catppuccin, Dracula, Tokyo Night, Nord, Gruvbox, Solarized, GitHub, Matrix, Claude, Codex, and more
+- **Custom theme import** — Create and share your own
+- **Theme mixing** — Different light/dark theme halves
+- **Glass opacity slider** — Control Liquid Glass intensity
+- **Appearance contrast** — Fine-tune readability
+- **4 font families** — Interface, prompt/composer, code blocks, terminal
+- **Per-family font size** — Independent control for each context
 
-### Terminal Per Thread
+### Notifications
 
-Every thread gets its own real PTY terminal. Run commands, check builds, inspect state — right where you need it.
+- **macOS notification banners** — System-level, breaking through Focus/DND
+- **Time-Sensitive priority** — Highest notification level
+- **Dock bounce** — When tasks finish while minimized
+- **Hydra head completion chimes** — Distinct sounds per head
+- **In-app toast banners** — Liquid Glass toast on task completion
 
-### Git Built In
+### Privacy
 
-Worktrees, commits, pushes, pull requests. Every turn creates a hidden git checkpoint. New threads start in their own worktree so several agents can work on one project simultaneously without clashing.
-
-### 26 Tinted-Glass Themes
-
-From System to Catppuccin, Dracula, Tokyo Night, Nord, Gruvbox, and more. Real glass, real code, real you.
-
-### Zero Compromise
-
-No remote access. No mobile apps. No cloud sync. No telemetry. No accounts. No web client. Left out on purpose.
-
----
-
-## Architecture
-
-```mermaid
-graph TB
-    subgraph Mac["Your Mac — Apple Silicon"]
-        direction TB
-        subgraph Swarm Code["Swarm Code — Native macOS App"]
-            direction LR
-            subgraph UI["Liquid Glass Interface"]
-                direction TB
-                Sidebar["Sidebar\nProjects · Threads · Search"]
-                Chat["Chat Thread\nStreaming · Diffs · Queue"]
-                Detail["Detail Panel\nDiff · Git · Terminal"]
-                Palette["Command Palette\nModels · Actions"]
-            end
-            subgraph Engine["Core Engine"]
-                ThemeEngine["Theme Engine\n26 tinted-glass themes"]
-                BinaryField["Binary Field\nCanvas + Glow"]
-                HydraEngine["Hydra Engine\nParallel worktrees"]
-                GitEngine["Git Engine\nCheckpoints · Worktrees"]
-                TerminalEngine["Terminal\nSwiftTerm PTY"]
-            end
-        end
-    end
-
-    subgraph Agents["Your Coding Agents"]
-        Codex["Codex CLI"]
-        Claude["Claude CLI"]
-        Cursor["Cursor CLI"]
-        OpenCode["OpenCode"]
-        Grok["Grok"]
-        Antigravity["Antigravity"]
-        DeepSeek["DeepSeek API"]
-        Meta["Meta API"]
-    end
-
-    UI --> Engine
-    Engine --> GitEngine
-    Engine --> TerminalEngine
-    Engine --> ThemeEngine
-    Engine --> BinaryField
-    Engine --> HydraEngine
-
-    Chat <--> Agents
-    HydraEngine <--> Agents
-
-    style Mac fill:#0b0e14,stroke:#4f9cff,stroke-width:2px,color:#e8edf5
-    style Swarm Code fill:#131823,stroke:#4f9cff,stroke-width:3px,color:#e8edf5
-    style UI fill:#1a2030,stroke:#4f9cff,stroke-width:1.5px,color:#e8edf5
-    style Engine fill:#1a2030,stroke:#4f9cff,stroke-width:1.5px,color:#e8edf5
-    style Agents fill:#131823,stroke:#fbbf24,stroke-width:2px,color:#e8edf5
-
-    class Sidebar,Chat,Detail,Palette,ThemeEngine,BinaryField,HydraEngine,GitEngine,TerminalEngine engineStyle
-    class Codex,Claude,Cursor,OpenCode,Grok,Antigravity,DeepSeek,Meta agentStyle
-```
+- **Zero telemetry** — No analytics, no accounts, no cloud sync
+- **No remote access** — No mobile apps, no web client
+- **API keys in Keychain** — Never leaves your Mac
+- **Direct-origin favicons** — No third-party proxies
 
 ---
 
-## Tech Stack
-
-| | |
-|---|---|
-| **Language** | Swift 6 |
-| **UI Framework** | SwiftUI + Liquid Glass |
-| **Terminal** | SwiftTerm |
-| **Git** | libgit2 |
-| **Architecture** | MV + async/await |
-| **License** | MIT |
-
-**One dependency. Zero telemetry. 100% native.**
-
----
-
-## Download
-
-### Requirements
+## Requirements
 
 - Apple Silicon Mac (M1 / M2 / M3 / M4 or newer)
 - macOS 26 or later
-- At least one provider installed (`codex login`, `claude auth login`, etc.)
+- At least one provider installed and signed in
 - Git, plus `gh` or `glab` for pull requests
 
-### Install
+## Installation
 
-1. Download `Swarm-Code-1.1.7.dmg` from the [Releases](https://github.com/soumyachk101/Swarm-Code-Release/releases) page.
+1. Download `Swarm-Code-<version>.dmg` from the [Releases](https://github.com/soumyachk101/Swarm-Code-Release/releases) page.
 2. Double-click the `.dmg` file to open it.
 3. Drag **Swarm Code.app** into your `/Applications` folder.
 4. Launch from Applications or Spotlight.
 
 > If Gatekeeper blocks it on first launch: right-click → **Open**, or run:
 > ```bash
-> xattr -cr /Applications/Swarm Code.app
+> xattr -cr /Applications/Swarm\ Code.app
 > ```
 
----
+## Building from Source
 
-## Changelog
+```bash
+# Install dependencies
+brew install xcodegen
 
-See [CHANGELOG.md](CHANGELOG.md) for the full history.
+# Generate Xcode project
+xcodegen generate
 
-### v1.1.4
-- Effort slider track transitions and particle animation continuity
-- Performance and stability optimizations
+# Open in Xcode
+open SwarmCode.xcodeproj
+```
 
-### v1.1.3
-- In-app update checker configured directly to the public Swarm-Code-Release repository
-- Streamlined about settings links and release references
+SwiftTerm is the only dependency, fetched by Swift Package Manager. Xcode asks once to trust its build plugin.
 
-### v1.1.2
-- Model search and provider switching in running chats
-- Eliminated all remaining compiler warnings
-- Performance improvements and bug fixes
+## Release Process
 
-### v1.0.0
-- 8 agent providers in one window
-- Hydra: parallel agents in separate worktrees
-- 26 tinted-glass themes
-- Streaming replies with live diff per turn
-- Inline approvals and follow-up queuing
-- Reasoning slider (Fast to Maximum)
-- Built-in terminal per thread
-- Zero telemetry, MIT licensed
+```bash
+# Build, sign, notarize, and package DMG
+scripts/release.sh
 
----
-
-## FAQ
-
-**Is it really free?**
-Yes. Swarm Code is free and MIT licensed. You pay your agent providers as you already do; Swarm Code never sits in between.
-
-**Is it open source?**
-Yes. The full Swift/SwiftUI source is on [GitHub](https://github.com/soumyachk101/Swarm-Code). The code is MIT; the Swarm Code name and icon are trademarks.
-
-**Do I need an API key?**
-Not for Codex, Claude, Cursor, OpenCode, Grok or Antigravity — sign in once in your terminal. DeepSeek and Meta need a key stored in your Keychain.
-
-**Which Mac do I need?**
-Apple silicon, macOS 26+. Signed and notarized. No Gatekeeper workaround needed.
-
-**Does it send anything anywhere?**
-Only what your agents send to their own providers. No telemetry, no analytics, no account, no cloud sync.
-
-**Where do I get help?**
-Open an [issue on GitHub](https://github.com/soumyachk101/Swarm-Code/issues) or email hi@getswarmcode.app.
-
----
+# Publish to GitHub Releases
+scripts/publish_release.sh
+```
 
 ## License
 
-Copyright (c) 2026 Soumya Chakraborty. All rights reserved.
-
-Swarm Code is released under the [MIT License](LICENSE). The Swarm Code name and icon are trademarks of Soumya Chakraborty — see [TRADEMARK.md](TRADEMARK.md).
+MIT. See [LICENSE](LICENSE). The code is free to use; the name "Swarm Code" and its icons are not part of the license, see [TRADEMARK.md](TRADEMARK.md).
 
 ---
 

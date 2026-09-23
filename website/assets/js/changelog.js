@@ -194,7 +194,21 @@
     function appendItem(item) {
       var li = document.createElement("li");
       li.className = "changelog-item";
-      li.textContent = String(item);
+      var str = String(item);
+      if (str.indexOf("`") !== -1) {
+        var parts = str.split(/`([^`]+)`/g);
+        for (var i = 0; i < parts.length; i++) {
+          if (i % 2 === 1) {
+            var code = document.createElement("code");
+            code.textContent = parts[i];
+            li.appendChild(code);
+          } else if (parts[i]) {
+            li.appendChild(document.createTextNode(parts[i]));
+          }
+        }
+      } else {
+        li.textContent = str;
+      }
       list.appendChild(li);
     }
 

@@ -42,10 +42,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Inter+Tight:wght@500;600;700&display=swap" rel="stylesheet">
 
   <script>try{if(sessionStorage.getItem("swarmcodeNavIntro")||sessionStorage.getItem("swarmaiNavIntro")){document.documentElement.className+=" nav-intro-done";}else{sessionStorage.setItem("swarmcodeNavIntro","1");}}catch(e){}</script>
+  <link rel="stylesheet" href="assets/css/site.css?v=14">
   <link rel="stylesheet" href="assets/css/changelog.css?v=3">
 
   <noscript><style>.reveal { opacity: 1; transform: none; }</style></noscript>
 
+  <script src="assets/js/site.js?v=5" defer></script>
   <script src="assets/js/changelog.js?v=4" defer></script>
   <style>
     /* ============================================================
@@ -75,22 +77,22 @@
       animation: orb-drift 12s ease-in-out infinite alternate;
     }
     .clog-hero__orb--1 {
-      width: 500px; height: 500px;
+      width: 360px; height: 360px;
       background: radial-gradient(circle, #4f9cff 0%, transparent 70%);
-      top: -15%; left: -10%;
+      top: -10%; left: -5%;
       animation-delay: 0s;
     }
     .clog-hero__orb--2 {
-      width: 400px; height: 400px;
+      width: 280px; height: 280px;
       background: radial-gradient(circle, #ffd257 0%, transparent 70%);
-      bottom: -20%; right: -8%;
+      bottom: -15%; right: -5%;
       animation-delay: -4s;
       animation-duration: 15s;
     }
     .clog-hero__orb--3 {
-      width: 300px; height: 300px;
+      width: 220px; height: 220px;
       background: radial-gradient(circle, #3fd08a 0%, transparent 70%);
-      top: 40%; left: 50%;
+      top: 50%; left: 55%;
       animation-delay: -8s;
       animation-duration: 18s;
     }
@@ -475,7 +477,7 @@
     <!-- ================================================================ -->
     <!-- Hero — premium motion canvas + floating bee + binary rain       -->
     <!-- ================================================================ -->
-    <section class="changelog-hero" style="position:relative; overflow:hidden; min-height:60vh;">
+    <section class="changelog-hero" style="position:relative; overflow:hidden; min-height:55vh; padding-top: clamp(100px, 14vw, 150px) !important; padding-bottom: 20px !important;">
       <div class="clog-hero__orb clog-hero__orb--1" aria-hidden="true"></div>
       <div class="clog-hero__orb clog-hero__orb--2" aria-hidden="true"></div>
       <div class="clog-hero__orb clog-hero__orb--3" aria-hidden="true"></div>
@@ -527,7 +529,7 @@
             </svg>
           </div>
 
-          <p class="section-subtitle reveal" data-reveal-on-load style="--reveal-delay: 280px; margin-top:18px;">Every feature, fix and refinement shipped to Swarm Code, newest release first.</p>
+          <p class="section-subtitle reveal" data-reveal-on-load style="--reveal-delay: 280ms; margin-top:14px;">Every feature, fix and refinement shipped to Swarm Code, newest release first.</p>
         </div>
       </div>
     </section>

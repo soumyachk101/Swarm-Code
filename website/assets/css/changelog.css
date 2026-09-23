@@ -441,6 +441,16 @@
   line-height: 1.55;
 }
 
+.changelog-item code {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.88em;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #c9d8f8;
+}
+
 .changelog-item::before {
   content: "";
   position: absolute;
