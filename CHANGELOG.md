@@ -4,6 +4,18 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.8.4] - 2026-09-23
+
+Swarm Code 1.8.4 introduces a redesigned dynamic model picker with a dedicated provider rail, live model count badges, and support for dynamically detected providers like Cursor alongside performance refinements. Apple silicon, macOS 26 or later.
+
+### New features
+- Dynamic Model Picker: Redesigned the model selection popover with a clean two-column layout featuring an active provider rail on the left, live model count badges, and aligned capability and selection indicators.
+- Dynamic Provider Discovery: Removed static provider filtering so all installed, signed-in, or configured providers—including Cursor, Claude, Codex, Antigravity, OpenCode, Grok, Copilot, Command Code, Pi, DeepSeek, Meta, and Z.ai—are discovered and displayed automatically.
+- Automatic Cursor Detection: Added standard macOS discovery paths for Cursor CLI (`cursor-agent` and `cursor`), enabling immediate integration when Cursor is installed.
+
+### Refinements
+- Agent activity and timeline styling: Enhanced thinking block visual boundaries and status indicators for running turns.
+
 ## [1.8.3] - 2026-09-23
 
 Swarm Code 1.8.3 prevents interactive Keychain password prompts across provider and MCP credential queries, enforces strict non-interactive Keychain policies, and refines updater asset resolution. Apple silicon, macOS 26 or later.
