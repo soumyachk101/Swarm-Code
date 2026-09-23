@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import LocalAuthentication
 import Security
 import UserNotifications
 
@@ -94,10 +95,15 @@ enum GitHubAuth {
             kSecAttrAccount as String: account,
         ]
         SecItemDelete(query as CFDictionary)
-        let attributes = query.merging([
+        var access: SecAccess?
+        SecAccessCreate(service as CFString, [] as CFArray, &access)
+        var attributes = query.merging([
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
         ]) { _, new in new }
+        if let access {
+            attributes[kSecAttrAccess as String] = access
+        }
         let ok = SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
         if ok {
             UserDefaults.standard.removeObject(forKey: fallbackKey)
@@ -195,6 +201,8 @@ enum GitHubAuth {
     }
 
     private static func readKeychain() -> String? {
+        let context = LAContext()
+        context.interactionNotAllowed = true
         for s in [service, legacyService] {
             let query: [String: Any] = [
                 kSecClass as String: kSecClassGenericPassword,
@@ -202,6 +210,7 @@ enum GitHubAuth {
                 kSecAttrAccount as String: account,
                 kSecReturnData as String: true,
                 kSecMatchLimit as String: kSecMatchLimitOne,
+                kSecUseAuthenticationContext as String: context,
             ]
             var item: CFTypeRef?
             if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,

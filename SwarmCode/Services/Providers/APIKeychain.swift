@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 /// One Keychain implementation for every native provider's API key. Each
@@ -32,20 +33,28 @@ enum APIKeychain {
             kSecAttrAccount as String: account,
         ]
         SecItemDelete(query as CFDictionary)
-        let attributes = query.merging([
+        var access: SecAccess?
+        SecAccessCreate(AppInfo.name as CFString, [] as CFArray, &access)
+        var attributes = query.merging([
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
         ]) { _, new in new }
+        if let access {
+            attributes[kSecAttrAccess as String] = access
+        }
         return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 
     private static func read(_ account: String) -> String? {
+        let context = LAContext()
+        context.interactionNotAllowed = true
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: AppInfo.name,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context,
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,

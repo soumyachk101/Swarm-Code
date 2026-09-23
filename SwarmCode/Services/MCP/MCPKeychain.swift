@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 /// Stores MCP secret field values in the macOS Keychain so they never sit
@@ -10,12 +11,15 @@ enum MCPKeychain {
 
     static func value(server: String, field: String) -> String? {
         guard !CaptureRun.isEnabled else { return nil }
+        let context = LAContext()
+        context.interactionNotAllowed = true
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: AppInfo.name,
             kSecAttrAccount as String: account(server: server, field: field),
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseAuthenticationContext as String: context,
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
@@ -42,10 +46,15 @@ enum MCPKeychain {
         let updated = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if updated == errSecSuccess { return true }
         guard updated == errSecItemNotFound else { return false }
-        let attributes = query.merging([
+        var access: SecAccess?
+        SecAccessCreate(AppInfo.name as CFString, [] as CFArray, &access)
+        var attributes = query.merging([
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlocked,
         ]) { _, new in new }
+        if let access {
+            attributes[kSecAttrAccess as String] = access
+        }
         return SecItemAdd(attributes as CFDictionary, nil) == errSecSuccess
     }
 
