@@ -4,6 +4,15 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.8.6] - 2026-09-24
+
+Swarm Code 1.8.6 delivers reliable desktop notifications with the official app logo attached, adds system notification permission status detection with direct links to macOS Settings, and enhances dock bounce attention for minimized states. Apple silicon, macOS 26 or later.
+
+### Bug fixes
+- Notification Delivery & Logo: Restored reliable system desktop notifications when the app is minimized or in the background. Notifications now feature the official Swarm Code application icon via image attachment and support Time-Sensitive alerts to break through Focus modes.
+- Dock Attention: Upgraded turn completion and thread decision attention to critical request so the Dock icon bounces continuously when the app is minimized until focused.
+- System Settings Status: Added automatic detection of macOS System Settings notification authorization state. If notifications are disabled in macOS Settings, a warning and a direct 1-click link to open System Settings > Notifications are displayed.
+
 ## [1.8.5] - 2026-09-23
 
 Swarm Code 1.8.5 fixes working indicator timeline layout by removing horizontal over-expansion, restores native macOS notifications with the official app icon, and refines timeline styling. Apple silicon, macOS 26 or later.
