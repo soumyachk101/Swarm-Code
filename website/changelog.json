@@ -2,6 +2,22 @@
   "generated_at": "2026-09-24T11:25:52.525922+00:00",
   "releases": [
     {
+      "version": "1.8.7",
+      "date": "2026-09-24",
+      "platform": "mac",
+      "summary": "Swarm Code 1.8.7 eliminates macOS Keychain modal password prompts across all background operations, enforcing non-interactive Security framework queries for GitHub update tokens and Claude CLI credential discovery. Apple silicon, macOS 26 or later.",
+      "sections": [
+        {
+          "title": "Bug fixes",
+          "items": [
+            "Keychain Password Prompts: Enforced strict non-interactive authentication (kSecUseAuthenticationUIFail) on GitHub update checker token queries, eliminating macOS login keychain modal password dialogs on app launch.",
+            "Direct Credential Discovery: Replaced external /usr/bin/security subprocess invocations in PlanLimits with in-process Security.framework queries, preventing external process security prompts and respecting app-wide non-interactive keychain access policies."
+          ]
+        }
+      ],
+      "thanks": []
+    },
+    {
       "version": "1.8.6",
       "date": "2026-09-24",
       "platform": "mac",

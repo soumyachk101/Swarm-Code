@@ -4,6 +4,14 @@ All notable changes to Swarm Code are documented here, newest first. The format 
 
 `scripts/publish_release.sh` reads the section whose heading matches the version in `project.yml` (for example `## [1.5.4] - 2026-09-17`) and publishes it as the GitLab release notes, which Settings › About shows as its New features / Bug fixes / Refinements cards. `scripts/build_changelog.py` builds `website/changelog.json` for the site from the same sections. Work that has merged but not shipped sits under `## [Unreleased]`, which both scripts skip; the next release renames that heading to its version and date. A `### Thanks` heading under a version names every outside contributor whose merge request shipped in it, in the form `- Name (@gitlab-handle): what they did (!MR).`; `python3 scripts/release_credits.py` prints the block for the changes since the previous tag, and publishing stops until every contributor is named.
 
+## [1.8.7] - 2026-09-24
+
+Swarm Code 1.8.7 eliminates macOS Keychain modal password prompts across all background operations, enforcing non-interactive Security framework queries for GitHub update tokens and Claude CLI credential discovery. Apple silicon, macOS 26 or later.
+
+### Bug fixes
+- Keychain Password Prompts: Enforced strict non-interactive authentication (`kSecUseAuthenticationUIFail`) on GitHub update checker token queries, eliminating macOS login keychain modal password dialogs on app launch.
+- Direct Credential Discovery: Replaced external `/usr/bin/security` subprocess invocations in PlanLimits with in-process `Security.framework` queries, preventing external process security prompts and respecting app-wide non-interactive keychain access policies.
+
 ## [1.8.6] - 2026-09-24
 
 Swarm Code 1.8.6 delivers reliable desktop notifications with the official app logo attached, adds system notification permission status detection with direct links to macOS Settings, and enhances dock bounce attention for minimized states. Apple silicon, macOS 26 or later.
