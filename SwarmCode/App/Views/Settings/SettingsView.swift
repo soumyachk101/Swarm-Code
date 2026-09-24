@@ -370,6 +370,26 @@ private struct GeneralSettingsPage: View {
                             model.sendTestNotification()
                         }
                     }
+                    if settings.notifyWhenFinished && model.isNotificationPermissionDenied {
+                        ChromeRowDivider()
+                        HStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.system(size: 12))
+                            Text("Notifications are turned off for Swarm Code in macOS System Settings.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Open Settings") {
+                                model.openNotificationSettings()
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.accentColor)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                    }
                 ChromeRowDivider()
                 ChromeRow(title: "Chime when a turn finishes", detail: "A soft chime, whether or not the thread is in view") {
                     SettingsSwitch(isOn: $settings.chimeWhenFinished)
@@ -493,6 +513,9 @@ private struct GeneralSettingsPage: View {
                     SettingsSwitch(isOn: $settings.reducedMotion)
                 }
             }
+        }
+        .onAppear {
+            model.requestNotificationPermission()
         }
     }
 }

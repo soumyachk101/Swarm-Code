@@ -112,6 +112,7 @@ final class AppModel {
 
     var isCommandPalettePresented = false
     var alert: AppAlert?
+    var isNotificationPermissionDenied = false
 
     @ObservationIgnored private var runtimes: [UUID: ThreadRuntime] = [:]
     @ObservationIgnored private var idleSessionStops: [UUID: Task<Void, Never>] = [:]
@@ -1172,7 +1173,7 @@ final class AppModel {
             return
         }
         notify(threadID: id, title: thread.title, body: "Waiting for your decision.")
-        NSApp.requestUserAttention(.informationalRequest)
+        NSApp.requestUserAttention(.criticalRequest)
     }
 
     /// A turn ended. `continues` means a queued message picks up right away, so the agent is
@@ -1212,7 +1213,7 @@ final class AppModel {
         let chimed = settings.chimeWhenFinished && status != .interrupted
         if chimed { FinishChime.play() }
         if !isVisible {
-            NSApp.requestUserAttention(.informationalRequest)
+            NSApp.requestUserAttention(.criticalRequest)
         }
         guard settings.notifyWhenFinished, let thread = thread(id) else { return }
         let body = switch status {
@@ -1269,19 +1270,66 @@ final class AppModel {
         }
     }
 
+    func openNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        } else if let fallback = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(fallback)
+        }
+    }
+
+    private func createLogoAttachment() -> UNNotificationAttachment? {
+        let tempDir = FileManager.default.temporaryDirectory
+        let iconURL = tempDir.appendingPathComponent("swarmcode-logo-\(UUID().uuidString).png")
+        let icon = NSApp.applicationIconImage ?? NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
+        guard let tiffData = icon.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiffData),
+              let pngData = rep.representation(using: .png, properties: [:]) else {
+            return nil
+        }
+        do {
+            try pngData.write(to: iconURL)
+            return try UNNotificationAttachment(identifier: "swarmcode-logo", url: iconURL, options: nil)
+        } catch {
+            return nil
+        }
+    }
+
     func requestNotificationPermission() {
         guard !WebsiteCaptures.isEnabled else { return }
         Task {
             let center = UNUserNotificationCenter.current()
             let settings = await center.notificationSettings()
             if settings.authorizationStatus == .notDetermined {
-                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge, .providesAppNotificationSettings])
+                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge, .providesAppNotificationSettings, .timeSensitive])
+            }
+            let refreshed = await center.notificationSettings()
+            await MainActor.run {
+                self.isNotificationPermissionDenied = (refreshed.authorizationStatus == .denied || refreshed.alertSetting == .disabled)
             }
         }
     }
 
     func sendTestNotification() {
-        notify(threadID: UUID(), title: "Swarm Code", body: "Task notifications are working perfectly!", sound: .default)
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            if settings.authorizationStatus == .denied || settings.alertSetting == .disabled {
+                await MainActor.run {
+                    self.isNotificationPermissionDenied = true
+                    showToast(
+                        title: "Notifications Disabled in macOS",
+                        message: "Turn on notifications for Swarm Code in System Settings."
+                    )
+                    openNotificationSettings()
+                }
+            } else {
+                await MainActor.run {
+                    self.isNotificationPermissionDenied = false
+                    notify(threadID: UUID(), title: "Swarm Code", body: "Task notifications are working properly!", sound: .default)
+                }
+            }
+        }
     }
 
     func notify(threadID: UUID, title: String, body: String, sound: UNNotificationSound? = .default) {
@@ -1290,12 +1338,12 @@ final class AppModel {
         // 1. In-app toast banner (for when window is on screen)
         showToast(title: title, message: body)
 
-        // 2. Request dock attention (bounce dock icon if minimized or inactive)
+        // 2. Request dock attention (bounce dock icon continuously if minimized or inactive)
         if !NSApp.isActive {
-            NSApp.requestUserAttention(.informationalRequest)
+            NSApp.requestUserAttention(.criticalRequest)
         }
 
-        // 3. Modern macOS notification with Time-Sensitive interruption level
+        // 3. Modern macOS notification with Time-Sensitive interruption level and Swarm Code Logo
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
@@ -1303,13 +1351,18 @@ final class AppModel {
         content.interruptionLevel = .timeSensitive
         content.relevanceScore = 1.0
         content.userInfo = ["threadID": threadID.uuidString]
+
+        if let attachment = createLogoAttachment() {
+            content.attachments = [attachment]
+        }
+
         let identifier = "turn-\(threadID.uuidString)-\(Date.now.timeIntervalSince1970)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         Task {
             let center = UNUserNotificationCenter.current()
             let settings = await center.notificationSettings()
             if settings.authorizationStatus == .notDetermined {
-                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge, .providesAppNotificationSettings])
+                _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge, .providesAppNotificationSettings, .timeSensitive])
             }
             try? await center.add(request)
         }
