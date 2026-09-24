@@ -1,4 +1,6 @@
 import Foundation
+import LocalAuthentication
+import Security
 
 /// A provider's subscription limits: each rolling window, how much of it is used and when it resets.
 struct PlanLimits: Sendable, Equatable {
@@ -192,18 +194,38 @@ enum PlanLimitsReader {
             }
         }
 
-        let security = URL(fileURLWithPath: "/usr/bin/security")
-        var attempts: [[String]] = []
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        var attempts: [[String: Any]] = []
         if let user = environment["USER"] ?? environment["LOGNAME"], !user.isEmpty {
-            attempts.append(["find-generic-password", "-s", keychainService, "-a", user, "-w"])
+            attempts.append([
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: keychainService,
+                kSecAttrAccount as String: user,
+                kSecReturnData as String: true,
+                kSecUseAuthenticationContext as String: context,
+                kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+            ])
         }
-        attempts.append(["find-generic-password", "-s", keychainService, "-w"])
-        for arguments in attempts {
-            guard let result = try? await Shell.run(security, arguments, environment: environment, timeout: 5),
-                  result.succeeded else { continue }
-            let text = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            let data = text.hasPrefix("{") ? Data(text.utf8) : (hexDecoded(text) ?? Data(text.utf8))
-            if let login = parseLogin(data) {
+        attempts.append([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecReturnData as String: true,
+            kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
+        ])
+        for query in attempts {
+            var item: CFTypeRef?
+            guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
+                  let data = item as? Data else { continue }
+            let text: String
+            if let str = String(data: data, encoding: .utf8) {
+                text = str
+            } else {
+                text = String(data: data, encoding: .ascii) ?? ""
+            }
+            let loginData = text.hasPrefix("{") ? Data(text.utf8) : (hexDecoded(text) ?? Data(text.utf8))
+            if let login = parseLogin(loginData) {
                 return login
             }
         }

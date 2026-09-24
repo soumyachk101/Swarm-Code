@@ -211,6 +211,7 @@ enum GitHubAuth {
                 kSecReturnData as String: true,
                 kSecMatchLimit as String: kSecMatchLimitOne,
                 kSecUseAuthenticationContext as String: context,
+                kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail,
             ]
             var item: CFTypeRef?
             if SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
