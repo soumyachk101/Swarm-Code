@@ -4,9 +4,10 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import {
   applyThemePalette,
-  CUSTOM_THEMES_STORAGE_KEY,
-  invalidateCustomThemes,
   canonicalThemePreference,
+  CUSTOM_THEMES_STORAGE_KEY,
+  emitThemeCssVariables,
+  invalidateCustomThemes,
   isKnownThemePreference,
   getThemePreferenceMode,
   parseThemeHalves,
@@ -351,8 +352,10 @@ function applyTheme(theme: Theme, { suppressTransitions = false, preservePreview
     appearanceMode,
     themeHalves,
   );
-  applyThemePalette(resolveThemeHalf(theme, themeHalves, resolvedAppearance), resolvedAppearance);
+  const resolvedThemeId = resolveThemeHalf(theme, themeHalves, resolvedAppearance);
+  applyThemePalette(resolvedThemeId, resolvedAppearance);
   document.documentElement.classList.toggle("dark", resolvedAppearance === "dark");
+  emitThemeCssVariables(resolvedThemeId, resolvedAppearance ?? "dark");
   lastAppliedTheme = { theme, systemDark, followSystem, appearanceMode, themeHalves };
   syncBrowserChromeTheme();
   syncDesktopTheme(theme, followSystem, appearanceMode);

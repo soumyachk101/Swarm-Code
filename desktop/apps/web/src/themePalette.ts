@@ -1669,3 +1669,128 @@ export function resolveThemeHalf(
 ): ThemePreference {
   return halves?.[appearance] ?? theme;
 }
+
+/**
+ * Liquid Glass CSS custom properties bridge.
+ *
+ * Maps every canonical theme to a set of CSS custom properties on `:root`
+ * and records the active theme on `data-theme`.  The rest of the UI reads
+ * these variables for glass tinting, accent colour, and semantic colours.
+ */
+export function emitThemeCssVariables(themeId: string, mode: "light" | "dark"): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  if (!root?.style) return;
+
+  root.dataset.theme = themeId;
+
+  // Find the theme spec — check both the canonical list and the liquid-glass
+  // spec (which lives outside the array as a named constant).
+  const liquidGlassSpec: CanonicalThemeSpec = {
+    id: "liquid-glass",
+    label: "Liquid Glass",
+    detail: "Swarm Code website signature",
+    appearance: "dark",
+    canvas: "#0b0e14",
+    accent: "#4f9cff",
+    surface: "#131823",
+    category: "website",
+  };
+  const themeSpec = themeId === "liquid-glass"
+    ? liquidGlassSpec
+    : SWARM_CODE_CANONICAL_THEME_SPECS.find((spec) => spec.id === themeId) ?? null;
+
+  if (!themeSpec) {
+    // Unknown theme — clear the glass variables but leave the app-theme ones
+    // alone (they are managed by `applyThemePalette`).
+    for (const key of GLASS_CSS_VARIABLES) root.style.removeProperty(key);
+    return;
+  }
+
+  const canvas = themeSpec.canvas;
+  const accent = themeSpec.accent;
+  const isDark = mode === "dark";
+
+  // Derive surface / tint from theme spec or canvas colour.
+  const surface = themeSpec.surface ?? (isDark ? lighten(canvas, 0.08) : darken(canvas, 0.04));
+
+  // Glass tint: semi-transparent version of the surface colour.
+  // For dark mode: higher opacity (0.45) so glass is readable on dark backgrounds.
+  // For light mode: lower opacity (0.55) so glass is readable on light backgrounds.
+  const glassTint = isDark
+    ? hexToRgba(surface, 0.45)
+    : hexToRgba(surface, 0.55);
+
+  // Glass border: slightly more opaque version of surface for subtle edge definition.
+  const glassBorder = isDark
+    ? hexToRgba(lighten(surface, 0.12), 0.18)
+    : hexToRgba(darken(surface, 0.08), 0.22);
+
+  // Derive readable text colours from canvas contrast.
+  const textPrimary = isDark ? "#e6e9ef" : "#1a1d24";
+  const textSecondary = isDark ? hexToRgba(textPrimary, 0.65) : hexToRgba(textPrimary, 0.55);
+
+  // Accent-derived semantic colours (tinted, not fully saturated).
+  const successColor = "#34d399"; // emerald-400
+  const warningColor = "#fbbf24"; // amber-400
+  const dangerColor = "#f87171";   // red-400
+
+  const vars: Record<string, string> = {
+    "--accent-color": accent,
+    "--glass-tint": glassTint,
+    "--glass-border": glassBorder,
+    "--success-color": successColor,
+    "--warning-color": warningColor,
+    "--danger-color": dangerColor,
+    "--text-primary": textPrimary,
+    "--text-secondary": textSecondary,
+  };
+
+  for (const [key, value] of Object.entries(vars)) {
+    root.style.setProperty(key, value);
+  }
+}
+
+/**
+ * The CSS custom property names managed by `emitThemeCssVariables`.
+ * Used by cleanup logic and tests.
+ */
+const GLASS_CSS_VARIABLES = [
+  "--accent-color",
+  "--glass-tint",
+  "--glass-border",
+  "--success-color",
+  "--warning-color",
+  "--danger-color",
+  "--text-primary",
+  "--text-secondary",
+];
+
+// ── Colour utility helpers ──────────────────────────────────────────────
+
+function hexToRgba(hex: string, alpha: number): string {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return `rgba(128,128,128,${alpha})`;
+  const r = parseInt(result[1]!, 16);
+  const g = parseInt(result[2]!, 16);
+  const b = parseInt(result[3]!, 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function lighten(hex: string, amount: number): string {
+  return adjustChannel(hex, amount);
+}
+
+function darken(hex: string, amount: number): string {
+  return adjustChannel(hex, -amount);
+}
+
+function adjustChannel(hex: string, amount: number): string {
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  if (!result) return hex;
+  const clamp = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+  const r = clamp(parseInt(result[1]!, 16) + amount * 255);
+  const g = clamp(parseInt(result[2]!, 16) + amount * 255);
+  const b = clamp(parseInt(result[3]!, 16) + amount * 255);
+  return `#${r.toString(16).padStart(2,"0")}${g.toString(16).padStart(2,"0")}${b.toString(16).padStart(2,"0")}`;
+}

@@ -2222,3 +2222,9 @@ code {
 .composer-tiptap li[data-checked] > div > p {
   margin: 0;
 }
+
+/* ── Working spinner pulse ──────────────────────────────────────── */
+@keyframes cell-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}

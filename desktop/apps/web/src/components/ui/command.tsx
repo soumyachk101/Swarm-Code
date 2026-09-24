@@ -62,10 +62,15 @@ function CommandDialogPopup({
         <CommandDialogPrimitive.Popup
           className={cn(
             DIALOG_POPUP_CLASS,
-            "pointer-events-auto max-h-105 max-w-xl text-foreground",
+            "pointer-events-auto max-h-105 max-w-xl rounded-2xl overflow-hidden text-foreground",
             className,
           )}
           data-slot="command-dialog-popup"
+          style={{
+            background: "var(--glass-tint)",
+            backdropFilter: "blur(24px) saturate(1.4)",
+            border: "1px solid var(--glass-border)",
+          }}
           {...props}
         >
           {children}
@@ -109,7 +114,7 @@ function CommandInput({
       <AutocompleteInput
         autoFocus
         className={cn(
-          "border-transparent! bg-transparent! shadow-none before:hidden has-focus-visible:ring-0 placeholder:text-placeholder *:data-[slot=autocomplete-input]:ps-9! sm:*:data-[slot=autocomplete-input]:ps-[calc(var(--command-shell-inset)+1.5rem)]!",
+          "border-transparent! bg-transparent! shadow-none before:hidden border-b border-[var(--glass-border)] has-focus-visible:ring-2 has-focus-visible:ring-[var(--accent-color)] has-focus-visible:ring-offset-0 placeholder:text-placeholder *:data-[slot=autocomplete-input]:ps-9! sm:*:data-[slot=autocomplete-input]:ps-[calc(var(--command-shell-inset)+1.5rem)]!",
           className,
         )}
         placeholder={placeholder}
@@ -124,7 +129,8 @@ function CommandInput({
 function CommandList({ className, ...props }: React.ComponentProps<typeof AutocompleteList>) {
   return (
     <AutocompleteList
-      className={cn("not-empty:scroll-py-2 not-empty:p-2", className)}
+      className={cn("not-empty:scroll-py-2 not-empty:p-2 bg-transparent", className)}
+      style={{ background: "transparent" }}
       data-slot="command-list"
       {...props}
     />
@@ -152,7 +158,15 @@ function CommandGroupLabel({
   ...props
 }: React.ComponentProps<typeof AutocompleteGroupLabel>) {
   return (
-    <AutocompleteGroupLabel className={className} data-slot="command-group-label" {...props} />
+    <AutocompleteGroupLabel
+      className={cn(
+        "text-xs font-medium uppercase tracking-wider px-4 py-2",
+        className,
+      )}
+      style={{ color: "var(--text-secondary)" }}
+      data-slot="command-group-label"
+      {...props}
+    />
   );
 }
 
@@ -164,7 +178,7 @@ function CommandItem({ className, ...props }: React.ComponentProps<typeof Autoco
   return (
     <AutocompleteItem
       className={cn(
-        "py-1.5 data-selected:bg-foreground/[0.06] data-highlighted:bg-foreground/[0.09] data-highlighted:text-foreground [&[data-highlighted][data-selected]]:bg-foreground/[0.09] [&[data-highlighted][data-selected]]:text-foreground",
+        "border-b border-[var(--glass-border)]/50 mx-2 rounded-lg hover:bg-[var(--glass-tint)] data-selected:bg-[var(--glass-tint)] data-highlighted:bg-[var(--glass-tint)] [&[data-highlighted][data-selected]]:bg-[var(--glass-tint)]",
         className,
       )}
       data-slot="command-item"
@@ -177,9 +191,14 @@ function CommandShortcut({ className, ...props }: React.ComponentProps<"kbd">) {
   return (
     <kbd
       className={cn(
-        "ms-auto font-medium font-sans text-secondary-label text-xs tracking-widest",
+        "ms-auto rounded px-1.5 py-0.5 text-[10px] font-medium font-sans",
         className,
       )}
+      style={{
+        background: "var(--glass-tint)",
+        border: "1px solid var(--glass-border)",
+        color: "var(--text-secondary)",
+      }}
       data-slot="command-shortcut"
       {...props}
     />

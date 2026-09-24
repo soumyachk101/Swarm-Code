@@ -174,6 +174,29 @@ export const ChatHeader = memo(function ChatHeader({
   }, []);
   const actionsCollapsed = isMobile || isNarrowHeader;
   const [actionsOpen, setActionsOpen] = useState(false);
+  const [scrimVisible, setScrimVisible] = useState(false);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setScrimVisible(!entry.isIntersecting),
+      { rootMargin: "0px 0px -72px 0px", threshold: 0 },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, []);
+  const [scrollProgress, setScrollProgress] = useState(0);
+  useEffect(() => {
+    const handleScroll = () => {
+      const scrollTop = window.scrollY;
+      const docHeight = document.documentElement.scrollHeight - window.innerHeight;
+      setScrollProgress(docHeight > 0 ? Math.min(scrollTop / docHeight, 1) : 0);
+    };
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
   const [actionsContainer] = useState(() => {
     const container = document.createElement("div");
     container.className = "contents";
@@ -397,13 +420,34 @@ export const ChatHeader = memo(function ChatHeader({
   );
   return (
     <div
-      className="@container/header-actions flex min-w-0 flex-1 items-center gap-2 sm:gap-3"
+      className="@container/header-actions relative flex min-w-0 flex-1 items-center gap-2 sm:gap-3"
       onContextMenu={handleHeaderContextMenu}
     >
-      <WorkspaceBreadcrumb
-        ariaLabel="Thread breadcrumb"
-        className="flex-1 overflow-clip [overflow-clip-margin:2px]"
-      >
+      <div
+        ref={sentinelRef}
+        className="absolute top-0 left-0 right-0 h-[1px] pointer-events-none z-50"
+      />
+      <div
+        className="absolute inset-x-0 top-0 h-[72px] pointer-events-none z-40 transition-opacity duration-300"
+        style={{
+          opacity: scrimVisible ? 1 : 0,
+          background: "linear-gradient(to bottom, var(--glass-tint), transparent)",
+          backdropFilter: "blur(16px) saturate(1.2)",
+          WebkitBackdropFilter: "blur(16px) saturate(1.2)",
+        }}
+      />
+      <div className="flex flex-1 flex-col min-w-0">
+        {scrollProgress > 0.5 && (
+          <div className="flex items-center justify-center py-1">
+            <span className="text-xs font-medium text-muted-foreground truncate">
+              {activeThreadTitle}
+            </span>
+          </div>
+        )}
+        <WorkspaceBreadcrumb
+          ariaLabel="Thread breadcrumb"
+          className="flex-1 overflow-clip [overflow-clip-margin:2px]"
+        >
         {/* The project always leads the header: knowing which project a
             thread lives in is priority zero, and the thread title alone
             doesn't answer it. */}
@@ -486,11 +530,12 @@ export const ChatHeader = memo(function ChatHeader({
             </Tooltip>
           )}
         </WorkspaceBreadcrumbItem>
-      </WorkspaceBreadcrumb>
-      <div
-        ref={headerActionsRef}
-        data-chat-header-actions
-        className={cn(
+          </WorkspaceBreadcrumb>
+        </div>
+        <div
+          ref={headerActionsRef}
+          data-chat-header-actions
+          className={cn(
           "flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3",
           // Reserve two panel toggles plus their 4px gaps and 1px edge inset.
           // The page header adds 8px more right padding at sm.
@@ -506,7 +551,14 @@ export const ChatHeader = memo(function ChatHeader({
                 ? undefined
                 : "hidden"
             }
-            render={<Button size="icon-sm" variant="ghost" aria-label="More header actions" />}
+            render={
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="More header actions"
+                className="surface-glass border-border/60 rounded-full"
+              />
+            }
           >
             <EllipsisIcon className="size-4" />
           </MenuTrigger>
