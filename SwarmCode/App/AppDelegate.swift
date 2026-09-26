@@ -6,6 +6,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     var model: AppModel?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Nothing the app fetches is worth keeping on disk (API calls, the MCP proxy's
+        // streams, link titles), and the shared cache wrote a SQLite commit for every
+        // response: a third of the app's disk writes while a team ran. Memory only.
+        URLCache.shared = URLCache(memoryCapacity: 8 * 1024 * 1024, diskCapacity: 0)
         UNUserNotificationCenter.current().delegate = self
         let windows = WindowManager.shared
         model = windows.model

@@ -50,6 +50,10 @@ final class ProviderRegistry {
     @ObservationIgnored private let catalogDatesKey = "providerModelCatalogDates"
     @ObservationIgnored private var catalogFetchedAt: [ProviderKind: Date] = [:]
 
+    /// Providers whose CLI is being updated right now (see `updateCLIIfDue`).
+    private(set) var updatingCLIs: Set<ProviderKind> = []
+    @ObservationIgnored private let cliUpdatesKey = "providerCLIUpdateDates"
+
     /// A list read within this window is served as it is; an older one, or one cached by an
     /// earlier build that stored no date, is read again on the next ask, so a model the
     /// account gained on a new plan appears without hunting for the Refresh button.
@@ -88,6 +92,10 @@ final class ProviderRegistry {
         for option in live {
             if let index = merged.firstIndex(where: { $0.id == option.id }) {
                 var kept = merged[index]
+                // The CLI's own name carries the version ("Opus 5.5"), and recipes pick the
+                // newest family member by it: a seed row named just "Opus" lost to the
+                // older "Opus 5" row. The Default row keeps its short name.
+                if option.id != "default", !option.name.isEmpty, option.name != option.id { kept.name = option.name }
                 if !option.efforts.isEmpty { kept.efforts = option.efforts }
                 if let detail = option.detail, !detail.isEmpty { kept.detail = detail }
                 if option.fastTier != nil { kept.fastTier = option.fastTier }
@@ -457,6 +465,77 @@ final class ProviderRegistry {
             return match
         }
         return list.first(where: \.isDefault) ?? list.first
+    }
+
+    // MARK: - Keeping the CLIs current
+
+    /// Claude Code and Codex update themselves only inside their own interactive
+    /// sessions. Swarm Code runs both headless, so a Mac that uses them only through the
+    /// app stays on the version it was installed with, and a new model then fails
+    /// outright: Opus 5.5 answers Claude Code 2.1.270 with "does not support this model;
+    /// version 2.1.280 or newer is required". The app runs each CLI's own updater instead.
+    private static let cliUpdateInterval: TimeInterval = 12 * 3600
+
+    /// The providers whose CLI carries its own updater (`claude update`, `codex update`).
+    static func updatesOwnCLI(_ provider: ProviderKind) -> Bool {
+        provider == .claude || provider == .codex
+    }
+
+    /// Whether a provider's error says its CLI is too old for what was asked of it.
+    nonisolated static func needsNewerCLI(_ message: String) -> Bool {
+        let text = message.lowercased()
+        return text.contains("or newer is required")
+            || text.contains("requires a newer version")
+            || text.contains("claude update")
+            || text.contains("codex update")
+            || text.contains("upgrade codex")
+            || text.contains("update codex")
+    }
+
+    /// Runs the CLI's own updater when one is due (every 12 hours) or `force`d, and when
+    /// a newer version went in, reads the provider and its catalog again so the models
+    /// that version brings show at once. Returns whether a newer version was installed.
+    /// A binary path the user set by hand is their own build, and is left alone.
+    @discardableResult
+    func updateCLIIfDue(_ provider: ProviderKind, force: Bool = false) async -> Bool {
+        guard Self.updatesOwnCLI(provider), !CaptureRun.isEnabled, settings.binaryPath(for: provider).isEmpty else { return false }
+        // An update already under way is not run twice; a forced one waits for it and
+        // then runs, which is quick when that one already brought the newest version.
+        if updatingCLIs.contains(provider) {
+            guard force else { return false }
+            while updatingCLIs.contains(provider) { try? await Task.sleep(for: .milliseconds(500)) }
+        }
+        var dates = (UserDefaults.standard.dictionary(forKey: cliUpdatesKey) as? [String: Double]) ?? [:]
+        if !force, let last = dates[provider.rawValue],
+           Date.now.timeIntervalSince1970 - last < Self.cliUpdateInterval { return false }
+        await LoginEnvironment.load()
+        guard let executable = executable(for: provider) else { return false }
+        updatingCLIs.insert(provider)
+        defer { updatingCLIs.remove(provider) }
+        let environment = environment(for: provider)
+        let before = await Self.cliVersion(executable, environment: environment)
+        _ = try? await Shell.run(executable, ["update"], in: FileManager.default.temporaryDirectory, environment: environment, timeout: 300)
+        dates[provider.rawValue] = Date.now.timeIntervalSince1970
+        UserDefaults.standard.set(dates, forKey: cliUpdatesKey)
+        let after = await Self.cliVersion(executable, environment: environment)
+        guard let after, after != before else { return false }
+        await refresh(provider)
+        await loadCatalog(provider, force: true)
+        return true
+    }
+
+    /// The version the installed CLI reports, or nil when it cannot be run.
+    func installedCLIVersion(_ provider: ProviderKind) async -> String? {
+        await LoginEnvironment.load()
+        guard let executable = executable(for: provider) else { return nil }
+        return await Self.cliVersion(executable, environment: environment(for: provider))
+    }
+
+    private nonisolated static func cliVersion(_ executable: URL, environment: [String: String]) async -> String? {
+        guard let result = try? await Shell.run(executable, ["--version"], environment: environment, timeout: 30),
+              result.succeeded else { return nil }
+        let version = result.trimmedOutput
+        return version.isEmpty ? nil : version
     }
 
     func loadCatalog(_ provider: ProviderKind, force: Bool = false) async {

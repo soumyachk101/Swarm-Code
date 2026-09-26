@@ -117,6 +117,7 @@ final class AppModel {
     @ObservationIgnored private var runtimes: [UUID: ThreadRuntime] = [:]
     @ObservationIgnored private var idleSessionStops: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var lastLibrarySave: ContinuousClock.Instant?
     /// The repeating merge sweep started at bootstrap. A chat whose automatic merge never
     /// got its moment while the app stayed open (a report batch left half-finished, a
     /// dialog never answered, a turn that ended in a way the trigger skipped) would sit on
@@ -278,6 +279,14 @@ final class AppModel {
         }
         if providers.status(.zai).isInstalled {
             await providers.loadCatalog(.zai)
+        }
+        // The CLIs Swarm Code runs headless never update themselves, and a model newer
+        // than the installed CLI fails outright. Their own updaters run here, in the
+        // background, at most every twelve hours; a newer version reloads its catalog.
+        Task { [providers] in
+            for provider in [ProviderKind.claude, .codex] where providers.status(provider).isInstalled {
+                await providers.updateCLIIfDue(provider)
+            }
         }
         // Last, once nothing the first click needs is waiting on the disk: the attachment
         // files no thread refers to any more go, a day after they were written.
@@ -1397,17 +1406,20 @@ final class AppModel {
     // MARK: - Persistence
 
     func scheduleSave() {
-        guard persistenceEnabled else { return }
-        saveTask?.cancel()
+        guard persistenceEnabled, saveTask == nil else { return }
+        let sinceLast = lastLibrarySave.map { ContinuousClock.now - $0 } ?? .seconds(60)
+        let wait = max(.milliseconds(400), .seconds(4) - sinceLast)
         saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(400))
-            guard !Task.isCancelled else { return }
-            self?.saveLibrary()
+            try? await Task.sleep(for: wait)
+            guard !Task.isCancelled, let self else { return }
+            self.saveTask = nil
+            self.saveLibrary()
         }
     }
 
     private func saveLibrary() {
         guard persistenceEnabled else { return }
+        lastLibrarySave = .now
         var library = Library()
         library.projects = projects
         library.threads = threads

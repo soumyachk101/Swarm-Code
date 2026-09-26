@@ -705,7 +705,7 @@ enum HydraPrompts {
     /// What a lead is told when the setting has Swarm Code land the work: the merge is
     /// the app's, not the lead's, whatever else it has been told about merging, and asking
     /// for one is a job it finishes by replying.
-    private static let autoMergeRule = "Swarm Code handles branches, commits and merge requests after all heads return and you finish. Never run or delegate those operations. For merge/status questions, use only the current [Hydra] note: if merged, give its link; if files remain, say they land when your answer ends; if merging failed or files are outside every project, give the stated reason and required user action. If nothing is pending, promise no merge. Never claim a merge without the note confirming it."
+    private static let autoMergeRule = "Swarm Code handles branches, commits and merge requests after all heads return and you finish. Never run or delegate those operations. For merge/status questions, use only the current [Hydra] note: if merged, give its link; if files remain, say they land when your answer ends; if it says Swarm Code retries by itself, say the work lands by itself and ask nothing; if merging failed or files are outside every project, give the stated reason and required user action. A merge never waits on another chat or session: never say it does, and never ask the user to merge. If nothing is pending, promise no merge. Never claim a merge without the note confirming it."
 
     /// What a lead is told when the setting has it check the heads' work: a quick read of
     /// every file a report names, with the fixes made by the lead itself, so the check
@@ -999,12 +999,16 @@ enum HydraPrompts {
         case .merged:
             return "Merge state: \(merged(last)) \(pending)"
         case .failed:
-            return "Merge state: the last merge failed at \(when(last.at)): \(last.detail ?? "no reason recorded"). The work is still in the checkout and is retried once you finish this answer; if the reason needs the user (a sign-in, a conflict), say exactly that."
-        case .held:
-            guard unmergedFiles > 0 else {
-                return "Merge state: the earlier wait has no recorded files left to merge. Do not claim a new merge or promise another one."
+            if last.retryable == true {
+                return "Merge state: the last try at \(when(last.at)) did not land yet (\(last.detail ?? "no reason recorded")). Swarm Code retries it by itself within a minute; nothing is needed from the user, so do not ask for anything or describe it as a problem. Do not claim a successful merge."
             }
-            return "Merge state: the merge is waiting at \(when(last.at)): \(last.detail ?? "another chat holds this job's files") The work is still in the checkout. Explain the recorded dependency without assuming a completed chat needs more work: active work must finish, while completed jobs merge in order. Hydra retries automatically while this job remains eligible. Do not claim a successful merge."
+            return "Merge state: the last merge failed at \(when(last.at)): \(last.detail ?? "no reason recorded"). The work is still in the checkout and goes out by itself once that is settled; if the reason needs the user (a sign-in, conflict markers, a real conflict with the remote), say exactly that."
+        case .held:
+            // Written only by earlier versions: a merge never waits on another chat now.
+            guard unmergedFiles > 0 else {
+                return "Merge state: nothing from this job is left to merge. Do not claim a new merge or promise another one."
+            }
+            return "Merge state: \(pendingLine("\(files(unmergedFiles)) from this job"))"
         case .settled:
             return "Merge state: at \(when(last.at)), Hydra found no recorded files left to merge. \(pending) Do not describe this as a new merge."
         case .stray:

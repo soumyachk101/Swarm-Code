@@ -80,34 +80,126 @@ enum SimpleDiff {
     /// encoded with every save. The same cap bounds command diffs (`ThreadRuntime.fileEdits`).
     static let diffLimit = 200_000
 
-    /// A compact unified hunk between two texts, trimming the unchanged head and tail.
+    /// Unchanged lines kept on each side of a change; hunks closer than twice that merge.
+    private static let contextLines = 3
+
+    /// A compact unified diff between two texts, one hunk per run of changes with context.
     static func unified(old: String, new: String) -> FileEdit.Stats {
         let oldLines = old.isEmpty ? [] : old.components(separatedBy: "\n")
         let newLines = new.isEmpty ? [] : new.components(separatedBy: "\n")
-        var prefix = 0
-        while prefix < oldLines.count, prefix < newLines.count, oldLines[prefix] == newLines[prefix] {
-            prefix += 1
-        }
-        var suffix = 0
-        while suffix < oldLines.count - prefix, suffix < newLines.count - prefix,
-              oldLines[oldLines.count - 1 - suffix] == newLines[newLines.count - 1 - suffix] {
-            suffix += 1
-        }
-        let removed = oldLines[prefix..<(oldLines.count - suffix)]
-        let added = newLines[prefix..<(newLines.count - suffix)]
-        let leading = oldLines[max(0, prefix - 3)..<prefix]
-        let trailingEnd = min(oldLines.count, oldLines.count - suffix + 3)
-        let trailing = oldLines[(oldLines.count - suffix)..<trailingEnd]
+
         guard old.utf8.count + new.utf8.count <= diffLimit else {
-            return FileEdit.Stats(diff: nil, additions: added.count, deletions: removed.count)
+            // Too large for an exact diff, so count by the unchanged head and tail instead.
+            var prefix = 0
+            while prefix < oldLines.count, prefix < newLines.count, oldLines[prefix] == newLines[prefix] {
+                prefix += 1
+            }
+            var suffix = 0
+            while suffix < oldLines.count - prefix, suffix < newLines.count - prefix,
+                  oldLines[oldLines.count - 1 - suffix] == newLines[newLines.count - 1 - suffix] {
+                suffix += 1
+            }
+            return FileEdit.Stats(diff: nil, additions: newLines.count - prefix - suffix, deletions: oldLines.count - prefix - suffix)
         }
-        let oldStart = prefix - leading.count + 1
-        var lines = ["@@ -\(oldStart),\(leading.count + removed.count + trailing.count) +\(oldStart),\(leading.count + added.count + trailing.count) @@"]
-        lines += leading.map { " " + $0 }
-        lines += removed.map { "-" + $0 }
-        lines += added.map { "+" + $0 }
-        lines += trailing.map { " " + $0 }
-        return FileEdit.Stats(diff: lines.joined(separator: "\n"), additions: added.count, deletions: removed.count)
+
+        var removed = Set<Int>()
+        var inserted = Set<Int>()
+        for change in newLines.difference(from: oldLines) {
+            switch change {
+            case .remove(let offset, _, _): removed.insert(offset)
+            case .insert(let offset, _, _): inserted.insert(offset)
+            }
+        }
+        guard !removed.isEmpty || !inserted.isEmpty else {
+            return FileEdit.Stats(diff: nil, additions: 0, deletions: 0)
+        }
+
+        // Walk both texts together, emitting the merged line stream a unified diff is cut from.
+        var ops: [DiffOp] = []
+        ops.reserveCapacity(oldLines.count + newLines.count)
+        var i = 0
+        var j = 0
+        while i < oldLines.count || j < newLines.count {
+            if i < oldLines.count, removed.contains(i) {
+                ops.append(.deletion(text: oldLines[i], old: i + 1))
+                i += 1
+            } else if j < newLines.count, inserted.contains(j) {
+                ops.append(.addition(text: newLines[j], new: j + 1))
+                j += 1
+            } else if i < oldLines.count, j < newLines.count {
+                ops.append(.context(text: oldLines[i], old: i + 1, new: j + 1))
+                i += 1
+                j += 1
+            } else {
+                break
+            }
+        }
+
+        let changes = ops.indices.filter { ops[$0].isChange }
+        var hunks: [String] = []
+        var groupStart = changes[0]
+        var groupEnd = changes[0]
+        func appendHunk() {
+            let start = max(0, groupStart - contextLines)
+            let end = min(ops.count - 1, groupEnd + contextLines)
+            let slice = ops[start...end]
+            let oldStart = slice.compactMap(\.oldNumber).first ?? 0
+            let newStart = slice.compactMap(\.newNumber).first ?? 0
+            let oldCount = slice.count { $0.oldNumber != nil }
+            let newCount = slice.count { $0.newNumber != nil }
+            var lines = ["@@ -\(oldStart),\(oldCount) +\(newStart),\(newCount) @@"]
+            lines += slice.map(\.line)
+            hunks.append(lines.joined(separator: "\n"))
+        }
+        for change in changes.dropFirst() {
+            if change - groupEnd <= 2 * contextLines + 1 {
+                groupEnd = change
+            } else {
+                appendHunk()
+                groupStart = change
+                groupEnd = change
+            }
+        }
+        appendHunk()
+        return FileEdit.Stats(diff: hunks.joined(separator: "\n"), additions: inserted.count, deletions: removed.count)
+    }
+}
+
+/// One line of the merged stream a unified diff is assembled from, numbered from one.
+private enum DiffOp {
+    case context(text: String, old: Int, new: Int)
+    case deletion(text: String, old: Int)
+    case addition(text: String, new: Int)
+
+    var oldNumber: Int? {
+        switch self {
+        case .context(_, let old, _): old
+        case .deletion(_, let old): old
+        case .addition: nil
+        }
+    }
+
+    var newNumber: Int? {
+        switch self {
+        case .context(_, _, let new): new
+        case .addition(_, let new): new
+        case .deletion: nil
+        }
+    }
+
+    var isChange: Bool {
+        switch self {
+        case .context: false
+        case .deletion, .addition: true
+        }
+    }
+
+    var line: String {
+        switch self {
+        case .context(let text, _, _): " " + text
+        case .deletion(let text, _): "-" + text
+        case .addition(let text, _): "+" + text
+        }
     }
 }
 
@@ -126,4 +218,5 @@ extension FileEdit {
 
 extension String {
     var nilIfEmpty: String? { isEmpty ? nil : self }
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }

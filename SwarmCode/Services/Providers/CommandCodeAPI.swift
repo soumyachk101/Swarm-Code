@@ -288,7 +288,7 @@ enum CommandCodeAPI {
         let lowHighMax = ["low", "high", "max"]
         let table: [String: [String]] = [
             "claude-sonnet-5": full, "claude-sonnet-4-6": full, "claude-fable-5-1": full, "claude-fable-5": full,
-            "claude-opus-5": full, "claude-opus-4-8": full, "claude-opus-4-7": full,
+            "claude-opus-5-5": full, "claude-opus-5": full, "claude-opus-4-8": full, "claude-opus-4-7": full,
             "gpt-6-astra": full, "gpt-5.6-sol": full, "gpt-5.6-terra": full, "gpt-5.6-luna": full,
             "gpt-5.5": toXHigh, "gpt-5.4": toXHigh, "gpt-5.3-codex": toXHigh, "gpt-5.4-mini": toHigh,
             "deepseek/deepseek-v4-pro": highMax, "deepseek/deepseek-v4-flash": highMax,
@@ -314,7 +314,7 @@ enum CommandCodeAPI {
         guard let id else { return nil }
         let table: [String: Int] = [
             "claude-sonnet-5": 1_000_000, "claude-sonnet-4-6": 1_000_000, "claude-fable-5-1": 1_000_000, "claude-fable-5": 1_000_000,
-            "claude-opus-5": 1_000_000, "claude-opus-4-8": 1_000_000, "claude-opus-4-7": 1_000_000, "claude-haiku-4-5": 200_000,
+            "claude-opus-5-5": 1_000_000, "claude-opus-5": 1_000_000, "claude-opus-4-8": 1_000_000, "claude-opus-4-7": 1_000_000, "claude-haiku-4-5": 200_000,
             "claude-haiku-4-5-20251001": 200_000,
             "gpt-6-astra": 1_050_000, "gpt-5.6-sol": 1_050_000, "gpt-5.6-terra": 1_050_000, "gpt-5.6-luna": 1_050_000,
             "gpt-5.5": 400_000, "gpt-5.4": 400_000, "gpt-5.3-codex": 400_000, "gpt-5.4-mini": 400_000,
@@ -349,9 +349,11 @@ enum CommandCodeAPI {
     static let seed: [ModelOption] = [
         ModelOption(id: "claude-sonnet-5", name: "Claude Sonnet 5", detail: "Anthropic · best combo of speed & intelligence", efforts: efforts(for: "claude-sonnet-5"), isDefault: true),
         ModelOption(id: "claude-fable-5-1", name: "Claude Fable 5.1", detail: "Anthropic · most capable for demanding reasoning & long-horizon agents", efforts: efforts(for: "claude-fable-5-1")),
+        ModelOption(id: "claude-opus-5-5", name: "Claude Opus 5.5", detail: "Anthropic · the newest Opus, for everyday complex work and coding", efforts: efforts(for: "claude-opus-5-5")),
         ModelOption(id: "claude-opus-5", name: "Claude Opus 5", detail: "Anthropic · most intelligent Opus for agents and coding", efforts: efforts(for: "claude-opus-5")),
         ModelOption(id: "gpt-6-astra", name: "GPT-6 Astra", detail: "OpenAI · most capable OpenAI model for demanding reasoning & agents", efforts: efforts(for: "gpt-6-astra")),
         ModelOption(id: "gpt-5.6-sol", name: "GPT-5.6 Sol", detail: "OpenAI · latest frontier model for general complex work", efforts: efforts(for: "gpt-5.6-sol")),
+        ModelOption(id: "gpt-5.6-luna", name: "GPT-5.6 Luna", detail: "OpenAI · fast and efficient model", efforts: efforts(for: "gpt-5.6-luna")),
         ModelOption(id: "google/gemini-3.8-flash", name: "Gemini 3.8 Flash", detail: "Google · newest Gemini Flash, improved core reasoning", efforts: efforts(for: "google/gemini-3.8-flash")),
         ModelOption(id: "deepseek/deepseek-v4-flash", name: "DeepSeek V4 Flash", detail: "Open Source · fast hybrid-attention reasoning", efforts: efforts(for: "deepseek/deepseek-v4-flash")),
         ModelOption(id: "moonshotai/kimi-k3", name: "Kimi K3", detail: "Open Source · long-horizon coding & knowledge work with 1M context", efforts: efforts(for: "moonshotai/kimi-k3")),

@@ -142,6 +142,8 @@ final class CodexSession: ProviderSession {
         if let effort { params["effort"] = .string(effort) }
         if let tier = input.serviceTier { params["serviceTierForTurn"] = .string(tier) }
         if let model = input.model ?? activeModel {
+            // A turn can switch the thread's model; the spend it reports is this turn's model's.
+            activeModel = model
             params["model"] = .string(model)
             params["collaborationMode"] = [
                 "mode": input.interactionMode == .plan ? "plan" : "default",
@@ -330,7 +332,8 @@ final class CodexSession: ProviderSession {
     }
 
     func stopAgent(_ id: String) async -> Bool {
-        guard let connection, headThreads.contains(id), let turnID = headTurns[id] else { return false }
+        guard let connection, let threadID, id != threadID,
+              headThreads.contains(id), let turnID = headTurns[id] else { return false }
         return (try? await connection.request("turn/interrupt", [
             "threadId": .string(id),
             "turnId": .string(turnID),
@@ -659,7 +662,8 @@ final class CodexSession: ProviderSession {
 
     /// A thread the server started: a head, when the lead's thread is its parent.
     private func headStarted(_ thread: JSONValue) {
-        guard let id = thread["id"]?.string, let threadID, !headThreads.contains(id) else { return }
+        guard let id = thread["id"]?.string, let threadID,
+              id != threadID, !headThreads.contains(id) else { return }
         guard thread["parentThreadId"]?.string == threadID else {
             // Another thread on the same server, unless it is a spawned agent whose parent
             // the server names otherwise (a resumed lead whose id rotated): a thread with
@@ -735,6 +739,7 @@ final class CodexSession: ProviderSession {
     /// sub-agent activity items bracket a head's life too, so a head whose own thread
     /// stays quiet still ends.
     private func describeHeads(from item: JSONValue) {
+        guard let threadID else { return }
         switch item["type"]?.string {
         case "collabAgentToolCall":
             // A spawn names the heads it reached; the brief is the best task line when it
@@ -751,11 +756,13 @@ final class CodexSession: ProviderSession {
             }
             let prompt = item["prompt"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             for receiver in (item["receiverThreadIds"]?.array ?? []).compactMap(\.string) {
+                guard receiver != threadID else { continue }
                 if !headThreads.contains(receiver) { headThreads.insert(receiver) }
                 onEvent?(.agentStarted(AgentSpawn(id: receiver, taskID: nil, toolUseID: item["id"]?.string, description: prompt.isEmpty ? "Head" : TextCleanup.singleLine(prompt, limit: 80), prompt: prompt.nilIfEmpty, model: item["model"]?.string, profile: routed)))
             }
         case "subAgentActivity":
-            guard let agentThread = item["agentThreadId"]?.string else { return }
+            guard let agentThread = item["agentThreadId"]?.string,
+                  agentThread != threadID else { return }
             if !headThreads.contains(agentThread) {
                 // A head the app-server announced only through the lead's activity note:
                 // no `thread/started` naming the lead as parent and no receiver id on the

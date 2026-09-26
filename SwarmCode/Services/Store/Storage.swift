@@ -341,6 +341,12 @@ final class DiskWriter: Sendable {
     /// by the next one for the same file, so a backlog never encodes and writes documents
     /// that are already stale when their turn comes.
     private let pending = Mutex<[URL: any Encodable & Sendable]>([:])
+    /// The size of the last write per file, so a caller can space its saves by it.
+    private let sizes = Mutex<[URL: Int]>([:])
+
+    func lastWrittenSize(of url: URL) -> Int? {
+        sizes.withLock { $0[url] }
+    }
 
     func encodeAndWrite<Value: Encodable & Sendable>(_ value: Value, to url: URL) {
         let queued = pending.withLock { pending in
@@ -351,13 +357,15 @@ final class DiskWriter: Sendable {
         guard !queued else { return }
         queue.async { [self] in
             guard let value = pending.withLock({ $0.removeValue(forKey: url) }) else { return }
-            Self.write(value, to: url)
+            if let size = Self.write(value, to: url) { sizes.withLock { $0[url] = size } }
         }
     }
 
     func writeSynchronously<Value: Encodable & Sendable>(_ value: Value, to url: URL) {
         pending.withLock { $0[url] = nil }
-        queue.sync { Self.write(value, to: url) }
+        queue.sync {
+            if let size = Self.write(value, to: url) { sizes.withLock { $0[url] = size } }
+        }
     }
 
     func removeSynchronously(_ url: URL) {
@@ -367,6 +375,9 @@ final class DiskWriter: Sendable {
     func removeSynchronously(_ urls: [URL]) {
         pending.withLock { pending in
             for url in urls { pending[url] = nil }
+        }
+        sizes.withLock { sizes in
+            for url in urls { sizes[url] = nil }
         }
         queue.sync {
             for url in urls { try? FileManager.default.removeItem(at: url) }
@@ -378,12 +389,15 @@ final class DiskWriter: Sendable {
         queue.sync {}
     }
 
-    private static func write(_ value: any Encodable, to url: URL) {
-        guard let data = try? JSONEncoder.storage.encode(value) else { return }
+    @discardableResult
+    private static func write(_ value: any Encodable, to url: URL) -> Int? {
+        guard let data = try? JSONEncoder.storage.encode(value) else { return nil }
         do {
             try data.write(to: url, options: .atomic)
+            return data.count
         } catch {
             NSLog("Swarm Code could not save %@: %@", url.lastPathComponent, error.localizedDescription)
+            return nil
         }
     }
 }

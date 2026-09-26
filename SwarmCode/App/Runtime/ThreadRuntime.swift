@@ -308,6 +308,11 @@ final class ThreadRuntime {
     @ObservationIgnored private var headReportsNext = false
     /// The team's finished work is on its way to the remote (see `AppModel.autoMergeHydraWork`).
     var isHydraMerging = false
+    /// This chat's finished work is waiting for another chat's merge to finish, and goes
+    /// right after it (see `AppModel.autoMergeHydraWork`).
+    var isHydraMergeQueued = false
+    /// A quiet retry of a merge that failed in a way that clears by itself is scheduled.
+    var hasHydraMergeRetryPending = false
     /// What the merge is doing right now, in words, for the timeline: gathering the
     /// team's files, writing the commit, pushing, opening the merge request, merging.
     var hydraMergeStage: String?
@@ -463,6 +468,10 @@ final class ThreadRuntime {
     @ObservationIgnored private var closingTurnID: UUID?
     /// The pair whose heads-provider fallback was already noted in this timeline.
     @ObservationIgnored private var hydraFallbackNoted: UUID?
+    /// The CLI version a message was last sent again at after the CLI said it was too old
+    /// for the model, per provider: one resend per version, so a CLI that is still too old
+    /// after its update says so rather than trying again forever.
+    @ObservationIgnored private var cliResendVersions: [ProviderKind: String] = [:]
     /// The turn a new row is filed under.
     private var turnIDForNewRows: UUID? { currentTurnID ?? closingTurnID }
     /// The provider's latest diff and resume anchor for the running turn. Codex re-sends its
@@ -1345,6 +1354,7 @@ final class ThreadRuntime {
             if let command { app.providers.recordCommand(command.name, for: thread.provider) }
         } catch {
             guard currentTurnID == turn.id else { return }
+            if finishTurnUpdatingCLI(error.localizedDescription, status: .failed, turnID: turn.id) { return }
             appendNotice(.error, error.localizedDescription)
             await finishTurn(status: .failed, turnID: turn.id)
         }
@@ -2173,8 +2183,9 @@ final class ThreadRuntime {
             if currentTurnID != nil { currentProviderAnchor = anchor }
         case .turnCompleted(let status, let error):
             flushDeltas()
-            if let error { appendNotice(.error, error) }
             let turnID = currentTurnID
+            if let error, finishTurnUpdatingCLI(error, status: status, turnID: turnID) { break }
+            if let error { appendNotice(.error, error) }
             Task { await finishTurn(status: status, turnID: turnID) }
         case .exited(let error):
             flushDeltas()
@@ -2189,8 +2200,9 @@ final class ThreadRuntime {
             stopNativeHeads()
             if currentTurnID != nil {
                 let name = thread?.provider.displayName ?? "The agent"
-                appendNotice(.error, error ?? "\(name) stopped unexpectedly.")
                 let turnID = currentTurnID
+                if let error, finishTurnUpdatingCLI(error, status: .failed, turnID: turnID) { break }
+                appendNotice(.error, error ?? "\(name) stopped unexpectedly.")
                 Task { await finishTurn(status: .failed, turnID: turnID) }
             }
         case .agentStarted(let spawn):
@@ -2214,6 +2226,46 @@ final class ThreadRuntime {
             }
         case .agentFinished(let agentID, let status, let summary):
             hydraAgentFinished(agentID, status: status, summary: summary)
+        }
+    }
+
+    /// A model newer than the installed CLI fails with the CLI's own "version X or newer
+    /// is required". That is not left to the user: the turn ends, the CLI runs its own
+    /// updater, and the message goes out again on the new version. Returns whether the
+    /// error was taken that way; the caller then neither posts it nor ends the turn.
+    private func finishTurnUpdatingCLI(_ error: String, status: TurnStatus, turnID: UUID?) -> Bool {
+        guard let turnID, let provider = thread?.provider, ProviderRegistry.updatesOwnCLI(provider),
+              ProviderRegistry.needsNewerCLI(error) else { return false }
+        // Part of the turn, so the resend's rewind takes it away with the failed attempt.
+        appendNotice(.info, "This model needs a newer \(provider.displayName). Updating it, then sending your message again.")
+        Task { [weak self] in
+            guard let self else { return }
+            await finishTurn(status: status, turnID: turnID)
+            await resendAfterCLIUpdate(turnID, provider: provider, error: error)
+        }
+        return true
+    }
+
+    private func resendAfterCLIUpdate(_ turnID: UUID, provider: ProviderKind, error: String) async {
+        guard let app else { return }
+        let command = provider == .claude ? "claude update" : "codex update"
+        await app.providers.updateCLIIfDue(provider, force: true)
+        guard let version = await app.providers.installedCLIVersion(provider), cliResendVersions[provider] != version else {
+            appendNotice(.error, "\(error)\n\nSwarm Code could not bring \(provider.displayName) up to date. Run `\(command)` in Terminal, then send the message again.")
+            return
+        }
+        cliResendVersions[provider] = version
+        // The session still runs the binary that refused: the next one starts the new one.
+        releaseSession(stop: true)
+        guard phase == .idle, let turn = turns.first(where: { $0.id == turnID }), let itemID = turn.userItemID,
+              let entry = entryIndex[itemID], case .user(let message) = entry.item.content, !message.isFromHydra else {
+            appendNotice(.error, "\(error)\n\n\(provider.displayName) is up to date now (\(version)). Send the message again.")
+            return
+        }
+        do {
+            try await resend(turnID, text: message.text, attachments: message.attachments, restoreFiles: false)
+        } catch {
+            appendNotice(.error, "\(provider.displayName) is up to date now (\(version)), but the message could not be sent again: \(error.localizedDescription) Send it again.")
         }
     }
 
@@ -3630,10 +3682,14 @@ final class ThreadRuntime {
         // A running turn fires this after nearly every event it streams, and every save
         // rewrites the whole thread file, which runs to megabytes. While the turn runs its
         // events share one save every few seconds: the timer already running writes
-        // whatever the thread holds by then, and `finishTurn` saves what is left.
+        // whatever the thread holds by then, and `finishTurn` saves what is left. A long
+        // thread waits longer, so no chat rewrites more than about 250 KB a second however
+        // big it grows: five seconds up to a megabyte, twenty for five megabytes and more.
         guard saveTask == nil else { return }
+        let bytes = DiskWriter.shared.lastWrittenSize(of: Storage.threadURL(threadID)) ?? 0
+        let seconds = min(20, max(5, Double(bytes) / 250_000))
         saveTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
             self?.saveNow()
         }

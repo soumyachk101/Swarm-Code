@@ -254,6 +254,8 @@ struct TurnSummary: Codable, Hashable, Sendable {
 
 /// One outcome of the Hydra auto-merge for this thread, kept so the lead can be told the true merge state at the front of its next message.
 struct HydraMergeRecord: Codable, Hashable, Sendable {
+    /// `held` is no longer written: a merge never waits on another chat's files now. It
+    /// stays so records written by earlier versions still decode.
     enum Outcome: String, Codable, Sendable { case merged, failed, stray, held, settled }
     var at: Date
     var outcome: Outcome
@@ -262,6 +264,9 @@ struct HydraMergeRecord: Codable, Hashable, Sendable {
     var url: URL?
     var files: Int
     var detail: String?
+    /// A failure that clears by itself and is retried quietly (the forge still checking,
+    /// a remote that moved); nil on the ones that need the user.
+    var retryable: Bool? = nil
 }
 
 struct TurnRecord: Codable, Identifiable, Hashable, Sendable {

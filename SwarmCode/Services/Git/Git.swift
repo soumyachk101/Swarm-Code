@@ -190,10 +190,31 @@ struct Git: Sendable {
             if let target { arguments += ["--base", target] }
             result = try await Shell.run(tool: "tea", arguments, in: directory, timeout: 300)
         }
+        if !result.succeeded, let existing = Self.existingRequestURL(in: result, web: await remoteWebURL()) {
+            return existing
+        }
         try Self.check(result)
         let text = result.output + "\n" + result.errorOutput
         let match = text.firstMatch(of: #/https://\S+/#)
         return match.flatMap { URL(string: String($0.output)) }
+    }
+
+    /// The open request a forge names when creating another for the same branch fails:
+    /// GitHub and Gitea print its address, GitLab names it as `!<number>`. A retried
+    /// merge then carries on with that request rather than failing on it.
+    static func existingRequestURL(in result: ShellResult, web: URL?) -> URL? {
+        let text = result.output + "\n" + result.errorOutput
+        guard text.lowercased().contains("already exist") else { return nil }
+        if let match = text.firstMatch(of: #/https://\S+/#), let url = URL(string: String(match.output)) {
+            return url
+        }
+        guard let match = text.firstMatch(of: #/!(\d+)/#), var web else { return nil }
+        if web.user != nil, var components = URLComponents(url: web, resolvingAgainstBaseURL: false) {
+            components.user = nil
+            components.password = nil
+            if let stripped = components.url { web = stripped }
+        }
+        return web.appending(path: "-/merge_requests/\(match.1)")
     }
 
     /// Which forge the origin remote is on, by its host: GitLab and GitHub by name, and
@@ -256,6 +277,87 @@ struct Git: Sendable {
         return tree.trimmedOutput
     }
 
+    /// The team's `paths` on top of `base`, a commit the checkout's `head` is an ancestor
+    /// of: what the work amounts to on the remote as it is now. A checkout that has fallen
+    /// behind otherwise sends a merge request built on its old HEAD, and every file the
+    /// remote changed since then conflicts on the forge, which is how one finished job
+    /// opened a conflicted merge request every five minutes. A file `base` changed since
+    /// `head` too is merged three ways with git's own `merge-file` (head's version, the
+    /// base's, the working tree's). Nil when any such file conflicts, is changed on one
+    /// side and deleted on the other, or was added on both sides differently; `merged`
+    /// holds every three-way result, for the checkout to take once the work has landed.
+    func captureTree(paths: [String], onto base: String, from head: String) async throws -> (tree: String, merged: [String: Data])? {
+        let fileManager = FileManager.default
+        let scratch = fileManager.temporaryDirectory.appendingPathComponent("swarm-code-rebase-\(UUID().uuidString)", isDirectory: true)
+        try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: scratch) }
+        let environment = ["GIT_INDEX_FILE": scratch.appendingPathComponent("index").path]
+        try Self.check(await run(["read-tree", base], environment: environment))
+
+        // Renames as a delete and an add, so a file the remote moved away counts as changed.
+        let upstream = Set(try await output(["diff", "--name-only", "--no-renames", "-z", head, base]).split(separator: "\0").map(String.init))
+        let clean = paths.filter { !upstream.contains($0) }
+        let contested = paths.filter { upstream.contains($0) }
+        if !clean.isEmpty {
+            try Self.check(await run(["add", "-A", "--ignore-errors", "--pathspec-from-file=-", "--pathspec-file-nul"], environment: environment, input: Self.nulSeparated(clean), timeout: 300))
+        }
+
+        var merged: [String: Data] = [:]
+        for path in contested {
+            let ancestor = await blobData(head, path)
+            let remote = await blobData(base, path)
+            let working = try? Data(contentsOf: directory.appendingPathComponent(path))
+            switch (remote, working) {
+            case (nil, nil):
+                // Gone on both sides: the base already has it the way the team left it.
+                continue
+            case (let remote?, nil):
+                // The team deleted it: fine only while the remote left it as head had it.
+                guard remote == ancestor else { return nil }
+                try Self.check(await run(["rm", "--cached", "--quiet", "--ignore-unmatch", "--", path], environment: environment))
+            case (nil, _?):
+                // The remote deleted a file the team kept or changed.
+                return nil
+            case (let remote?, let working?):
+                guard remote != working else { continue }
+                // Added on both sides with different contents: nothing to merge from.
+                guard let ancestor else { return nil }
+                let current = scratch.appendingPathComponent("current")
+                let common = scratch.appendingPathComponent("common")
+                let other = scratch.appendingPathComponent("other")
+                try working.write(to: current)
+                try ancestor.write(to: common)
+                try remote.write(to: other)
+                // Exit 0 is a clean merge written into `current`; above 0 counts conflicts.
+                let result = try await run(["merge-file", "--quiet", "--", current.path, common.path, other.path])
+                guard result.succeeded else { return nil }
+                let content = try Data(contentsOf: current)
+                let blob = try await run(["hash-object", "-w", "--stdin"], input: content)
+                try Self.check(blob)
+                let mode = await fileMode(base, path) ?? "100644"
+                try Self.check(await run(["update-index", "--add", "--cacheinfo", "\(mode),\(blob.trimmedOutput),\(path)"], environment: environment))
+                merged[path] = content
+            }
+        }
+        let tree = try await run(["write-tree"], environment: environment)
+        try Self.check(tree)
+        return (tree.trimmedOutput, merged)
+    }
+
+    /// A file's bytes at a commit, or nil where the commit has no such file.
+    private func blobData(_ commit: String, _ path: String) async -> Data? {
+        guard let result = try? await run(["cat-file", "blob", "\(commit):\(path)"]), result.succeeded else { return nil }
+        return result.stdout
+    }
+
+    /// A file's mode at a commit ("100644", "100755"), or nil where it has none.
+    private func fileMode(_ commit: String, _ path: String) async -> String? {
+        guard let listing = try? await output(["ls-tree", "-z", commit, "--", path]),
+              let entry = listing.split(separator: "\0").first,
+              let mode = entry.split(separator: " ").first else { return nil }
+        return String(mode)
+    }
+
     func treeHash(of ref: String) async throws -> String {
         try await output(["rev-parse", "\(ref)^{tree}"]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
@@ -282,8 +384,11 @@ struct Git: Sendable {
         try Self.check(await run(["update-ref", ref, commit, old ?? ""]))
     }
 
-    func pushBranch(_ name: String) async throws {
-        try Self.check(await run(["push", "-u", "origin", "refs/heads/\(name):refs/heads/\(name)"], timeout: 300))
+    /// Pushes a branch. `force` is for a branch Swarm Code owns outright (a Hydra job's),
+    /// which a retry rebuilds on a newer base, so its open merge request follows along
+    /// instead of a second one being opened.
+    func pushBranch(_ name: String, force: Bool = false) async throws {
+        try Self.check(await run(["push", "-u"] + (force ? ["--force"] : []) + ["origin", "refs/heads/\(name):refs/heads/\(name)"], timeout: 300))
     }
 
     func fetch() async throws {

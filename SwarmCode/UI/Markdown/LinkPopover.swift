@@ -86,7 +86,7 @@ private struct LinkPopoverContent: View {
                 PopoverDivider()
             }
             PopoverItem("Open Link", symbol: "safari") {
-                NSWorkspace.shared.open(url)
+                MarkdownLinkOpener.open(url)
             }
             PopoverItem("Copy Link", symbol: "link") {
                 NSPasteboard.general.clearContents()

@@ -621,6 +621,12 @@ enum RichLink {
     }
 
     @MainActor
+    static func containsLinks(in source: String, streaming: Bool = false) -> Bool {
+        let pretty = prettyAttributed(source, streaming: streaming)
+        return pretty.runs.contains { $0.link != nil }
+    }
+
+    @MainActor
     static func linkHosts(for source: String, streaming: Bool = false) -> [String] {
         let pretty = prettyAttributed(source, streaming: streaming)
         var hosts: [String] = []
@@ -727,11 +733,6 @@ enum RichLink {
     static func compactFallback(_ absolute: String) -> String {
         guard absolute.count > 40 else { return absolute }
         return String(absolute.prefix(19)) + "…" + String(absolute.suffix(18))
-    }
-
-    @MainActor
-    static func containsLinks(in source: String, streaming: Bool = false) -> Bool {
-        prettyAttributed(source, streaming: streaming).runs.contains { $0.link != nil }
     }
 
     static func isBareDisplay(_ display: String, url: URL) -> Bool {
@@ -1127,9 +1128,8 @@ struct InlineText: View {
         // faviconRevision read so loaded favicons rebuild the text.
         let _ = faviconRevision
         let scaled = (pointSize * zoom * 2).rounded() / 2
-        // Hosts key the favicon work, so a streamed token with no new link costs nothing.
-        let hosts = RichLink.linkHosts(for: source, streaming: streaming)
-        let hasLinkText = hasLinks ?? !hosts.isEmpty
+        // Local file links have no host, but still need the native link opener.
+        let hasLinkText = hasLinks ?? RichLink.containsLinks(in: source, streaming: streaming)
         if hasLinkText {
             // An AppKit view has no text baseline of its own, so a list's marker sat on the
             // paragraph's top edge and the text started a line below it. The first line's

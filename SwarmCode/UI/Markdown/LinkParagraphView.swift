@@ -89,11 +89,11 @@ struct LinkParagraphView: NSViewRepresentable {
         var lastHeads: [String: URL] = [:]
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             if let url = link as? URL {
-                NSWorkspace.shared.open(url)
+                MarkdownLinkOpener.open(url)
                 return true
             }
             if let string = link as? String, let url = URL(string: string) {
-                NSWorkspace.shared.open(url)
+                MarkdownLinkOpener.open(url)
                 return true
             }
             return false
@@ -241,6 +241,27 @@ struct LinkParagraphView: NSViewRepresentable {
             runStart = i
         }
         flush(from: runStart, to: string.endIndex)
+    }
+}
+
+enum MarkdownLinkOpener {
+    static func open(_ url: URL) {
+        guard url.scheme == nil, url.host == nil, url.query == nil, url.fragment == nil,
+              url.path.hasPrefix("/") else {
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        var path = url.path
+        if !FileManager.default.fileExists(atPath: path),
+           let colon = path.lastIndex(of: ":"),
+           let line = Int(path[path.index(after: colon)...]), line > 0 {
+            let filePath = String(path[..<colon])
+            var isDirectory: ObjCBool = false
+            if FileManager.default.fileExists(atPath: filePath, isDirectory: &isDirectory),
+               !isDirectory.boolValue { path = filePath }
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 }
 

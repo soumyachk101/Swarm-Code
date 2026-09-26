@@ -977,13 +977,19 @@ extension AnyTransition {
 // MARK: - Cards
 
 struct ChromeCard<Content: View>: View {
+    /// Use lazy only for cards that list a long, uniform, growing collection.
+    /// Variable-height rows at the visible bottom edge can rebuild without end.
+    var lazy = false
     @ViewBuilder var content: Content
 
     var body: some View {
-        // Rows are built as they scroll into view, and the card is a filled shape rather than a
-        // clip, so a long page costs neither every row up front nor a mask per card while scrolling.
-        LazyVStack(alignment: .leading, spacing: 0) {
-            content
+        // The card uses a filled shape instead of a clip, avoiding a mask while scrolling.
+        Group {
+            if lazy {
+                LazyVStack(alignment: .leading, spacing: 0) { content }
+            } else {
+                VStack(alignment: .leading, spacing: 0) { content }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(

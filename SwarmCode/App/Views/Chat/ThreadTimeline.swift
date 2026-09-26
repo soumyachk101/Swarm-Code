@@ -359,7 +359,11 @@ struct ThreadTimeline: View, Equatable {
                         if isVisible { loadEarlier() }
                     }
                 }
-                LazyVStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
+                // Eager, not lazy: rows of varying height at the visible edge sent a lazy
+                // stack pinned to the bottom into a placement loop that never returned to
+                // the run loop (release hangs of 16 s to 20 min, all in the lazy item
+                // phases). The window keeps the eager stack bounded instead.
+                VStack(alignment: .leading, spacing: TimelineMetrics.rowSpacing) {
                     ForEach(visible) { block in
                         DisplayBlockView(block: block, runtime: runtime, context: makeRowContext(for: block, rewindable: rewindable))
                             .equatable()
@@ -688,6 +692,11 @@ struct ThreadTimeline: View, Equatable {
             guard !historyLoadPending, !tracking.isUserScrolling else { return }
             let isQuestion = lastEntryID?.hasPrefix("question-") == true
             guard tracking.isPinnedToBottom || tracking.distanceFromBottom < 48 || isQuestion else { return }
+            // A reader following a long run lets the oldest rows go, above the viewport, so
+            // the eager stack stays bounded; they come back as history on the way up.
+            if visibleCount > TimelineWindow.eagerLimit {
+                visibleCount = TimelineWindow.initial
+            }
             tracking.isPinnedToBottom = true
             anchorsBottomOnGrowth = true
             scrollState.showsJumpButton = false
@@ -1788,6 +1797,9 @@ enum TimelineWindow {
     static let firstPaint = 3
     static let initial = 24
     static let page = 24
+    /// The most blocks the eager stack holds while the reader follows the end; past it the
+    /// window drops back to `initial`.
+    static let eagerLimit = 96
 }
 
 /// Per-turn facts computed once per timeline pass, so rows never scan the thread to

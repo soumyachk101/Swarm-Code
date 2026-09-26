@@ -958,7 +958,7 @@ private struct ArchiveSettingsPage: View {
 
     var body: some View {
         let archived = model.archivedThreads
-        ChromeCard {
+        ChromeCard(lazy: true) {
             ForEach(Array(archived.enumerated()), id: \.element.id) { index, thread in
                 if index > 0 { ChromeRowDivider() }
                 ChromeRow(title: thread.title, detail: model.project(thread.projectID)?.name) {

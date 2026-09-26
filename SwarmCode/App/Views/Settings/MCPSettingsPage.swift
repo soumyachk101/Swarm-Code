@@ -37,7 +37,7 @@ struct MCPSettingsPage: View {
             MCPLeadCard()
             if !connected.isEmpty {
                 ChromeSection(title: "Connected") {
-                    ChromeCard {
+                    ChromeCard(lazy: true) {
                         ForEach(Array(connected.enumerated()), id: \.element.id) { index, entry in
                             if index > 0 { ChromeRowDivider() }
                             MCPConnectedRow(entry: entry)
@@ -392,7 +392,7 @@ private struct MCPCustomSection: View {
         let isSearching = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if !visible.isEmpty || !isSearching {
             ChromeSection(title: "Custom") {
-                ChromeCard {
+                ChromeCard(lazy: true) {
                     if visible.isEmpty {
                         Text("Servers of your own: a command that runs on this Mac, or a remote address, with the variables they need.")
                             .font(.system(size: 12))
